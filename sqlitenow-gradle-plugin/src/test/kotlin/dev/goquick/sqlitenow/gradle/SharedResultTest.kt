@@ -1,0 +1,236 @@
+package dev.goquick.sqlitenow.gradle
+
+import dev.goquick.sqlitenow.gradle.inspect.SelectStatement
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.DisplayName
+
+class SharedResultTest {
+
+    @Test
+    @DisplayName("Test SharedResultManager registers and validates shared results")
+    fun testSharedResultManagerBasicFunctionality() {
+        val sharedResultManager = SharedResultManager()
+
+        // Create a SELECT statement with @@sharedResult=All
+        val statement1 = AnnotatedSelectStatement(
+            name = "SelectAllPaginated",
+            src = SelectStatement(
+                sql = "SELECT * FROM Person LIMIT :limit OFFSET :offset",
+                fromTable = "Person",
+                joinTables = emptyList(),
+                namedParameters = listOf("limit", "offset"),
+                namedParametersToColumns = emptyMap(),
+                offsetNamedParam = "offset",
+                limitNamedParam = "limit",
+                fields = listOf(
+                    SelectStatement.FieldSource(
+                        fieldName = "id",
+                        tableName = "Person",
+                        originalColumnName = "id",
+                        dataType = "INTEGER"
+                    ),
+                    SelectStatement.FieldSource(
+                        fieldName = "name",
+                        tableName = "Person",
+                        originalColumnName = "name",
+                        dataType = "TEXT"
+                    )
+                )
+            ),
+            annotations = StatementAnnotationOverrides(
+                name = null,
+                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
+                sharedResult = "All",
+                implements = null,
+                excludeOverrideFields = null
+            ),
+            fields = listOf(
+                AnnotatedSelectStatement.Field(
+                    src = SelectStatement.FieldSource(
+                        fieldName = "id",
+                        tableName = "Person",
+                        originalColumnName = "id",
+                        dataType = "INTEGER"
+                    ),
+                    annotations = FieldAnnotationOverrides.parse(emptyMap())
+                ),
+                AnnotatedSelectStatement.Field(
+                    src = SelectStatement.FieldSource(
+                        fieldName = "name",
+                        tableName = "Person",
+                        originalColumnName = "name",
+                        dataType = "TEXT"
+                    ),
+                    annotations = FieldAnnotationOverrides.parse(emptyMap())
+                )
+            )
+        )
+
+        // Register the shared result
+        val sharedResult = sharedResultManager.registerSharedResult(statement1, "person")
+        
+        // Verify the shared result was created
+        assertNotNull(sharedResult)
+        assertEquals("All", sharedResult!!.name)
+        assertEquals("person", sharedResult.namespace)
+        assertEquals(2, sharedResult.fields.size)
+        
+        // Verify isSharedResult works
+        assertTrue(sharedResultManager.isSharedResult(statement1))
+        
+        // Verify getSharedResult works
+        val retrievedSharedResult = sharedResultManager.getSharedResult(statement1, "person")
+        assertNotNull(retrievedSharedResult)
+        assertEquals(sharedResult, retrievedSharedResult)
+    }
+
+    @Test
+    @DisplayName("Test SharedResultManager validates field structure consistency")
+    fun testSharedResultStructureValidation() {
+        val sharedResultManager = SharedResultManager()
+
+        // Create first statement with @@sharedResult=All
+        val statement1 = AnnotatedSelectStatement(
+            name = "SelectAllPaginated",
+            src = SelectStatement(
+                sql = "SELECT id, name FROM Person LIMIT :limit",
+                fromTable = "Person",
+                joinTables = emptyList(),
+                namedParameters = listOf("limit"),
+                namedParametersToColumns = emptyMap(),
+                offsetNamedParam = null,
+                limitNamedParam = "limit",
+                fields = listOf(
+                    SelectStatement.FieldSource("id", "Person", "id", "INTEGER"),
+                    SelectStatement.FieldSource("name", "Person", "name", "TEXT")
+                )
+            ),
+            annotations = StatementAnnotationOverrides(
+                name = null,
+                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
+                sharedResult = "All",
+                implements = null,
+                excludeOverrideFields = null
+            ),
+            fields = listOf(
+                AnnotatedSelectStatement.Field(
+                    src = SelectStatement.FieldSource("id", "Person", "id", "INTEGER"),
+                    annotations = FieldAnnotationOverrides.parse(emptyMap())
+                ),
+                AnnotatedSelectStatement.Field(
+                    src = SelectStatement.FieldSource("name", "Person", "name", "TEXT"),
+                    annotations = FieldAnnotationOverrides.parse(emptyMap())
+                )
+            )
+        )
+
+        // Create second statement with same @@sharedResult=All but different structure
+        val statement2 = AnnotatedSelectStatement(
+            name = "SelectAllFiltered",
+            src = SelectStatement(
+                sql = "SELECT id, email FROM Person WHERE active = 1",
+                fromTable = "Person",
+                joinTables = emptyList(),
+                namedParameters = emptyList(),
+                namedParametersToColumns = emptyMap(),
+                offsetNamedParam = null,
+                limitNamedParam = null,
+                fields = listOf(
+                    SelectStatement.FieldSource("id", "Person", "id", "INTEGER"),
+                    SelectStatement.FieldSource("email", "Person", "email", "TEXT") // Different field!
+                )
+            ),
+            annotations = StatementAnnotationOverrides(
+                name = null,
+                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
+                sharedResult = "All",
+                implements = null,
+                excludeOverrideFields = null
+            ),
+            fields = listOf(
+                AnnotatedSelectStatement.Field(
+                    src = SelectStatement.FieldSource("id", "Person", "id", "INTEGER"),
+                    annotations = FieldAnnotationOverrides.parse(emptyMap())
+                ),
+                AnnotatedSelectStatement.Field(
+                    src = SelectStatement.FieldSource("email", "Person", "email", "TEXT"),
+                    annotations = FieldAnnotationOverrides.parse(emptyMap())
+                )
+            )
+        )
+
+        // Register first statement - should succeed
+        val sharedResult1 = sharedResultManager.registerSharedResult(statement1, "person")
+        assertNotNull(sharedResult1)
+
+        // Register second statement with different structure - should throw exception
+        assertThrows(IllegalArgumentException::class.java) {
+            sharedResultManager.registerSharedResult(statement2, "person")
+        }
+    }
+
+    @Test
+    @DisplayName("Test SharedResultManager groups results by namespace")
+    fun testSharedResultsByNamespace() {
+        val sharedResultManager = SharedResultManager()
+
+        // Create statements in different namespaces
+        val personStatement = AnnotatedSelectStatement(
+            name = "SelectAll",
+            src = SelectStatement(
+                sql = "SELECT * FROM Person",
+                fromTable = "Person",
+                joinTables = emptyList(),
+                namedParameters = emptyList(),
+                namedParametersToColumns = emptyMap(),
+                offsetNamedParam = null,
+                limitNamedParam = null,
+                fields = emptyList()
+            ),
+            annotations = StatementAnnotationOverrides(
+                name = null,
+                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
+                sharedResult = "All",
+                implements = null,
+                excludeOverrideFields = null
+            ),
+            fields = emptyList()
+        )
+
+        val orderStatement = AnnotatedSelectStatement(
+            name = "SelectAll",
+            src = SelectStatement(
+                sql = "SELECT * FROM Order",
+                fromTable = "Order",
+                joinTables = emptyList(),
+                namedParameters = emptyList(),
+                namedParametersToColumns = emptyMap(),
+                offsetNamedParam = null,
+                limitNamedParam = null,
+                fields = emptyList()
+            ),
+            annotations = StatementAnnotationOverrides(
+                name = null,
+                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
+                sharedResult = "All",
+                implements = null,
+                excludeOverrideFields = null
+            ),
+            fields = emptyList()
+        )
+
+        // Register shared results
+        sharedResultManager.registerSharedResult(personStatement, "person")
+        sharedResultManager.registerSharedResult(orderStatement, "order")
+
+        // Get results by namespace
+        val resultsByNamespace = sharedResultManager.getSharedResultsByNamespace()
+
+        assertEquals(2, resultsByNamespace.size)
+        assertTrue(resultsByNamespace.containsKey("person"))
+        assertTrue(resultsByNamespace.containsKey("order"))
+        assertEquals(1, resultsByNamespace["person"]!!.size)
+        assertEquals(1, resultsByNamespace["order"]!!.size)
+    }
+}
