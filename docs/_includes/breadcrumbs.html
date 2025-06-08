@@ -1,0 +1,50 @@
+{% if page.parent %}
+<nav class="breadcrumbs">
+  <a href="{{ site.baseurl }}/">Home</a>
+  <span class="separator">›</span>
+  <a href="{{ site.baseurl }}/{{ page.parent | downcase }}/">{{ page.parent }}</a>
+  <span class="separator">›</span>
+  <span class="current">{{ page.title }}</span>
+</nav>
+
+<style>
+.breadcrumbs {
+  background: #f6f8fa;
+  padding: 8px 16px;
+  margin: -16px -16px 20px -16px;
+  border-bottom: 1px solid #d0d7de;
+  font-size: 14px;
+}
+
+.breadcrumbs a {
+  color: #0969da;
+  text-decoration: none;
+}
+
+.breadcrumbs a:hover {
+  text-decoration: underline;
+}
+
+.breadcrumbs .separator {
+  margin: 0 8px;
+  color: #656d76;
+}
+
+.breadcrumbs .current {
+  color: #24292f;
+  font-weight: 600;
+}
+
+@media (max-width: 600px) {
+  .breadcrumbs {
+    margin: -16px -16px 16px -16px;
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+  
+  .breadcrumbs .separator {
+    margin: 0 4px;
+  }
+}
+</style>
+{% endif %}

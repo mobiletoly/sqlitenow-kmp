@@ -1,0 +1,140 @@
+<header class="site-header" role="banner">
+
+  <div class="wrapper">
+    {%- assign default_paths = site.pages | map: "path" -%}
+    {%- assign page_paths = site.header_pages | default: default_paths -%}
+    <a class="site-title" rel="author" href="{{ "/" | relative_url }}">{{ site.title | escape }}</a>
+
+    {%- if page_paths -%}
+      <nav class="site-nav">
+        <input type="checkbox" id="nav-trigger" class="nav-trigger" />
+        <label for="nav-trigger">
+          <span class="menu-icon">
+            <svg viewBox="0 0 18 15" width="18px" height="15px">
+              <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.032C17.335,0,18,0.665,18,1.484L18,1.484z M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.032C17.335,6.031,18,6.696,18,7.516L18,7.516z M18,13.516C18,14.335,17.335,15,16.516,15H1.484 C0.665,15,0,14.335,0,13.516l0,0c0-0.82,0.665-1.483,1.484-1.483h15.032C17.335,12.031,18,12.695,18,13.516L18,13.516z"/>
+            </svg>
+          </span>
+        </label>
+
+        <div class="trigger">
+          {%- for path in page_paths -%}
+            {%- assign my_page = site.pages | where: "path", path | first -%}
+            {%- if my_page.title -%}
+              {%- if my_page.title == "Documentation" -%}
+                <div class="dropdown">
+                  <a class="page-link dropdown-toggle" href="{{ my_page.url | relative_url }}">{{ my_page.title | escape }}</a>
+                  <div class="dropdown-content">
+                    <a href="{{ site.baseurl }}/documentation/create-schema/">Create Schema</a>
+                    <a href="{{ site.baseurl }}/documentation/query-data/">Query Data</a>
+                    <a href="{{ site.baseurl }}/documentation/manage-data/">Manage Data</a>
+                  </div>
+                </div>
+              {%- else -%}
+                <a class="page-link" href="{{ my_page.url | relative_url }}">{{ my_page.title | escape }}</a>
+              {%- endif -%}
+            {%- endif -%}
+          {%- endfor -%}
+        </div>
+      </nav>
+    {%- endif -%}
+  </div>
+</header>
+
+<style>
+.dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.dropdown-content {
+  display: none;
+  position: absolute;
+  background-color: #f9f9f9;
+  min-width: 160px;
+  box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+  z-index: 1;
+  border-radius: 4px;
+  border: 1px solid #ddd;
+  top: 100%;
+  left: 0;
+}
+
+.dropdown-content a {
+  color: #424242 !important;
+  padding: 12px 16px;
+  text-decoration: none;
+  display: block;
+  font-size: 14px;
+  border-bottom: 1px solid #eee;
+}
+
+.dropdown-content a:last-child {
+  border-bottom: none;
+}
+
+.dropdown-content a:hover {
+  background-color: #f1f1f1;
+  color: #0969da !important;
+}
+
+.dropdown:hover .dropdown-content {
+  display: block;
+}
+
+.dropdown-toggle::after {
+  content: " ▼";
+  font-size: 10px;
+  margin-left: 4px;
+}
+
+@media screen and (max-width: 600px) {
+  .dropdown {
+    display: block;
+    width: 100%;
+  }
+
+  .dropdown-content {
+    position: static;
+    display: none;
+    box-shadow: none;
+    border: none;
+    background-color: transparent;
+    margin-left: 20px;
+  }
+
+  .dropdown-content a {
+    padding: 5px 10px;
+    border-bottom: none;
+    color: #828282 !important;
+  }
+
+  .dropdown:hover .dropdown-content,
+  .dropdown.active .dropdown-content {
+    display: block;
+  }
+
+  .dropdown-toggle {
+    cursor: pointer;
+  }
+}
+</style>
+
+<script>
+// Mobile dropdown toggle
+document.addEventListener('DOMContentLoaded', function() {
+  const dropdowns = document.querySelectorAll('.dropdown');
+
+  dropdowns.forEach(function(dropdown) {
+    const toggle = dropdown.querySelector('.dropdown-toggle');
+
+    toggle.addEventListener('click', function(e) {
+      if (window.innerWidth <= 600) {
+        e.preventDefault();
+        dropdown.classList.toggle('active');
+      }
+    });
+  });
+});
+</script>
+
+

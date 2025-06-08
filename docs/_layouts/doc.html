@@ -1,0 +1,42 @@
+---
+layout: default
+---
+
+<article class="post">
+  <header class="post-header">
+    {% include breadcrumbs.html %}
+    <h1 class="post-title">{{ page.title | escape }}</h1>
+  </header>
+
+  <div class="post-content">
+    {{ content }}
+  </div>
+
+  {% if page.parent %}
+  <footer class="doc-footer">
+    <div class="doc-nav">
+      <a href="{{ site.baseurl }}/{{ page.parent | downcase }}/" class="back-to-parent">
+        ← Back to {{ page.parent }}
+      </a>
+    </div>
+  </footer>
+  {% endif %}
+</article>
+
+<style>
+.doc-footer {
+  margin-top: 40px;
+  padding-top: 20px;
+  border-top: 1px solid #d0d7de;
+}
+
+.back-to-parent {
+  color: #0969da;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.back-to-parent:hover {
+  text-decoration: underline;
+}
+</style>
