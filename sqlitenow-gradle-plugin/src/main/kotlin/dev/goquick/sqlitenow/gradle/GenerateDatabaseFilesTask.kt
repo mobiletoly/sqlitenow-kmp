@@ -54,7 +54,7 @@ abstract class GenerateDatabaseFilesTask @Inject constructor(
         println(outDir)
 
         val dbNameRef = dbName.get()
-        println("1::::: $dbNameRef")
+        println("--- Database to generate: $dbNameRef")
         val dbDir = sqlDir.dir(dbName.get())
         if (!dbDir.get().asFile.exists()) {
             throw FileNotFoundException("SQL database directory '${dbDir.get().asFile.path}' not found")
@@ -76,7 +76,7 @@ fun generateDatabaseFiles(
 ) {
     val schemaDir = sqlDir.resolve("schema")
     val initSqlDir = sqlDir.resolve("init")
-    val dbDir = sqlDir.resolve("migration")
+    val migrationDir = sqlDir.resolve("migration")
     val queriesDirs = sqlDir.resolve("queries")
 
 //    val conn: Connection = TempDatabaseConnector(MigratorTempStorage.Memory).connection
@@ -84,7 +84,7 @@ fun generateDatabaseFiles(
 
     val schemaInspector = SchemaInspector(schemaDirectory = schemaDir)
     val sqlBatchInspector = SQLBatchInspector(sqlDirectory = initSqlDir)
-    val migrationInspector = MigrationInspector(sqlDirectory = dbDir)
+    val migrationInspector = MigrationInspector(sqlDirectory = migrationDir)
 
     if (outDir.path.contains("/generated/")) {      // just for safety reasons
         outDir.deleteRecursively()
