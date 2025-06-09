@@ -28,7 +28,7 @@ that will be validated by your IDE or other external tools for correctness.
 Third, I wanted to have a more flexible and extensible code generation system that can be easily extended
 and customized. For example, you can declare this SQL statement in your file:  
 
-```sql
+```sqlite
 -- @@sharedResult=PersonEntity
 -- @@implements=com.example.app.PersonEssentialFields
 -- @@excludeOverrideFields=[phone, birthDate]
@@ -54,7 +54,7 @@ Add the following to your `build.gradle.kts` file:
 
 ```kotlin
 plugins {
-    id("dev.goquick.sqlitenow") version "0.0.1"
+    id("dev.goquick.sqlitenow") version "0.1.0"
 }
 
 // ...
@@ -80,7 +80,7 @@ for your SQL files and create 4 empty subdirectories (even if you don't use some
 
 Create `schema/Person.sql` file with the following content:
 
-```sql
+```sqlite
 CREATE TABLE Person
 (
     id         INTEGER PRIMARY KEY NOT NULL,
@@ -116,7 +116,7 @@ in `sql/NowSampleDatabase/queries/[namespace]` directory (normally you can use y
 but is really up to you, you can create as many namespaces as you want, for example to deal with complex
 queries that span multiple tables). In our case create `queries/person/selectAll.sql` file with the following content:
 
-```sql
+```sqlite
 SELECT * FROM Person
 LIMIT :limit OFFSET :offset;
 ```
@@ -125,7 +125,7 @@ This will generate Person's `selectAll` query that will return `List<Person>` an
 
 You can add more queries to the same namespace, for example `queries/person/add.sql`:
 
-```sql
+```sqlite
 INSERT INTO Person (email, first_name, last_name, phone, birth_date, created_at)
 VALUES (:email, :firstName, :lastName, :phone, :birthDate, :createdAt);
 ```

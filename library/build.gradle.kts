@@ -8,8 +8,8 @@ plugins {
     id(libs.plugins.mavenPublish.get().pluginId)
 }
 
-group = "io.github.kotlin"
-version = "1.0.0"
+group = "dev.goquick.sqlitenow"
+version = "0.1.0"
 
 kotlin {
     jvm()
@@ -54,7 +54,7 @@ kotlin {
 }
 
 android {
-    namespace = "org.jetbrains.kotlinx.multiplatform.library.template"
+    namespace = group.toString()
     compileSdk = libs.versions.android.compileSdk.get().toInt()
     defaultConfig {
         minSdk = libs.versions.android.minSdk.get().toInt()
@@ -70,7 +70,7 @@ mavenPublishing {
 
     signAllPublications()
 
-    coordinates(group.toString(), "library", version.toString())
+    coordinates(group.toString(), "kmp", version.toString())
 
     pom {
         name = "SQLiteNow Multiplatform Library"
@@ -79,22 +79,22 @@ mavenPublishing {
         url = "https://github.com/mobiletoly/sqlitenow-kmp/"
         licenses {
             license {
-                name = "XXX"
-                url = "YYY"
-                distribution = "ZZZ"
+                name = "The Apache License, Version 2.0"
+                url = "https://www.apache.org/licenses/LICENSE-2.0.txt"
+                distribution = "repo"
             }
         }
         developers {
             developer {
-                id = "XXX"
-                name = "YYY"
-                url = "ZZZ"
+                id = "mobiletoly"
+                name = "Toly Pochkin"
+                url = "https://github.com/mobiletoly"
             }
         }
         scm {
-            url = "XXX"
-            connection = "YYY"
-            developerConnection = "ZZZ"
+            url = "https://github.com/mobiletoly/sqlitenow-kmp"
+            connection = "scm:git:git://github.com/mobiletoly/sqlitenow-kmp.git"
+            developerConnection = "scm:git:git://github.com/mobiletoly/sqlitenow-kmp.git"
         }
     }
 }
