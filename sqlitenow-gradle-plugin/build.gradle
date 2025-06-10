@@ -1,10 +1,14 @@
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
+import com.vanniktech.maven.publish.SonatypeHost
 
 plugins {
     id("org.jetbrains.kotlin.jvm") version "2.1.21"
     id("com.vanniktech.maven.publish") version "0.32.0"
     id("java-gradle-plugin")
 }
+
+group = "dev.goquick.sqlitenow"
+version = "0.1.1"
 
 repositories {
     mavenCentral()
@@ -62,4 +66,36 @@ tasks.test {
 compileKotlin {
 }
 
-//apply from: "$rootDir/gradle/gradle-mvn-push.gradle"
+mavenPublishing {
+    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
+
+    signAllPublications()
+
+    coordinates(group.toString(), "sqlitenow-gradle-plugin", version.toString())
+
+    pom {
+        name = "SQLiteNow Gradle Plugin"
+        description = "Gradle plugin for generating Kotlin interfaces for SQLite files"
+        inceptionYear = "2025"
+        url = "https://github.com/mobiletoly/sqlitenow-kmp/"
+        licenses {
+            license {
+                name = "The Apache License, Version 2.0"
+                url = "https://www.apache.org/licenses/LICENSE-2.0.txt"
+                distribution = "repo"
+            }
+        }
+        developers {
+            developer {
+                id = "mobiletoly"
+                name = "Toly Pochkin"
+                url = "https://github.com/mobiletoly"
+            }
+        }
+        scm {
+            url = "https://github.com/mobiletoly/sqlitenow-kmp"
+            connection = "scm:git:git://github.com/mobiletoly/sqlitenow-kmp.git"
+            developerConnection = "scm:git:git://github.com/mobiletoly/sqlitenow-kmp.git"
+        }
+    }
+}
