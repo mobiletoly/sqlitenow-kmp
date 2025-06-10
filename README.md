@@ -54,7 +54,7 @@ Add the following to your `build.gradle.kts` file:
 
 ```kotlin
 plugins {
-    id("dev.goquick.sqlitenow") version "0.1.1"
+    id("dev.goquick.sqlitenow") version "0.1.2"
 }
 
 // ...

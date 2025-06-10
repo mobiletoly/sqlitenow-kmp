@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "dev.goquick.sqlitenow"
-version = "0.1.1"
+version = "0.1.2"
 
 kotlin {
     jvm()
@@ -70,7 +70,7 @@ mavenPublishing {
 
     signAllPublications()
 
-    coordinates(group.toString(), "kmp", version.toString())
+    coordinates(group.toString(), "core", version.toString())
 
     pom {
         name = "SQLiteNow Multiplatform Library"
