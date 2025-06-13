@@ -36,6 +36,4 @@ LIMIT :limit OFFSET :offset
 This will generate shared data class `PersonEntity` that implements my custom `PersonEssentialFields` interface
 but because this interface does not include phone and birthDate fields - they will be excluded.
 
-Now let's start...
-
 [Get Started →]({{ site.baseurl }}/getting-started/){: .btn .btn-primary}

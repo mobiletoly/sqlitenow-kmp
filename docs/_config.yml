@@ -27,6 +27,12 @@ url: "https://mobiletoly.github.io" # the base hostname & protocol for your site
 twitter_username:
 github_username: mobiletoly
 
+# Repository information
+repository: mobiletoly/sqlitenow-kmp
+github:
+  repository_url: https://github.com/mobiletoly/sqlitenow-kmp
+  repository_name: sqlitenow-kmp
+
 # Build settings
 theme: minima
 plugins:

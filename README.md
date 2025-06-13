@@ -2,7 +2,7 @@
 
 A Kotlin Multiplatform library for type-safe SQLite database access, inspired by SQLDelight.
 
-Full documentation is available in the [`/docs`](./docs) directory.
+Full documentation is available in the https://mobiletoly.github.io/sqlitenow-kmp/ directory.
 
 ## Overview
 
@@ -53,4 +53,5 @@ Full example is available in the [`/sample-kmp`](./sample-kmp) directory.
 
 ## Documentation
 
-Full documentation is available in the [`/docs`](./docs) directory.
+Full documentation is available in the https://mobiletoly.github.io/sqlitenow-kmp/
+
