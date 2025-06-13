@@ -29,7 +29,7 @@ internal class MigrationInspector(
     val latestVersion: Int
 
     init {
-        SqlFileProcessor.validateDirectory(sqlDirectory, "Migration")
+        SqlFileProcessor.validateDirectory(sqlDirectory, "Migration", mandatory = false)
         val sqlFiles = SqlFileProcessor.findSqlFiles(sqlDirectory)
 
         // Parse files and partition SQL statements by version

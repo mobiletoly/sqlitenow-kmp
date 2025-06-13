@@ -53,6 +53,7 @@ import dev.goquick.sqlitenow.samplekmp.db.VersionBasedDatabaseMigrations
 import dev.goquick.sqlitenow.samplekmp.model.AddressType
 import dev.goquick.sqlitenow.samplekmp.model.PersonNote
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.Clock
@@ -98,7 +99,7 @@ fun App() {
     // Initialize database and listen for real-time changes
     LaunchedEffect(Unit) {
         db.open()
-        withContext(Dispatchers.Default) {
+        val persons = withContext(Dispatchers.IO) {
             db.person
                 .selectAll(
                     Person.SelectAll.Params(
@@ -106,11 +107,6 @@ fun App() {
                         offset = 0
                     )
                 )
-                .asFlow()
-                .collect { personList ->
-                    persons = personList
-                    isLoading = false
-                }
         }
     }
 
@@ -352,7 +348,8 @@ fun PersonCard(
 // Helper function to add a random person
 suspend fun addRandomPerson(onError: (String) -> Unit) {
     val firstNames = listOf("John", "Jane", "Alice", "Bob", "Charlie", "Diana", "Eve", "Frank", "Grace", "Henry")
-    val lastNames = listOf("Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez")
+    val lastNames =
+        listOf("Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez")
     val domains = listOf("gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "example.com")
 
     val firstName = firstNames.random()

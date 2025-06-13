@@ -225,7 +225,7 @@ class DatabaseCodeGeneratorTest {
         assertTrue(fileContent.contains("override suspend fun asList()"), "Should contain asList() method in SelectRunners")
         assertTrue(fileContent.contains("override suspend fun asOne()"), "Should contain asOne() method in SelectRunners")
         assertTrue(fileContent.contains("override suspend fun asOneOrNull()"), "Should contain asOneOrNull() method in SelectRunners")
-        assertTrue(fileContent.contains("override suspend fun asFlow()"), "Should contain asFlow() method in SelectRunners")
+        assertTrue(fileContent.contains("override fun asFlow()"), "Should contain asFlow() method in SelectRunners")
         assertTrue(fileContent.contains("val insertWithAdapters"), "Should contain insertWithAdapters ExecuteRunners property")
 
         // Verify adapter wrapper classes
@@ -385,7 +385,7 @@ class DatabaseCodeGeneratorTest {
                   "Should contain asOne() method implementation")
         assertTrue(fileContent.contains("override suspend fun asOneOrNull()"),
                   "Should contain asOneOrNull() method implementation")
-        assertTrue(fileContent.contains("override suspend fun asFlow()"),
+        assertTrue(fileContent.contains("override fun asFlow()"),
                   "Should contain asFlow() method implementation")
 
         // Should have function type for parameterized queries

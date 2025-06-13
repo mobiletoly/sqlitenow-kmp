@@ -66,7 +66,7 @@ class MigratorCodeGeneratorTest {
 
         // Create inspectors with separate directories
         val schemaInspector = SchemaInspector(schemaDirectory = schemaDir)
-        val sqlBatchInspector = SQLBatchInspector(sqlDirectory = batchDir)
+        val sqlBatchInspector = SQLBatchInspector(sqlDirectory = batchDir, mandatory = false)
         val migrationInspector = MigrationInspector(sqlDirectory = migrationDir)
 
         // Create a MigratorCodeGenerator
@@ -131,7 +131,7 @@ class MigratorCodeGeneratorTest {
 
         // Create inspectors
         val schemaInspector = SchemaInspector(schemaDirectory = schemaDir)
-        val sqlBatchInspector = SQLBatchInspector(sqlDirectory = batchDir)
+        val sqlBatchInspector = SQLBatchInspector(sqlDirectory = batchDir, mandatory = false)
         val migrationInspector = MigrationInspector(sqlDirectory = migrationDir)
 
         // Create generator
@@ -197,7 +197,7 @@ class MigratorCodeGeneratorTest {
 
         // Create inspectors
         val schemaInspector = SchemaInspector(schemaDirectory = schemaDir)
-        val sqlBatchInspector = SQLBatchInspector(sqlDirectory = batchDir)
+        val sqlBatchInspector = SQLBatchInspector(sqlDirectory = batchDir, mandatory = false)
         val migrationInspector = MigrationInspector(sqlDirectory = migrationDir)
 
         // Create generator

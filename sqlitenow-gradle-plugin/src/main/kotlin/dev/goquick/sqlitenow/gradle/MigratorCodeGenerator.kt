@@ -1,5 +1,6 @@
-package dev.goquick.sqlitenow.gradle//package dev.goquick.sqlitenow.gradle
+package dev.goquick.sqlitenow.gradle
 
+import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
@@ -35,6 +36,9 @@ internal class MigratorCodeGenerator(
         // Create the function builder
         val functionBuilder = FunSpec.builder("applyMigration")
             .addModifiers(KModifier.OVERRIDE)
+            .addAnnotation(AnnotationSpec.builder(Suppress::class)
+                .addMember("%S", "SameReturnValue")
+                .build())
             .addParameter("conn", ClassName("androidx.sqlite", "SQLiteConnection"))
             .addParameter("currentVersion", Int::class)
             .returns(Int::class)

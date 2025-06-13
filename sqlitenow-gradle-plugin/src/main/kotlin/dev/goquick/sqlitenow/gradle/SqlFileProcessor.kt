@@ -60,7 +60,10 @@ object SqlFileProcessor {
      * @param name Descriptive name for error messages (e.g., "Schema", "Migration")
      * @throws IllegalArgumentException if directory doesn't exist or isn't a directory
      */
-    fun validateDirectory(directory: File, name: String) {
+    fun validateDirectory(directory: File, name: String, mandatory: Boolean) {
+        if (!mandatory && !directory.exists()) {
+            return
+        }
         if (!directory.exists()) {
             throw IllegalArgumentException("$name directory does not exist: ${directory.absolutePath}")
         }

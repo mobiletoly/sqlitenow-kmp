@@ -6,7 +6,7 @@ interface SelectRunners<T : Any> {
     suspend fun asList(): List<T>
     suspend fun asOne(): T
     suspend fun asOneOrNull(): T?
-    suspend fun asFlow(): Flow<List<T>>
+    fun asFlow(): Flow<List<T>>
 }
 
 interface ExecuteRunners {

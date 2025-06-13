@@ -21,7 +21,7 @@ CREATE TABLE Person
 
     -- @@field=notes @@adapter
     -- @@propertyType=dev.goquick.sqlitenow.samplekmp.model.PersonNote
-    notes      BLOB
+   notes      BLOB
 );
 
 CREATE INDEX idx_person_name ON Person (last_name, first_name);

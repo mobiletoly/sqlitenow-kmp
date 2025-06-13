@@ -154,17 +154,6 @@ class MigrationInspectorTest {
     }
 
     @Test
-    @DisplayName("Test MigrationInspector uses SQLBatchInspector validation")
-    fun testUsesValidation() {
-        // Test that it uses validation from SQLBatchInspector
-        val nonExistentDir = File(tempDir.toFile(), "non-existent")
-
-        assertFailsWith<IllegalArgumentException> {
-            MigrationInspector(nonExistentDir)
-        }
-    }
-
-    @Test
     @DisplayName("Test MigrationInspector with empty directory")
     fun testInspectWithEmptyDirectory() {
         // Empty directory is now valid (no SQL files is OK)

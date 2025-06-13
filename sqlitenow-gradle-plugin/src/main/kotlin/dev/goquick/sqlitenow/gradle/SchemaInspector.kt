@@ -40,7 +40,7 @@ internal class SchemaInspector(
     }
 
     init {
-        SqlFileProcessor.validateDirectory(schemaDirectory, "Schema")
+        SqlFileProcessor.validateDirectory(schemaDirectory, "Schema", mandatory = true)
         sqlStatements = SqlFileProcessor.parseAllSqlFilesInDirectory(schemaDirectory)
 
         // Only validate that we have SQL files for schema directory since it's required

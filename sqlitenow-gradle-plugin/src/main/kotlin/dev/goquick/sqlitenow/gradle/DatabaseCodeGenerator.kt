@@ -514,7 +514,7 @@ class DatabaseCodeGenerator(
             append("            $commonParams\n")
             append("        )\n\n")
 
-            append("        override suspend fun asFlow() = ref.createReactiveQueryFlow(\n")
+            append("        override fun asFlow() = ref.createReactiveQueryFlow(\n")
             append("            affectedTables = $capitalizedNamespace.$className.affectedTables,\n")
             append("            queryExecutor = {\n")
             append("                $capitalizedNamespace.$className.executeAsList(\n")

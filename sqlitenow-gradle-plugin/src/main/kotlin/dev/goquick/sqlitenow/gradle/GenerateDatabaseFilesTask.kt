@@ -83,7 +83,7 @@ fun generateDatabaseFiles(
     val conn: Connection = TempDatabaseConnector(MigratorTempStorage.Memory).connection
 
     val schemaInspector = SchemaInspector(schemaDirectory = schemaDir)
-    val sqlBatchInspector = SQLBatchInspector(sqlDirectory = initSqlDir)
+    val sqlBatchInspector = SQLBatchInspector(sqlDirectory = initSqlDir, mandatory = false)
     val migrationInspector = MigrationInspector(sqlDirectory = migrationDir)
 
     if (outDir.path.contains("/generated/")) {      // just for safety reasons

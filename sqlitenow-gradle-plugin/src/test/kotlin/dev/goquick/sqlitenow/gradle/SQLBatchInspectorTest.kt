@@ -63,7 +63,7 @@ class SQLBatchInspectorTest {
         File(sqlDir, "03_data.sql").writeText(insertDataSql)
 
         // Create SQLBatchInspector
-        val inspector = SQLBatchInspector(sqlDir)
+        val inspector = SQLBatchInspector(sqlDir, mandatory = false)
 
         // Verify that all SQL statements were collected
         assertEquals(6, inspector.sqlStatements.size, "Should have collected 6 SQL statements")
@@ -77,23 +77,13 @@ class SQLBatchInspectorTest {
     }
 
     @Test
-    @DisplayName("Test SQLBatchInspector with non-existent directory")
-    fun testInspectWithNonExistentDirectory() {
-        val nonExistentDir = File(tempDir.toFile(), "non-existent")
-        
-        assertFailsWith<IllegalArgumentException> {
-            SQLBatchInspector(nonExistentDir)
-        }
-    }
-
-    @Test
     @DisplayName("Test SQLBatchInspector with file instead of directory")
     fun testInspectWithFile() {
         val file = File(tempDir.toFile(), "test.sql")
         file.writeText("CREATE TABLE test (id INTEGER);")
         
         assertFailsWith<IllegalArgumentException> {
-            SQLBatchInspector(file)
+            SQLBatchInspector(file, mandatory = false)
         }
     }
 
@@ -113,7 +103,7 @@ class SQLBatchInspectorTest {
         File(sqlDir, "config.json").writeText("{}")
 
         // SQLBatchInspector should only process .sql files
-        val inspector = SQLBatchInspector(sqlDir)
+        val inspector = SQLBatchInspector(sqlDir, mandatory = false)
 
         assertEquals(1, inspector.sqlStatements.size, "Should have collected 1 SQL statement")
         
@@ -149,7 +139,7 @@ class SQLBatchInspectorTest {
         File(sqlDir, "complex.sql").writeText(complexSql)
 
         // Create SQLBatchInspector
-        val inspector = SQLBatchInspector(sqlDir)
+        val inspector = SQLBatchInspector(sqlDir, mandatory = false)
 
         // Verify that all statements were collected
         assertEquals(5, inspector.sqlStatements.size, "Should have collected 5 SQL statements")
@@ -171,7 +161,7 @@ class SQLBatchInspectorTest {
         File(sqlDir, "a_first.sql").writeText("CREATE TABLE test (id INTEGER);")
         File(sqlDir, "b_second.sql").writeText("INSERT INTO test VALUES (1);")
 
-        val inspector = SQLBatchInspector(sqlDir)
+        val inspector = SQLBatchInspector(sqlDir, mandatory = false)
 
         assertEquals(3, inspector.sqlStatements.size, "Should have collected 3 SQL statements")
 

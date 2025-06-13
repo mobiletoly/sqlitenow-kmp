@@ -11,12 +11,13 @@ import java.io.File
  */
 internal class SQLBatchInspector(
     sqlDirectory: File,
+    mandatory: Boolean,
 ) {
     val sqlStatements: List<SqlSingleStatement>
     val sqlFiles: List<File>
 
     init {
-        SqlFileProcessor.validateDirectory(sqlDirectory, "SQL")
+        SqlFileProcessor.validateDirectory(sqlDirectory, "SQL", mandatory = mandatory)
         sqlFiles = SqlFileProcessor.findSqlFiles(sqlDirectory)
         sqlStatements = SqlFileProcessor.parseAllSqlFiles(sqlFiles)
     }
