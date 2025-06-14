@@ -20,7 +20,18 @@
           {%- for path in page_paths -%}
             {%- assign my_page = site.pages | where: "path", path | first -%}
             {%- if my_page.title -%}
-            <a class="page-link" href="{{ my_page.url | relative_url }}">{{ my_page.title | escape }}</a>
+              {%- if my_page.title == "Documentation" -%}
+                <div class="dropdown">
+                  <a class="page-link dropdown-toggle" href="{{ my_page.url | relative_url }}">{{ my_page.title | escape }}</a>
+                  <div class="dropdown-content">
+                    <a href="{{ site.baseurl }}/documentation/create-schema/">Create Schema</a>
+                    <a href="{{ site.baseurl }}/documentation/query-data/">Query Data</a>
+                    <a href="{{ site.baseurl }}/documentation/manage-data/">Manage Data</a>
+                  </div>
+                </div>
+              {%- else -%}
+                <a class="page-link" href="{{ my_page.url | relative_url }}">{{ my_page.title | escape }}</a>
+              {%- endif -%}
             {%- endif -%}
           {%- endfor -%}
         </div>
@@ -28,5 +39,102 @@
     {%- endif -%}
   </div>
 </header>
+
+<style>
+.dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.dropdown-content {
+  display: none;
+  position: absolute;
+  background-color: #f9f9f9;
+  min-width: 160px;
+  box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+  z-index: 1;
+  border-radius: 4px;
+  border: 1px solid #ddd;
+  top: 100%;
+  left: 0;
+}
+
+.dropdown-content a {
+  color: #424242 !important;
+  padding: 12px 16px;
+  text-decoration: none;
+  display: block;
+  font-size: 14px;
+  border-bottom: 1px solid #eee;
+}
+
+.dropdown-content a:last-child {
+  border-bottom: none;
+}
+
+.dropdown-content a:hover {
+  background-color: #f1f1f1;
+  color: #0969da !important;
+}
+
+.dropdown:hover .dropdown-content {
+  display: block;
+}
+
+.dropdown-toggle::after {
+  content: " ▼";
+  font-size: 10px;
+  margin-left: 4px;
+}
+
+@media screen and (max-width: 600px) {
+  .dropdown {
+    display: block;
+    width: 100%;
+  }
+
+  .dropdown-content {
+    position: static;
+    display: none;
+    box-shadow: none;
+    border: none;
+    background-color: transparent;
+    margin-left: 20px;
+  }
+
+  .dropdown-content a {
+    padding: 5px 10px;
+    border-bottom: none;
+    color: #828282 !important;
+  }
+
+  .dropdown:hover .dropdown-content,
+  .dropdown.active .dropdown-content {
+    display: block;
+  }
+
+  .dropdown-toggle {
+    cursor: pointer;
+  }
+}
+</style>
+
+<script>
+// Mobile dropdown toggle
+document.addEventListener('DOMContentLoaded', function() {
+  const dropdowns = document.querySelectorAll('.dropdown');
+
+  dropdowns.forEach(function(dropdown) {
+    const toggle = dropdown.querySelector('.dropdown-toggle');
+
+    toggle.addEventListener('click', function(e) {
+      if (window.innerWidth <= 600) {
+        e.preventDefault();
+        dropdown.classList.toggle('active');
+      }
+    });
+  });
+});
+</script>
 
 

@@ -43,6 +43,7 @@ header_pages:
   - overview.md
   - how-it-works.md
   - getting-started.md
+  - documentation.md
 
 # Exclude from processing.
 # The following items will not be processed, by default.

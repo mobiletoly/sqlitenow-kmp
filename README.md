@@ -2,7 +2,7 @@
 
 A Kotlin Multiplatform library for type-safe SQLite database access, inspired by SQLDelight.
 
-Full documentation is available in the https://mobiletoly.github.io/sqlitenow-kmp/ directory.
+Full documentation is available in the https://mobiletoly.github.io/sqlitenow-kmp/ pages.
 
 ## Overview
 
@@ -17,7 +17,7 @@ allowing for deeper integration and SQLite-specific optimizations.
 - **No IDE Plugin Required** - Works with any editor, uses Gradle plugin for code generation
 - **Kotlin Multiplatform** - Supports all KMP targets using [androidx.sqlite](https://developer.android.com/kotlin/multiplatform/sqlite) driver
 - **SQLite Focused** - Optimized specifically for SQLite features and capabilities
-- **Migration is supports** - Migration scripts are supported to manage database schema changes
+- **Migration support** - Migration scripts are supported to manage database schema changes
 
 ## Why SQLiteNow exists if SQLDelight is really awesome
 
