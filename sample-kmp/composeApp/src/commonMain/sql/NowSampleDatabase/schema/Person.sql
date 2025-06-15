@@ -3,7 +3,7 @@ CREATE TABLE Person
     id         INTEGER PRIMARY KEY NOT NULL,
 
     -- @@field=first_name @@propertyName=myFirstName
-    first_name VARCHAR(255)        NOT NULL,
+    first_name TEXT                NOT NULL,
 
     -- @@field=last_name @@propertyName=myLastName
     last_name  TEXT                NOT NULL,

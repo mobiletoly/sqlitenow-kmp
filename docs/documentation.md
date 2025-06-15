@@ -29,6 +29,16 @@ Understand how to INSERT, UPDATE, and DELETE data in your database.
 
 [Manage Data →]({{ site.baseurl }}/documentation/manage-data/)
 
+### Initializing Data
+Learn how to populate your database with initial data during creation.
+
+[Initialize Data →]({{ site.baseurl }}/documentation/initialize-data/)
+
+### Migration
+Understand how to manage database schema changes over time.
+
+[Migration →]({{ site.baseurl }}/documentation/migration/)
+
 ## Quick Navigation
 
 <div class="doc-nav-grid">
@@ -46,16 +56,18 @@ Understand how to INSERT, UPDATE, and DELETE data in your database.
     <h3>✏️ Manage Data</h3>
     <p>INSERT, UPDATE, and DELETE operations to modify your database</p>
   </a>
+
+  <a href="{{ site.baseurl }}/documentation/initialize-data/" class="doc-nav-card">
+    <h3>🚀 Initialize Data</h3>
+    <p>Populate your database with initial data during creation</p>
+  </a>
+
+  <a href="{{ site.baseurl }}/documentation/migration/" class="doc-nav-card">
+    <h3>🔄 Migration</h3>
+    <p>Manage database schema changes and version upgrades</p>
+  </a>
 </div>
 
-## Advanced Topics
-
-More documentation sections will be added here as the library grows:
-
-- **Migrations** - Managing database schema changes
-- **Type Adapters** - Custom type conversions
-- **Reactive Queries** - Real-time data with Flow
-- **Testing** - Unit testing your database code
 
 <style>
 .doc-nav-grid {

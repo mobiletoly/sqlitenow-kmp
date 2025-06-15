@@ -54,32 +54,6 @@ object Person {
 As you can see Params class is generated automatically based on the SQL query parameters
 and reside under `Person`/`Add` object (object name is generated from file name).
 
-### INSERT with Default Values
-
-**File: `queries/person/addMinimal.sql`**
-
-```sql
-INSERT INTO Person (first_name, last_name, email)
-VALUES (:firstName, :lastName, :email);
-```
-
-This generates:
-
-```kotlin
-object Person {
-    object AddMinimal {
-        data class Params(
-            val firstName: String,
-            val lastName: String,
-            val email: String
-        )
-
-        // ...
-    }
-}
-```
-
-This only requires the non-default fields as parameters, letting the database handle defaults like `created_at`.
 
 ## UPDATE Queries
 

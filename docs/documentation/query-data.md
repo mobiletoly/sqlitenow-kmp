@@ -142,21 +142,6 @@ db.person
 The Flow automatically re-executes the query when any table used in the query is
 modified by INSERT, UPDATE, or DELETE operations.
 
-## Using Generated Code
-
-### Database Initialization
-
-```kotlin
-val db = SampleDatabase(
-    dbName = "sample.db",
-    migration = migration,
-    personAdapters = SampleDatabase.PersonAdapters(
-        sqlColumnToBirthDate = { it?.let { LocalDate.parse(it) } },
-        birthDateToSqlColumn = { it?.toString() },
-        sqlColumnToCreatedAt = { LocalDateTime.parse(it) }
-    )
-)
-```
 
 ## Query Annotations
 
@@ -175,7 +160,7 @@ This generates `Person`/`PersonSummary` object instead of `Person`/`SelectSummar
 
 ### Overriding Schema Annotations
 
-Query annotations can override table-level annotations for specific queries:
+Query annotations can override schema-level annotations for specific queries:
 
 ```sql
 SELECT 
@@ -188,12 +173,13 @@ FROM Person;
 ```
 
 This generates `contactPhone` property instead of `userPhone` defined via annotation in the schema.
-You can override any table-level annotation in a query (including property name, property type,
-nullability etc), it means that SELECT annotations have higher priorities.
+You can override any schema-level annotation in a query (including property name, property type,
+nullability etc). It means that **SELECT** annotations have higher priorities than annotations
+in **CREATE TABLE**.
 
 ### Shared Result Classes
 
-Assuming that you have two queries in two different files:
+Assuming that you have two (or more) queries in two different files:
 
 **File: `queries/person/selectActive.sql`**
 
@@ -209,25 +195,33 @@ SELECT * FROM Person WHERE active = 1;
 SELECT * FROM Person WHERE created_at > :since;
 ```
 
-Instead of two separate result classes `Person`/`SelectActive` and `Person`/`SelectNew`, both queries
-will use the same `Person`/`SharedResult`/`PersonEntity` result class, reducing code duplication.
+Instead of two separate result classes `Person`/**`SelectActive`** and `Person`/**`SelectNew`**, both queries
+will use the same `Person`/**`SharedResult`**/**`PersonEntity`** result class, reducing code duplication.
 
 `Person`/`SharedResult` object contains all shared result classes for the `person` namespace.
 
 ## Collection Parameters
 
-For `IN` clauses, use Collection types:
+SqliteNow supports `IN` clauses with Collection parameters.
 
 ```sql
 SELECT * FROM Person 
 WHERE id IN :ids;
 ```
 
-Generates:
+It generates:
 ```kotlin
 data class Params(
     val ids: Collection<Long>
 )
+```
+
+And can be used as:
+
+```kotlin
+val personList: List<Person.SelectAll.Result> = db.person
+    .selectAll(Person.SelectAll.Params(ids = listOf(1L, 2L, 3L)))
+    .asList()
 ```
 
 ## Next Steps
