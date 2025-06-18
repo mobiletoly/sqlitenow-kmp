@@ -265,3 +265,7 @@ db.person
 ```
 
 This will automatically re-execute the query whenever the `Person` table changes and emit the new result.
+
+## Next Step
+
+Check out our [Full Documentation]({{ site.baseurl }}/documentation/) guide to set up SQLiteNow in your project.
