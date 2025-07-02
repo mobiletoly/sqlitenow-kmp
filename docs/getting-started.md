@@ -74,7 +74,10 @@ sqliteNow {
 
 This will create **generateSampleDatabase** task that you can use to generate your database code.
 Generated code will be added to `build/generated/sqlitenow/code` directory (not to your source directory)
-and will be under `com.example.app.db`, and will be available to your `commonMain` source set. 
+and will be under `com.example.app.db`, and will be available to your `commonMain` source set.
+
+_Note:_ If you don't see **generateSampleDatabase** task in your Gradle tasks list - try
+running `./gradlew build` first.
 
 ## Project Structure
 
