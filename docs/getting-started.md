@@ -43,7 +43,7 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             // ...
-            implementation(libs.sqlitenow)
+            implementation(libs.sqlitenow.kmp)
             implementation(libs.sqlite.bundled)
             implementation(libs.kotlinx.datetime)
         }
