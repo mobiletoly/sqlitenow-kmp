@@ -5,13 +5,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -20,15 +16,9 @@ import androidx.compose.material.Button
 import androidx.compose.material.ButtonDefaults
 import androidx.compose.material.Card
 import androidx.compose.material.CircularProgressIndicator
-import androidx.compose.material.Icon
-import androidx.compose.material.IconButton
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -178,12 +168,6 @@ fun App() {
                     backgroundColor = MaterialTheme.colors.primary
                 )
             ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "Add Person",
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
                 Text("Add Random Person", fontSize = 16.sp)
             }
 
@@ -208,13 +192,6 @@ fun App() {
                         modifier = Modifier.padding(32.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Person,
-                            contentDescription = "No persons",
-                            modifier = Modifier.size(48.dp),
-                            tint = MaterialTheme.colors.onSurface.copy(alpha = 0.4f)
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
                         Text(
                             text = "No persons yet",
                             fontSize = 18.sp,
@@ -345,7 +322,7 @@ fun PersonCard(
             }
 
             // Delete Button
-            IconButton(
+            TextButton(
                 onClick = { onDelete(person) },
                 modifier = Modifier
                     .background(
@@ -353,11 +330,10 @@ fun PersonCard(
                         shape = RoundedCornerShape(8.dp)
                     )
             ) {
-                Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = "Delete Person",
-                    tint = MaterialTheme.colors.error,
-                    modifier = Modifier.size(20.dp)
+                Text(
+                    text = "X",
+                    color = MaterialTheme.colors.error,
+                    fontSize = 14.sp
                 )
             }
         }

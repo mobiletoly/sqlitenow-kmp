@@ -43,7 +43,7 @@ class AnnotationsTest {
         val userIdAnnotations = result["user_id"]
         assertNotNull(userIdAnnotations)
         assertEquals(2, userIdAnnotations.size)
-        assertNull(userIdAnnotations["nullable"], "nullable annotation should have null value")
+        assertNull(userIdAnnotations[AnnotationConstants.NULLABLE], "nullable annotation should have null value")
         assertEquals("0", userIdAnnotations["default"], "default annotation should have value '0'")
 
         // Check username field annotations
@@ -81,7 +81,7 @@ class AnnotationsTest {
         assertNull(idAnnotations["autoIncrement"])
 
         // Check name field annotations
-        val nameAnnotations = result["name"]
+        val nameAnnotations = result[AnnotationConstants.NAME]
         assertNotNull(nameAnnotations)
         assertEquals(3, nameAnnotations.size)
         assertNull(nameAnnotations["notNull"])

@@ -137,7 +137,7 @@ class SelectFieldCodeGenerator(
         if (field != null) {
             val column = findColumnForField(field)
             if (column != null) {
-                val propertyType = column.annotations["propertyType"]
+                val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE]
                 if (propertyType != null) {
                     return SqliteTypeToKotlinCodeConverter.determinePropertyType(kotlinType, propertyType, false)
                 }

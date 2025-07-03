@@ -2,13 +2,13 @@ import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 import com.vanniktech.maven.publish.SonatypeHost
 
 plugins {
-    id("org.jetbrains.kotlin.jvm") version "2.1.21"
-    id("com.vanniktech.maven.publish") version "0.32.0"
+    id("org.jetbrains.kotlin.jvm") version "2.2.0"
+    id("com.vanniktech.maven.publish") version "0.33.0"
     id("java-gradle-plugin")
 }
 
 group = "dev.goquick.sqlitenow"
-version = "0.1.4"
+version = "0.1.5"
 
 repositories {
     mavenCentral()
@@ -32,19 +32,19 @@ gradlePlugin {
 dependencies {
     implementation(gradleApi())
     implementation(localGroovy())
-    implementation("com.squareup:kotlinpoet:2.1.0")
-    compileOnly("org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.20")
+    implementation("com.squareup:kotlinpoet:2.2.0")
+    compileOnly("org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.0")
     // SQLite JDBC for database access
-    implementation("org.xerial:sqlite-jdbc:3.49.1.0")
-    implementation("androidx.sqlite:sqlite-bundled:2.5.1")
+    implementation("org.xerial:sqlite-jdbc:3.50.2.0")
+    implementation("androidx.sqlite:sqlite-bundled:2.5.2")
     implementation("com.github.jsqlparser:jsqlparser:4.9")
 
     // -- Testing dependencies --
-    testImplementation("org.junit.jupiter:junit-jupiter-api:5.9.0")
-    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.9.0")
-    testImplementation("org.jetbrains.kotlin:kotlin-test:1.9.0")
-    testImplementation("org.mockito:mockito-core:5.10.0")
-    testImplementation("org.mockito:mockito-junit-jupiter:5.10.0")
+    testImplementation("org.junit.jupiter:junit-jupiter-api:5.13.2")
+    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.13.2")
+    testImplementation("org.jetbrains.kotlin:kotlin-test:2.2.0")
+    testImplementation("org.mockito:mockito-core:5.18.0")
+    testImplementation("org.mockito:mockito-junit-jupiter:5.18.0")
 }
 
 repositories {

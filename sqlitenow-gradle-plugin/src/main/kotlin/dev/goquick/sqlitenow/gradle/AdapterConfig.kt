@@ -135,7 +135,7 @@ class AdapterConfig(
         column: AnnotatedCreateTableStatement.Column
     ): ParamConfig {
         val baseType = SqliteTypeToKotlinCodeConverter.mapSqlTypeToKotlinType(column.src.dataType)
-        val propertyType = column.annotations["propertyType"]
+        val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE]
         val isNullable = column.isNullable()
 
         val targetType = SqliteTypeToKotlinCodeConverter.determinePropertyType(baseType, propertyType, isNullable)

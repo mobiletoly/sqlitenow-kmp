@@ -11,8 +11,8 @@ class ImplementsAnnotationTest {
     @DisplayName("Test @@implements annotation parsing")
     fun testImplementsAnnotationParsing() {
         val annotations = mapOf(
-            "sharedResult" to "All",
-            "implements" to "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields"
+            AnnotationConstants.SHARED_RESULT to "All",
+            AnnotationConstants.IMPLEMENTS to "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields"
         )
         
         val parsed = StatementAnnotationOverrides.parse(annotations)
@@ -31,8 +31,8 @@ class ImplementsAnnotationTest {
 
         val extracted = extractAnnotations(comments)
 
-        assertEquals("All", extracted["sharedResult"])
-        assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", extracted["implements"])
+        assertEquals("All", extracted[AnnotationConstants.SHARED_RESULT])
+        assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", extracted[AnnotationConstants.IMPLEMENTS])
     }
 
     @Test
@@ -163,9 +163,9 @@ class ImplementsAnnotationTest {
     @DisplayName("Test @@excludeOverrideFields annotation parsing")
     fun testExcludeOverrideFieldsAnnotation() {
         val annotations = mapOf(
-            "sharedResult" to "All",
-            "implements" to "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
-            "excludeOverrideFields" to "phone,birthDate,age,score,createdAt,notes"
+            AnnotationConstants.SHARED_RESULT to "All",
+            AnnotationConstants.IMPLEMENTS to "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
+            AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS to "phone,birthDate,age,score,createdAt,notes"
         )
 
         val parsed = StatementAnnotationOverrides.parse(annotations)
@@ -186,9 +186,9 @@ class ImplementsAnnotationTest {
 
         val extracted = extractAnnotations(comments)
 
-        assertEquals("All", extracted["sharedResult"])
-        assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", extracted["implements"])
-        assertEquals("phone,birthDate,age,score,createdAt,notes", extracted["excludeOverrideFields"])
+        assertEquals("All", extracted[AnnotationConstants.SHARED_RESULT])
+        assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", extracted[AnnotationConstants.IMPLEMENTS])
+        assertEquals("phone,birthDate,age,score,createdAt,notes", extracted[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS])
 
         val parsed = StatementAnnotationOverrides.parse(extracted)
         assertEquals(setOf("phone", "birthDate", "age", "score", "createdAt", "notes"), parsed.excludeOverrideFields)
@@ -200,9 +200,9 @@ class ImplementsAnnotationTest {
     @DisplayName("Test @@excludeOverrideFields with bracket syntax")
     fun testExcludeOverrideFieldsWithBrackets() {
         val annotations = mapOf(
-            "sharedResult" to "All",
-            "implements" to "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
-            "excludeOverrideFields" to "[phone,birthDate,age,score,createdAt,notes]"
+            AnnotationConstants.SHARED_RESULT to "All",
+            AnnotationConstants.IMPLEMENTS to "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
+            AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS to "[phone,birthDate,age,score,createdAt,notes]"
         )
 
         val parsed = StatementAnnotationOverrides.parse(annotations)
@@ -218,7 +218,7 @@ class ImplementsAnnotationTest {
     @DisplayName("Test @@excludeOverrideFields with bracket syntax and spaces")
     fun testExcludeOverrideFieldsWithBracketsAndSpaces() {
         val annotations = mapOf(
-            "excludeOverrideFields" to "[ phone , birthDate , age ]"
+            AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS to "[ phone , birthDate , age ]"
         )
 
         val parsed = StatementAnnotationOverrides.parse(annotations)
@@ -232,7 +232,7 @@ class ImplementsAnnotationTest {
     @DisplayName("Test exact case: @@excludeOverrideFields=[phone, birthDate]")
     fun testExactUserCase() {
         val annotations = mapOf(
-            "excludeOverrideFields" to "[phone, birthDate]"
+            AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS to "[phone, birthDate]"
         )
 
         val parsed = StatementAnnotationOverrides.parse(annotations)
@@ -247,8 +247,8 @@ class ImplementsAnnotationTest {
 
         // Verify no leading/trailing spaces
         assertTrue(parsed.excludeOverrideFields!!.contains("phone"))
-        assertTrue(parsed.excludeOverrideFields!!.contains("birthDate"))
-        assertFalse(parsed.excludeOverrideFields!!.contains(" birthDate"))
+        assertTrue(parsed.excludeOverrideFields.contains("birthDate"))
+        assertFalse(parsed.excludeOverrideFields.contains(" birthDate"))
 
         println("✅ Exact user case works correctly!")
     }
@@ -260,7 +260,7 @@ class ImplementsAnnotationTest {
         val input = "[phone, birthDate]"
 
         // Test the parsing function directly
-        val annotations = mapOf("excludeOverrideFields" to input)
+        val annotations = mapOf(AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS to input)
         val parsed = StatementAnnotationOverrides.parse(annotations)
 
         println("Input: '$input'")
@@ -271,13 +271,13 @@ class ImplementsAnnotationTest {
 
         // Test that the set contains the exact field names
         assertTrue(parsed.excludeOverrideFields!!.contains("phone"))
-        assertTrue(parsed.excludeOverrideFields!!.contains("birthDate"))
+        assertTrue(parsed.excludeOverrideFields.contains("birthDate"))
 
         // Test that it doesn't contain versions with spaces
-        assertFalse(parsed.excludeOverrideFields!!.contains(" phone"))
-        assertFalse(parsed.excludeOverrideFields!!.contains("phone "))
-        assertFalse(parsed.excludeOverrideFields!!.contains(" birthDate"))
-        assertFalse(parsed.excludeOverrideFields!!.contains("birthDate "))
+        assertFalse(parsed.excludeOverrideFields.contains(" phone"))
+        assertFalse(parsed.excludeOverrideFields.contains("phone "))
+        assertFalse(parsed.excludeOverrideFields.contains(" birthDate"))
+        assertFalse(parsed.excludeOverrideFields.contains("birthDate "))
 
         println("✅ Problematic space case works correctly!")
     }
@@ -298,7 +298,7 @@ class ImplementsAnnotationTest {
 
         testCases.forEach { (input, expected) ->
             println("Testing input: '$input'")
-            val annotations = mapOf("excludeOverrideFields" to input)
+            val annotations = mapOf(AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS to input)
             val parsed = StatementAnnotationOverrides.parse(annotations)
 
             println("  Expected: $expected")
@@ -325,7 +325,7 @@ class ImplementsAnnotationTest {
 
         println("Testing EXACT failing case: '$input'")
 
-        val annotations = mapOf("excludeOverrideFields" to input)
+        val annotations = mapOf(AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS to input)
         val parsed = StatementAnnotationOverrides.parse(annotations)
 
         println("Input: '$input'")
@@ -374,21 +374,21 @@ class ImplementsAnnotationTest {
         // Test field that should have override (not in exclude list)
         val idFieldName = "id"
         val idIsExcluded = excludeFields.contains(idFieldName)
-        val idShouldHaveOverride = implementsInterface != null && !idIsExcluded
+        val idShouldHaveOverride = !idIsExcluded
 
         assertTrue(idShouldHaveOverride, "id field should have override modifier")
 
         // Test field that should NOT have override (in exclude list)
         val phoneFieldName = "phone"
         val phoneIsExcluded = excludeFields.contains(phoneFieldName)
-        val phoneShouldHaveOverride = implementsInterface != null && !phoneIsExcluded
+        val phoneShouldHaveOverride = !phoneIsExcluded
 
         assertFalse(phoneShouldHaveOverride, "phone field should NOT have override modifier")
 
         // Test field that should NOT have override (in exclude list)
         val birthDateFieldName = "birthDate"
         val birthDateIsExcluded = excludeFields.contains(birthDateFieldName)
-        val birthDateShouldHaveOverride = implementsInterface != null && !birthDateIsExcluded
+        val birthDateShouldHaveOverride = !birthDateIsExcluded
 
         assertFalse(birthDateShouldHaveOverride, "birthDate field should NOT have override modifier")
 
@@ -409,9 +409,9 @@ class ImplementsAnnotationTest {
 
         val extracted = extractAnnotations(comments)
 
-        assertEquals("All", extracted["sharedResult"])
-        assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", extracted["implements"])
-        assertEquals("[phone,birthDate]", extracted["excludeOverrideFields"])
+        assertEquals("All", extracted[AnnotationConstants.SHARED_RESULT])
+        assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", extracted[AnnotationConstants.IMPLEMENTS])
+        assertEquals("[phone,birthDate]", extracted[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS])
 
         val parsed = StatementAnnotationOverrides.parse(extracted)
         assertEquals(setOf("phone", "birthDate"), parsed.excludeOverrideFields)
@@ -428,9 +428,9 @@ class ImplementsAnnotationTest {
 
         val extracted = extractAnnotations(comments)
 
-        assertEquals("All", extracted["sharedResult"])
-        assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", extracted["implements"])
-        assertEquals("[phone, birthDate]", extracted["excludeOverrideFields"])
+        assertEquals("All", extracted[AnnotationConstants.SHARED_RESULT])
+        assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", extracted[AnnotationConstants.IMPLEMENTS])
+        assertEquals("[phone, birthDate]", extracted[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS])
 
         val parsed = StatementAnnotationOverrides.parse(extracted)
         assertEquals(setOf("phone", "birthDate"), parsed.excludeOverrideFields)
@@ -449,9 +449,9 @@ class ImplementsAnnotationTest {
 
         val extracted = extractAnnotations(comments)
 
-        assertEquals("All", extracted["sharedResult"])
-        assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", extracted["implements"])
-        assertEquals("[ phone , birthDate ]", extracted["excludeOverrideFields"])
+        assertEquals("All", extracted[AnnotationConstants.SHARED_RESULT])
+        assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", extracted[AnnotationConstants.IMPLEMENTS])
+        assertEquals("[ phone , birthDate ]", extracted[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS])
 
         val parsed = StatementAnnotationOverrides.parse(extracted)
         assertEquals(setOf("phone", "birthDate"), parsed.excludeOverrideFields)

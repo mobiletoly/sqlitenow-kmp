@@ -444,8 +444,8 @@ class DataStructCodeGeneratorTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            "adapter" to null,  // @@adapter annotation
-                            "propertyType" to "kotlinx.datetime.LocalDateTime"  // @@propertyType annotation
+                            AnnotationConstants.ADAPTER to null,  // @@adapter annotation
+                            AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDateTime"  // @@propertyType annotation
                         )
                     )
                 )
@@ -559,8 +559,8 @@ class DataStructCodeGeneratorTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            "adapter" to null,  // @@adapter annotation
-                            "propertyType" to "kotlinx.datetime.LocalDateTime"  // @@propertyType annotation
+                            AnnotationConstants.ADAPTER to null,  // @@adapter annotation
+                            AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDateTime"  // @@propertyType annotation
                         )
                     )
                 )
@@ -679,9 +679,9 @@ class DataStructCodeGeneratorTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            "nullable" to null,  // @@nullable annotation overrides NOT NULL
-                            "adapter" to null,   // @@adapter annotation
-                            "propertyType" to "String"  // @@propertyType annotation
+                            AnnotationConstants.NULLABLE to null,  // @@nullable annotation overrides NOT NULL
+                            AnnotationConstants.ADAPTER to null,   // @@adapter annotation
+                            AnnotationConstants.PROPERTY_TYPE to "String"  // @@propertyType annotation
                         )
                     )
                 )
@@ -787,9 +787,9 @@ class DataStructCodeGeneratorTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            "nullable" to null,  // @@nullable annotation overrides NOT NULL
-                            "adapter" to null,   // @@adapter annotation
-                            "propertyType" to "String"  // @@propertyType annotation
+                            AnnotationConstants.NULLABLE to null,  // @@nullable annotation overrides NOT NULL
+                            AnnotationConstants.ADAPTER to null,   // @@adapter annotation
+                            AnnotationConstants.PROPERTY_TYPE to "String"  // @@propertyType annotation
                         )
                     )
                 )
@@ -907,8 +907,8 @@ class DataStructCodeGeneratorTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            "adapter" to null,  // @@adapter annotation
-                            "propertyType" to "kotlinx.datetime.LocalDateTime"  // @@propertyType annotation
+                            AnnotationConstants.ADAPTER to null,  // @@adapter annotation
+                            AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDateTime"  // @@propertyType annotation
                         )
                     )
                 )
@@ -1077,8 +1077,8 @@ class DataStructCodeGeneratorTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            "adapter" to null,  // @@adapter annotation
-                            "propertyType" to "kotlinx.datetime.LocalDate"
+                            AnnotationConstants.ADAPTER to null,  // @@adapter annotation
+                            AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDate"
                         )
                     )
                 )
@@ -1553,8 +1553,8 @@ class DataStructCodeGeneratorTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            "adapter" to null,  // @@adapter annotation
-                            "propertyType" to "kotlinx.datetime.LocalDate"
+                            AnnotationConstants.ADAPTER to null,  // @@adapter annotation
+                            AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDate"
                         )
                     )
                 )
@@ -1734,7 +1734,7 @@ class DataStructCodeGeneratorTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            "propertyType" to "kotlinx.datetime.LocalDate"
+                            AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDate"
                         )
                     )
                 )
@@ -1866,8 +1866,8 @@ class DataStructCodeGeneratorTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            "propertyType" to "kotlinx.datetime.LocalDate",
-                            "adapter" to null
+                            AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDate",
+                            AnnotationConstants.ADAPTER to null
                         )
                     )
                 )
@@ -2181,7 +2181,7 @@ class DataStructCodeGeneratorTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            "propertyType" to "kotlinx.datetime.LocalDate"
+                            AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDate"
                         )
                     )
                 )
@@ -2421,7 +2421,7 @@ class DataStructCodeGeneratorTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            "propertyType" to "kotlinx.datetime.LocalDate"
+                            AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDate"
                         )
                     ),
                     AnnotatedCreateTableStatement.Column(
@@ -2434,7 +2434,7 @@ class DataStructCodeGeneratorTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            "propertyType" to "kotlinx.datetime.LocalDateTime"
+                            AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDateTime"
                         )
                     ),
                     AnnotatedCreateTableStatement.Column(
@@ -2647,7 +2647,7 @@ class DataStructCodeGeneratorTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            "propertyType" to "kotlinx.datetime.LocalDateTime"
+                            AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDateTime"
                         )
                     )
                 )
@@ -2864,7 +2864,7 @@ class DataStructCodeGeneratorTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            "propertyType" to "kotlinx.datetime.LocalDateTime"
+                            AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDateTime"
                         )
                     )
                 )
@@ -3002,9 +3002,9 @@ class DataStructCodeGeneratorTest {
                     AnnotatedCreateTableStatement.Column(src = CreateTableStatement.Column(name = "last_name", dataType = "TEXT", notNull = false, primaryKey = false, autoIncrement = false, unique = false), annotations = emptyMap()),
                     AnnotatedCreateTableStatement.Column(src = CreateTableStatement.Column(name = "age", dataType = "INTEGER", notNull = true, primaryKey = false, autoIncrement = false, unique = false), annotations = emptyMap()),
                     AnnotatedCreateTableStatement.Column(src = CreateTableStatement.Column(name = "phone", dataType = "TEXT", notNull = false, primaryKey = false, autoIncrement = false, unique = false), annotations = emptyMap()),
-                    AnnotatedCreateTableStatement.Column(src = CreateTableStatement.Column(name = "birth_date", dataType = "TEXT", notNull = false, primaryKey = false, autoIncrement = false, unique = false), annotations = mapOf("propertyType" to "kotlinx.datetime.LocalDate")),
-                    AnnotatedCreateTableStatement.Column(src = CreateTableStatement.Column(name = "created_at", dataType = "TEXT", notNull = true, primaryKey = false, autoIncrement = false, unique = false), annotations = mapOf("propertyType" to "kotlinx.datetime.LocalDateTime")),
-                    AnnotatedCreateTableStatement.Column(src = CreateTableStatement.Column(name = "notes", dataType = "TEXT", notNull = false, primaryKey = false, autoIncrement = false, unique = false), annotations = mapOf("propertyType" to "PersonNote"))
+                    AnnotatedCreateTableStatement.Column(src = CreateTableStatement.Column(name = "birth_date", dataType = "TEXT", notNull = false, primaryKey = false, autoIncrement = false, unique = false), annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDate")),
+                    AnnotatedCreateTableStatement.Column(src = CreateTableStatement.Column(name = "created_at", dataType = "TEXT", notNull = true, primaryKey = false, autoIncrement = false, unique = false), annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDateTime")),
+                    AnnotatedCreateTableStatement.Column(src = CreateTableStatement.Column(name = "notes", dataType = "TEXT", notNull = false, primaryKey = false, autoIncrement = false, unique = false), annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "PersonNote"))
                 )
             )
         )

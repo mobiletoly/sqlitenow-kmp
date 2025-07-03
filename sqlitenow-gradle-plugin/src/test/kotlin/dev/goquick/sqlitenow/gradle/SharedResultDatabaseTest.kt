@@ -76,7 +76,7 @@ class SharedResultDatabaseTest {
                     ),
                     AnnotatedCreateTableStatement.Column(
                         src = CreateTableStatement.Column("birth_date", "TEXT", false, false, false, false),
-                        annotations = mapOf("adapter" to null)
+                        annotations = mapOf(AnnotationConstants.ADAPTER to null)
                     ),
                     AnnotatedCreateTableStatement.Column(
                         src = CreateTableStatement.Column("active", "INTEGER", false, false, false, false),

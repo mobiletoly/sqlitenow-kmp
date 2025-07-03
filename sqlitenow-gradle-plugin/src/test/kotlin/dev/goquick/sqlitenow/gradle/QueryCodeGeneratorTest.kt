@@ -269,8 +269,8 @@ class QueryCodeGeneratorTest {
 
         // Test 1: Adapter annotation present (flag annotation with null value)
         val annotationsWithAdapter = mapOf(
-            "adapter" to null,  // Flag annotation - key exists, value is null
-            "propertyType" to "dev.example.CustomType"
+            AnnotationConstants.ADAPTER to null,  // Flag annotation - key exists, value is null
+            AnnotationConstants.PROPERTY_TYPE to "dev.example.CustomType"
         )
 
         val fieldOverrides = FieldAnnotationOverrides.parse(annotationsWithAdapter)
@@ -279,8 +279,8 @@ class QueryCodeGeneratorTest {
 
         // Test 2: Adapter annotation absent
         val annotationsWithoutAdapter = mapOf(
-            "propertyType" to "dev.example.AnotherType",
-            "nullable" to null
+            AnnotationConstants.PROPERTY_TYPE to "dev.example.AnotherType",
+            AnnotationConstants.NULLABLE to null
         )
 
         val fieldOverridesNoAdapter = FieldAnnotationOverrides.parse(annotationsWithoutAdapter)

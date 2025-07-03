@@ -67,8 +67,8 @@ class ViewColumnLookupTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            "propertyType" to "kotlinx.datetime.LocalDate",
-                            "adapter" to null
+                            AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDate",
+                            AnnotationConstants.ADAPTER to null
                         )
                     )
                 )
@@ -199,7 +199,7 @@ class ViewColumnLookupTest {
         assertNotNull(myBirthDateColumn, "Should find column for myBirthDate parameter")
         assertEquals("birth_date", myBirthDateColumn.src.name, "myBirthDate should map to birth_date column")
         assertEquals("TEXT", myBirthDateColumn.src.dataType, "birth_date column should be TEXT")
-        assertEquals("kotlinx.datetime.LocalDate", myBirthDateColumn.annotations["propertyType"],
+        assertEquals("kotlinx.datetime.LocalDate", myBirthDateColumn.annotations[AnnotationConstants.PROPERTY_TYPE],
             "birth_date column should have LocalDate propertyType annotation")
     }
 
@@ -398,9 +398,9 @@ class ViewColumnLookupTest {
 
         // Verify that only original table annotations are present (no VIEW annotations merged)
         assertEquals("tableValue", column!!.annotations["tableAnnotation"], "Should have original table annotation")
-        assertEquals(null, column.annotations["propertyName"], "Should NOT have VIEW's custom property name")
-        assertEquals(null, column.annotations["propertyType"], "Should NOT have VIEW's custom property type")
-        assertEquals(false, column.annotations.containsKey("adapter"), "Should NOT have VIEW's adapter annotation")
+        assertEquals(null, column.annotations[AnnotationConstants.PROPERTY_NAME], "Should NOT have VIEW's custom property name")
+        assertEquals(null, column.annotations[AnnotationConstants.PROPERTY_TYPE], "Should NOT have VIEW's custom property type")
+        assertEquals(false, column.annotations.containsKey(AnnotationConstants.ADAPTER), "Should NOT have VIEW's adapter annotation")
 
         // Verify that the underlying column info is preserved
         assertEquals("birth_date", column.src.name, "Should preserve original column name")

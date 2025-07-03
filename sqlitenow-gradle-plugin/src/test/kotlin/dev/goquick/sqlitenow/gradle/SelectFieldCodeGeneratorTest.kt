@@ -481,7 +481,7 @@ class SelectFieldCodeGeneratorTest {
         // Create a mock AnnotatedCreateTableStatement with @@nullable annotation
         val mockAnnotatedColumn = AnnotatedCreateTableStatement.Column(
             src = mockColumn,
-            annotations = mapOf("nullable" to null) // @@nullable annotation
+            annotations = mapOf(AnnotationConstants.NULLABLE to null) // @@nullable annotation
         )
 
         val mockAnnotatedCreateTable = AnnotatedCreateTableStatement(
@@ -551,7 +551,7 @@ class SelectFieldCodeGeneratorTest {
         // Create a mock AnnotatedCreateTableStatement with @@propertyType annotation
         val mockAnnotatedColumn = AnnotatedCreateTableStatement.Column(
             src = mockColumn,
-            annotations = mapOf("propertyType" to "java.time.LocalDateTime") // @@propertyType=java.time.LocalDateTime annotation
+            annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "java.time.LocalDateTime") // @@propertyType=java.time.LocalDateTime annotation
         )
 
         val mockAnnotatedCreateTable = AnnotatedCreateTableStatement(
@@ -621,7 +621,7 @@ class SelectFieldCodeGeneratorTest {
         // Create a mock AnnotatedCreateTableStatement with @@propertyType annotation
         val mockAnnotatedColumn = AnnotatedCreateTableStatement.Column(
             src = mockColumn,
-            annotations = mapOf("propertyType" to "java.time.LocalDateTime") // @@propertyType=java.time.LocalDateTime annotation
+            annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "java.time.LocalDateTime") // @@propertyType=java.time.LocalDateTime annotation
         )
 
         val mockAnnotatedCreateTable = AnnotatedCreateTableStatement(

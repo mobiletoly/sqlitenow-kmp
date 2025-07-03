@@ -143,7 +143,7 @@ class DatabaseCodeGeneratorTest {
                             autoIncrement = false,
                             unique = false
                         ),
-                        annotations = mapOf("adapter" to null)
+                        annotations = mapOf(AnnotationConstants.ADAPTER to null)
                     ),
                     AnnotatedCreateTableStatement.Column(
                         src = CreateTableStatement.Column(
@@ -154,7 +154,7 @@ class DatabaseCodeGeneratorTest {
                             autoIncrement = false,
                             unique = false
                         ),
-                        annotations = mapOf("adapter" to null)
+                        annotations = mapOf(AnnotationConstants.ADAPTER to null)
                     )
                 )
             )
@@ -561,7 +561,7 @@ class DatabaseCodeGeneratorTest {
                             name = "created_at", dataType = "TEXT", notNull = false,
                             primaryKey = false, autoIncrement = false, unique = false
                         ),
-                        annotations = mapOf("adapter" to null)
+                        annotations = mapOf(AnnotationConstants.ADAPTER to null)
                     )
                 )
             )
@@ -679,7 +679,7 @@ class DatabaseCodeGeneratorTest {
                             name = "created_at", dataType = "TEXT", notNull = false,
                             primaryKey = false, autoIncrement = false, unique = false
                         ),
-                        annotations = mapOf("adapter" to null)
+                        annotations = mapOf(AnnotationConstants.ADAPTER to null)
                     )
                 )
             )
