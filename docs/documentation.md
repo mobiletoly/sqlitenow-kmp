@@ -39,6 +39,11 @@ Understand how to manage database schema changes over time.
 
 [Migration →]({{ site.baseurl }}/documentation/migration/)
 
+### Recipes
+Useful recipes and patterns for common use cases.
+
+[Recipes →]({{ site.baseurl }}/documentation/recipes/)
+
 ## Quick Navigation
 
 <div class="doc-nav-grid">
@@ -65,6 +70,11 @@ Understand how to manage database schema changes over time.
   <a href="{{ site.baseurl }}/documentation/migration/" class="doc-nav-card">
     <h3>🔄 Migration</h3>
     <p>Manage database schema changes and version upgrades</p>
+  </a>
+
+  <a href="{{ site.baseurl }}/documentation/recipes/" class="doc-nav-card">
+    <h3>📖 Recipes</h3>
+    <p>Useful recipes and patterns for common use cases</p>
   </a>
 </div>
 
