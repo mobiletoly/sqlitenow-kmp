@@ -1,6 +1,6 @@
 CREATE TABLE Comment
 (
-    id         INTEGER PRIMARY KEY NOT NULL,
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
     person_id  INTEGER             NOT NULL,
     comment    TEXT                NOT NULL,
 
