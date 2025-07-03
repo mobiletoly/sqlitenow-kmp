@@ -11,7 +11,8 @@ class InsertStatement(
     override val table: String,
     override val namedParameters: List<String>,
     val columnNamesAssociatedWithNamedParameters: Map<String, String>,
-    override val withSelectStatements: List<SelectStatement>
+    override val withSelectStatements: List<SelectStatement>,
+    override val parameterCastTypes: Map<String, String> = emptyMap()
 ) : ExecuteStatement {
 
     companion object {
@@ -40,6 +41,7 @@ class InsertStatement(
                 namedParameters = processor.parameters,
                 columnNamesAssociatedWithNamedParameters = columnNamesAssociatedWithNamedParameters,
                 withSelectStatements = withSelectStatements,
+                parameterCastTypes = processor.parameterCastTypes,
             )
         }
     }

@@ -11,7 +11,8 @@ class UpdateStatement(
     override val namedParameters: List<String>,
     val namedParametersToColumns: Map<String, AssociatedColumn>,
     val columnNamesAssociatedWithNamedParameters: Map<String, String>,
-    override val withSelectStatements: List<SelectStatement>
+    override val withSelectStatements: List<SelectStatement>,
+    override val parameterCastTypes: Map<String, String> = emptyMap()
 ) : ExecuteStatement {
 
     companion object {
@@ -43,7 +44,8 @@ class UpdateStatement(
                 namedParameters = processor.parameters,
                 namedParametersToColumns = namedParamsWithColumns,
                 withSelectStatements = withSelectStatements,
-                columnNamesAssociatedWithNamedParameters = columnNamesAssociatedWithNamedParameters
+                columnNamesAssociatedWithNamedParameters = columnNamesAssociatedWithNamedParameters,
+                parameterCastTypes = processor.parameterCastTypes
             )
         }
     }

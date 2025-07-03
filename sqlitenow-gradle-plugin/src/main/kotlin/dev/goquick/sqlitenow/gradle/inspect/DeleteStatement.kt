@@ -9,7 +9,8 @@ class DeleteStatement(
     override val table: String,
     override val namedParameters: List<String>,
     val namedParametersToColumns: Map<String, AssociatedColumn>,
-    override val withSelectStatements: List<SelectStatement>
+    override val withSelectStatements: List<SelectStatement>,
+    override val parameterCastTypes: Map<String, String> = emptyMap()
 ) : ExecuteStatement {
 
     companion object {
@@ -30,6 +31,7 @@ class DeleteStatement(
                 namedParameters = processor.parameters,
                 namedParametersToColumns = namedParamsWithColumns,
                 withSelectStatements = withSelectStatements,
+                parameterCastTypes = processor.parameterCastTypes,
             )
         }
     }

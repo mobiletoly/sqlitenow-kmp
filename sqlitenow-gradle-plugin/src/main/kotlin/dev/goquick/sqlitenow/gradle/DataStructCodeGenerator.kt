@@ -300,6 +300,12 @@ open class DataStructCodeGenerator(
             }
         }
 
+        // Check for CAST expressions first - this takes precedence over other type inference
+        val castType = getCastTypeForParameter(paramName, statement)
+        if (castType != null) {
+            return SqliteTypeToKotlinCodeConverter.mapSqlTypeToKotlinType(castType)
+        }
+
         // Check for collection parameters (IN clauses) across all statement types
         val associatedColumn = getAssociatedColumn(statement, paramName)
         if (associatedColumn is AssociatedColumn.Collection) {
@@ -326,6 +332,22 @@ open class DataStructCodeGenerator(
         }
 
         return ClassName("kotlin", "String")
+    }
+
+    /**
+     * Helper function to get the CAST target type for a parameter if it's used within a CAST expression.
+     * Returns null if the parameter is not used in a CAST expression.
+     */
+    private fun getCastTypeForParameter(paramName: String, statement: AnnotatedStatement): String? {
+        return when (statement) {
+            is AnnotatedSelectStatement -> {
+                statement.src.parameterCastTypes[paramName]
+            }
+            is AnnotatedExecuteStatement -> {
+                statement.src.parameterCastTypes[paramName]
+            }
+            else -> null
+        }
     }
 
     /**

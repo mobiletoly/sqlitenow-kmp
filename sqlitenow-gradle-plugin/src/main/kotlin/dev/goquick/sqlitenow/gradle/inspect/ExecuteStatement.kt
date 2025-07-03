@@ -11,6 +11,7 @@ interface ExecuteStatement : SqlStatement {
     val table: String
     override val namedParameters: List<String>
     val withSelectStatements: List<SelectStatement>
+    val parameterCastTypes: Map<String, String>
 
     companion object {
         fun buildSelectStatementFromWithItemsList(

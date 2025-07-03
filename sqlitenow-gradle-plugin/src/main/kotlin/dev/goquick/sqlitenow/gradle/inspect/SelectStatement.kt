@@ -15,6 +15,7 @@ class SelectStatement(
     val namedParametersToColumns: Map<String, AssociatedColumn>,
     val offsetNamedParam: String?,
     val limitNamedParam: String?,
+    val parameterCastTypes: Map<String, String> = emptyMap(),
 ) : SqlStatement {
     data class FieldSource(
         val fieldName: String,
@@ -64,6 +65,7 @@ class SelectStatement(
                 namedParametersToColumns = namedParamsWithColumns,
                 offsetNamedParam = offsetNamedParam,
                 limitNamedParam = limitNamedParam,
+                parameterCastTypes = processor.parameterCastTypes,
             )
         }
 
