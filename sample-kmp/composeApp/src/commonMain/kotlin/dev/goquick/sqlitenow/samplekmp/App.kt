@@ -37,7 +37,10 @@ import androidx.sqlite.SQLiteException
 import dev.goquick.sqlitenow.core.resolveDatabasePath
 import dev.goquick.sqlitenow.core.util.fromSqliteDate
 import dev.goquick.sqlitenow.core.util.fromSqliteTimestamp
+import dev.goquick.sqlitenow.core.util.jsonDecodeFromSqlite
+import dev.goquick.sqlitenow.core.util.jsonEncodeToSqlite
 import dev.goquick.sqlitenow.core.util.toSqliteDate
+import dev.goquick.sqlitenow.core.util.toSqliteTimestamp
 import dev.goquick.sqlitenow.samplekmp.db.NowSampleDatabase
 import dev.goquick.sqlitenow.samplekmp.db.Person
 import dev.goquick.sqlitenow.samplekmp.db.VersionBasedDatabaseMigrations
@@ -73,9 +76,19 @@ val db = NowSampleDatabase(
         },
         sqlColumnToNotes = { it?.let { PersonNote.deserialize(it) } }
     ),
+    commentAdapters = NowSampleDatabase.CommentAdapters(
+        sqlColumnToCreatedAt = {
+            LocalDateTime.fromSqliteTimestamp(it)
+        },
+        createdAtToSqlColumn = {
+            it.toSqliteTimestamp()
+        },
+        sqlColumnToTags = { it?.jsonDecodeFromSqlite() ?: emptyList() },
+        tagsToSqlColumn = { it?.jsonEncodeToSqlite() }
+    ),
     personAddressAdapters = NowSampleDatabase.PersonAddressAdapters(
         addressTypeToSqlColumn = { it.value },
-        sqlColumnToAddressType = { it.let { AddressType.valueOf(it) } },
+        sqlColumnToAddressType = { it.let { AddressType.from(it) } },
         sqlColumnToCreatedAt = { Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()) },
     ),
     migration = VersionBasedDatabaseMigrations()

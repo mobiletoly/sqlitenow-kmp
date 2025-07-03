@@ -1,6 +1,7 @@
 package dev.goquick.sqlitenow.gradle
 
 import com.squareup.kotlinpoet.ClassName
+import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.TypeName
 
 /**
@@ -45,6 +46,12 @@ class SqliteTypeToKotlinCodeConverter {
             "String", "Int", "Long", "Double", "Float", "Boolean", "Byte", "Short", "Char", "Any", "Unit", "Nothing"
         )
 
+        // List of Kotlin collection types that should be mapped to kotlin.collections
+        val KOTLIN_COLLECTION_TYPES = listOf(
+            "List", "MutableList", "Set", "MutableSet", "Map", "MutableMap", "Collection", "MutableCollection",
+            "Iterable", "MutableIterable", "Iterator", "MutableIterator", "ListIterator", "MutableListIterator"
+        )
+
         /**
          * Maps a SQLite data type to a Kotlin type.
          *
@@ -71,17 +78,119 @@ class SqliteTypeToKotlinCodeConverter {
         ): TypeName {
             // Use the property type from the annotation if present
             val typeFromAnnotation = propertyType?.let {
-                // Special handling for Kotlin standard library types to avoid import conflicts
-                if (it in KOTLIN_STDLIB_TYPES) {
-                    ClassName("kotlin", it)
-                } else {
-                    ClassName.bestGuess(it)
-                }
+                parseTypeString(it)
             }
 
             // Apply nullability to the type
             val finalType = typeFromAnnotation ?: baseType
             return if (isNullable) finalType.copy(nullable = true) else finalType
+        }
+
+        /**
+         * Parses a type string that may contain generics (e.g., "List<String>", "Map<String, Int>")
+         * and converts it to a proper KotlinPoet TypeName.
+         *
+         * @param typeString The type string to parse
+         * @return The corresponding TypeName
+         */
+        private fun parseTypeString(typeString: String): TypeName {
+            val trimmed = typeString.trim()
+
+            // Check if it's a generic type
+            if (trimmed.contains('<') && trimmed.contains('>')) {
+                return parseGenericType(trimmed)
+            }
+
+            // Handle simple types
+            return when (trimmed) {
+                in KOTLIN_STDLIB_TYPES -> ClassName("kotlin", trimmed)
+                in KOTLIN_COLLECTION_TYPES -> ClassName("kotlin.collections", trimmed)
+                else -> ClassName.bestGuess(trimmed)
+            }
+        }
+
+        /**
+         * Parses a generic type string (e.g., "List<String>", "Map<String, Int>")
+         * and converts it to a parameterized TypeName.
+         *
+         * @param typeString The generic type string to parse
+         * @return The corresponding ParameterizedTypeName
+         */
+        private fun parseGenericType(typeString: String): TypeName {
+            val openBracket = typeString.indexOf('<')
+            val closeBracket = typeString.lastIndexOf('>')
+
+            if (openBracket == -1 || closeBracket == -1 || openBracket >= closeBracket) {
+                throw IllegalArgumentException("Invalid generic type format: $typeString")
+            }
+
+            val rawTypeName = typeString.substring(0, openBracket).trim()
+            val typeArgumentsString = typeString.substring(openBracket + 1, closeBracket).trim()
+
+            // Parse the raw type
+            val rawType = when {
+                rawTypeName in KOTLIN_STDLIB_TYPES -> ClassName("kotlin", rawTypeName)
+                rawTypeName in KOTLIN_COLLECTION_TYPES -> ClassName("kotlin.collections", rawTypeName)
+                else -> ClassName.bestGuess(rawTypeName)
+            }
+
+            // Parse type arguments
+            val typeArguments = parseTypeArguments(typeArgumentsString)
+
+            return rawType.parameterizedBy(typeArguments)
+        }
+
+        /**
+         * Parses type arguments from a string (e.g., "String, Int" or "String")
+         * and returns a list of TypeName objects.
+         *
+         * @param typeArgumentsString The type arguments string to parse
+         * @return List of TypeName objects representing the type arguments
+         */
+        private fun parseTypeArguments(typeArgumentsString: String): List<TypeName> {
+            if (typeArgumentsString.isBlank()) {
+                return emptyList()
+            }
+
+            val arguments = mutableListOf<TypeName>()
+            var currentArg = StringBuilder()
+            var bracketDepth = 0
+
+            for (char in typeArgumentsString) {
+                when (char) {
+                    '<' -> {
+                        bracketDepth++
+                        currentArg.append(char)
+                    }
+                    '>' -> {
+                        bracketDepth--
+                        currentArg.append(char)
+                    }
+                    ',' -> {
+                        if (bracketDepth == 0) {
+                            // We're at the top level, this comma separates type arguments
+                            val argString = currentArg.toString().trim()
+                            if (argString.isNotEmpty()) {
+                                arguments.add(parseTypeString(argString))
+                            }
+                            currentArg.clear()
+                        } else {
+                            currentArg.append(char)
+                        }
+                    }
+                    else -> {
+                        currentArg.append(char)
+                    }
+                }
+            }
+
+            // Add the last argument
+            val lastArgString = currentArg.toString().trim()
+            if (lastArgString.isNotEmpty()) {
+                arguments.add(parseTypeString(lastArgString))
+            }
+
+            return arguments
         }
     }
 }
