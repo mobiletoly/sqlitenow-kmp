@@ -13,5 +13,5 @@ open class DatabaseConfig @Inject constructor(
     /** The package into which code will be generated */
     val packageName: Property<String> = objects.property(String::class.java)
         .convention("")
-    val sqlFile: RegularFileProperty = objects.fileProperty()
+    val schemaDatabaseFile: RegularFileProperty = objects.fileProperty()
 }

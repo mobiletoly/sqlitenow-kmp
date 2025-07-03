@@ -79,3 +79,28 @@ val db = SampleDatabase(
     )
 )
 ```
+
+---
+## Create schema file
+
+In order to generate SQLiteNow schemas - we use in-memory created SQLite database.
+This database is created from all SQL files in `schema/` directory.
+If you want to inspect the generated schema - you can create a file-based database from the same SQL files.
+
+For this you can use `schemaDatabaseFile` property in sqliteNow plugin:
+
+```kotlin
+sqliteNow {
+    databases {
+        create("NowSampleDatabase") {
+            packageName.set("dev.goquick.sqlitenow.samplekmp.db")
+            schemaDatabaseFile.set(layout.projectDirectory.file("tmp/schema.sqlite"))
+        }
+    }
+}
+```
+
+This will result in `schema.sqlite` file being created in `tmp/` directory every time you run
+**generateNowSampleDatabase** task. This can be convenient if you want to inspect the generated schema
+or if you want to associate your .sql files with database schema in some external tool (or in IntelliJ
+SQL plugin etc).
