@@ -94,13 +94,13 @@ sqliteNow {
     databases {
         create("NowSampleDatabase") {
             packageName.set("dev.goquick.sqlitenow.samplekmp.db")
-            schemaDatabaseFile.set(layout.projectDirectory.file("tmp/schema.sqlite"))
+            schemaDatabaseFile.set(layout.projectDirectory.file("tmp/schema.db"))
         }
     }
 }
 ```
 
-This will result in `schema.sqlite` file being created in `tmp/` directory every time you run
+This will result in `schema.db` file being created in `tmp/` directory every time you run
 **generateNowSampleDatabase** task. This can be convenient if you want to inspect the generated schema
 or if you want to associate your .sql files with database schema in some external tool (or in IntelliJ
 SQL plugin etc).
