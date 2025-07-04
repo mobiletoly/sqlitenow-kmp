@@ -37,7 +37,8 @@ class StatementProcessingHelper(
                 try {
                     processQueryFile(file)
                 } catch (e: Exception) {
-                    System.err.println("Failed to process query file: ${file.name}")
+                    System.err.println("*** Failed to process query file: ${file.absolutePath}")
+                    e.printStackTrace()
                     throw e
                 }
             }
@@ -58,16 +59,26 @@ class StatementProcessingHelper(
         val sqlStatement = sqlStatements.first()
         val parsedStatement = CCJSqlParserUtil.parse(sqlStatement.sql)
 
-        return when (parsedStatement) {
-            is PlainSelect -> {
-                createAnnotatedSelectStatement(stmtName, parsedStatement, sqlStatement)
+        return try {
+            when (parsedStatement) {
+                is PlainSelect -> {
+                    createAnnotatedSelectStatement(stmtName, parsedStatement, sqlStatement)
+                }
+                is Insert, is Delete, is Update -> {
+                    createAnnotatedExecuteStatement(stmtName, parsedStatement, sqlStatement)
+                }
+                else -> {
+                    throw RuntimeException("Unsupported statement type in ${file.name}")
+                }
             }
-            is Insert, is Delete, is Update -> {
-                createAnnotatedExecuteStatement(stmtName, parsedStatement, sqlStatement)
-            }
-            else -> {
-                throw RuntimeException("Unsupported statement type in ${file.name}")
-            }
+        } catch (e: Exception) {
+            System.err.println("""
+Failed to process statement:
+
+${sqlStatement.topComments.joinToString("\n")}
+${sqlStatement.sql}
+""")
+            throw e
         }
     }
 

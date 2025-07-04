@@ -164,6 +164,18 @@ data class StatementAnnotationOverrides(
 ) {
     companion object {
         fun parse(annotations: Map<String, String?>): StatementAnnotationOverrides {
+            if (annotations.containsKey(AnnotationConstants.NAME) && annotations[AnnotationConstants.NAME]!!.isBlank()) {
+                throw IllegalArgumentException("Annotation @@${AnnotationConstants.NAME} cannot be blank")
+            }
+            if (annotations.containsKey(AnnotationConstants.PROPERTY_NAME_GENERATOR) && annotations[AnnotationConstants.PROPERTY_NAME_GENERATOR]!!.isBlank()) {
+                throw IllegalArgumentException("Annotation @@${AnnotationConstants.PROPERTY_NAME_GENERATOR} cannot be blank")
+            }
+            if (annotations.containsKey(AnnotationConstants.SHARED_RESULT) && annotations[AnnotationConstants.SHARED_RESULT]!!.isBlank()) {
+                throw IllegalArgumentException("Annotation @@${AnnotationConstants.SHARED_RESULT} cannot be blank")
+            }
+            if (annotations.containsKey(AnnotationConstants.IMPLEMENTS) && annotations[AnnotationConstants.IMPLEMENTS]!!.isBlank()) {
+                throw IllegalArgumentException("Annotation @@${AnnotationConstants.IMPLEMENTS} cannot be blank")
+            }
             return StatementAnnotationOverrides(
                 name = annotations[AnnotationConstants.NAME],
                 propertyNameGenerator = annotations[AnnotationConstants.PROPERTY_NAME_GENERATOR].parsePropertyNameGeneratorType(),
