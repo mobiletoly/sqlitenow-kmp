@@ -152,7 +152,7 @@ You can use annotations in SELECT queries to customize the generated code and ov
 Assuming that you have file `queries/person/selectSummary.sql`:
 
 ```sql
--- @@className=PersonSummary
+-- @@class=PersonSummary
 SELECT id, first_name, last_name FROM Person;
 ```
 
