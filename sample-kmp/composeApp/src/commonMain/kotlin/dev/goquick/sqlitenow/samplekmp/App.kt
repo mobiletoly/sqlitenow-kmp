@@ -44,7 +44,7 @@ import dev.goquick.sqlitenow.core.util.toSqliteTimestamp
 import dev.goquick.sqlitenow.samplekmp.db.NowSampleDatabase
 import dev.goquick.sqlitenow.samplekmp.db.Person
 import dev.goquick.sqlitenow.samplekmp.db.VersionBasedDatabaseMigrations
-import dev.goquick.sqlitenow.samplekmp.model.AddressType
+import dev.goquick.sqlitenow.samplekmp.db.AddressType
 import dev.goquick.sqlitenow.samplekmp.model.PersonNote
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO

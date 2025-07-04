@@ -13,7 +13,8 @@ import com.squareup.kotlinpoet.TypeName
  * @param createTableStatements List of AnnotatedCreateTableStatement objects to assist with type and nullability inference
  */
 class SelectFieldCodeGenerator(
-    createTableStatements: List<AnnotatedCreateTableStatement> = emptyList()
+    createTableStatements: List<AnnotatedCreateTableStatement> = emptyList(),
+    private val packageName: String? = null
 ) {
     // Convert the list to a map with table name as the key for more efficient lookups
     private val tableMap: Map<String, AnnotatedCreateTableStatement> = createTableStatements.associateBy {
@@ -41,7 +42,8 @@ class SelectFieldCodeGenerator(
         val propertyType = SqliteTypeToKotlinCodeConverter.determinePropertyType(
             baseType,
             field.annotations.propertyType,
-            isNullable
+            isNullable,
+            packageName
         )
 
         return Pair(propertyName, propertyType)
@@ -139,7 +141,7 @@ class SelectFieldCodeGenerator(
             if (column != null) {
                 val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE]
                 if (propertyType != null) {
-                    return SqliteTypeToKotlinCodeConverter.determinePropertyType(kotlinType, propertyType, false)
+                    return SqliteTypeToKotlinCodeConverter.determinePropertyType(kotlinType, propertyType, false, packageName)
                 }
 
                 // If no annotation, use the column's data type

@@ -74,11 +74,12 @@ class SqliteTypeToKotlinCodeConverter {
         fun determinePropertyType(
             baseType: TypeName,
             propertyType: String?,
-            isNullable: Boolean
+            isNullable: Boolean,
+            packageName: String? = null
         ): TypeName {
             // Use the property type from the annotation if present
             val typeFromAnnotation = propertyType?.let {
-                parseTypeString(it)
+                parseTypeString(it, packageName)
             }
 
             // Apply nullability to the type
@@ -91,21 +92,30 @@ class SqliteTypeToKotlinCodeConverter {
          * and converts it to a proper KotlinPoet TypeName.
          *
          * @param typeString The type string to parse
+         * @param packageName The package name of the generated class (for same-package custom types)
          * @return The corresponding TypeName
          */
-        private fun parseTypeString(typeString: String): TypeName {
+        private fun parseTypeString(typeString: String, packageName: String? = null): TypeName {
             val trimmed = typeString.trim()
 
             // Check if it's a generic type
             if (trimmed.contains('<') && trimmed.contains('>')) {
-                return parseGenericType(trimmed)
+                return parseGenericType(trimmed, packageName)
             }
 
             // Handle simple types
             return when (trimmed) {
                 in KOTLIN_STDLIB_TYPES -> ClassName("kotlin", trimmed)
                 in KOTLIN_COLLECTION_TYPES -> ClassName("kotlin.collections", trimmed)
-                else -> ClassName.bestGuess(trimmed)
+                else -> {
+                    // If the type name doesn't contain a dot, it's likely a class in the same package
+                    if (trimmed.contains('.')) {
+                        ClassName.bestGuess(trimmed)
+                    } else {
+                        // Use the provided package name for same-package classes
+                        ClassName(packageName ?: "", trimmed)
+                    }
+                }
             }
         }
 
@@ -116,7 +126,7 @@ class SqliteTypeToKotlinCodeConverter {
          * @param typeString The generic type string to parse
          * @return The corresponding ParameterizedTypeName
          */
-        private fun parseGenericType(typeString: String): TypeName {
+        private fun parseGenericType(typeString: String, packageName: String? = null): TypeName {
             val openBracket = typeString.indexOf('<')
             val closeBracket = typeString.lastIndexOf('>')
 
@@ -131,11 +141,19 @@ class SqliteTypeToKotlinCodeConverter {
             val rawType = when {
                 rawTypeName in KOTLIN_STDLIB_TYPES -> ClassName("kotlin", rawTypeName)
                 rawTypeName in KOTLIN_COLLECTION_TYPES -> ClassName("kotlin.collections", rawTypeName)
-                else -> ClassName.bestGuess(rawTypeName)
+                else -> {
+                    // If the type name doesn't contain a dot, it's likely a class in the same package
+                    if (rawTypeName.contains('.')) {
+                        ClassName.bestGuess(rawTypeName)
+                    } else {
+                        // Use the provided package name for same-package classes
+                        ClassName(packageName ?: "", rawTypeName)
+                    }
+                }
             }
 
             // Parse type arguments
-            val typeArguments = parseTypeArguments(typeArgumentsString)
+            val typeArguments = parseTypeArguments(typeArgumentsString, packageName)
 
             return rawType.parameterizedBy(typeArguments)
         }
@@ -147,7 +165,7 @@ class SqliteTypeToKotlinCodeConverter {
          * @param typeArgumentsString The type arguments string to parse
          * @return List of TypeName objects representing the type arguments
          */
-        private fun parseTypeArguments(typeArgumentsString: String): List<TypeName> {
+        private fun parseTypeArguments(typeArgumentsString: String, packageName: String? = null): List<TypeName> {
             if (typeArgumentsString.isBlank()) {
                 return emptyList()
             }
@@ -171,7 +189,7 @@ class SqliteTypeToKotlinCodeConverter {
                             // We're at the top level, this comma separates type arguments
                             val argString = currentArg.toString().trim()
                             if (argString.isNotEmpty()) {
-                                arguments.add(parseTypeString(argString))
+                                arguments.add(parseTypeString(argString, packageName))
                             }
                             currentArg.clear()
                         } else {
@@ -187,7 +205,7 @@ class SqliteTypeToKotlinCodeConverter {
             // Add the last argument
             val lastArgString = currentArg.toString().trim()
             if (lastArgString.isNotEmpty()) {
-                arguments.add(parseTypeString(lastArgString))
+                arguments.add(parseTypeString(lastArgString, packageName))
             }
 
             return arguments

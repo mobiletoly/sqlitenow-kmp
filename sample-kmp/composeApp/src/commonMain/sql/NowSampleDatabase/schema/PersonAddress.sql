@@ -3,7 +3,7 @@ CREATE TABLE PersonAddress
     id           INTEGER PRIMARY KEY NOT NULL,
     person_id    INTEGER             NOT NULL,
 
-    -- @@field=address_type @@propertyType=dev.goquick.sqlitenow.samplekmp.model.AddressType @@adapter
+    -- @@field=address_type @@propertyType=AddressType @@adapter
     address_type TEXT                NOT NULL,
 
     street       TEXT                NOT NULL,

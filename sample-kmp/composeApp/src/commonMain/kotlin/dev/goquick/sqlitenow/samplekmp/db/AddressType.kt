@@ -1,4 +1,4 @@
-package dev.goquick.sqlitenow.samplekmp.model
+package dev.goquick.sqlitenow.samplekmp.db
 
 import dev.goquick.sqlitenow.core.util.EnumByValueLookup
 

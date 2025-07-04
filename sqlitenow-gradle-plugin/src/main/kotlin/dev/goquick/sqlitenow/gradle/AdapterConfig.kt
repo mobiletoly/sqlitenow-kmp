@@ -8,7 +8,8 @@ import org.gradle.internal.extensions.stdlib.capitalized
  */
 class AdapterConfig(
     private val columnLookup: ColumnLookup,
-    private val createTableStatements: List<AnnotatedCreateTableStatement>
+    private val createTableStatements: List<AnnotatedCreateTableStatement>,
+    private val packageName: String? = null
 ) {
     data class ParamConfig(
         val paramName: String,
@@ -100,7 +101,7 @@ class AdapterConfig(
         processedAdapters: MutableSet<String>
     ): List<ParamConfig> {
         val configs = mutableListOf<ParamConfig>()
-        val selectFieldGenerator = SelectFieldCodeGenerator(createTableStatements)
+        val selectFieldGenerator = SelectFieldCodeGenerator(createTableStatements, packageName)
 
         statement.fields.forEach { field: AnnotatedSelectStatement.Field ->
             if (hasAdapterAnnotation(field)) {
@@ -138,7 +139,7 @@ class AdapterConfig(
         val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE]
         val isNullable = column.isNullable()
 
-        val targetType = SqliteTypeToKotlinCodeConverter.determinePropertyType(baseType, propertyType, isNullable)
+        val targetType = SqliteTypeToKotlinCodeConverter.determinePropertyType(baseType, propertyType, isNullable, packageName)
 
         val inputType = targetType.copy(nullable = isNullable)
         val outputType = baseType.copy(nullable = isNullable)

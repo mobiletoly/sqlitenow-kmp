@@ -3077,7 +3077,7 @@ class DataStructCodeGeneratorTest {
 
         val notesType = dataStructGenerator.inferParameterType("notes", mockInsertStatement)
         println("notes -> ${notesType}")
-        assertEquals("PersonNote?", notesType.toString(), "notes should map to PersonNote?")
+        assertEquals("com.example.db.PersonNote?", notesType.toString(), "notes should map to com.example.db.PersonNote?")
 
         // Clean up
         tempDir.toFile().deleteRecursively()

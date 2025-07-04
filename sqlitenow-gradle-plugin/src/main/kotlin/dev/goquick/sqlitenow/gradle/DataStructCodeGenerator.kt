@@ -127,7 +127,7 @@ open class DataStructCodeGenerator(
 
         // Add Result data class for SELECT statements (unless they use shared results)
         if (statement is AnnotatedSelectStatement && !sharedResultManager.isSharedResult(statement)) {
-            val resultDataClass = generateResultDataClass(statement, namespace)
+            val resultDataClass = generateResultDataClassForSelectStatement(statement, namespace)
             queryObjectBuilder.addType(resultDataClass)
         }
 
@@ -155,12 +155,17 @@ open class DataStructCodeGenerator(
 
         // Add interface implementation if specified
         if (sharedResult.implements != null) {
-            val interfaceType = ClassName.bestGuess(sharedResult.implements)
+            val interfaceType = if (sharedResult.implements.contains('.')) {
+                ClassName.bestGuess(sharedResult.implements)
+            } else {
+                // Create a ClassName without package name to avoid imports for same-package classes
+                ClassName("", sharedResult.implements)
+            }
             dataClassBuilder.addSuperinterface(interfaceType)
         }
 
         val constructorBuilder = FunSpec.constructorBuilder()
-        val fieldCodeGenerator = SelectFieldCodeGenerator(createTableStatements)
+        val fieldCodeGenerator = SelectFieldCodeGenerator(createTableStatements, fileGenerationHelper.packageName)
 
         sharedResult.fields.forEach { field ->
             val parameter = fieldCodeGenerator.generateParameter(field, sharedResult.propertyNameGenerator)
@@ -186,15 +191,19 @@ open class DataStructCodeGenerator(
         return dataClassBuilder.build()
     }
 
-    /** Generates a result data class for a SELECT statement. */
-    private fun generateResultDataClass(statement: AnnotatedSelectStatement, namespace: String): TypeSpec {
+    private fun generateResultDataClassForSelectStatement(statement: AnnotatedSelectStatement, namespace: String): TypeSpec {
         val dataClassBuilder = TypeSpec.classBuilder("Result")
             .addModifiers(KModifier.DATA)
             .addKdoc("Data class for ${statement.name} query results.")
 
         // Add interface implementation if specified
         if (statement.annotations.implements != null) {
-            val interfaceType = ClassName.bestGuess(statement.annotations.implements)
+            val interfaceType = if (statement.annotations.implements.contains('.')) {
+                ClassName.bestGuess(statement.annotations.implements)
+            } else {
+                // Create a ClassName without package name to avoid imports for same-package classes
+                ClassName("", statement.annotations.implements)
+            }
             dataClassBuilder.addSuperinterface(interfaceType)
         }
 
@@ -203,7 +212,7 @@ open class DataStructCodeGenerator(
         // Pass all createTableStatements to SelectFieldCodeGenerator so it can properly
         // map view columns back to original table columns. The SelectFieldCodeGenerator
         // already handles searching across all tables when needed.
-        val fieldCodeGenerator = SelectFieldCodeGenerator(createTableStatements)
+        val fieldCodeGenerator = SelectFieldCodeGenerator(createTableStatements, fileGenerationHelper.packageName)
         val propertyNameGeneratorType = statement.annotations.propertyNameGenerator
 
         statement.fields.forEach { field ->
@@ -328,7 +337,7 @@ open class DataStructCodeGenerator(
             val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE]
             val isNullable = column.isNullable()
 
-            return SqliteTypeToKotlinCodeConverter.determinePropertyType(baseType, propertyType, isNullable)
+            return SqliteTypeToKotlinCodeConverter.determinePropertyType(baseType, propertyType, isNullable, fileGenerationHelper.packageName)
         }
 
         return ClassName("kotlin", "String")

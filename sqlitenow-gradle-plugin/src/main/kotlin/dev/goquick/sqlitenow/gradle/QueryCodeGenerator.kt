@@ -23,8 +23,8 @@ internal class QueryCodeGenerator(
     private val columnLookup = ColumnLookup(dataStructCodeGenerator.createTableStatements, dataStructCodeGenerator.createViewStatements)
     private val typeMapping = TypeMapping()
     private val parameterBinding = ParameterBinding(columnLookup, typeMapping, dataStructCodeGenerator)
-    private val adapterConfig = AdapterConfig(columnLookup, dataStructCodeGenerator.createTableStatements)
-    private val selectFieldGenerator = SelectFieldCodeGenerator(dataStructCodeGenerator.createTableStatements)
+    private val adapterConfig = AdapterConfig(columnLookup, dataStructCodeGenerator.createTableStatements, packageName)
+    private val selectFieldGenerator = SelectFieldCodeGenerator(dataStructCodeGenerator.createTableStatements, packageName)
 
     /**
      * Generates query extension function files for all namespaces.

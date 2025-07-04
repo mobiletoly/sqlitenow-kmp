@@ -8,7 +8,7 @@ import java.io.File
  * Provides shared functionality for generating and writing Kotlin code files.
  */
 class FileGenerationHelper(
-    private val packageName: String,
+    val packageName: String,
     private val outputDir: File
 ) {
 

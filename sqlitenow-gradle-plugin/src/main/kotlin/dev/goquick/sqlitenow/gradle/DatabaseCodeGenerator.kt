@@ -18,7 +18,8 @@ class DatabaseCodeGenerator(
 ) {
     private val adapterConfig = AdapterConfig(
         columnLookup = ColumnLookup(createTableStatements, createViewStatements),
-        createTableStatements = createTableStatements
+        createTableStatements = createTableStatements,
+        packageName = packageName
     )
     private val sharedResultManager = SharedResultManager()
 
