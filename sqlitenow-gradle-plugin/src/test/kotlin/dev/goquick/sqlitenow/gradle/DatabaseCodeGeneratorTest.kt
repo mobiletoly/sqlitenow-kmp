@@ -183,29 +183,10 @@ class DatabaseCodeGeneratorTest {
             databaseClassName = "TestDatabase"
         )
 
-        // Generate the database class
         databaseGenerator.generateDatabaseClass()
-
-        // Debug: Check what files were created
-        println("=== Files in output directory ===")
-        outputDir.walkTopDown().forEach { file ->
-            if (file.isFile()) {
-                println("File: ${file.relativeTo(outputDir)}")
-            }
-        }
-
         // Verify that the database file was created
         val databaseFile = File(outputDir, "com/example/db/TestDatabase.kt")
-        if (!databaseFile.exists()) {
-            println("TestDatabase.kt file not found. Looking for any .kt files...")
-            outputDir.walkTopDown().filter { it.extension == "kt" }.forEach { file ->
-                println("Found .kt file: ${file.absolutePath}")
-                println("Content preview: ${file.readText().take(200)}...")
-            }
-        }
         assertTrue(databaseFile.exists(), "TestDatabase.kt file should be created")
-
-        // Read the file content
         val fileContent = databaseFile.readText()
 
         // Verify basic structure
@@ -278,11 +259,6 @@ class DatabaseCodeGeneratorTest {
         assertTrue(databaseFile.exists(), "TestDatabase.kt file should be created")
 
         val fileContent = databaseFile.readText()
-
-        // Debug: Print the generated content to understand what's happening
-        println("Generated database file content:")
-        println(fileContent)
-
         // Should NOT have PersonAdapters data class (no adapters in our test SQL)
         assertFalse(fileContent.contains("public data class PersonAdapters("),
                    "Should NOT generate PersonAdapters data class when no adapters are used")
@@ -308,14 +284,7 @@ class DatabaseCodeGeneratorTest {
                    "Person router methods should not reference adapters when none exist")
         assertFalse(fileContent.contains("ref.utilsAdapters."),
                    "Utils router methods should not reference adapters")
-
         realConnection.close()
-
-        println("✅ Namespaces without adapters test passed!")
-        println("  - PersonAdapters data class NOT generated (no adapters)")
-        println("  - UtilsAdapters data class NOT generated (no adapters)")
-        println("  - Constructor parameters correct (no adapter parameters)")
-        println("  - Router methods work without adapter references")
     }
 
     @Test
@@ -391,14 +360,7 @@ class DatabaseCodeGeneratorTest {
         // Should have function type for parameterized queries
         assertTrue(fileContent.contains("{ params -> object : SelectRunners<"),
                   "Should have lambda function for parameterized queries")
-
         realConnection.close()
-
-        println("✅ SelectRunners generation test passed!")
-        println("  - Individual methods NOT generated")
-        println("  - SelectRunners properties generated")
-        println("  - Object expressions with correct interface implementation")
-        println("  - Function types for parameterized queries")
     }
 
     @Test
@@ -480,13 +442,6 @@ class DatabaseCodeGeneratorTest {
                   "Should contain table change notifications")
 
         realConnection.close()
-
-        println("✅ ExecuteRunners generation test passed!")
-        println("  - Individual execute methods NOT generated")
-        println("  - ExecuteRunners properties generated")
-        println("  - Object expressions with correct interface implementation")
-        println("  - Function types for parameterized execute queries")
-        println("  - Table change notifications included")
     }
 
     @Test
@@ -712,24 +667,12 @@ class DatabaseCodeGeneratorTest {
         assertTrue(databaseFile.exists(), "RealWorldTestDatabase.kt file should be created")
 
         val fileContent = databaseFile.readText()
-        println("=== Generated RealWorldTestDatabase.kt content ===")
-        println(fileContent)
-
         // Count occurrences of sqlColumnToCreatedAt in adapter data class
         val adapterDataClassContent = fileContent.substringAfter("public data class ")
             .substringAfter("Adapters(")
             .substringBefore(")")
 
         val sqlColumnToCreatedAtCount = adapterDataClassContent.split("sqlColumnToCreatedAt").size - 1
-
-        // If we see duplicates, let's understand why
-        if (sqlColumnToCreatedAtCount > 1) {
-            println("=== DUPLICATE DETECTED ===")
-            println("Found $sqlColumnToCreatedAtCount occurrences of sqlColumnToCreatedAt in adapter data class")
-            println("Adapter data class content:")
-            println(adapterDataClassContent)
-        }
-
         assertEquals(1, sqlColumnToCreatedAtCount,
             "sqlColumnToCreatedAt should appear exactly once in adapter data class, but found $sqlColumnToCreatedAtCount occurrences")
     }

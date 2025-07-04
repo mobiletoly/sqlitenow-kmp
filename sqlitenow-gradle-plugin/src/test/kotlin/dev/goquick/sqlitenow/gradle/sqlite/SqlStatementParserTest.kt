@@ -20,16 +20,6 @@ class SqlStatementParserTest {
         """.trimIndent()
 
         val statements = parseSqlStatements(sql)
-
-        // Print statements for debugging
-        println("Number of statements: ${statements.size}")
-        statements.forEachIndexed { index, stmt ->
-            println("Statement $index:")
-            println("  SQL: ${stmt.sql}")
-            println("  Top Comments: ${stmt.topComments}")
-            println("  Inner Comments: ${stmt.innerComments}")
-        }
-
         // Should have 2 statements
         assertEquals(2, statements.size, "Should have 2 SQL statements")
 

@@ -34,10 +34,6 @@ class ListenFunctionalityTest {
             val actual = "${input}Flow"
             assertEquals(expected, actual, "Flow method naming should be consistent")
         }
-
-        println("✅ Flow method naming verified!")
-        println("  - Correct 'Flow' suffix applied")
-        println("  - Consistent naming pattern")
     }
 
     @Test
@@ -60,11 +56,6 @@ class ListenFunctionalityTest {
         )
 
         assertNotNull(generator, "DatabaseCodeGenerator should be instantiable")
-
-        println("✅ DatabaseCodeGenerator flow method logic verified!")
-        println("  - DatabaseCodeGenerator class exists")
-        println("  - Class can be instantiated")
-        println("  - Flow method generation logic is integrated")
     }
 
     @Test
@@ -92,11 +83,5 @@ class ListenFunctionalityTest {
         // We can't test the private generateFlowMethod directly, but we can verify
         // that the DatabaseCodeGenerator compiles and includes the flow logic
         assertTrue(true, "Flow method generation logic is integrated into DatabaseCodeGenerator")
-
-        println("✅ Reactive flow feature completeness verified!")
-        println("  - DatabaseCodeGenerator ready")
-        println("  - Naming convention correct")
-        println("  - Feature implementation complete")
-        println("  - Flow method generation logic integrated")
     }
 }

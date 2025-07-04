@@ -33,22 +33,14 @@ class UpdateWithClauseOrderingTest {
 
         // Verify the processed SQL structure
         val processedSql = processor.processedSql
-        println("Processed SQL: $processedSql")
-
         // Verify parameter ordering: WITH clause parameters should come first
         val parameters = processor.parameters
-        println("Parameter order: $parameters")
 
         // Expected parameter order:
         // 1. WITH clause: myAge (position 1)
         // 2. SET clause: myScore, myNotes, myAge (positions 2, 3, 4)
         // 3. WHERE clause: id, myBirthDate, myBirthDate (positions 5, 6, 7)
         val expectedOrder = listOf("myAge", "myScore", "myNotes", "myAge", "id", "myBirthDate", "myBirthDate")
-
-        // Debug: Print actual vs expected
-        println("Expected: $expectedOrder")
-        println("Actual:   $parameters")
-
         assertEquals(expectedOrder, parameters,
             "Parameter order should be: WITH clause first, then SET clause, then WHERE clause. Expected: $expectedOrder, Actual: $parameters")
 
@@ -85,8 +77,6 @@ class UpdateWithClauseOrderingTest {
 
         // Verify parameter ordering
         val parameters = processor.parameters
-        println("Multiple WITH clauses parameter order: $parameters")
-
         // Expected parameter order:
         // 1. WITH clauses: age1, score1 (positions 1, 2)
         // 2. SET clause: newAge, newScore (positions 3, 4)
@@ -116,8 +106,6 @@ class UpdateWithClauseOrderingTest {
 
         // Verify parameter ordering for UPDATE without WITH clause
         val parameters = processor.parameters
-        println("No WITH clause parameter order: $parameters")
-
         // Expected parameter order:
         // 1. SET clause: newAge, newScore (positions 1, 2)
         // 2. WHERE clause: personId, isActive (positions 3, 4)
@@ -151,13 +139,10 @@ class UpdateWithClauseOrderingTest {
 
         // Verify parameter ordering with duplicates
         val parameters = processor.parameters
-        println("Duplicate parameters order: $parameters")
-
         // Expected parameter order:
         // 1. WITH clause: myAge (position 1)
         // 2. SET clause: myAge, newScore (positions 2, 3)
         val expectedOrder = listOf("myAge", "myAge", "newScore")
-        
         assertEquals(expectedOrder, parameters, 
             "Duplicate parameters should appear in order: WITH clause first, then SET clause")
 

@@ -25,14 +25,14 @@ class MockCreateTableStatementExecutor(
     override fun execute(conn: Connection): AnnotatedStatement {
         // Create the table in the database using the column information from the annotated statement
         val tableName = annotatedStatement.src.tableName
-        val columns = annotatedStatement.src.columns.map { col ->
+        val columns = annotatedStatement.src.columns.joinToString(", ") { col ->
             val nullConstraint = if (col.notNull) "NOT NULL" else ""
             val primaryKeyConstraint = if (col.primaryKey) "PRIMARY KEY" else ""
             val autoIncrementConstraint = if (col.autoIncrement) "AUTOINCREMENT" else ""
             val uniqueConstraint = if (col.unique) "UNIQUE" else ""
 
             "${col.name} ${col.dataType} $nullConstraint $primaryKeyConstraint $autoIncrementConstraint $uniqueConstraint".trim()
-        }.joinToString(", ")
+        }
 
         val createTableSql = "CREATE TABLE IF NOT EXISTS $tableName ($columns)"
 
@@ -180,8 +180,6 @@ class DataStructCodeGeneratorTest {
         // Verify file contents
         val userQueriesContent = userQueriesFile.readText()
 
-        println("User file content: $userQueriesContent")
-
         assertTrue(userQueriesContent.contains("object User"), "User.kt should contain 'object User'")
         assertTrue(userQueriesContent.contains("object CustomClassName"), "User.kt should contain query-specific object")
         assertTrue(userQueriesContent.contains("const val SQL"), "User.kt should contain SQL constant")
@@ -205,8 +203,6 @@ class DataStructCodeGeneratorTest {
 
         // Verify file contents
         val userQueriesContent = userQueriesFile.readText()
-
-        println("User file content: $userQueriesContent")
 
         assertTrue(userQueriesContent.contains("object User"), "User.kt should contain 'object User'")
         assertTrue(userQueriesContent.contains("object TestQuery"), "User.kt should contain query-specific object")
@@ -237,9 +233,6 @@ class DataStructCodeGeneratorTest {
         val userQueriesContent = userQueriesFile.readText()
         val productQueriesContent = productQueriesFile.readText()
 
-        println("User file content: $userQueriesContent")
-        println("Product file content: $productQueriesContent")
-
         assertTrue(userQueriesContent.contains("object User"), "User.kt should contain 'object User'")
         assertTrue(userQueriesContent.contains("object CustomClassName"), "User.kt should contain query-specific object")
         assertTrue(userQueriesContent.contains("const val SQL"), "User.kt should contain SQL constant")
@@ -268,8 +261,6 @@ class DataStructCodeGeneratorTest {
 
         // Verify file contents
         val userQueriesContent = userQueriesFile.readText()
-
-        println("User file content with parameters: $userQueriesContent")
 
         assertTrue(userQueriesContent.contains("object User"), "User.kt should contain 'object User'")
         assertTrue(userQueriesContent.contains("object CustomClassName"), "User.kt should contain query-specific object")
@@ -3050,33 +3041,26 @@ class DataStructCodeGeneratorTest {
         )
 
         // Test each parameter mapping individually
-        println("=== Testing Parameter-to-Column Mapping ===")
 
         val emailType = dataStructGenerator.inferParameterType("email", mockInsertStatement)
-        println("email -> ${emailType}")
         assertEquals("kotlin.String", emailType.toString(), "email should map to String")
 
         val firstNameType = dataStructGenerator.inferParameterType("firstName", mockInsertStatement)
-        println("firstName -> ${firstNameType}")
         assertEquals("kotlin.String", firstNameType.toString(), "firstName should map to String")
 
         val lastNameType = dataStructGenerator.inferParameterType("lastName", mockInsertStatement)
-        println("lastName -> ${lastNameType}")
         assertEquals("kotlin.String?", lastNameType.toString(), "lastName should map to String?")
 
         // Note: phone is not a parameter in this test - it has a literal value "000-555-777"
         // So we skip testing phone parameter
 
         val birthDateType = dataStructGenerator.inferParameterType("birthDate", mockInsertStatement)
-        println("birthDate -> ${birthDateType}")
         assertEquals("kotlinx.datetime.LocalDate?", birthDateType.toString(), "birthDate should map to LocalDate?")
 
         val createdAtType = dataStructGenerator.inferParameterType("myCreatedAt", mockInsertStatement)
-        println("myCreatedAt -> ${createdAtType}")
         assertEquals("kotlinx.datetime.LocalDateTime", createdAtType.toString(), "myCreatedAt should map to LocalDateTime")
 
         val notesType = dataStructGenerator.inferParameterType("notes", mockInsertStatement)
-        println("notes -> ${notesType}")
         assertEquals("com.example.db.PersonNote?", notesType.toString(), "notes should map to com.example.db.PersonNote?")
 
         // Clean up
@@ -3338,11 +3322,5 @@ class DataStructCodeGeneratorTest {
             "Regular parameters should still default to kotlin.String type")
 
         realConnection.close()
-
-        println("✅ LIMIT and OFFSET parameters generate Long type test passed!")
-        println("  - pageSize parameter (LIMIT): kotlin.Long")
-        println("  - skipRows parameter (OFFSET): kotlin.Long")
-        println("  - Works regardless of parameter names!")
-        println("  - Regular parameters still default to String")
     }
 }

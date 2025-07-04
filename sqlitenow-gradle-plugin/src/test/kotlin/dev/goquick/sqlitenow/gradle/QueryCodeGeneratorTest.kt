@@ -79,7 +79,6 @@ class QueryCodeGeneratorTest {
         try {
             queryGenerator.generateCode()
         } catch (e: Exception) {
-            println("Exception during code generation: ${e.message}")
             e.printStackTrace()
             throw e
         }

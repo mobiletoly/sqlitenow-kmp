@@ -77,10 +77,7 @@ class MigratorCodeGeneratorTest {
             packageName = "com.example.db",
             outputDir = outputDir,
         )
-
-        // Generate the code
-        val fileSpec = generator.generateCode()
-        println("File content: ${fileSpec.toString()}")
+        generator.generateCode()
 
         // Verify that the file was created
         val outputFile = File(outputDir, "com/example/db/VersionBasedDatabaseMigrations.kt")

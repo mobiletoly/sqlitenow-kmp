@@ -33,11 +33,8 @@ class UpdateUserScenarioTest {
 
         // Verify the processed SQL structure
         val processedSql = processor.processedSql
-        println("User scenario processed SQL: $processedSql")
-
         // Verify parameter ordering matches user's expected order
         val parameters = processor.parameters
-        println("User scenario parameter order: $parameters")
 
         // Expected parameter order based on user's requirements:
         // 1. WITH clause parameters first: myAge (position 1)
