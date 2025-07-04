@@ -62,9 +62,6 @@ internal class QueryCodeGenerator(
             .addFileComment("Generated query extension functions for ${namespace}.${className}")
             .addFileComment("\nDo not modify this file manually")
             .addImport("dev.goquick.sqlitenow.core.util", "jsonEncodeToSqlite")
-            .addImport("kotlinx.coroutines", "withContext")
-            .addImport("kotlinx.coroutines", "Dispatchers")
-            .addImport("kotlinx.coroutines", "IO")
 
         // Generate bindStatementParams function first
         val bindFunction = generateBindStatementParamsFunction(namespace, statement)
@@ -127,7 +124,7 @@ internal class QueryCodeGenerator(
             .addKdoc(kdoc)
 
         // Set up common function structure (receiver, connection, params)
-        setupFunctionStructure(fnBld, statement, namespace, className, functionType = "execute")
+        setupExecuteFunctionStructure(fnBld, statement, namespace, className)
 
         // Set return type based on function name (handles shared results)
         val resultType = createSelectResultTypeName(namespace, statement)
@@ -192,7 +189,7 @@ internal class QueryCodeGenerator(
         fnBld.returns(resultType)
 
         // Add result reading logic
-        addReadStatementResultProcessing(fnBld, statement, namespace, className)
+        addReadStatementResultProcessing(fnBld, statement, namespace)
 
         return fnBld.build()
     }
@@ -213,7 +210,7 @@ internal class QueryCodeGenerator(
             .addKdoc("Executes the ${statement.name} query.")
 
         // Set up common function structure (receiver, connection, params)
-        setupFunctionStructure(fnBld, statement, namespace, className, functionType = "execute")
+        setupExecuteFunctionStructure(fnBld, statement, namespace, className)
 
         // Set return type: Unit (no return value needed for INSERT/DELETE/UPDATE)
         fnBld.returns(Unit::class)
@@ -228,12 +225,11 @@ internal class QueryCodeGenerator(
      * Helper function to set up common function structure.
      * This includes receiver type, connection parameter, and params parameter.
      */
-    private fun setupFunctionStructure(
+    private fun setupExecuteFunctionStructure(
         fnBld: FunSpec.Builder,
         statement: AnnotatedStatement,
         namespace: String,
-        className: String,
-        functionType: String
+        className: String
     ) {
         val capitalizedNamespace = namespace.capitalized()
 
@@ -254,14 +250,7 @@ internal class QueryCodeGenerator(
             fnBld.addParameter(paramsParam)
         }
 
-        // Add adapter parameters based on function type
-        if (functionType == "prepareStatement") {
-            // For prepareStatement: only add parameter binding adapters (xxxToSqlColumn)
-            addParameterBindingAdapterParameters(fnBld, statement)
-        } else {
-            // For execute: add all adapters (both parameter binding and result conversion)
-            addAllAdapterParameters(fnBld, statement)
-        }
+        addAllAdapterParameters(fnBld, statement)
     }
 
     /**
@@ -419,17 +408,6 @@ internal class QueryCodeGenerator(
     }
 
     /**
-     * Helper function to create Result type name.
-     * Handles both regular Result classes and SharedResult classes.
-     */
-    private fun createResultTypeName(namespace: String, className: String): ClassName {
-        val capitalizedNamespace = namespace.capitalized()
-        return ClassName(packageName, capitalizedNamespace)
-            .nestedClass(className)
-            .nestedClass("Result")
-    }
-
-    /**
      * Helper function to create Result type name for SELECT statements.
      * Uses SharedResult if the statement has @@sharedResult annotation, otherwise uses regular Result.
      */
@@ -484,13 +462,13 @@ internal class QueryCodeGenerator(
 
         // Build the complete withContext block as a single statement
         val codeBuilder = StringBuilder()
-        codeBuilder.append("return withContext(Dispatchers.IO) {\n")
+        codeBuilder.append("return run {\n")
 
         // Prepare the statement and bind parameters
         codeBuilder.append("  val sql = $capitalizedNamespace.$className.SQL\n")
         codeBuilder.append("  val statement = conn.prepare(sql)\n")
 
-        val namedParameters = StatementUtils.getNamedParameters(statement)
+        val namedParameters = getNamedParameters(statement)
         if (namedParameters.isNotEmpty()) {
             // Build parameter list for bindStatementParams: statement, params, and only xxxToSqlColumn adapters
             val paramsList = mutableListOf("statement", "params")
@@ -523,7 +501,7 @@ internal class QueryCodeGenerator(
         namespace: String,
         className: String
     ) {
-        val namedParameters = StatementUtils.getNamedParameters(statement)
+        val namedParameters = getNamedParameters(statement)
 
         if (namedParameters.isNotEmpty()) {
             val processedAdapterVars = mutableMapOf<String, String>()
@@ -553,11 +531,8 @@ internal class QueryCodeGenerator(
     private fun addReadStatementResultProcessing(
         fnBld: FunSpec.Builder,
         statement: AnnotatedSelectStatement,
-        namespace: String,
-        className: String
+        namespace: String
     ) {
-        val capitalizedNamespace = namespace.capitalized()
-
         // Use the correct result type (handles shared results)
         val resultType = SharedResultTypeUtils.createResultTypeString(namespace, statement)
 

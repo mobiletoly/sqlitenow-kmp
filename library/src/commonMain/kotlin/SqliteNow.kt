@@ -5,9 +5,6 @@ import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.sqlite.driver.bundled.SQLITE_OPEN_CREATE
 import androidx.sqlite.driver.bundled.SQLITE_OPEN_READWRITE
 import androidx.sqlite.execSQL
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -55,27 +52,25 @@ open class SqliteNowDatabase {
             throw IllegalStateException("Database connection already initialized")
         }
 
-        withContext(Dispatchers.IO) {
-            val dbFileExists = validateFileExists(dbName)
+        val dbFileExists = validateFileExists(dbName)
 
-            conn = BundledSQLiteDriver().open(
-                fileName = dbName,
-                flags = SQLITE_OPEN_CREATE or SQLITE_OPEN_READWRITE
-            )
-            transaction {
-                conn.execSQL("""PRAGMA foreign_keys = ON;""")
-                val currentVersion = if (!dbFileExists) {
-                    setUserVersion(-1)
-                    -1
-                } else {
-                    getUserVersion()
-                }
+        conn = BundledSQLiteDriver().open(
+            fileName = dbName,
+            flags = SQLITE_OPEN_CREATE or SQLITE_OPEN_READWRITE
+        )
+        transaction {
+            conn.execSQL("""PRAGMA foreign_keys = ON;""")
+            val currentVersion = if (!dbFileExists) {
+                setUserVersion(-1)
+                -1
+            } else {
+                getUserVersion()
+            }
 
-                // Apply migrations starting from the current version
-                val newVersion = migration.applyMigration(conn, currentVersion)
-                if (newVersion != currentVersion) {
-                    setUserVersion(newVersion)
-                }
+            // Apply migrations starting from the current version
+            val newVersion = migration.applyMigration(conn, currentVersion)
+            if (newVersion != currentVersion) {
+                setUserVersion(newVersion)
             }
         }
     }
@@ -117,14 +112,14 @@ open class SqliteNowDatabase {
      * @return The result of the block
      * @throws Exception Any exception thrown by the block
      */
-    suspend fun <T> transaction(block: suspend () -> T): T = withContext(Dispatchers.IO) {
+    suspend fun <T> transaction(block: suspend () -> T): T {
         if (!::conn.isInitialized) {
             throw IllegalStateException("Database connection not initialized. Call open() first.")
         }
 
         conn.execSQL("BEGIN TRANSACTION;")
 
-        try {
+        return try {
             val result = block()
             conn.execSQL("COMMIT;")
             result
@@ -175,7 +170,7 @@ open class SqliteNowDatabase {
         // Get or create SharedFlows for each table
         val flows = affectedTables.map { tableName ->
             tableChangeFlows.getOrPut(tableName) {
-                MutableSharedFlow<Unit>(replay = 0, extraBufferCapacity = 1)
+                MutableSharedFlow(replay = 0, extraBufferCapacity = 1)
             }.asSharedFlow()
         }
 

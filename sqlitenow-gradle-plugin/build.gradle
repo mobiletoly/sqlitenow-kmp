@@ -1,5 +1,4 @@
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
-import com.vanniktech.maven.publish.SonatypeHost
 
 plugins {
     id("org.jetbrains.kotlin.jvm") version "2.2.0"
@@ -8,7 +7,7 @@ plugins {
 }
 
 group = "dev.goquick.sqlitenow"
-version = "0.1.9"
+version = "0.1.10-SNAPSHOT"
 
 repositories {
     mavenCentral()
@@ -66,7 +65,7 @@ compileKotlin {
 }
 
 mavenPublishing {
-    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
+    publishToMavenCentral()
 
     signAllPublications()
 

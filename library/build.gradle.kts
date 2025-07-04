@@ -1,4 +1,3 @@
-import com.vanniktech.maven.publish.SonatypeHost
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -9,7 +8,7 @@ plugins {
 }
 
 group = "dev.goquick.sqlitenow"
-version = "0.1.9"
+version = "0.1.10-SNAPSHOT"
 
 kotlin {
     jvm()
@@ -66,7 +65,7 @@ android {
 }
 
 mavenPublishing {
-    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
+    publishToMavenCentral()
 
     signAllPublications()
 
