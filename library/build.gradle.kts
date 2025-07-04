@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "dev.goquick.sqlitenow"
-version = "0.1.9-SNAPSHOT"
+version = "0.1.9"
 
 kotlin {
     jvm()
