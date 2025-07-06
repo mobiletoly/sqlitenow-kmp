@@ -101,8 +101,7 @@ class ColumnLookup(
 
         return when (val src = statement.src) {
             is InsertStatement -> {
-                val columnName = src.columnNamesAssociatedWithNamedParameters.entries
-                    .find { it.value == paramName }?.key
+                val columnName = src.columnNamesAssociatedWithNamedParameters[paramName]
 
                 if (columnName != null) {
                     return table.findColumnByName(columnName)
@@ -122,7 +121,7 @@ class ColumnLookup(
 
             is UpdateStatement -> {
                 // First check if this parameter is from a SET clause (has direct column mapping)
-                val directColumnName = src.columnNamesAssociatedWithNamedParameters[paramName]
+                val directColumnName = src.namedParametersToColumnNames[paramName]
                 if (directColumnName != null) {
                     return table.findColumnByName(directColumnName)
                 }

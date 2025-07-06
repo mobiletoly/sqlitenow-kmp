@@ -392,7 +392,7 @@ suspend fun addRandomPerson(onError: (String) -> Unit) {
                 email = email,
                 phone = phone,
                 birthDate = birthDate,
-                notes = notes
+                notes = notes,
             )
         ).execute()
     } catch (e: SQLiteException) {

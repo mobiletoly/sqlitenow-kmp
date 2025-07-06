@@ -126,7 +126,7 @@ class UpdateColumnLookupTest {
                     "id" to AssociatedColumn.Default("id"),
                     "myBirthDate" to AssociatedColumn.Default("birth_date")
                 ),
-                columnNamesAssociatedWithNamedParameters = mapOf(
+                namedParametersToColumnNames = mapOf(
                     // SET clause parameters - this is the key fix!
                     "myAge" to "age",
                     "myScore" to "score", 
@@ -244,7 +244,7 @@ class UpdateColumnLookupTest {
                 table = "Person",
                 namedParameters = listOf("myAge", "myScore"),
                 namedParametersToColumns = emptyMap(),
-                columnNamesAssociatedWithNamedParameters = mapOf(
+                namedParametersToColumnNames = mapOf(
                     "myAge" to "age",
                     "myScore" to "score"
                 ),

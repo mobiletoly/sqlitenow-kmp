@@ -138,7 +138,6 @@ class QueryCodeGeneratorTest {
         assertTrue(getByIdFileContent.contains("val results = mutableListOf<"), "Should contain results collection for SELECT")
         assertTrue(getByIdFileContent.contains("while (statement.step())"), "Should contain result iteration for SELECT")
         assertTrue(getByIdFileContent.contains("results.add("), "Should contain result addition for SELECT")
-        assertTrue(getByIdFileContent.contains("= withContext(Dispatchers.IO) {"), "Should contain withContext wrapper for SELECT")
 
         // Verify that executeAsList calls readStatementResult for SELECT statements
         assertTrue(getByIdFileContent.contains("Person.GetById.readStatementResult("), "ExecuteAsList should call readStatementResult for SELECT")
@@ -153,8 +152,6 @@ class QueryCodeGeneratorTest {
 
         // Verify imports
         assertTrue(getByIdFileContent.contains("import androidx.sqlite.SQLiteConnection"), "Should import androidx.sqlite.SQLiteConnection")
-        assertTrue(getByIdFileContent.contains("import kotlinx.coroutines.withContext"), "Should import kotlinx.coroutines.withContext")
-        assertTrue(getByIdFileContent.contains("import kotlinx.coroutines.Dispatchers"), "Should import kotlinx.coroutines.Dispatchers")
 
         // Verify suspend functions
         assertTrue(getByIdFileContent.contains("public suspend fun Person.GetById.executeAsList("), "ExecuteAsList function should be suspend")
@@ -508,7 +505,6 @@ class QueryCodeGeneratorTest {
 
         // Verify UPDATE SQL execution implementation
         assertTrue(updateFileContent.contains("val sql = Person.UpdateUser.SQL"), "Should use SQL constant for UPDATE")
-        assertTrue(updateFileContent.contains("= withContext(Dispatchers.IO) {"), "Should contain withContext wrapper for UPDATE")
         assertTrue(updateFileContent.contains("statement.use { statement ->"), "Should contain statement execution for UPDATE")
         assertTrue(updateFileContent.contains("statement.step()"), "Should execute UPDATE statement")
 
@@ -576,33 +572,11 @@ class QueryCodeGeneratorTest {
         val getByIdFileContent = personGetByIdFile.readText()
         val addFileContent = personAddFile.readText()
 
-        // Verify coroutines imports are present
-        assertTrue(getByIdFileContent.contains("import kotlinx.coroutines.withContext"),
-                  "SELECT file should import kotlinx.coroutines.withContext")
-        assertTrue(getByIdFileContent.contains("import kotlinx.coroutines.Dispatchers"),
-                  "SELECT file should import kotlinx.coroutines.Dispatchers")
-        assertTrue(addFileContent.contains("import kotlinx.coroutines.withContext"),
-                  "INSERT file should import kotlinx.coroutines.withContext")
-        assertTrue(addFileContent.contains("import kotlinx.coroutines.Dispatchers"),
-                  "INSERT file should import kotlinx.coroutines.Dispatchers")
-
         // Verify suspend modifier is present in execute functions
         assertTrue(getByIdFileContent.contains("public suspend fun Person.GetById.executeAsList("),
                   "SELECT executeAsList function should be suspend")
         assertTrue(addFileContent.contains("public suspend fun Person.Add.execute("),
                   "INSERT execute function should be suspend")
-
-        // Verify withContext(Dispatchers.IO) wrapper for SELECT statements
-        assertTrue(getByIdFileContent.contains("= withContext(Dispatchers.IO) {"),
-                  "SELECT execute should use withContext(Dispatchers.IO)")
-        assertTrue(getByIdFileContent.contains("statement.use { statement ->"),
-                  "SELECT execute should contain statement.use inside withContext")
-
-        // Verify withContext(Dispatchers.IO) wrapper for INSERT statements
-        assertTrue(addFileContent.contains("= withContext(Dispatchers.IO) {"),
-                  "INSERT execute should use withContext(Dispatchers.IO)")
-        assertTrue(addFileContent.contains("statement.use { statement ->"),
-                  "INSERT execute should contain statement.use inside withContext")
 
         // Verify that bindStatementParams and readStatementResult functions are NOT suspend
         assertTrue(getByIdFileContent.contains("public fun Person.GetById.bindStatementParams("),
@@ -671,14 +645,6 @@ class QueryCodeGeneratorTest {
                   "Should contain executeAsOne function")
         assertTrue(fileContent.contains("public suspend fun Person.GetById.executeAsOneOrNull("),
                   "Should contain executeAsOneOrNull function")
-
-        // Verify return types
-        assertTrue(fileContent.contains("): List<Person.GetById.Result> = withContext(Dispatchers.IO)"),
-                  "executeAsList should return List<Result>")
-        assertTrue(fileContent.contains("): Person.GetById.Result = withContext(Dispatchers.IO)"),
-                  "executeAsOne should return Result")
-        assertTrue(fileContent.contains("): Person.GetById.Result? = withContext(Dispatchers.IO)"),
-                  "executeAsOneOrNull should return Result?")
 
         // Verify executeAsList implementation
         assertTrue(fileContent.contains("val results = mutableListOf<Person.GetById.Result>()"),

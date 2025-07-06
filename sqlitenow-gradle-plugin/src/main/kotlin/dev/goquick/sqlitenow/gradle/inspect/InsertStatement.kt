@@ -4,7 +4,6 @@ import dev.goquick.sqlitenow.gradle.inspect.ExecuteStatement.Companion.buildSele
 import java.sql.Connection
 import net.sf.jsqlparser.expression.JdbcNamedParameter
 import net.sf.jsqlparser.statement.insert.Insert
-import net.sf.jsqlparser.statement.select.PlainSelect
 
 class InsertStatement(
     override val sql: String,
@@ -26,11 +25,22 @@ class InsertStatement(
             val values = insert.select?.values?.expressions
             val requiredColumnNames = mutableListOf<String>()
             val columnNamesAssociatedWithNamedParameters = linkedMapOf<String, String>()
+
+            // Process VALUES clause parameters
             values?.forEachIndexed { index, expr ->
                 if (expr is JdbcNamedParameter) {
                     val columnName = allColumnNames[index]
                     requiredColumnNames.add(columnName)
-                    columnNamesAssociatedWithNamedParameters[columnName] = expr.name.removePrefix(":")
+                    columnNamesAssociatedWithNamedParameters[expr.name.removePrefix(":")] = columnName
+                }
+            }
+
+            // Process ON CONFLICT DO UPDATE clause parameters
+            insert.conflictAction?.updateSets?.forEach { updateSet ->
+                val columnName: String? = updateSet.columns.firstOrNull()?.columnName
+                val expr = updateSet.values.firstOrNull()
+                if (columnName != null && expr is JdbcNamedParameter) {
+                    columnNamesAssociatedWithNamedParameters[expr.name.removePrefix(":")] = columnName
                 }
             }
 

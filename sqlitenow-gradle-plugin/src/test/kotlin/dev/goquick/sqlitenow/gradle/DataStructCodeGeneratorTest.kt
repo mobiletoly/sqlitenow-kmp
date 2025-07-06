@@ -360,8 +360,8 @@ class DataStructCodeGeneratorTest {
             namedParameters = listOf("firstName", "createdAt"),  // camelCase parameters
             withSelectStatements = emptyList(),
             columnNamesAssociatedWithNamedParameters = mapOf(
-                "first_name" to "firstName",
-                "created_at" to "createdAt"
+                "firstName" to "first_name",
+                "createdAt" to "created_at"
             )
         )
 
@@ -459,7 +459,7 @@ class DataStructCodeGeneratorTest {
             namedParameters = listOf("createdAt"),
             withSelectStatements = emptyList(),
             columnNamesAssociatedWithNamedParameters = mapOf(
-                "created_at" to "createdAt"
+                "createdAt" to "created_at"
             )
         )
 
@@ -574,7 +574,7 @@ class DataStructCodeGeneratorTest {
             namedParameters = listOf("createdAt"),
             withSelectStatements = emptyList(),
             columnNamesAssociatedWithNamedParameters = mapOf(
-                "created_at" to "createdAt"
+                "createdAt" to "created_at"
             )
         )
 
@@ -695,7 +695,7 @@ class DataStructCodeGeneratorTest {
             namedParameters = listOf("lastName"),
             withSelectStatements = emptyList(),
             columnNamesAssociatedWithNamedParameters = mapOf(
-                "last_name" to "lastName"
+                "lastName" to "last_name"
             )
         )
 
@@ -803,7 +803,7 @@ class DataStructCodeGeneratorTest {
             namedParameters = listOf("lastName"),
             withSelectStatements = emptyList(),
             columnNamesAssociatedWithNamedParameters = mapOf(
-                "last_name" to "lastName"
+                "lastName" to "last_name"
             )
         )
 
@@ -922,7 +922,7 @@ class DataStructCodeGeneratorTest {
             namedParameters = listOf("createdAt"),
             withSelectStatements = emptyList(),
             columnNamesAssociatedWithNamedParameters = mapOf(
-                "created_at" to "createdAt"
+                "createdAt" to "created_at"
             )
         )
 
@@ -1750,7 +1750,7 @@ class DataStructCodeGeneratorTest {
             columnNamesAssociatedWithNamedParameters = mapOf(
                 "email" to "email",
                 "phone" to "phone",
-                "birth_date" to "birthDate"
+                "birthDate" to "birth_date"
             )
         )
 
@@ -2467,12 +2467,12 @@ class DataStructCodeGeneratorTest {
                 withSelectStatements = emptyList(),
                 columnNamesAssociatedWithNamedParameters = mapOf(
                     "email" to "email",
-                    "first_name" to "firstName",
-                    "last_name" to "lastName",
+                    "firstName" to "first_name",
+                    "lastName" to "last_name",
                     "age" to "age", // This won't be used since age has a literal value
                     "phone" to "phone",
-                    "birth_date" to "birthDate",
-                    "created_at" to "myCreatedAt",
+                    "birthDate" to "birth_date",
+                    "myCreatedAt" to "created_at",
                     "notes" to "notes"
                 )
             ),
@@ -2693,9 +2693,9 @@ class DataStructCodeGeneratorTest {
                 namedParameters = listOf("firstName", "lastName", "createdAt"),
                 withSelectStatements = listOf(withSelectStatement),
                 columnNamesAssociatedWithNamedParameters = mapOf(
-                    "first_name" to "firstName",
-                    "last_name" to "lastName",
-                    "created_at" to "createdAt"
+                    "firstName" to "first_name",
+                    "lastName" to "last_name",
+                    "createdAt" to "created_at"
                 )
             ),
             annotations = StatementAnnotationOverrides(
@@ -2906,9 +2906,9 @@ class DataStructCodeGeneratorTest {
                 namedParameters = listOf("firstName", "lastName", "createdAt"),
                 withSelectStatements = listOf(withSelectStatement),
                 columnNamesAssociatedWithNamedParameters = mapOf(
-                    "first_name" to "firstName",
-                    "last_name" to "lastName",
-                    "created_at" to "createdAt"
+                    "firstName" to "first_name",
+                    "lastName" to "last_name",
+                    "createdAt" to "created_at"
                 )
             ),
             annotations = StatementAnnotationOverrides(
@@ -3024,10 +3024,10 @@ class DataStructCodeGeneratorTest {
                 withSelectStatements = emptyList(),
                 columnNamesAssociatedWithNamedParameters = mapOf(
                     "email" to "email",
-                    "first_name" to "firstName",
-                    "last_name" to "lastName",
-                    "birth_date" to "birthDate",
-                    "created_at" to "myCreatedAt",
+                    "firstName" to "first_name",
+                    "lastName" to "last_name",
+                    "birthDate" to "birth_date",
+                    "myCreatedAt" to "created_at",
                     "notes" to "notes"
                 )
             ),
@@ -3191,7 +3191,7 @@ class DataStructCodeGeneratorTest {
                     "newAge" to AssociatedColumn.Default("age"),
                     "personId" to AssociatedColumn.Default("id")
                 ),
-                columnNamesAssociatedWithNamedParameters = mapOf(
+                namedParametersToColumnNames = mapOf(
                     "newName" to "name",
                     "newAge" to "age"
                     // personId is from WHERE clause, not SET clause

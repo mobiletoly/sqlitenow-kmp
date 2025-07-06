@@ -10,7 +10,7 @@ class UpdateStatement(
     override val table: String,
     override val namedParameters: List<String>,
     val namedParametersToColumns: Map<String, AssociatedColumn>,
-    val columnNamesAssociatedWithNamedParameters: Map<String, String>,
+    val namedParametersToColumnNames: Map<String, String>,
     override val withSelectStatements: List<SelectStatement>,
     override val parameterCastTypes: Map<String, String> = emptyMap()
 ) : ExecuteStatement {
@@ -44,7 +44,7 @@ class UpdateStatement(
                 namedParameters = processor.parameters,
                 namedParametersToColumns = namedParamsWithColumns,
                 withSelectStatements = withSelectStatements,
-                columnNamesAssociatedWithNamedParameters = columnNamesAssociatedWithNamedParameters,
+                namedParametersToColumnNames = columnNamesAssociatedWithNamedParameters,
                 parameterCastTypes = processor.parameterCastTypes
             )
         }
