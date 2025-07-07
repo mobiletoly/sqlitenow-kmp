@@ -41,15 +41,16 @@ import dev.goquick.sqlitenow.core.util.jsonDecodeFromSqlite
 import dev.goquick.sqlitenow.core.util.jsonEncodeToSqlite
 import dev.goquick.sqlitenow.core.util.toSqliteDate
 import dev.goquick.sqlitenow.core.util.toSqliteTimestamp
+import dev.goquick.sqlitenow.samplekmp.db.AddressType
 import dev.goquick.sqlitenow.samplekmp.db.NowSampleDatabase
 import dev.goquick.sqlitenow.samplekmp.db.Person
 import dev.goquick.sqlitenow.samplekmp.db.VersionBasedDatabaseMigrations
-import dev.goquick.sqlitenow.samplekmp.db.AddressType
 import dev.goquick.sqlitenow.samplekmp.model.PersonNote
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.datetime.Clock
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
@@ -59,6 +60,17 @@ import org.jetbrains.compose.ui.tooling.preview.Preview
 import kotlin.random.Random
 
 typealias PersonEntity = Person.SharedResult.Row
+
+private val firstNames = listOf(
+    "John", "Jane", "Alice", "Bob", "Charlie", "Diana", "Eve",
+    "Frank", "Grace", "Henry"
+)
+private val lastNames = listOf(
+    "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia",
+    "Miller", "Davis", "Rodriguez", "Martinez"
+)
+private val domains = listOf("gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "example.com")
+
 
 val db = NowSampleDatabase(
     resolveDatabasePath("test04.db"),
@@ -112,24 +124,29 @@ fun App() {
     }
 
     LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) {
-            // TODO .open() is here just for demo purposes. In your app you should open it in some other place
-            db.open()
+        // TODO .open() is here just for demo purposes. In your app you should open it in some other place
+        db.open()
 
-            // Listen for real-time changes from Person/SelectAll query
-            db.person
-                .selectAll(
-                    Person.SelectAll.Params(
-                        limit = -1,
-                        offset = 0
-                    )
+        // Listen for real-time changes from Person/SelectAll query
+        db.person
+            .selectAll(
+                Person.SelectAll.Params(
+                    limit = -1,
+                    offset = 0
                 )
-                .asFlow()
-                .collect {
-                    persons = it
-                    isLoading = false
+            )
+            .asFlow()
+            .map { personList ->
+                personList.map { person ->
+                    person.copy(myLastName = person.myLastName.uppercase())
                 }
-        }
+            }
+            .flowOn(Dispatchers.IO)     // DB and mapper code above runs on Dispatchers.IO
+            .collect {
+                // This code runs on Dispatchers.Main (UI)
+                persons = it
+                isLoading = false
+            }
     }
 
     MaterialTheme {
@@ -227,6 +244,13 @@ fun App() {
                     persons.forEach { person ->
                         PersonCard(
                             person = person,
+                            onRandomize = {
+                                coroutineScope.launch {
+                                    randomizePerson(it) { error ->
+                                        errorMessage = error
+                                    }
+                                }
+                            },
                             onDelete = { personToDelete ->
                                 coroutineScope.launch {
                                     deletePerson(personToDelete.id) { error ->
@@ -274,6 +298,7 @@ fun App() {
 @Composable
 fun PersonCard(
     person: PersonEntity,
+    onRandomize: (PersonEntity) -> Unit,
     onDelete: (PersonEntity) -> Unit
 ) {
     Card(
@@ -334,6 +359,22 @@ fun PersonCard(
                 }
             }
 
+            // Randomize Button
+            TextButton(
+                onClick = { onRandomize(person) },
+                modifier = Modifier
+                    .background(
+                        color = MaterialTheme.colors.error.copy(alpha = 0.1f),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+            ) {
+                Text(
+                    text = "R",
+                    color = MaterialTheme.colors.error,
+                    fontSize = 14.sp
+                )
+            }
+
             // Delete Button
             TextButton(
                 onClick = { onDelete(person) },
@@ -355,15 +396,6 @@ fun PersonCard(
 
 // Helper function to add a random person
 suspend fun addRandomPerson(onError: (String) -> Unit) {
-    val firstNames = listOf(
-        "John", "Jane", "Alice", "Bob", "Charlie", "Diana", "Eve",
-        "Frank", "Grace", "Henry"
-    )
-    val lastNames = listOf(
-        "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia",
-        "Miller", "Davis", "Rodriguez", "Martinez"
-    )
-    val domains = listOf("gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "example.com")
 
     val firstName = firstNames.random()
     val lastName = lastNames.random()
@@ -426,3 +458,30 @@ suspend fun deletePerson(personId: Long, onError: (String) -> Unit = {}) {
     }
 }
 
+suspend fun randomizePerson(person: PersonEntity, onError: (String) -> Unit = {}) {
+    try {
+        val firstName = firstNames.random()
+        val lastName = lastNames.random()
+        val email = person.email
+        val phone = person.phone
+        val birthDate = person.birthDate
+        val notes = person.notes
+        db.person.updateById(
+            Person.UpdateById.Params(
+                id = person.id,
+                firstName = firstName,
+                lastName = lastName,
+                email = email,
+                phone = phone,
+                birthDate = birthDate,
+                notes = notes
+            )
+        ).execute()
+    } catch (e: SQLiteException) {
+        e.printStackTrace()
+        onError("Failed to delete person: ${e.message}")
+    } catch (e: Exception) {
+        e.printStackTrace()
+        onError("Unexpected error: ${e.message}")
+    }
+}

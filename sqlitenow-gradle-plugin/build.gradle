@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "dev.goquick.sqlitenow"
-version = "0.1.11"
+version = "0.1.12-SNAPSHOT"
 
 repositories {
     mavenCentral()
