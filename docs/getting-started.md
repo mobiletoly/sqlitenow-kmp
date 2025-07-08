@@ -67,6 +67,7 @@ sqliteNow {
     databases {
         create("SampleDatabase") {
             packageName.set("com.example.app.db")
+            debug = true
         }
     }
 }

@@ -10,6 +10,7 @@ import kotlin.test.assertTrue
 import kotlin.test.fail
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import java.io.File
+import kotlinx.coroutines.runBlocking
 
 class SqliteNowDatabaseTest {
     private lateinit var database: SqliteNowDatabase
@@ -44,7 +45,7 @@ class SqliteNowDatabaseTest {
         try {
             // Close the database connection first
             if (this::database.isInitialized) {
-                database.close()
+                runBlocking { database.close() }
             }
         } finally {
             // Clean up the database file
