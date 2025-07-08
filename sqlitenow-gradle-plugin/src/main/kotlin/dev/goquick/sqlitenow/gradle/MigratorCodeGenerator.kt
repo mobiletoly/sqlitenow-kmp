@@ -24,6 +24,7 @@ internal class MigratorCodeGenerator(
     private val migrationInspector: MigrationInspector,
     private val packageName: String,
     private val outputDir: File,
+    private val debug: Boolean = false,
 ) {
     // Logger for this class
     private val logger: Logger = Logging.getLogger(MigratorCodeGenerator::class.java)
@@ -45,13 +46,21 @@ internal class MigratorCodeGenerator(
 
         val codeBlockBuilder = CodeBlock.builder()
 
-        // Wrap entire migration logic with a single withLock
-        codeBlockBuilder.add("return conn.mutex.withLock {\n")
+        // Wrap entire migration logic with a single withContext
+        if (debug) {
+            codeBlockBuilder.add("return conn.withContextAndTrace {\n")
+        } else {
+            codeBlockBuilder.add("return withContext(conn.dispatcher) {\n")
+        }
 
         // Handle initial setup when currentVersion is -1
         codeBlockBuilder.add("    if (currentVersion == -1) {\n")
         codeBlockBuilder.add("        executeAllSql(conn)\n")
-        codeBlockBuilder.add("        return@withLock ${migrationInspector.latestVersion}\n")
+        if (debug) {
+            codeBlockBuilder.add("        return@withContextAndTrace ${migrationInspector.latestVersion}\n")
+        } else {
+            codeBlockBuilder.add("        return@withContext ${migrationInspector.latestVersion}\n")
+        }
         codeBlockBuilder.add("    }\n")
         codeBlockBuilder.add("\n")
 
@@ -163,13 +172,19 @@ internal class MigratorCodeGenerator(
         classBuilder.addFunction(executeSqlFunction)
 
         // Build the file spec
-        val fileSpec = FileSpec.builder(packageName, className)
+        val fileSpecBuilder = FileSpec.builder(packageName, className)
             .addType(classBuilder.build())
             .addImport("dev.goquick.sqlitenow.core", "SafeSQLiteConnection")
             .addImport("androidx.sqlite", "execSQL")
             .addImport("dev.goquick.sqlitenow.core", "DatabaseMigrations")
-            .addImport("kotlinx.coroutines.sync", "withLock")
-            .build()
+
+        if (debug) {
+            // No additional import needed for conn.withContextAndTrace
+        } else {
+            fileSpecBuilder.addImport("kotlinx.coroutines", "withContext")
+        }
+
+        val fileSpec = fileSpecBuilder.build()
 
         // Write the file
         fileSpec.writeTo(outputDir)
