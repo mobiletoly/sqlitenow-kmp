@@ -19,6 +19,7 @@ internal class QueryCodeGenerator(
     private val dataStructCodeGenerator: DataStructCodeGenerator,
     private val packageName: String,
     private val outputDir: File,
+    private val debug: Boolean = false,
 ) {
     private val columnLookup = ColumnLookup(dataStructCodeGenerator.createTableStatements, dataStructCodeGenerator.createViewStatements)
     private val typeMapping = TypeMapping()
@@ -62,7 +63,12 @@ internal class QueryCodeGenerator(
             .addFileComment("Generated query extension functions for ${namespace}.${className}")
             .addFileComment("\nDo not modify this file manually")
             .addImport("dev.goquick.sqlitenow.core.util", "jsonEncodeToSqlite")
-            .addImport("kotlinx.coroutines.sync", "withLock")
+
+        if (debug) {
+            // No additional import needed for conn.withContextAndTrace
+        } else {
+            fileSpecBuilder.addImport("kotlinx.coroutines", "withContext")
+        }
 
         // Generate bindStatementParams function first
         val bindFunction = generateBindStatementParamsFunction(namespace, statement)
@@ -461,9 +467,13 @@ internal class QueryCodeGenerator(
     ) {
         val capitalizedNamespace = namespace.capitalized()
 
-        // Build the complete withLock block as a single statement
+        // Build the complete withContext block as a single statement
         val codeBuilder = StringBuilder()
-        codeBuilder.append("return conn.mutex.withLock {\n")
+        if (debug) {
+            codeBuilder.append("return conn.withContextAndTrace {\n")
+        } else {
+            codeBuilder.append("return withContext(conn.dispatcher) {\n")
+        }
 
         // Prepare the statement and bind parameters
         codeBuilder.append("  val sql = $capitalizedNamespace.$className.SQL\n")

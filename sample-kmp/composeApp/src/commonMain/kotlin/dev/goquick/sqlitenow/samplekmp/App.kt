@@ -501,7 +501,7 @@ suspend fun randomizePerson(person: PersonEntity, onError: (String) -> Unit = {}
         ).execute()
     } catch (e: SQLiteException) {
         e.printStackTrace()
-        onError("Failed to delete person: ${e.message}")
+        onError("Failed to update person: ${e.message}")
     } catch (e: Exception) {
         e.printStackTrace()
         onError("Unexpected error: ${e.message}")

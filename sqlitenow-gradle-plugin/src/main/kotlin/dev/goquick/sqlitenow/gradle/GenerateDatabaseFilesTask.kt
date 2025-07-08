@@ -26,7 +26,8 @@ fun main() {
         sqlDir = File("$rootScrDir/NowSampleDatabase"),
         packageName = "dev.goquick.sqlitenow.samplekmp.db",
         outDir = File("/Users/pochkin/Projects/my/sqlitenow-kmp/sample-kmp/composeApp/build/generated/sqlitenow/code"),
-        schemaDatabaseFile = File("$schemaDatabaseDir/schema.db")
+        schemaDatabaseFile = File("$schemaDatabaseDir/schema.db"),
+        debug = true,
     )
 }
 
@@ -56,6 +57,9 @@ abstract class GenerateDatabaseFilesTask @Inject constructor(
     @get:Optional
     val schemaDatabaseFile: RegularFileProperty = objects.fileProperty()
 
+    @get:Input
+    abstract val debug: Property<Boolean>
+
     @TaskAction
     fun generate() {
         // 1. Ensure the output directory exists
@@ -76,12 +80,14 @@ abstract class GenerateDatabaseFilesTask @Inject constructor(
             packageName = packageName,
             outDir = outDir,
             schemaDatabaseFile = dbFile,
+            debug = debug.get(),
         )
     }
 }
 
 fun generateDatabaseFiles(
     dbName: String, sqlDir: File, packageName: String, outDir: File, schemaDatabaseFile: File?,
+    debug: Boolean
 ) {
     val schemaDir = sqlDir.resolve("schema")
     val initSqlDir = sqlDir.resolve("init")
@@ -109,7 +115,8 @@ fun generateDatabaseFiles(
             sqlBatchInspector = sqlBatchInspector,
             migrationInspector = migrationInspector,
             packageName = packageName,
-            outputDir = outDir
+            outputDir = outDir,
+            debug = debug
         )
         migratorCodeGenerator.generateCode()
 
@@ -122,7 +129,7 @@ fun generateDatabaseFiles(
         )
         dataStructCodeGenerator.generateCode()
         val queryCodeGenerator = QueryCodeGenerator(
-            dataStructCodeGenerator = dataStructCodeGenerator, packageName = packageName, outputDir = outDir
+            dataStructCodeGenerator = dataStructCodeGenerator, packageName = packageName, outputDir = outDir, debug = debug
         )
         queryCodeGenerator.generateCode()
 

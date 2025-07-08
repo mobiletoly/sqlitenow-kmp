@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.merge
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /**
  * Base class for generated database classes.
@@ -102,7 +102,7 @@ open class SqliteNowDatabase {
             throw IllegalStateException("Database connection not initialized. Call open() first.")
         }
 
-        conn.mutex.withLock {
+        withContext(conn.dispatcher) {
             conn.ref.execSQL("PRAGMA user_version = $version;")
         }
     }
@@ -121,27 +121,23 @@ open class SqliteNowDatabase {
             throw IllegalStateException("Database connection not initialized. Call open() first.")
         }
 
-        // Only wrap individual SQL calls with withLock to avoid deadlock
-        conn.mutex.withLock {
+        // Use single-threaded dispatcher to avoid deadlock
+        return withContext(conn.dispatcher) {
             conn.ref.execSQL("BEGIN TRANSACTION;")
-        }
 
-        return try {
-            val result = block()
-            conn.mutex.withLock {
-                conn.ref.execSQL("COMMIT;")
-            }
-            result
-        } catch (e: Exception) {
-            // Roll back the transaction in case of an exception
             try {
-                conn.mutex.withLock {
+                val result = block()
+                conn.ref.execSQL("COMMIT;")
+                result
+            } catch (e: Exception) {
+                // Roll back the transaction in case of an exception
+                try {
                     conn.ref.execSQL("ROLLBACK;")
+                } catch (rollbackException: Exception) {
+                    e.addSuppressed(rollbackException)
                 }
-            } catch (rollbackException: Exception) {
-                e.addSuppressed(rollbackException)
+                throw e
             }
-            throw e
         }
     }
 
@@ -150,7 +146,7 @@ open class SqliteNowDatabase {
      */
     suspend fun close() {
         if (::conn.isInitialized) {
-            conn.mutex.withLock {
+            withContext(conn.dispatcher) {
                 conn.ref.close()
             }
         }

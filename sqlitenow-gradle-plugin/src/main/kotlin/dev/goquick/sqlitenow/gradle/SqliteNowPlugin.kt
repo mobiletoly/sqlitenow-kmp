@@ -28,6 +28,7 @@ class SqliteNowPlugin : Plugin<Project> {
                     task.dbName.set(db.name)
                     task.packageName.set(db.packageName)
                     task.schemaDatabaseFile.set(db.schemaDatabaseFile)
+                    task.debug.set(db.debug)
                 }
 
                 // Add generated dir to commonMain immediately

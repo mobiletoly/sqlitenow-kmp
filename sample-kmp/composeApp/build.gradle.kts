@@ -106,7 +106,8 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEa
 sqliteNow {
     databases {
         create("NowSampleDatabase") {
-            packageName.set("dev.goquick.sqlitenow.samplekmp.db")
+            packageName = "dev.goquick.sqlitenow.samplekmp.db"
+            debug = true
         }
     }
 }
