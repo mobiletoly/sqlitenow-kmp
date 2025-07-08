@@ -1,6 +1,5 @@
 package dev.goquick.sqlitenow.core
 
-import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.sqlite.driver.bundled.SQLITE_OPEN_CREATE
 import androidx.sqlite.driver.bundled.SQLITE_OPEN_READWRITE
@@ -10,6 +9,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Base class for generated database classes.
@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.merge
 open class SqliteNowDatabase {
     private val dbName: String
     private val migration: DatabaseMigrations
-    private lateinit var conn: SQLiteConnection
+    private lateinit var conn: SafeSQLiteConnection
 
     // Table change notification system
     private val tableChangeFlows = mutableMapOf<String, MutableSharedFlow<Unit>>()
@@ -37,7 +37,7 @@ open class SqliteNowDatabase {
      * @return The database connection
      * @throws IllegalStateException if the database is not open
      */
-    fun connection(): SQLiteConnection {
+    fun connection(): SafeSQLiteConnection {
         if (!::conn.isInitialized) {
             throw IllegalStateException("Database connection not initialized. Call open() first.")
         }
@@ -54,12 +54,14 @@ open class SqliteNowDatabase {
 
         val dbFileExists = validateFileExists(dbName)
 
-        conn = BundledSQLiteDriver().open(
+        val realConn = BundledSQLiteDriver().open(
             fileName = dbName,
             flags = SQLITE_OPEN_CREATE or SQLITE_OPEN_READWRITE
         )
+        conn = SafeSQLiteConnection(realConn)
+
         transaction {
-            conn.execSQL("""PRAGMA foreign_keys = ON;""")
+            conn.ref.execSQL("""PRAGMA foreign_keys = ON;""")
             val currentVersion = if (!dbFileExists) {
                 setUserVersion(-1)
                 -1
@@ -83,7 +85,7 @@ open class SqliteNowDatabase {
             throw IllegalStateException("Database connection not initialized. Call open() first.")
         }
 
-        val statement = conn.prepare("PRAGMA user_version;")
+        val statement = conn.ref.prepare("PRAGMA user_version;")
         return try {
             statement.step()
             statement.getInt(0)
@@ -95,12 +97,14 @@ open class SqliteNowDatabase {
     /**
      * Sets the user_version in the database.
      */
-    internal fun setUserVersion(version: Int) {
+    internal suspend fun setUserVersion(version: Int) {
         if (!::conn.isInitialized) {
             throw IllegalStateException("Database connection not initialized. Call open() first.")
         }
 
-        conn.execSQL("PRAGMA user_version = $version;")
+        conn.mutex.withLock {
+            conn.ref.execSQL("PRAGMA user_version = $version;")
+        }
     }
 
     /**
@@ -117,16 +121,23 @@ open class SqliteNowDatabase {
             throw IllegalStateException("Database connection not initialized. Call open() first.")
         }
 
-        conn.execSQL("BEGIN TRANSACTION;")
+        // Only wrap individual SQL calls with withLock to avoid deadlock
+        conn.mutex.withLock {
+            conn.ref.execSQL("BEGIN TRANSACTION;")
+        }
 
         return try {
             val result = block()
-            conn.execSQL("COMMIT;")
+            conn.mutex.withLock {
+                conn.ref.execSQL("COMMIT;")
+            }
             result
         } catch (e: Exception) {
             // Roll back the transaction in case of an exception
             try {
-                conn.execSQL("ROLLBACK;")
+                conn.mutex.withLock {
+                    conn.ref.execSQL("ROLLBACK;")
+                }
             } catch (rollbackException: Exception) {
                 e.addSuppressed(rollbackException)
             }
@@ -137,9 +148,11 @@ open class SqliteNowDatabase {
     /**
      * Closes the database connection.
      */
-    fun close() {
+    suspend fun close() {
         if (::conn.isInitialized) {
-            conn.close()
+            conn.mutex.withLock {
+                conn.ref.close()
+            }
         }
     }
 
@@ -208,5 +221,5 @@ interface DatabaseMigrations {
      * @param currentVersion The current version of the database
      * @return The new version of the database
      */
-    fun applyMigration(conn: SQLiteConnection, currentVersion: Int): Int
+    suspend fun applyMigration(conn: SafeSQLiteConnection, currentVersion: Int): Int
 }

@@ -1,6 +1,5 @@
 package dev.goquick.sqlitenow.core
 
-import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.execSQL
 import kotlinx.coroutines.test.runTest
 import kotlin.test.AfterTest
@@ -22,7 +21,7 @@ class SqliteNowDatabaseTest {
     private class TestMigrations : DatabaseMigrations {
         var lastAppliedVersion = -1
 
-        override fun applyMigration(conn: SQLiteConnection, currentVersion: Int): Int {
+        override suspend fun applyMigration(conn: SafeSQLiteConnection, currentVersion: Int): Int {
             lastAppliedVersion = currentVersion
             // For fresh databases (currentVersion == -1), return 0
             // For existing databases, increment by 1
@@ -102,7 +101,7 @@ class SqliteNowDatabaseTest {
         database.open()
 
         // Create a test table
-        database.connection().execSQL("""
+        database.connection().ref.execSQL("""
             CREATE TABLE test_table (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL
@@ -112,7 +111,7 @@ class SqliteNowDatabaseTest {
         // Execute a transaction that should commit
         val result = database.transaction {
             // Insert a row
-            database.connection().execSQL("""
+            database.connection().ref.execSQL("""
                 INSERT INTO test_table (id, name) VALUES (1, 'Test Name');
             """)
 
@@ -124,7 +123,7 @@ class SqliteNowDatabaseTest {
         assertEquals("Transaction completed", result)
 
         // Verify that the row was inserted
-        val statement = database.connection().prepare("SELECT COUNT(*) FROM test_table;")
+        val statement = database.connection().ref.prepare("SELECT COUNT(*) FROM test_table;")
         try {
             statement.step()
             val count = statement.getInt(0)
@@ -141,7 +140,7 @@ class SqliteNowDatabaseTest {
         database.open()
 
         // Create a test table
-        database.connection().execSQL("""
+        database.connection().ref.execSQL("""
             CREATE TABLE test_table (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL
@@ -152,7 +151,7 @@ class SqliteNowDatabaseTest {
         try {
             database.transaction {
                 // Insert a row
-                database.connection().execSQL("""
+                database.connection().ref.execSQL("""
                     INSERT INTO test_table (id, name) VALUES (1, 'Test Name');
                 """)
 
@@ -168,7 +167,7 @@ class SqliteNowDatabaseTest {
         }
 
         // Verify that the row was not inserted (rolled back)
-        val statement = database.connection().prepare("SELECT COUNT(*) FROM test_table;")
+        val statement = database.connection().ref.prepare("SELECT COUNT(*) FROM test_table;")
         try {
             statement.step()
             val count = statement.getInt(0)

@@ -62,6 +62,7 @@ internal class QueryCodeGenerator(
             .addFileComment("Generated query extension functions for ${namespace}.${className}")
             .addFileComment("\nDo not modify this file manually")
             .addImport("dev.goquick.sqlitenow.core.util", "jsonEncodeToSqlite")
+            .addImport("kotlinx.coroutines.sync", "withLock")
 
         // Generate bindStatementParams function first
         val bindFunction = generateBindStatementParamsFunction(namespace, statement)
@@ -240,7 +241,7 @@ internal class QueryCodeGenerator(
         // Add connection parameter
         val connectionParam = ParameterSpec.builder(
             name = "conn",
-            ClassName("androidx.sqlite", "SQLiteConnection")
+            ClassName("dev.goquick.sqlitenow.core", "SafeSQLiteConnection")
         ).build()
         fnBld.addParameter(connectionParam)
 
@@ -460,13 +461,13 @@ internal class QueryCodeGenerator(
     ) {
         val capitalizedNamespace = namespace.capitalized()
 
-        // Build the complete withContext block as a single statement
+        // Build the complete withLock block as a single statement
         val codeBuilder = StringBuilder()
-        codeBuilder.append("return run {\n")
+        codeBuilder.append("return conn.mutex.withLock {\n")
 
         // Prepare the statement and bind parameters
         codeBuilder.append("  val sql = $capitalizedNamespace.$className.SQL\n")
-        codeBuilder.append("  val statement = conn.prepare(sql)\n")
+        codeBuilder.append("  val statement = conn.ref.prepare(sql)\n")
 
         val namedParameters = getNamedParameters(statement)
         if (namedParameters.isNotEmpty()) {

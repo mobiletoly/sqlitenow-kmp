@@ -35,33 +35,37 @@ internal class MigratorCodeGenerator(
     private fun generateApplyMigrationFunction(): FunSpec {
         // Create the function builder
         val functionBuilder = FunSpec.builder("applyMigration")
-            .addModifiers(KModifier.OVERRIDE)
+            .addModifiers(KModifier.OVERRIDE, KModifier.SUSPEND)
             .addAnnotation(AnnotationSpec.builder(Suppress::class)
                 .addMember("%S", "SameReturnValue")
                 .build())
-            .addParameter("conn", ClassName("androidx.sqlite", "SQLiteConnection"))
+            .addParameter("conn", ClassName("dev.goquick.sqlitenow.core", "SafeSQLiteConnection"))
             .addParameter("currentVersion", Int::class)
             .returns(Int::class)
 
         val codeBlockBuilder = CodeBlock.builder()
 
+        // Wrap entire migration logic with a single withLock
+        codeBlockBuilder.add("return conn.mutex.withLock {\n")
+
         // Handle initial setup when currentVersion is -1
-        codeBlockBuilder.addStatement("if (currentVersion == -1) {")
-        codeBlockBuilder.addStatement("    executeAllSql(conn)")
-        codeBlockBuilder.addStatement("    return ${migrationInspector.latestVersion}")
-        codeBlockBuilder.addStatement("}")
+        codeBlockBuilder.add("    if (currentVersion == -1) {\n")
+        codeBlockBuilder.add("        executeAllSql(conn)\n")
+        codeBlockBuilder.add("        return@withLock ${migrationInspector.latestVersion}\n")
+        codeBlockBuilder.add("    }\n")
         codeBlockBuilder.add("\n")
 
         // Generate incremental migration calls for each version
         migrationInspector.sqlStatements.keys.sorted().forEach { version ->
-            codeBlockBuilder.addStatement("if (currentVersion < $version) {")
-            codeBlockBuilder.addStatement("    migrateToVersion$version(conn)")
-            codeBlockBuilder.addStatement("}")
+            codeBlockBuilder.add("    if (currentVersion < $version) {\n")
+            codeBlockBuilder.add("        migrateToVersion$version(conn)\n")
+            codeBlockBuilder.add("    }\n")
             codeBlockBuilder.add("\n")
         }
 
         // Return the latest version
-        codeBlockBuilder.addStatement("return ${migrationInspector.latestVersion}")
+        codeBlockBuilder.add("    ${migrationInspector.latestVersion}\n")
+        codeBlockBuilder.add("}\n")
 
         return functionBuilder
             .addCode(codeBlockBuilder.build())
@@ -73,7 +77,7 @@ internal class MigratorCodeGenerator(
         // Create the function builder
         val functionBuilder = FunSpec.builder("migrateToVersion$version")
             .addModifiers(KModifier.PRIVATE)
-            .addParameter("conn", ClassName("androidx.sqlite", "SQLiteConnection"))
+            .addParameter("conn", ClassName("dev.goquick.sqlitenow.core", "SafeSQLiteConnection"))
 
         // Add the function body
         val codeBlockBuilder = CodeBlock.builder()
@@ -94,14 +98,14 @@ internal class MigratorCodeGenerator(
             // Convert the SQL statement to a Kotlin string with proper formatting
             val formattedSql = translateSqliteStatementToKotlin(statement.sql)
 
-            // Add the statement to execute the SQL
+            // Add the statement to execute the SQL (no individual withLock needed)
             // Handle dollar signs in SQL by using the $$ syntax in the generated code
             if (formattedSql.contains("$")) {
                 // Use $$ syntax for SQL containing dollar signs
-                codeBlockBuilder.addStatement("conn.execSQL($$\"\"\"$formattedSql\"\"\".trimMargin())")
+                codeBlockBuilder.addStatement("conn.ref.execSQL($$\"\"\"$formattedSql\"\"\".trimMargin())")
             } else {
                 // Regular case without dollar signs
-                codeBlockBuilder.addStatement("conn.execSQL(\"\"\"$formattedSql\"\"\".trimMargin())")
+                codeBlockBuilder.addStatement("conn.ref.execSQL(\"\"\"$formattedSql\"\"\".trimMargin())")
             }
         }
     }
@@ -111,7 +115,7 @@ internal class MigratorCodeGenerator(
         // Create the function builder
         val functionBuilder = FunSpec.builder("executeAllSql")
             .addModifiers(KModifier.PRIVATE)
-            .addParameter("conn", ClassName("androidx.sqlite", "SQLiteConnection"))
+            .addParameter("conn", ClassName("dev.goquick.sqlitenow.core", "SafeSQLiteConnection"))
 
         // Add the function body
         val codeBlockBuilder = CodeBlock.builder()
@@ -161,9 +165,10 @@ internal class MigratorCodeGenerator(
         // Build the file spec
         val fileSpec = FileSpec.builder(packageName, className)
             .addType(classBuilder.build())
-            .addImport("androidx.sqlite", "SQLiteConnection")
+            .addImport("dev.goquick.sqlitenow.core", "SafeSQLiteConnection")
             .addImport("androidx.sqlite", "execSQL")
             .addImport("dev.goquick.sqlitenow.core", "DatabaseMigrations")
+            .addImport("kotlinx.coroutines.sync", "withLock")
             .build()
 
         // Write the file

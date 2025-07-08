@@ -1784,7 +1784,7 @@ class DataStructCodeGeneratorTest {
         // Verify that the execute function prepares statement and calls bindStatementParams
         assertTrue(generatedCode.contains("val sql = Person.Add.SQL"),
             "Execute function should use SQL constant")
-        assertTrue(generatedCode.contains("val statement = conn.prepare(sql)"),
+        assertTrue(generatedCode.contains("val statement = conn.ref.prepare(sql)"),
             "Execute function should prepare statement")
         assertTrue(generatedCode.contains("Person.Add.bindStatementParams("),
             "Execute function should call bindStatementParams")

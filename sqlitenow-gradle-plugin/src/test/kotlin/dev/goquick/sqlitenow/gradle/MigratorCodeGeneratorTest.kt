@@ -88,7 +88,7 @@ class MigratorCodeGeneratorTest {
 
         // Verify that the file contains the expected content
         assertTrue(fileContent.contains("class VersionBasedDatabaseMigrations"), "File should contain the class declaration")
-        assertTrue(fileContent.contains("override fun applyMigration"), "File should contain the applyMigration function")
+        assertTrue(fileContent.contains("override suspend fun applyMigration"), "File should contain the applyMigration function")
         assertTrue(fileContent.contains("private fun executeAllSql"), "File should contain the executeAllSql function")
         assertTrue(fileContent.contains("migrateToVersion1"), "File should contain migration function for version 1")
         assertTrue(fileContent.contains("CREATE TABLE test_table"), "File should contain the CREATE TABLE statement")
@@ -162,7 +162,7 @@ class MigratorCodeGeneratorTest {
         assertTrue(fileContent.contains("if (currentVersion == -1)"), "Should contain initial setup logic")
         assertTrue(fileContent.contains("if (currentVersion < 1)"), "Should contain incremental migration check for version 1")
         assertTrue(fileContent.contains("migrateToVersion1(conn)"), "Should call migration function for version 1")
-        assertTrue(fileContent.contains("return 1"), "Should return latest version")
+        assertTrue(fileContent.contains("return@withLock 1") || fileContent.contains("    1"), "Should return latest version")
     }
 
     @Test
@@ -232,6 +232,6 @@ class MigratorCodeGeneratorTest {
         assertTrue(fileContent.contains("migrateToVersion5(conn)"), "Should call migration function for version 5")
 
         // Verify latest version return
-        assertTrue(fileContent.contains("return 5"), "Should return latest version 5")
+        assertTrue(fileContent.contains("return@withLock 5") || fileContent.contains("    5"), "Should return latest version 5")
     }
 }

@@ -46,8 +46,11 @@ import dev.goquick.sqlitenow.samplekmp.db.NowSampleDatabase
 import dev.goquick.sqlitenow.samplekmp.db.Person
 import dev.goquick.sqlitenow.samplekmp.db.VersionBasedDatabaseMigrations
 import dev.goquick.sqlitenow.samplekmp.model.PersonNote
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -119,11 +122,15 @@ fun App() {
     DisposableEffect(Unit) {
         onDispose {
             // TODO .close() is here just for demo purposes. In your app you should close it in some other place
-            db.close()
+            @OptIn(DelicateCoroutinesApi::class)
+            GlobalScope.launch {
+                db.close()
+            }
         }
     }
 
     LaunchedEffect(Unit) {
+
         // TODO .open() is here just for demo purposes. In your app you should open it in some other place
         db.open()
 
@@ -146,6 +153,21 @@ fun App() {
                 // This code runs on Dispatchers.Main (UI)
                 persons = it
                 isLoading = false
+            }
+    }
+    LaunchedEffect(Unit) {
+        delay(2000L)
+        db.person
+            .selectAllByBirthdayRange(
+                Person.SelectAllByBirthdayRange.Params(
+                    startDate = LocalDate(1990, 1, 1),
+                    endDate = LocalDate(2000, 1, 1)
+                )
+            )
+            .asFlow()
+            .flowOn(Dispatchers.Main)
+            .collect {
+                println("----> Persons born between 1990 and 2000: $it")
             }
     }
 

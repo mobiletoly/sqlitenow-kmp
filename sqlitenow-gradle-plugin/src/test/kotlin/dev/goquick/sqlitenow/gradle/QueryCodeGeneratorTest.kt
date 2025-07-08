@@ -106,7 +106,7 @@ class QueryCodeGeneratorTest {
         assertTrue(deleteByIdFileContent.contains("fun Person.DeleteById.bindStatementParams"), "Should contain DeleteById.bindStatementParams extension function")
 
         // Verify function signatures with new structure
-        assertTrue(getByIdFileContent.contains("conn: SQLiteConnection"), "Should have SQLiteConnection parameter")
+        assertTrue(getByIdFileContent.contains("conn: SafeSQLiteConnection"), "Should have SafeSQLiteConnection parameter")
         assertTrue(getByIdFileContent.contains("params: Person.GetById.Params"), "Should have GetById.Params parameter")
         assertTrue(addFileContent.contains("params: Person.Add.Params"), "Should have Add.Params parameter")
         assertTrue(deleteByIdFileContent.contains("params: Person.DeleteById.Params"), "Should have DeleteById.Params parameter")
@@ -114,9 +114,9 @@ class QueryCodeGeneratorTest {
         // Verify return types with new structure
         assertTrue(getByIdFileContent.contains("List<Person.GetById.Result>"), "SELECT should return List of results")
         // For Unit return type, Kotlin doesn't require explicit declaration, so check for function without return type
-        assertTrue(addFileContent.contains("fun Person.Add.execute(conn: SQLiteConnection, params: Person.Add.Params)"),
+        assertTrue(addFileContent.contains("fun Person.Add.execute(conn: SafeSQLiteConnection, params: Person.Add.Params)"),
                   "INSERT should have Unit return type (implicit)")
-        assertTrue(deleteByIdFileContent.contains("fun Person.DeleteById.execute(conn: SQLiteConnection, params: Person.DeleteById.Params)"),
+        assertTrue(deleteByIdFileContent.contains("fun Person.DeleteById.execute(conn: SafeSQLiteConnection, params: Person.DeleteById.Params)"),
                   "DELETE should have Unit return type (implicit)")
 
         // Verify SQL statement variables (now uses SQL constants from query objects)
@@ -125,9 +125,9 @@ class QueryCodeGeneratorTest {
         assertTrue(deleteByIdFileContent.contains("val sql = Person.DeleteById.SQL"), "Should use SQL constants from query objects")
 
         // Verify statement preparation in execute functions
-        assertTrue(getByIdFileContent.contains("val statement = conn.prepare(sql)"), "Should prepare SQL statement")
-        assertTrue(addFileContent.contains("val statement = conn.prepare(sql)"), "Should prepare SQL statement")
-        assertTrue(deleteByIdFileContent.contains("val statement = conn.prepare(sql)"), "Should prepare SQL statement")
+        assertTrue(getByIdFileContent.contains("val statement = conn.ref.prepare(sql)"), "Should prepare SQL statement")
+        assertTrue(addFileContent.contains("val statement = conn.ref.prepare(sql)"), "Should prepare SQL statement")
+        assertTrue(deleteByIdFileContent.contains("val statement = conn.ref.prepare(sql)"), "Should prepare SQL statement")
 
         // Verify that execute functions call bindStatementParams
         assertTrue(getByIdFileContent.contains("Person.GetById.bindStatementParams("), "Execute should call bindStatementParams")
@@ -151,7 +151,7 @@ class QueryCodeGeneratorTest {
         assertTrue(getByIdFileContent.contains("Do not modify this file manually"), "Should contain warning comment")
 
         // Verify imports
-        assertTrue(getByIdFileContent.contains("import androidx.sqlite.SQLiteConnection"), "Should import androidx.sqlite.SQLiteConnection")
+        assertTrue(getByIdFileContent.contains("import dev.goquick.sqlitenow.core.SafeSQLiteConnection"), "Should import dev.goquick.sqlitenow.core.SafeSQLiteConnection")
 
         // Verify suspend functions
         assertTrue(getByIdFileContent.contains("public suspend fun Person.GetById.executeAsList("), "ExecuteAsList function should be suspend")
@@ -211,7 +211,7 @@ class QueryCodeGeneratorTest {
         val fileContent = userGetAllFile.readText()
 
         // Verify that extension function is generated without params parameter
-        assertTrue(fileContent.contains("suspend fun User.GetAll.executeAsList(conn: SQLiteConnection): List<User.GetAll.Result>"),
+        assertTrue(fileContent.contains("suspend fun User.GetAll.executeAsList(conn: SafeSQLiteConnection): List<User.GetAll.Result>"),
                   "Should contain GetAll.executeAsList extension function without params parameter and with suspend modifier")
         assertTrue(fileContent.contains("fun User.GetAll.bindStatementParams(statement: SQLiteStatement)"),
                   "Should contain GetAll.bindStatementParams extension function without params parameter")
@@ -500,7 +500,7 @@ class QueryCodeGeneratorTest {
         assertTrue(updateFileContent.contains("params: Person.UpdateUser.Params"), "Should have UpdateUser.Params parameter")
 
         // Verify UPDATE return type (should be Unit, implicit)
-        assertTrue(updateFileContent.contains("suspend fun Person.UpdateUser.execute(conn: SQLiteConnection, params: Person.UpdateUser.Params)"),
+        assertTrue(updateFileContent.contains("suspend fun Person.UpdateUser.execute(conn: SafeSQLiteConnection, params: Person.UpdateUser.Params)"),
                   "UPDATE should have Unit return type (implicit) and suspend modifier")
 
         // Verify UPDATE SQL execution implementation
