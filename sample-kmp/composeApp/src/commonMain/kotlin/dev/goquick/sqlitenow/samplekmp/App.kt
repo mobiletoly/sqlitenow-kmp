@@ -104,7 +104,9 @@ val db = NowSampleDatabase(
     personAddressAdapters = NowSampleDatabase.PersonAddressAdapters(
         addressTypeToSqlColumn = { it.value },
         sqlColumnToAddressType = { AddressType.from(it) },
-        sqlColumnToCreatedAt = { Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()) },
+        sqlColumnToCreatedAt = {
+            it.let { LocalDateTime.fromSqliteTimestamp(it) }
+        },
     ),
     migration = VersionBasedDatabaseMigrations()
 )

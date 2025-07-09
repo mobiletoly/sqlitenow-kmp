@@ -18,7 +18,7 @@ CREATE TABLE PersonAddress
     is_primary   INTEGER             NOT NULL DEFAULT 0,
 
     -- @@field=created_at @@propertyType=kotlinx.datetime.LocalDateTime @@adapter
-    created_at   INT                 NOT NULL DEFAULT current_timestamp,
+    created_at   TEXT                NOT NULL DEFAULT current_timestamp,
 
     FOREIGN KEY (person_id) REFERENCES Person (id) ON DELETE CASCADE
 );

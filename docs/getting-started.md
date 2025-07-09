@@ -19,8 +19,8 @@ First add SQLiteNow version to your `libs.version.toml` file
 ```toml
 [version]
 sqlite = "2.5.1"
-sqlitenow = "0.1.11"
-kotlinx-datetime = "0.6.2"
+sqlitenow = "0.1.12"
+kotlinx-datetime = "0.7.1"
 
 [libraries]
 sqlitenow-kmp = { module = "dev.goquick.sqlitenow:core", version.ref = "sqlitenow" }
