@@ -12,15 +12,15 @@ private enum class State { OUTSIDE, LINE_COMMENT, BLOCK_COMMENT, SINGLE_QUOTE, D
  * @return an ordered list of SqlSingleStatement objects containing SQL statements and their comments
  */
 internal fun parseSqlStatements(sql: String): List<SqlSingleStatement> {
-    val results       = mutableListOf<SqlSingleStatement>()
-    val topComments   = mutableListOf<String>()
+    val results = mutableListOf<SqlSingleStatement>()
+    val topComments = mutableListOf<String>()
     val innerComments = mutableListOf<String>()
     val pendingTopComments = mutableListOf<String>() // Comments between statements that belong to the next statement
 
     var stmtStart: Int? = null               // index where current statement begins
-    val commentBuf     = StringBuilder()
-    var readingStmt    = false               // whether we've seen non-comment SQL content
-    var state          = State.OUTSIDE
+    val commentBuf = StringBuilder()
+    var readingStmt = false               // whether we've seen non-comment SQL content
+    var state = State.OUTSIDE
 
     fun flushStatement(endIdx: Int) {
         val rawSql = sql.substring(stmtStart!!, endIdx)
@@ -34,7 +34,7 @@ internal fun parseSqlStatements(sql: String): List<SqlSingleStatement> {
         results += SqlSingleStatement(
             topComments.toList(),
             innerComments.toList(),
-            rawSql
+            rawSql,
         )
         topComments.clear()
         innerComments.clear()
@@ -62,21 +62,27 @@ internal fun parseSqlStatements(sql: String): List<SqlSingleStatement> {
                 }
                 // single-quoted literal
                 c == '\'' -> {
-                    if (stmtStart == null) stmtStart = i
+                    if (stmtStart == null) {
+                        stmtStart = i
+                    }
                     readingStmt = true
                     state = State.SINGLE_QUOTE
                     i++
                 }
                 // double-quoted literal/identifier
                 c == '"' -> {
-                    if (stmtStart == null) stmtStart = i
+                    if (stmtStart == null) {
+                        stmtStart = i
+                    }
                     readingStmt = true
                     state = State.DOUBLE_QUOTE
                     i++
                 }
                 // statement terminator
                 c == ';' -> {
-                    if (stmtStart == null) stmtStart = i
+                    if (stmtStart == null) {
+                        stmtStart = i
+                    }
                     // include semicolon
                     val endIdx = i + 1
                     flushStatement(endIdx)
@@ -86,14 +92,16 @@ internal fun parseSqlStatements(sql: String): List<SqlSingleStatement> {
                 c.isWhitespace() && !readingStmt -> i++
                 // normal SQL content
                 else -> {
-                    if (stmtStart == null) stmtStart = i
+                    if (stmtStart == null) {
+                        stmtStart = i
+                    }
                     readingStmt = true
                     i++
                 }
             }
 
             State.LINE_COMMENT -> if (c == '\n' || c == '\r') {
-                val comment = "--" + commentBuf.toString()
+                val comment = "--$commentBuf"
                 if (stmtStart == null) {
                     // This is a comment between statements, save it for the next statement
                     pendingTopComments += comment
@@ -112,7 +120,7 @@ internal fun parseSqlStatements(sql: String): List<SqlSingleStatement> {
             }
 
             State.BLOCK_COMMENT -> if (c == '*' && c2 == '/') {
-                val comment = "/*" + commentBuf.toString() + "*/"
+                val comment = "/*$commentBuf*/"
                 if (stmtStart == null) {
                     // This is a comment between statements, save it for the next statement
                     pendingTopComments += comment
@@ -125,23 +133,31 @@ internal fun parseSqlStatements(sql: String): List<SqlSingleStatement> {
                     innerComments += comment
                 }
                 state = State.OUTSIDE; i += 2
-            } else { commentBuf.append(c); i++ }
+            } else {
+                commentBuf.append(c); i++
+            }
 
             State.SINGLE_QUOTE -> if (c == '\'' && c2 == '\'') {
                 i += 2
             } else if (c == '\'') {
-                state = State.OUTSIDE; i++ } else { i++ }
+                state = State.OUTSIDE; i++
+            } else {
+                i++
+            }
 
             State.DOUBLE_QUOTE -> if (c == '"' && c2 == '"') {
                 i += 2
             } else if (c == '"') {
-                state = State.OUTSIDE; i++ } else { i++ }
+                state = State.OUTSIDE; i++
+            } else {
+                i++
+            }
         }
     }
 
     // unterminated line comment at EOF
     if (state == State.LINE_COMMENT) {
-        val comment = "--" + commentBuf.toString()
+        val comment = "--$commentBuf"
         if (stmtStart == null) {
             // This is a comment at the end of the file with no following statement
             // We'll add it to the last statement if there is one

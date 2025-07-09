@@ -1,6 +1,7 @@
 package dev.goquick.sqlitenow.gradle
 
 import com.squareup.kotlinpoet.*
+import dev.goquick.sqlitenow.gradle.AnnotationConstants.PROPERTY_NAME_GENERATOR
 import org.gradle.internal.extensions.stdlib.capitalized
 
 /**
@@ -145,7 +146,7 @@ class SharedResultManager {
 
             throw IllegalArgumentException(
                 "Shared result '$sharedResultName' in namespace '$namespace' has inconsistent field structure. " +
-                "All SELECT statements using the same @@sharedResult must have identical field names, types, and annotations.\n\n" +
+                "All SELECT statements using the same sharedResult must have identical field names, types, and annotations.\n\n" +
                 fieldComparison
             )
         }
@@ -212,21 +213,21 @@ class SharedResultManager {
             val newImplements = newStatement.annotations.implements ?: "null"
 
             throw IllegalArgumentException(
-                "Conflicting @@implements annotations for shared result '$sharedResultKey'.\n" +
-                "Existing: @@implements=$existingImplements\n" +
-                "New statement '${newStatement.name}': @@implements=$newImplements\n" +
-                "All SELECT statements using the same @@sharedResult must have identical @@implements annotations.\n" +
-                "Either add the missing @@implements annotation or use different @@sharedResult names."
+                "Conflicting 'implements' annotations for shared result '$sharedResultKey'.\n" +
+                "Existing: implements=$existingImplements\n" +
+                "New statement '${newStatement.name}': implements=$newImplements\n" +
+                "All SELECT statements using the same sharedResult must have identical 'implements' annotations.\n" +
+                "Either add the missing 'implements' annotation or use different sharedResult names."
             )
         }
 
         // Check if propertyNameGenerator is consistent
         if (existingSharedResult.propertyNameGenerator != newStatement.annotations.propertyNameGenerator) {
             throw IllegalArgumentException(
-                "Conflicting @@propertyNameGenerator annotations for shared result '$sharedResultKey'.\n" +
+                "Conflicting $PROPERTY_NAME_GENERATOR annotations for shared result '$sharedResultKey'.\n" +
                 "Existing: ${existingSharedResult.propertyNameGenerator}\n" +
                 "New statement '${newStatement.name}': ${newStatement.annotations.propertyNameGenerator}\n" +
-                "All SELECT statements using the same @@sharedResult must have identical @@propertyNameGenerator annotations."
+                "All SELECT statements using the same sharedResult must have identical propertyNameGenerator annotations."
             )
         }
 
@@ -259,10 +260,10 @@ class SharedResultManager {
                     val newStr = newExclude.joinToString(",")
 
                     throw IllegalArgumentException(
-                        "Conflicting @@excludeOverrideFields annotations for shared result '$sharedResultKey'.\n" +
-                        "Existing: @@excludeOverrideFields=$existingStr\n" +
-                        "New statement '${newStatement.name}': @@excludeOverrideFields=$newStr\n" +
-                        "All SELECT statements using the same @@sharedResult must have identical @@excludeOverrideFields annotations."
+                        "Conflicting 'excludeOverrideFields' annotations for shared result '$sharedResultKey'.\n" +
+                        "Existing: excludeOverrideFields=$existingStr\n" +
+                        "New statement '${newStatement.name}': excludeOverrideFields=$newStr\n" +
+                        "All SELECT statements using the same sharedResult must have identical 'excludeOverrideFields' annotations."
                     )
                 }
             }

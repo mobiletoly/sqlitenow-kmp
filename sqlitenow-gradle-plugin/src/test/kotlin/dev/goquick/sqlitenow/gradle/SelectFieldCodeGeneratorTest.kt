@@ -26,8 +26,7 @@ class SelectFieldCodeGeneratorTest {
         val annotations = FieldAnnotationOverrides(
             propertyName = null,
             propertyType = null,
-            nonNull = null,
-            nullable = null,
+            notNull = null,
             adapter = false
         )
 
@@ -63,8 +62,7 @@ class SelectFieldCodeGeneratorTest {
         val annotations = FieldAnnotationOverrides(
             propertyName = null,
             propertyType = null,
-            nonNull = null,
-            nullable = null,
+            notNull = null,
             adapter = false
         )
 
@@ -100,8 +98,7 @@ class SelectFieldCodeGeneratorTest {
         val annotations = FieldAnnotationOverrides(
             propertyName = null,
             propertyType = null,
-            nonNull = true,
-            nullable = null,
+            notNull = true,
             adapter = false
         )
 
@@ -137,8 +134,7 @@ class SelectFieldCodeGeneratorTest {
         val annotations = FieldAnnotationOverrides(
             propertyName = null,
             propertyType = null,
-            nonNull = null,
-            nullable = null,
+            notNull = null,
             adapter = false
         )
 
@@ -207,8 +203,7 @@ class SelectFieldCodeGeneratorTest {
         val annotations = FieldAnnotationOverrides(
             propertyName = null,
             propertyType = null,
-            nonNull = null,
-            nullable = null,
+            notNull = null,
             adapter = false
         )
 
@@ -309,8 +304,7 @@ class SelectFieldCodeGeneratorTest {
         val annotations = FieldAnnotationOverrides(
             propertyName = "myAddressId",
             propertyType = null,
-            nonNull = null,
-            nullable = null,
+            notNull = null,
             adapter = false
         )
 
@@ -379,8 +373,7 @@ class SelectFieldCodeGeneratorTest {
         val annotations = FieldAnnotationOverrides(
             propertyName = "fullName",
             propertyType = null,
-            nonNull = null,
-            nullable = null,
+            notNull = null,
             adapter = false
         )
 
@@ -416,8 +409,7 @@ class SelectFieldCodeGeneratorTest {
         val annotations = FieldAnnotationOverrides(
             propertyName = null,
             propertyType = "java.time.LocalDateTime",
-            nonNull = null,
-            nullable = null,
+            notNull = null,
             adapter = false
         )
 
@@ -453,8 +445,7 @@ class SelectFieldCodeGeneratorTest {
         val annotations = FieldAnnotationOverrides(
             propertyName = null,
             propertyType = null,
-            nonNull = null,
-            nullable = null,
+            notNull = null,
             adapter = false
         )
 
@@ -481,7 +472,7 @@ class SelectFieldCodeGeneratorTest {
         // Create a mock AnnotatedCreateTableStatement with @@nullable annotation
         val mockAnnotatedColumn = AnnotatedCreateTableStatement.Column(
             src = mockColumn,
-            annotations = mapOf(AnnotationConstants.NULLABLE to null) // @@nullable annotation
+            annotations = mapOf(AnnotationConstants.NOT_NULL to false) // @@nullable annotation
         )
 
         val mockAnnotatedCreateTable = AnnotatedCreateTableStatement(
@@ -523,8 +514,7 @@ class SelectFieldCodeGeneratorTest {
         val annotations = FieldAnnotationOverrides(
             propertyName = null,
             propertyType = null,
-            nonNull = null,
-            nullable = null,
+            notNull = null,
             adapter = false
         )
 
@@ -534,7 +524,7 @@ class SelectFieldCodeGeneratorTest {
             annotations = annotations
         )
 
-        // Create a mock column for the Person table with @@propertyType annotation
+        // Create a mock column for the Person table with propertyType annotation
         val mockColumn = mock(CreateTableStatement.Column::class.java)
         `when`(mockColumn.name).thenReturn("created_at")
         `when`(mockColumn.dataType).thenReturn("TEXT")
@@ -548,10 +538,10 @@ class SelectFieldCodeGeneratorTest {
         `when`(mockCreateTable.tableName).thenReturn("person")
         `when`(mockCreateTable.columns).thenReturn(listOf(mockColumn))
 
-        // Create a mock AnnotatedCreateTableStatement with @@propertyType annotation
+        // Create a mock AnnotatedCreateTableStatement with propertyType annotation
         val mockAnnotatedColumn = AnnotatedCreateTableStatement.Column(
             src = mockColumn,
-            annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "java.time.LocalDateTime") // @@propertyType=java.time.LocalDateTime annotation
+            annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "java.time.LocalDateTime")
         )
 
         val mockAnnotatedCreateTable = AnnotatedCreateTableStatement(
@@ -593,8 +583,7 @@ class SelectFieldCodeGeneratorTest {
         val annotations = FieldAnnotationOverrides(
             propertyName = null,
             propertyType = "java.time.ZonedDateTime", // This should override the CREATE TABLE annotation
-            nonNull = null,
-            nullable = null,
+            notNull = null,
             adapter = false
         )
 
@@ -604,7 +593,7 @@ class SelectFieldCodeGeneratorTest {
             annotations = annotations
         )
 
-        // Create a mock column for the Person table with @@propertyType annotation
+        // Create a mock column for the Person table with propertyType annotation
         val mockColumn = mock(CreateTableStatement.Column::class.java)
         `when`(mockColumn.name).thenReturn("created_at")
         `when`(mockColumn.dataType).thenReturn("TEXT")
@@ -618,10 +607,10 @@ class SelectFieldCodeGeneratorTest {
         `when`(mockCreateTable.tableName).thenReturn("person")
         `when`(mockCreateTable.columns).thenReturn(listOf(mockColumn))
 
-        // Create a mock AnnotatedCreateTableStatement with @@propertyType annotation
+        // Create a mock AnnotatedCreateTableStatement with propertyType annotation
         val mockAnnotatedColumn = AnnotatedCreateTableStatement.Column(
             src = mockColumn,
-            annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "java.time.LocalDateTime") // @@propertyType=java.time.LocalDateTime annotation
+            annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "java.time.LocalDateTime")
         )
 
         val mockAnnotatedCreateTable = AnnotatedCreateTableStatement(

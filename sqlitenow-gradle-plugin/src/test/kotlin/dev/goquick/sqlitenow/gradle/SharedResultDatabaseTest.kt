@@ -14,22 +14,22 @@ class SharedResultDatabaseTest {
     lateinit var tempDir: File
 
     @Test
-    @DisplayName("Test DatabaseCodeGenerator handles @@sharedResult correctly")
+    @DisplayName("Test DatabaseCodeGenerator handles sharedResult correctly")
     fun testDatabaseGeneratorWithSharedResults() {
         // Create test SQL files with shared results
         val queriesDir = File(tempDir, "queries/person")
         queriesDir.mkdirs()
 
-        // Create two queries that use the same @@sharedResult
+        // Create two queries that use the same sharedResult
         File(queriesDir, "selectAllPaginated.sql").writeText("""
-            -- @@sharedResult=All
-            -- @@field=birth_date @@adapter
+            -- @@{sharedResult=All}
+            -- @@{field=birth_date, adapter=custom}
             SELECT * FROM Person LIMIT :limit OFFSET :offset;
         """.trimIndent())
 
         File(queriesDir, "selectAllFiltered.sql").writeText("""
-            -- @@sharedResult=All
-            -- @@field=birth_date @@adapter
+            -- @@{sharedResult=All}
+            -- @@{field=birth_date, adapter=custom}
             SELECT * FROM Person WHERE active = :active;
         """.trimIndent())
 
@@ -76,7 +76,7 @@ class SharedResultDatabaseTest {
                     ),
                     AnnotatedCreateTableStatement.Column(
                         src = CreateTableStatement.Column("birth_date", "TEXT", false, false, false, false),
-                        annotations = mapOf(AnnotationConstants.ADAPTER to null)
+                        annotations = mapOf(AnnotationConstants.ADAPTER to "custom")
                     ),
                     AnnotatedCreateTableStatement.Column(
                         src = CreateTableStatement.Column("active", "INTEGER", false, false, false, false),

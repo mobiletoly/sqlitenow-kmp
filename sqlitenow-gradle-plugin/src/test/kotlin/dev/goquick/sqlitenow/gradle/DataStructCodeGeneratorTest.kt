@@ -43,6 +43,10 @@ class MockCreateTableStatementExecutor(
         // Return the exact annotated statement that was passed in
         return annotatedStatement
     }
+
+    override fun reportContext(): String {
+        return annotatedStatement.src.sql
+    }
 }
 
 // Helper function to create DataStructCodeGenerator with mock executors
@@ -78,7 +82,7 @@ class DataStructCodeGeneratorTest {
      * Creates a real DataStructCodeGenerator with actual SQL files and database connection.
      * This eliminates the need for complex mocking.
      *
-     * @param useClassName If true, adds @@name annotation to SQL files
+     * @param useClassName If true, adds 'name' annotation to SQL files
      * @param withParams If true, creates SQL with named parameters
      * @param namespace The namespace directory name (default: "user")
      */
@@ -98,16 +102,18 @@ class DataStructCodeGeneratorTest {
         val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
 
         // Create the users table
-        conn.createStatement().execute("""
+        conn.createStatement().execute(
+            """
             CREATE TABLE users (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL,
                 email TEXT NOT NULL
             )
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Create SQL file content
-        val classNameAnnotation = if (useClassName) "-- @@name=CustomClassName\n" else ""
+        val classNameAnnotation = if (useClassName) "-- @@{name=CustomClassName}\n" else ""
         val sqlContent = if (withParams) {
             "${classNameAnnotation}SELECT name FROM users WHERE id = :user_id AND email = :email;"
         } else {
@@ -181,7 +187,10 @@ class DataStructCodeGeneratorTest {
         val userQueriesContent = userQueriesFile.readText()
 
         assertTrue(userQueriesContent.contains("object User"), "User.kt should contain 'object User'")
-        assertTrue(userQueriesContent.contains("object CustomClassName"), "User.kt should contain query-specific object")
+        assertTrue(
+            userQueriesContent.contains("object CustomClassName"),
+            "User.kt should contain query-specific object"
+        )
         assertTrue(userQueriesContent.contains("const val SQL"), "User.kt should contain SQL constant")
         assertTrue(userQueriesContent.contains("data class Result"), "User.kt should contain 'data class Result'")
         assertTrue(userQueriesContent.contains("val name: String"), "User.kt should contain 'val name: String'")
@@ -234,15 +243,24 @@ class DataStructCodeGeneratorTest {
         val productQueriesContent = productQueriesFile.readText()
 
         assertTrue(userQueriesContent.contains("object User"), "User.kt should contain 'object User'")
-        assertTrue(userQueriesContent.contains("object CustomClassName"), "User.kt should contain query-specific object")
+        assertTrue(
+            userQueriesContent.contains("object CustomClassName"),
+            "User.kt should contain query-specific object"
+        )
         assertTrue(userQueriesContent.contains("const val SQL"), "User.kt should contain SQL constant")
         assertTrue(productQueriesContent.contains("object Product"), "Product.kt should contain 'object Product'")
-        assertTrue(productQueriesContent.contains("object CustomClassName"), "Product.kt should contain query-specific object")
+        assertTrue(
+            productQueriesContent.contains("object CustomClassName"),
+            "Product.kt should contain query-specific object"
+        )
         assertTrue(productQueriesContent.contains("const val SQL"), "Product.kt should contain SQL constant")
 
         // Since we didn't add parameters, the Params data class should not be present
         assertFalse(userQueriesContent.contains("data class Params"), "User.kt should not contain 'data class Params'")
-        assertFalse(productQueriesContent.contains("data class Params"), "Product.kt should not contain 'data class Params'")
+        assertFalse(
+            productQueriesContent.contains("data class Params"),
+            "Product.kt should not contain 'data class Params'"
+        )
     }
 
     @Test
@@ -263,7 +281,10 @@ class DataStructCodeGeneratorTest {
         val userQueriesContent = userQueriesFile.readText()
 
         assertTrue(userQueriesContent.contains("object User"), "User.kt should contain 'object User'")
-        assertTrue(userQueriesContent.contains("object CustomClassName"), "User.kt should contain query-specific object")
+        assertTrue(
+            userQueriesContent.contains("object CustomClassName"),
+            "User.kt should contain query-specific object"
+        )
         assertTrue(userQueriesContent.contains("const val SQL"), "User.kt should contain SQL constant")
         assertTrue(userQueriesContent.contains("data class Params"), "User.kt should contain 'data class Params'")
         assertTrue(userQueriesContent.contains("data class Result"), "User.kt should contain 'data class Result'")
@@ -313,9 +334,9 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    sharedResult = null,
+                    implements = null,
+                    excludeOverrideFields = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -379,17 +400,25 @@ class DataStructCodeGeneratorTest {
 
         // Test that parameters are mapped to correct column types using columnNames
         val createdAtType = generator.inferParameterType("createdAt", mockAnnotatedStatement)
-        assertEquals("kotlin.Long", createdAtType.toString(), "createdAt parameter should map to Long type from created_at INTEGER column")
+        assertEquals(
+            "kotlin.Long",
+            createdAtType.toString(),
+            "createdAt parameter should map to Long type from created_at INTEGER column"
+        )
 
         val firstNameType = generator.inferParameterType("firstName", mockAnnotatedStatement)
-        assertEquals("kotlin.String", firstNameType.toString(), "firstName parameter should map to String type from first_name VARCHAR column")
+        assertEquals(
+            "kotlin.String",
+            firstNameType.toString(),
+            "firstName parameter should map to String type from first_name VARCHAR column"
+        )
 
         // Clean up
         tempDir.toFile().deleteRecursively()
     }
 
     @Test
-    @DisplayName("Test INSERT statement with @@adapter annotation generates correct adapter parameters")
+    @DisplayName("Test INSERT statement with adapter annotation generates correct adapter parameters")
     fun testInsertWithAdapterAnnotation() {
         // Create a temporary directory for SQL files
         val tempDir = Files.createTempDirectory("test-sql")
@@ -399,7 +428,7 @@ class DataStructCodeGeneratorTest {
         // Create a real in-memory SQLite connection
         val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
 
-        // Create mock CREATE TABLE statements with @@adapter annotation
+        // Create mock CREATE TABLE statements with adapter annotation
         val createTableStatements = listOf(
             AnnotatedCreateTableStatement(
                 name = "Person",
@@ -420,9 +449,9 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    sharedResult = null,
+                    implements = null,
+                    excludeOverrideFields = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -435,8 +464,8 @@ class DataStructCodeGeneratorTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            AnnotationConstants.ADAPTER to null,  // @@adapter annotation
-                            AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDateTime"  // @@propertyType annotation
+                            AnnotationConstants.ADAPTER to "custom",
+                            AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDateTime"
                         )
                     )
                 )
@@ -477,7 +506,7 @@ class DataStructCodeGeneratorTest {
 
         // Create QueryCodeGenerator to test adapter parameter generation
         val queryGenerator = QueryCodeGenerator(
-            
+
             dataStructCodeGenerator = dataStructGenerator,
             packageName = "com.example.db",
             outputDir = tempDir.resolve("output").toFile()
@@ -485,15 +514,17 @@ class DataStructCodeGeneratorTest {
 
         // Test that the parameter type is correctly inferred as LocalDateTime (not Long)
         val createdAtType = dataStructGenerator.inferParameterType("createdAt", mockAnnotatedStatement)
-        assertEquals("kotlinx.datetime.LocalDateTime", createdAtType.toString(),
-            "createdAt parameter should map to LocalDateTime type due to @@propertyType annotation")
+        assertEquals(
+            "kotlinx.datetime.LocalDateTime", createdAtType.toString(),
+            "createdAt parameter should map to LocalDateTime type due to propertyType annotation"
+        )
 
         // Clean up
         tempDir.toFile().deleteRecursively()
     }
 
     @Test
-    @DisplayName("Test INSERT statement with nullable @@adapter annotation generates correct null-checking logic")
+    @DisplayName("Test INSERT statement with nullable adapter annotation generates correct null-checking logic")
     fun testInsertWithNullableAdapterAnnotation() {
         // Create a temporary directory for SQL files
         val tempDir = Files.createTempDirectory("test-sql")
@@ -508,13 +539,15 @@ class DataStructCodeGeneratorTest {
         val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
 
         // Create the Person table
-        conn.createStatement().execute("""
+        conn.createStatement().execute(
+            """
             CREATE TABLE Person (
                 created_at INTEGER NOT NULL
             )
-        """.trimIndent())
+        """.trimIndent()
+        )
 
-        // Create mock CREATE TABLE statements with nullable @@adapter annotation
+        // Create mock CREATE TABLE statements with nullable adapter annotation
         val createTableStatements = listOf(
             AnnotatedCreateTableStatement(
                 name = "Person",
@@ -535,9 +568,9 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    sharedResult = null,
+                    implements = null,
+                    excludeOverrideFields = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -550,8 +583,8 @@ class DataStructCodeGeneratorTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            AnnotationConstants.ADAPTER to null,  // @@adapter annotation
-                            AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDateTime"  // @@propertyType annotation
+                            AnnotationConstants.ADAPTER to "custom",
+                            AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDateTime"
                         )
                     )
                 )
@@ -592,7 +625,7 @@ class DataStructCodeGeneratorTest {
 
         // Create QueryCodeGenerator to test nullable adapter logic
         val queryGenerator = QueryCodeGenerator(
-            
+
             dataStructCodeGenerator = dataStructGenerator,
             packageName = "com.example.db",
             outputDir = tempDir.resolve("output").toFile()
@@ -600,8 +633,10 @@ class DataStructCodeGeneratorTest {
 
         // Test that the parameter type is correctly inferred as nullable LocalDateTime
         val createdAtType = dataStructGenerator.inferParameterType("createdAt", mockAnnotatedStatement)
-        assertEquals("kotlinx.datetime.LocalDateTime?", createdAtType.toString(),
-            "createdAt parameter should map to nullable LocalDateTime type due to @@propertyType annotation and nullable column")
+        assertEquals(
+            "kotlinx.datetime.LocalDateTime?", createdAtType.toString(),
+            "createdAt parameter should map to nullable LocalDateTime type due to propertyType annotation and nullable column"
+        )
 
         // Test that the column is detected as nullable using ColumnLookupService
         val columnLookup = ColumnLookup(createTableStatements, createViewStatements = emptyList())
@@ -628,11 +663,13 @@ class DataStructCodeGeneratorTest {
         val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
 
         // Create the Person table
-        conn.createStatement().execute("""
+        conn.createStatement().execute(
+            """
             CREATE TABLE Person (
                 last_name TEXT NOT NULL
             )
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Create mock CREATE TABLE statements with @@nullable annotation on NOT NULL column
         val createTableStatements = listOf(
@@ -655,9 +692,9 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    sharedResult = null,
+                    implements = null,
+                    excludeOverrideFields = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -670,9 +707,9 @@ class DataStructCodeGeneratorTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            AnnotationConstants.NULLABLE to null,  // @@nullable annotation overrides NOT NULL
-                            AnnotationConstants.ADAPTER to null,   // @@adapter annotation
-                            AnnotationConstants.PROPERTY_TYPE to "String"  // @@propertyType annotation
+                            AnnotationConstants.NOT_NULL to false,
+                            AnnotationConstants.ADAPTER to "custom",
+                            AnnotationConstants.PROPERTY_TYPE to "String"
                         )
                     )
                 )
@@ -714,14 +751,17 @@ class DataStructCodeGeneratorTest {
         // Test that the column is detected as nullable despite NOT NULL constraint using ColumnLookupService
         val columnLookup = ColumnLookup(createTableStatements, createViewStatements = emptyList())
         val isNullable = columnLookup.isParameterNullable(mockAnnotatedStatement, "lastName")
-        assertTrue(isNullable, "last_name column should be detected as nullable due to @@nullable annotation, even though it has NOT NULL constraint")
+        assertTrue(
+            isNullable,
+            "last_name column should be detected as nullable due to @@nullable annotation, even though it has NOT NULL constraint"
+        )
 
         // Clean up
         tempDir.toFile().deleteRecursively()
     }
 
     @Test
-    @DisplayName("Test INSERT statement with nullable @@adapter generates adapter with nullable input and return types")
+    @DisplayName("Test INSERT statement with nullable adapter generates adapter with nullable input and return types")
     fun testInsertWithNullableAdapterGeneratesNullableInputAndReturn() {
         // Create a temporary directory for SQL files
         val tempDir = Files.createTempDirectory("test-sql")
@@ -736,13 +776,15 @@ class DataStructCodeGeneratorTest {
         val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
 
         // Create the Person table
-        conn.createStatement().execute("""
+        conn.createStatement().execute(
+            """
             CREATE TABLE Person (
                 last_name TEXT NOT NULL
             )
-        """.trimIndent())
+        """.trimIndent()
+        )
 
-        // Create mock CREATE TABLE statements with nullable @@adapter annotation
+        // Create mock CREATE TABLE statements with nullable adapter annotation
         val createTableStatements = listOf(
             AnnotatedCreateTableStatement(
                 name = "Person",
@@ -763,9 +805,9 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    sharedResult = null,
+                    implements = null,
+                    excludeOverrideFields = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -778,9 +820,9 @@ class DataStructCodeGeneratorTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            AnnotationConstants.NULLABLE to null,  // @@nullable annotation overrides NOT NULL
-                            AnnotationConstants.ADAPTER to null,   // @@adapter annotation
-                            AnnotationConstants.PROPERTY_TYPE to "String"  // @@propertyType annotation
+                            AnnotationConstants.NOT_NULL to false,
+                            AnnotationConstants.ADAPTER to "custom",
+                            AnnotationConstants.PROPERTY_TYPE to "String"
                         )
                     )
                 )
@@ -821,15 +863,17 @@ class DataStructCodeGeneratorTest {
 
         // Create QueryCodeGenerator and generate the function
         val queryGenerator = QueryCodeGenerator(
-            
+
             dataStructCodeGenerator = dataStructGenerator,
             packageName = "com.example.db",
             outputDir = tempDir.resolve("output").toFile()
         )
 
         // Generate the function to test adapter parameter types
-        val function = queryGenerator.javaClass.getDeclaredMethod("generateExecuteQueryFunction",
-            String::class.java, AnnotatedExecuteStatement::class.java).apply { isAccessible = true }
+        val function = queryGenerator.javaClass.getDeclaredMethod(
+            "generateExecuteQueryFunction",
+            String::class.java, AnnotatedExecuteStatement::class.java
+        ).apply { isAccessible = true }
             .invoke(queryGenerator, "person", mockAnnotatedStatement)
 
         // The function should be generated successfully without type errors
@@ -856,13 +900,15 @@ class DataStructCodeGeneratorTest {
         val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
 
         // Create the Person table
-        conn.createStatement().execute("""
+        conn.createStatement().execute(
+            """
             CREATE TABLE Person (
                 created_at INTEGER NOT NULL
             )
-        """.trimIndent())
+        """.trimIndent()
+        )
 
-        // Create mock CREATE TABLE statements with @@adapter annotation
+        // Create mock CREATE TABLE statements with adapter annotation
         val createTableStatements = listOf(
             AnnotatedCreateTableStatement(
                 name = "Person",
@@ -883,9 +929,9 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    sharedResult = null,
+                    implements = null,
+                    excludeOverrideFields = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -898,8 +944,8 @@ class DataStructCodeGeneratorTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            AnnotationConstants.ADAPTER to null,  // @@adapter annotation
-                            AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDateTime"  // @@propertyType annotation
+                            AnnotationConstants.ADAPTER to "custom",
+                            AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDateTime"
                         )
                     )
                 )
@@ -976,9 +1022,8 @@ class DataStructCodeGeneratorTest {
                     annotations = FieldAnnotationOverrides(
                         propertyName = null,
                         propertyType = null,
-                        nonNull = null,
-                        nullable = null,
-                        adapter = true  // @@adapter annotation
+                        notNull = null,
+                        adapter = true  // adapter annotation
                     )
                 )
             )
@@ -986,19 +1031,23 @@ class DataStructCodeGeneratorTest {
 
         // Create QueryCodeGenerator to test parameter naming
         val queryGenerator = QueryCodeGenerator(
-            
+
             dataStructCodeGenerator = dataStructGenerator,
             packageName = "com.example.db",
             outputDir = tempDir.resolve("output").toFile()
         )
 
         // Generate functions to verify parameter naming
-        val insertFunction = queryGenerator.javaClass.getDeclaredMethod("generateExecuteQueryFunction",
-            String::class.java, AnnotatedExecuteStatement::class.java).apply { isAccessible = true }
+        val insertFunction = queryGenerator.javaClass.getDeclaredMethod(
+            "generateExecuteQueryFunction",
+            String::class.java, AnnotatedExecuteStatement::class.java
+        ).apply { isAccessible = true }
             .invoke(queryGenerator, "person", mockInsertAnnotatedStatement)
 
-        val selectFunction = queryGenerator.javaClass.getDeclaredMethod("generateSelectQueryFunction",
-            String::class.java, AnnotatedSelectStatement::class.java, String::class.java).apply { isAccessible = true }
+        val selectFunction = queryGenerator.javaClass.getDeclaredMethod(
+            "generateSelectQueryFunction",
+            String::class.java, AnnotatedSelectStatement::class.java, String::class.java
+        ).apply { isAccessible = true }
             .invoke(queryGenerator, "person", mockSelectStatement, "executeAsList")
 
         // The functions should be generated successfully with correct parameter names:
@@ -1025,14 +1074,16 @@ class DataStructCodeGeneratorTest {
         val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
 
         // Create the Person table
-        conn.createStatement().execute("""
+        conn.createStatement().execute(
+            """
             CREATE TABLE Person (
                 birth_date TEXT,
                 age INTEGER
             )
-        """.trimIndent())
+        """.trimIndent()
+        )
 
-        // Create mock CREATE TABLE statements with @@adapter annotation
+        // Create mock CREATE TABLE statements with adapter annotation
         val createTableStatements = listOf(
             AnnotatedCreateTableStatement(
                 name = "Person",
@@ -1053,9 +1104,9 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    sharedResult = null,
+                    implements = null,
+                    excludeOverrideFields = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -1068,7 +1119,7 @@ class DataStructCodeGeneratorTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            AnnotationConstants.ADAPTER to null,  // @@adapter annotation
+                            AnnotationConstants.ADAPTER to "custom",
                             AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDate"
                         )
                     )
@@ -1087,7 +1138,7 @@ class DataStructCodeGeneratorTest {
 
         // Create QueryCodeGenerator to test deduplication
         val queryGenerator = QueryCodeGenerator(
-            
+
             dataStructCodeGenerator = dataStructGenerator,
             packageName = "com.example.db",
             outputDir = tempDir.resolve("output").toFile()
@@ -1110,7 +1161,10 @@ class DataStructCodeGeneratorTest {
                     )
                 ),
                 namedParameters = listOf("birth_date", "birth_date", "age"),  // Duplicate birth_date
-                namedParametersToColumns = mapOf("birth_date" to AssociatedColumn.Default("birth_date"), "age" to AssociatedColumn.Default("age")),
+                namedParametersToColumns = mapOf(
+                    "birth_date" to AssociatedColumn.Default("birth_date"),
+                    "age" to AssociatedColumn.Default("age")
+                ),
                 offsetNamedParam = null,
                 limitNamedParam = null
             ),
@@ -1132,17 +1186,18 @@ class DataStructCodeGeneratorTest {
                     annotations = FieldAnnotationOverrides(
                         propertyName = null,
                         propertyType = null,
-                        nonNull = null,
-                        nullable = null,
-                        adapter = true  // @@adapter annotation
+                        notNull = null,
+                        adapter = true,
                     )
                 )
             )
         )
 
         // Generate the function - this should not fail due to duplicate parameters
-        val selectFunction = queryGenerator.javaClass.getDeclaredMethod("generateSelectQueryFunction",
-            String::class.java, AnnotatedSelectStatement::class.java, String::class.java).apply { isAccessible = true }
+        val selectFunction = queryGenerator.javaClass.getDeclaredMethod(
+            "generateSelectQueryFunction",
+            String::class.java, AnnotatedSelectStatement::class.java, String::class.java
+        ).apply { isAccessible = true }
             .invoke(queryGenerator, "person", mockSelectStatement, "executeAsList")
 
         // The function should be generated successfully without duplicate adapter parameters
@@ -1168,14 +1223,16 @@ class DataStructCodeGeneratorTest {
         val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
 
         // Create the Person table with proper schema
-        conn.createStatement().execute("""
+        conn.createStatement().execute(
+            """
             CREATE TABLE Person (
                 id INTEGER PRIMARY KEY,
                 age INTEGER NOT NULL,
                 score INTEGER NOT NULL,
                 birth_date TEXT
             )
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Create the schema statements
         val createTableStatements = listOf(
@@ -1214,9 +1271,9 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    sharedResult = null,
+                    implements = null,
+                    excludeOverrideFields = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -1312,13 +1369,17 @@ class DataStructCodeGeneratorTest {
 
         // Test parameter type inference for WITH clause parameter
         val myAgeType = dataStructGenerator.inferParameterType("myAge", mockDeleteStatement)
-        assertEquals("kotlin.Long", myAgeType.toString(),
-            "myAge parameter from WITH clause should map to Long type")
+        assertEquals(
+            "kotlin.Long", myAgeType.toString(),
+            "myAge parameter from WITH clause should map to Long type"
+        )
 
         // Test parameter type inference for DELETE clause parameter
         val myScoreType = dataStructGenerator.inferParameterType("myScore", mockDeleteStatement)
-        assertEquals("kotlin.Long", myScoreType.toString(),
-            "myScore parameter from DELETE clause should map to Long type")
+        assertEquals(
+            "kotlin.Long", myScoreType.toString(),
+            "myScore parameter from DELETE clause should map to Long type"
+        )
 
         // Test that data structure generation includes both parameters
         // This tests the generateParameterDataClass method integration
@@ -1326,14 +1387,22 @@ class DataStructCodeGeneratorTest {
         val generatedCode = generatedFileSpec.build().toString()
 
         // The generated Params class should include both myAge (from WITH) and myScore (from DELETE)
-        assertTrue(generatedCode.contains("object DeleteOlderThan"),
-            "Should generate DeleteOlderThan query object")
-        assertTrue(generatedCode.contains("data class Params"),
-            "Should generate Params data class")
-        assertTrue(generatedCode.contains("val myAge: Long"),
-            "Should include myAge parameter from WITH clause")
-        assertTrue(generatedCode.contains("val myScore: Long"),
-            "Should include myScore parameter from DELETE clause")
+        assertTrue(
+            generatedCode.contains("object DeleteOlderThan"),
+            "Should generate DeleteOlderThan query object"
+        )
+        assertTrue(
+            generatedCode.contains("data class Params"),
+            "Should generate Params data class"
+        )
+        assertTrue(
+            generatedCode.contains("val myAge: Long"),
+            "Should include myAge parameter from WITH clause"
+        )
+        assertTrue(
+            generatedCode.contains("val myScore: Long"),
+            "Should include myScore parameter from DELETE clause"
+        )
 
         // Clean up
         tempDir.toFile().deleteRecursively()
@@ -1355,12 +1424,14 @@ class DataStructCodeGeneratorTest {
         val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
 
         // Create the Person table with nullable age column
-        conn.createStatement().execute("""
+        conn.createStatement().execute(
+            """
             CREATE TABLE Person (
                 id INTEGER PRIMARY KEY,
                 age INTEGER  -- Note: nullable (no NOT NULL constraint)
             )
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Create the schema statements with nullable age column
         val createTableStatements = listOf(
@@ -1391,9 +1462,9 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    sharedResult = null,
+                    implements = null,
+                    excludeOverrideFields = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -1478,8 +1549,10 @@ class DataStructCodeGeneratorTest {
 
         // Test parameter type inference - should be nullable Long
         val myAgeType = dataStructGenerator.inferParameterType("myAge", mockDeleteStatement)
-        assertEquals("kotlin.Long?", myAgeType.toString(),
-            "myAge parameter should be nullable Long due to nullable age column")
+        assertEquals(
+            "kotlin.Long?", myAgeType.toString(),
+            "myAge parameter should be nullable Long due to nullable age column"
+        )
 
         // Clean up
         tempDir.toFile().deleteRecursively()
@@ -1501,14 +1574,16 @@ class DataStructCodeGeneratorTest {
         val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
 
         // Create the Person table
-        conn.createStatement().execute("""
+        conn.createStatement().execute(
+            """
             CREATE TABLE Person (
                 birth_date TEXT,
                 age INTEGER
             )
-        """.trimIndent())
+        """.trimIndent()
+        )
 
-        // Create mock CREATE TABLE statements with @@adapter annotation
+        // Create mock CREATE TABLE statements with adapter annotation
         val createTableStatements = listOf(
             AnnotatedCreateTableStatement(
                 name = "Person",
@@ -1529,9 +1604,9 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    sharedResult = null,
+                    implements = null,
+                    excludeOverrideFields = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -1544,7 +1619,7 @@ class DataStructCodeGeneratorTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            AnnotationConstants.ADAPTER to null,  // @@adapter annotation
+                            AnnotationConstants.ADAPTER to "custom",
                             AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDate"
                         )
                     )
@@ -1563,7 +1638,7 @@ class DataStructCodeGeneratorTest {
 
         // Create QueryCodeGenerator to test binding deduplication
         val queryGenerator = QueryCodeGenerator(
-            
+
             dataStructCodeGenerator = dataStructGenerator,
             packageName = "com.example.db",
             outputDir = tempDir.resolve("output").toFile()
@@ -1585,7 +1660,10 @@ class DataStructCodeGeneratorTest {
                     )
                 ),
                 namedParameters = listOf("birth_date", "birth_date", "age"),  // Duplicate birth_date
-                namedParametersToColumns = mapOf("birth_date" to AssociatedColumn.Default("birth_date"), "age" to AssociatedColumn.Default("age")),
+                namedParametersToColumns = mapOf(
+                    "birth_date" to AssociatedColumn.Default("birth_date"),
+                    "age" to AssociatedColumn.Default("age")
+                ),
                 offsetNamedParam = null,
                 limitNamedParam = null
             ),
@@ -1607,17 +1685,18 @@ class DataStructCodeGeneratorTest {
                     annotations = FieldAnnotationOverrides(
                         propertyName = null,
                         propertyType = null,
-                        nonNull = null,
-                        nullable = null,
-                        adapter = true  // @@adapter annotation
+                        notNull = null,
+                        adapter = true,
                     )
                 )
             )
         )
 
         // Generate the function - this should not fail due to duplicate binding variables
-        val selectFunction = queryGenerator.javaClass.getDeclaredMethod("generateSelectQueryFunction",
-            String::class.java, AnnotatedSelectStatement::class.java, String::class.java).apply { isAccessible = true }
+        val selectFunction = queryGenerator.javaClass.getDeclaredMethod(
+            "generateSelectQueryFunction",
+            String::class.java, AnnotatedSelectStatement::class.java, String::class.java
+        ).apply { isAccessible = true }
             .invoke(queryGenerator, "person", mockSelectStatement, "executeAsList")
 
         // The function should be generated successfully without duplicate binding variables
@@ -1643,13 +1722,15 @@ class DataStructCodeGeneratorTest {
         val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
 
         // Create the Person table with mixed nullable/non-nullable columns
-        conn.createStatement().execute("""
+        conn.createStatement().execute(
+            """
             CREATE TABLE Person (
                 email TEXT NOT NULL,
                 phone TEXT,
                 birth_date TEXT
             )
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Create mock CREATE TABLE statements matching the schema
         val createTableStatements = listOf(
@@ -1688,9 +1769,9 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    sharedResult = null,
+                    implements = null,
+                    excludeOverrideFields = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -1768,32 +1849,44 @@ class DataStructCodeGeneratorTest {
 
         // Create QueryCodeGenerator to test null-checking logic
         val queryGenerator = QueryCodeGenerator(
-            
+
             dataStructCodeGenerator = dataStructGenerator,
             packageName = "com.example.db",
             outputDir = tempDir.resolve("output").toFile()
         )
 
         // Generate the function and check the generated code
-        val function = queryGenerator.javaClass.getDeclaredMethod("generateExecuteQueryFunction",
-            String::class.java, AnnotatedExecuteStatement::class.java).apply { isAccessible = true }
+        val function = queryGenerator.javaClass.getDeclaredMethod(
+            "generateExecuteQueryFunction",
+            String::class.java, AnnotatedExecuteStatement::class.java
+        ).apply { isAccessible = true }
             .invoke(queryGenerator, "person", mockAnnotatedStatement) as FunSpec
 
         val generatedCode = function.toString()
 
         // Verify that the execute function prepares statement and calls bindStatementParams
-        assertTrue(generatedCode.contains("val sql = Person.Add.SQL"),
-            "Execute function should use SQL constant")
-        assertTrue(generatedCode.contains("val statement = conn.ref.prepare(sql)"),
-            "Execute function should prepare statement")
-        assertTrue(generatedCode.contains("Person.Add.bindStatementParams("),
-            "Execute function should call bindStatementParams")
+        assertTrue(
+            generatedCode.contains("val sql = Person.Add.SQL"),
+            "Execute function should use SQL constant"
+        )
+        assertTrue(
+            generatedCode.contains("val statement = conn.ref.prepare(sql)"),
+            "Execute function should prepare statement"
+        )
+        assertTrue(
+            generatedCode.contains("Person.Add.bindStatementParams("),
+            "Execute function should call bindStatementParams"
+        )
 
         // Verify that execute function uses the prepared statement
-        assertTrue(generatedCode.contains("statement.use { statement ->"),
-            "Execute function should use the prepared statement")
-        assertTrue(generatedCode.contains("statement.step()"),
-            "Execute function should call step() on the prepared statement")
+        assertTrue(
+            generatedCode.contains("statement.use { statement ->"),
+            "Execute function should use the prepared statement"
+        )
+        assertTrue(
+            generatedCode.contains("statement.step()"),
+            "Execute function should call step() on the prepared statement"
+        )
 
         // Clean up
         tempDir.toFile().deleteRecursively()
@@ -1815,13 +1908,15 @@ class DataStructCodeGeneratorTest {
         val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
 
         // Create the Person table
-        conn.createStatement().execute("""
+        conn.createStatement().execute(
+            """
             CREATE TABLE Person (
                 birth_date TEXT
             )
-        """.trimIndent())
+        """.trimIndent()
+        )
 
-        // Create mock CREATE TABLE statements with @@propertyType annotation
+        // Create mock CREATE TABLE statements with propertyType annotation
         val createTableStatements = listOf(
             AnnotatedCreateTableStatement(
                 name = "Person",
@@ -1842,9 +1937,9 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    sharedResult = null,
+                    implements = null,
+                    excludeOverrideFields = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -1858,7 +1953,7 @@ class DataStructCodeGeneratorTest {
                         ),
                         annotations = mapOf(
                             AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDate",
-                            AnnotationConstants.ADAPTER to null
+                            AnnotationConstants.ADAPTER to "custom"
                         )
                     )
                 )
@@ -1890,7 +1985,10 @@ class DataStructCodeGeneratorTest {
                     )
                 ),
                 namedParameters = listOf("start", "end"),
-                namedParametersToColumns = mapOf("start" to AssociatedColumn.Default("birth_date"), "end" to AssociatedColumn.Default("birth_date")),
+                namedParametersToColumns = mapOf(
+                    "start" to AssociatedColumn.Default("birth_date"),
+                    "end" to AssociatedColumn.Default("birth_date")
+                ),
                 offsetNamedParam = null,
                 limitNamedParam = null
             ),
@@ -1912,8 +2010,7 @@ class DataStructCodeGeneratorTest {
                     annotations = FieldAnnotationOverrides(
                         propertyName = null,
                         propertyType = null,
-                        nonNull = null,
-                        nullable = null,
+                        notNull = null,
                         adapter = true
                     )
                 )
@@ -1924,13 +2021,17 @@ class DataStructCodeGeneratorTest {
 
         // start parameter should map to LocalDate? (nullable because column allows NULL)
         val startType = dataStructGenerator.inferParameterType("start", mockSelectStatement)
-        assertEquals("kotlinx.datetime.LocalDate?", startType.toString(),
-            "start parameter should map to nullable LocalDate type due to @@propertyType annotation and nullable column")
+        assertEquals(
+            "kotlinx.datetime.LocalDate?", startType.toString(),
+            "start parameter should map to nullable LocalDate type due to propertyType annotation and nullable column"
+        )
 
         // end parameter should also map to LocalDate? (same column)
         val endType = dataStructGenerator.inferParameterType("end", mockSelectStatement)
-        assertEquals("kotlinx.datetime.LocalDate?", endType.toString(),
-            "end parameter should map to nullable LocalDate type due to @@propertyType annotation and nullable column")
+        assertEquals(
+            "kotlinx.datetime.LocalDate?", endType.toString(),
+            "end parameter should map to nullable LocalDate type due to propertyType annotation and nullable column"
+        )
 
         // Clean up
         tempDir.toFile().deleteRecursively()
@@ -1952,12 +2053,14 @@ class DataStructCodeGeneratorTest {
         val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
 
         // Create the Person table
-        conn.createStatement().execute("""
+        conn.createStatement().execute(
+            """
             CREATE TABLE Person (
                 last_name TEXT NOT NULL,
                 age INTEGER
             )
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Create mock CREATE TABLE statements
         val createTableStatements = listOf(
@@ -1988,9 +2091,9 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    sharedResult = null,
+                    implements = null,
+                    excludeOverrideFields = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -2075,8 +2178,7 @@ class DataStructCodeGeneratorTest {
                     annotations = FieldAnnotationOverrides(
                         propertyName = null,
                         propertyType = null,
-                        nonNull = null,
-                        nullable = null,
+                        notNull = null,
                         adapter = false
                     )
                 ),
@@ -2090,8 +2192,7 @@ class DataStructCodeGeneratorTest {
                     annotations = FieldAnnotationOverrides(
                         propertyName = null,
                         propertyType = null,
-                        nonNull = null,
-                        nullable = null,
+                        notNull = null,
                         adapter = false
                     )
                 )
@@ -2102,13 +2203,17 @@ class DataStructCodeGeneratorTest {
 
         // setOfLastNames parameter should map to Collection<String> (non-nullable because column is NOT NULL)
         val lastNamesType = dataStructGenerator.inferParameterType("setOfLastNames", mockSelectStatement)
-        assertEquals("kotlin.collections.Collection<kotlin.String>", lastNamesType.toString(),
-            "setOfLastNames parameter should map to Collection<String> for IN clause")
+        assertEquals(
+            "kotlin.collections.Collection<kotlin.String>", lastNamesType.toString(),
+            "setOfLastNames parameter should map to Collection<String> for IN clause"
+        )
 
         // setOfAges parameter should map to Collection<Long?> (nullable because column allows NULL)
         val agesType = dataStructGenerator.inferParameterType("setOfAges", mockSelectStatement)
-        assertEquals("kotlin.collections.Collection<kotlin.Long?>", agesType.toString(),
-            "setOfAges parameter should map to Collection<Long?> for IN clause")
+        assertEquals(
+            "kotlin.collections.Collection<kotlin.Long?>", agesType.toString(),
+            "setOfAges parameter should map to Collection<Long?> for IN clause"
+        )
 
         // Clean up
         tempDir.toFile().deleteRecursively()
@@ -2130,13 +2235,15 @@ class DataStructCodeGeneratorTest {
         val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
 
         // Create the Person table
-        conn.createStatement().execute("""
+        conn.createStatement().execute(
+            """
             CREATE TABLE Person (
                 birth_date TEXT
             )
-        """.trimIndent())
+        """.trimIndent()
+        )
 
-        // Create mock CREATE TABLE statements with @@propertyType annotation
+        // Create mock CREATE TABLE statements with propertyType annotation
         val createTableStatements = listOf(
             AnnotatedCreateTableStatement(
                 name = "Person",
@@ -2157,9 +2264,9 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    sharedResult = null,
+                    implements = null,
+                    excludeOverrideFields = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -2228,8 +2335,7 @@ class DataStructCodeGeneratorTest {
                     annotations = FieldAnnotationOverrides(
                         propertyName = null,
                         propertyType = null,
-                        nonNull = null,
-                        nullable = null,
+                        notNull = null,
                         adapter = false
                     )
                 )
@@ -2238,8 +2344,10 @@ class DataStructCodeGeneratorTest {
 
         // Test that IN clause parameter with custom type gets Collection<CustomType?>
         val birthDatesType = dataStructGenerator.inferParameterType("setOfBirthDates", mockSelectStatement)
-        assertEquals("kotlin.collections.Collection<kotlinx.datetime.LocalDate?>", birthDatesType.toString(),
-            "setOfBirthDates parameter should map to Collection<LocalDate?> for IN clause with custom property type")
+        assertEquals(
+            "kotlin.collections.Collection<kotlinx.datetime.LocalDate?>", birthDatesType.toString(),
+            "setOfBirthDates parameter should map to Collection<LocalDate?> for IN clause with custom property type"
+        )
 
         // Clean up
         tempDir.toFile().deleteRecursively()
@@ -2252,7 +2360,8 @@ class DataStructCodeGeneratorTest {
         val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
 
         // Create the Person table with various column types and constraints
-        conn.createStatement().execute("""
+        conn.createStatement().execute(
+            """
             CREATE TABLE Person (
                 email TEXT NOT NULL,
                 first_name TEXT NOT NULL,
@@ -2263,7 +2372,8 @@ class DataStructCodeGeneratorTest {
                 created_at TEXT NOT NULL DEFAULT current_timestamp,
                 notes TEXT
             )
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Create mock CREATE TABLE statements with various annotations
         val createTableStatements = listOf(
@@ -2342,9 +2452,9 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    sharedResult = null,
+                    implements = null,
+                    excludeOverrideFields = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -2463,7 +2573,15 @@ class DataStructCodeGeneratorTest {
             src = InsertStatement(
                 sql = "INSERT INTO Person (email, first_name, last_name, age, phone, birth_date, created_at, notes) VALUES (?, ?, ?, 1234, ?, ?, ?, ?)",
                 table = "Person",
-                namedParameters = listOf("email", "firstName", "lastName", "phone", "birthDate", "myCreatedAt", "notes"),
+                namedParameters = listOf(
+                    "email",
+                    "firstName",
+                    "lastName",
+                    "phone",
+                    "birthDate",
+                    "myCreatedAt",
+                    "notes"
+                ),
                 withSelectStatements = emptyList(),
                 columnNamesAssociatedWithNamedParameters = mapOf(
                     "email" to "email",
@@ -2491,8 +2609,10 @@ class DataStructCodeGeneratorTest {
 
         // Test that email parameter gets correct type (non-nullable string)
         val emailType = dataStructGenerator.inferParameterType("email", mockInsertStatement)
-        assertEquals("kotlin.String", emailType.toString(),
-            "email parameter should map to non-nullable String")
+        assertEquals(
+            "kotlin.String", emailType.toString(),
+            "email parameter should map to non-nullable String"
+        )
 
         // Test that the parameter type inference works for INSERT statements
         // Note: The exact column mapping might not be perfect yet, but we're testing that:
@@ -2501,20 +2621,28 @@ class DataStructCodeGeneratorTest {
         // 3. Mixed parameters and literals are handled correctly
 
         val phoneType = dataStructGenerator.inferParameterType("phone", mockInsertStatement)
-        assertTrue(phoneType.toString().isNotEmpty(),
-            "phone parameter should get some type (actual: ${phoneType})")
+        assertTrue(
+            phoneType.toString().isNotEmpty(),
+            "phone parameter should get some type (actual: ${phoneType})"
+        )
 
         val birthDateType = dataStructGenerator.inferParameterType("birthDate", mockInsertStatement)
-        assertTrue(birthDateType.toString().contains("?"),
-            "birthDate parameter should be nullable (actual: ${birthDateType})")
+        assertTrue(
+            birthDateType.toString().contains("?"),
+            "birthDate parameter should be nullable (actual: ${birthDateType})"
+        )
 
         val firstNameType = dataStructGenerator.inferParameterType("firstName", mockInsertStatement)
-        assertTrue(firstNameType.toString().isNotEmpty(),
-            "firstName parameter should get some type (actual: ${firstNameType})")
+        assertTrue(
+            firstNameType.toString().isNotEmpty(),
+            "firstName parameter should get some type (actual: ${firstNameType})"
+        )
 
         val notesType = dataStructGenerator.inferParameterType("notes", mockInsertStatement)
-        assertTrue(notesType.toString().isNotEmpty(),
-            "notes parameter should get some type (actual: ${notesType})")
+        assertTrue(
+            notesType.toString().isNotEmpty(),
+            "notes parameter should get some type (actual: ${notesType})"
+        )
 
         // The key test: verify that only named parameters are processed
         // (literal values like age = 1234 should not be included in parameter inference)
@@ -2536,14 +2664,16 @@ class DataStructCodeGeneratorTest {
         val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
 
         // Create the Person table
-        conn.createStatement().execute("""
+        conn.createStatement().execute(
+            """
             CREATE TABLE Person (
                 first_name TEXT NOT NULL,
                 last_name TEXT NOT NULL,
                 age INTEGER,
                 created_at TEXT NOT NULL
             )
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Create mock CREATE TABLE statements
         val createTableStatements = listOf(
@@ -2590,9 +2720,9 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    sharedResult = null,
+                    implements = null,
+                    excludeOverrideFields = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -2713,8 +2843,10 @@ class DataStructCodeGeneratorTest {
 
         // Test that regular INSERT parameters still work correctly
         val createdAtType = dataStructGenerator.inferParameterType("createdAt", mockInsertStatement)
-        assertEquals("kotlinx.datetime.LocalDateTime", createdAtType.toString(),
-            "createdAt parameter should map to LocalDateTime from @@propertyType annotation")
+        assertEquals(
+            "kotlinx.datetime.LocalDateTime", createdAtType.toString(),
+            "createdAt parameter should map to LocalDateTime from propertyType annotation"
+        )
 
         // The key test: WITH clause fields should NOT be included as parameters
         // Only the named parameters from the SQL should be included:
@@ -2733,7 +2865,8 @@ class DataStructCodeGeneratorTest {
         val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
 
         // Create the Person table
-        conn.createStatement().execute("""
+        conn.createStatement().execute(
+            """
             CREATE TABLE Person (
                 id INTEGER PRIMARY KEY,
                 age INTEGER NOT NULL,
@@ -2741,7 +2874,8 @@ class DataStructCodeGeneratorTest {
                 last_name TEXT NOT NULL,
                 created_at TEXT NOT NULL
             )
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Create mock CREATE TABLE statements
         val createTableStatements = listOf(
@@ -2796,9 +2930,9 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    sharedResult = null,
+                    implements = null,
+                    excludeOverrideFields = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -2922,17 +3056,23 @@ class DataStructCodeGeneratorTest {
 
         // Test that WITH clause named parameters are properly extracted and typed
         val mySelectAgeType = dataStructGenerator.inferParameterType("mySelectAge", mockInsertStatement)
-        assertEquals("kotlin.Long", mySelectAgeType.toString(),
-            "mySelectAge parameter should map to Long (INTEGER type from age column)")
+        assertEquals(
+            "kotlin.Long", mySelectAgeType.toString(),
+            "mySelectAge parameter should map to Long (INTEGER type from age column)"
+        )
 
         // Test that regular INSERT parameters still work correctly
         val firstNameType = dataStructGenerator.inferParameterType("firstName", mockInsertStatement)
-        assertEquals("kotlin.String", firstNameType.toString(),
-            "firstName parameter should map to non-nullable String")
+        assertEquals(
+            "kotlin.String", firstNameType.toString(),
+            "firstName parameter should map to non-nullable String"
+        )
 
         val createdAtType = dataStructGenerator.inferParameterType("createdAt", mockInsertStatement)
-        assertEquals("kotlinx.datetime.LocalDateTime", createdAtType.toString(),
-            "createdAt parameter should map to LocalDateTime from @@propertyType annotation")
+        assertEquals(
+            "kotlinx.datetime.LocalDateTime", createdAtType.toString(),
+            "createdAt parameter should map to LocalDateTime from propertyType annotation"
+        )
 
         // Test that the parameter extraction includes both WITH clause and INSERT parameters
         // This verifies that the allNamedParameters collection works correctly
@@ -2941,8 +3081,10 @@ class DataStructCodeGeneratorTest {
         allParams.addAll(withSelectStatement.namedParameters)     // WITH clause parameters
 
         val expectedParams = setOf("firstName", "lastName", "createdAt", "mySelectAge")
-        assertEquals(expectedParams, allParams,
-            "Should include both INSERT parameters and WITH clause parameters")
+        assertEquals(
+            expectedParams, allParams,
+            "Should include both INSERT parameters and WITH clause parameters"
+        )
 
         // Clean up
         tempDir.toFile().deleteRecursively()
@@ -2955,7 +3097,8 @@ class DataStructCodeGeneratorTest {
         val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
 
         // Create the Person table matching your schema
-        conn.createStatement().execute("""
+        conn.createStatement().execute(
+            """
             CREATE TABLE Person (
                 email TEXT NOT NULL,
                 first_name TEXT NOT NULL,
@@ -2966,7 +3109,8 @@ class DataStructCodeGeneratorTest {
                 created_at TEXT NOT NULL DEFAULT current_timestamp,
                 notes TEXT
             )
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Create mock CREATE TABLE statements with annotations matching your setup
         val createTableStatements = listOf(
@@ -2976,26 +3120,160 @@ class DataStructCodeGeneratorTest {
                     sql = "",
                     tableName = "Person",
                     columns = listOf(
-                        CreateTableStatement.Column(name = "email", dataType = "TEXT", notNull = true, primaryKey = false, autoIncrement = false, unique = false),
-                        CreateTableStatement.Column(name = "first_name", dataType = "TEXT", notNull = true, primaryKey = false, autoIncrement = false, unique = false),
-                        CreateTableStatement.Column(name = "last_name", dataType = "TEXT", notNull = false, primaryKey = false, autoIncrement = false, unique = false),
-                        CreateTableStatement.Column(name = "age", dataType = "INTEGER", notNull = true, primaryKey = false, autoIncrement = false, unique = false),
-                        CreateTableStatement.Column(name = "phone", dataType = "TEXT", notNull = false, primaryKey = false, autoIncrement = false, unique = false),
-                        CreateTableStatement.Column(name = "birth_date", dataType = "TEXT", notNull = false, primaryKey = false, autoIncrement = false, unique = false),
-                        CreateTableStatement.Column(name = "created_at", dataType = "TEXT", notNull = true, primaryKey = false, autoIncrement = false, unique = false),
-                        CreateTableStatement.Column(name = "notes", dataType = "TEXT", notNull = false, primaryKey = false, autoIncrement = false, unique = false)
+                        CreateTableStatement.Column(
+                            name = "email",
+                            dataType = "TEXT",
+                            notNull = true,
+                            primaryKey = false,
+                            autoIncrement = false,
+                            unique = false
+                        ),
+                        CreateTableStatement.Column(
+                            name = "first_name",
+                            dataType = "TEXT",
+                            notNull = true,
+                            primaryKey = false,
+                            autoIncrement = false,
+                            unique = false
+                        ),
+                        CreateTableStatement.Column(
+                            name = "last_name",
+                            dataType = "TEXT",
+                            notNull = false,
+                            primaryKey = false,
+                            autoIncrement = false,
+                            unique = false
+                        ),
+                        CreateTableStatement.Column(
+                            name = "age",
+                            dataType = "INTEGER",
+                            notNull = true,
+                            primaryKey = false,
+                            autoIncrement = false,
+                            unique = false
+                        ),
+                        CreateTableStatement.Column(
+                            name = "phone",
+                            dataType = "TEXT",
+                            notNull = false,
+                            primaryKey = false,
+                            autoIncrement = false,
+                            unique = false
+                        ),
+                        CreateTableStatement.Column(
+                            name = "birth_date",
+                            dataType = "TEXT",
+                            notNull = false,
+                            primaryKey = false,
+                            autoIncrement = false,
+                            unique = false
+                        ),
+                        CreateTableStatement.Column(
+                            name = "created_at",
+                            dataType = "TEXT",
+                            notNull = true,
+                            primaryKey = false,
+                            autoIncrement = false,
+                            unique = false
+                        ),
+                        CreateTableStatement.Column(
+                            name = "notes",
+                            dataType = "TEXT",
+                            notNull = false,
+                            primaryKey = false,
+                            autoIncrement = false,
+                            unique = false
+                        )
                     )
                 ),
-                annotations = StatementAnnotationOverrides(name = null, propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE, sharedResult = null, implements = null, excludeOverrideFields = null),
+                annotations = StatementAnnotationOverrides(
+                    name = null,
+                    propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
+                    sharedResult = null,
+                    implements = null,
+                    excludeOverrideFields = null
+                ),
                 columns = listOf(
-                    AnnotatedCreateTableStatement.Column(src = CreateTableStatement.Column(name = "email", dataType = "TEXT", notNull = true, primaryKey = false, autoIncrement = false, unique = false), annotations = emptyMap()),
-                    AnnotatedCreateTableStatement.Column(src = CreateTableStatement.Column(name = "first_name", dataType = "TEXT", notNull = true, primaryKey = false, autoIncrement = false, unique = false), annotations = emptyMap()),
-                    AnnotatedCreateTableStatement.Column(src = CreateTableStatement.Column(name = "last_name", dataType = "TEXT", notNull = false, primaryKey = false, autoIncrement = false, unique = false), annotations = emptyMap()),
-                    AnnotatedCreateTableStatement.Column(src = CreateTableStatement.Column(name = "age", dataType = "INTEGER", notNull = true, primaryKey = false, autoIncrement = false, unique = false), annotations = emptyMap()),
-                    AnnotatedCreateTableStatement.Column(src = CreateTableStatement.Column(name = "phone", dataType = "TEXT", notNull = false, primaryKey = false, autoIncrement = false, unique = false), annotations = emptyMap()),
-                    AnnotatedCreateTableStatement.Column(src = CreateTableStatement.Column(name = "birth_date", dataType = "TEXT", notNull = false, primaryKey = false, autoIncrement = false, unique = false), annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDate")),
-                    AnnotatedCreateTableStatement.Column(src = CreateTableStatement.Column(name = "created_at", dataType = "TEXT", notNull = true, primaryKey = false, autoIncrement = false, unique = false), annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDateTime")),
-                    AnnotatedCreateTableStatement.Column(src = CreateTableStatement.Column(name = "notes", dataType = "TEXT", notNull = false, primaryKey = false, autoIncrement = false, unique = false), annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "PersonNote"))
+                    AnnotatedCreateTableStatement.Column(
+                        src = CreateTableStatement.Column(
+                            name = "email",
+                            dataType = "TEXT",
+                            notNull = true,
+                            primaryKey = false,
+                            autoIncrement = false,
+                            unique = false
+                        ), annotations = emptyMap()
+                    ),
+                    AnnotatedCreateTableStatement.Column(
+                        src = CreateTableStatement.Column(
+                            name = "first_name",
+                            dataType = "TEXT",
+                            notNull = true,
+                            primaryKey = false,
+                            autoIncrement = false,
+                            unique = false
+                        ), annotations = emptyMap()
+                    ),
+                    AnnotatedCreateTableStatement.Column(
+                        src = CreateTableStatement.Column(
+                            name = "last_name",
+                            dataType = "TEXT",
+                            notNull = false,
+                            primaryKey = false,
+                            autoIncrement = false,
+                            unique = false
+                        ), annotations = emptyMap()
+                    ),
+                    AnnotatedCreateTableStatement.Column(
+                        src = CreateTableStatement.Column(
+                            name = "age",
+                            dataType = "INTEGER",
+                            notNull = true,
+                            primaryKey = false,
+                            autoIncrement = false,
+                            unique = false
+                        ), annotations = emptyMap()
+                    ),
+                    AnnotatedCreateTableStatement.Column(
+                        src = CreateTableStatement.Column(
+                            name = "phone",
+                            dataType = "TEXT",
+                            notNull = false,
+                            primaryKey = false,
+                            autoIncrement = false,
+                            unique = false
+                        ), annotations = emptyMap()
+                    ),
+                    AnnotatedCreateTableStatement.Column(
+                        src = CreateTableStatement.Column(
+                            name = "birth_date",
+                            dataType = "TEXT",
+                            notNull = false,
+                            primaryKey = false,
+                            autoIncrement = false,
+                            unique = false
+                        ), annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDate")
+                    ),
+                    AnnotatedCreateTableStatement.Column(
+                        src = CreateTableStatement.Column(
+                            name = "created_at",
+                            dataType = "TEXT",
+                            notNull = true,
+                            primaryKey = false,
+                            autoIncrement = false,
+                            unique = false
+                        ), annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDateTime")
+                    ),
+                    AnnotatedCreateTableStatement.Column(
+                        src = CreateTableStatement.Column(
+                            name = "notes",
+                            dataType = "TEXT",
+                            notNull = false,
+                            primaryKey = false,
+                            autoIncrement = false,
+                            unique = false
+                        ), annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "PersonNote")
+                    )
                 )
             )
         )
@@ -3020,7 +3298,15 @@ class DataStructCodeGeneratorTest {
             src = InsertStatement(
                 sql = "INSERT INTO Person (email, first_name, last_name, age, phone, birth_date, created_at, notes) VALUES (?, ?, ?, 1234, '000-555-777', ?, ?, ?)",
                 table = "Person",
-                namedParameters = listOf("mySelectAge", "email", "firstName", "lastName", "birthDate", "myCreatedAt", "notes"),
+                namedParameters = listOf(
+                    "mySelectAge",
+                    "email",
+                    "firstName",
+                    "lastName",
+                    "birthDate",
+                    "myCreatedAt",
+                    "notes"
+                ),
                 withSelectStatements = emptyList(),
                 columnNamesAssociatedWithNamedParameters = mapOf(
                     "email" to "email",
@@ -3058,10 +3344,18 @@ class DataStructCodeGeneratorTest {
         assertEquals("kotlinx.datetime.LocalDate?", birthDateType.toString(), "birthDate should map to LocalDate?")
 
         val createdAtType = dataStructGenerator.inferParameterType("myCreatedAt", mockInsertStatement)
-        assertEquals("kotlinx.datetime.LocalDateTime", createdAtType.toString(), "myCreatedAt should map to LocalDateTime")
+        assertEquals(
+            "kotlinx.datetime.LocalDateTime",
+            createdAtType.toString(),
+            "myCreatedAt should map to LocalDateTime"
+        )
 
         val notesType = dataStructGenerator.inferParameterType("notes", mockInsertStatement)
-        assertEquals("com.example.db.PersonNote?", notesType.toString(), "notes should map to com.example.db.PersonNote?")
+        assertEquals(
+            "com.example.db.PersonNote?",
+            notesType.toString(),
+            "notes should map to com.example.db.PersonNote?"
+        )
 
         // Clean up
         tempDir.toFile().deleteRecursively()
@@ -3083,13 +3377,15 @@ class DataStructCodeGeneratorTest {
         val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
 
         // Create the Person table
-        conn.createStatement().execute("""
+        conn.createStatement().execute(
+            """
             CREATE TABLE Person (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL,
                 age INTEGER
             )
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Create mock CREATE TABLE statements
         val createTableStatements = listOf(
@@ -3128,9 +3424,9 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    sharedResult = null,
+                    implements = null,
+                    excludeOverrideFields = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -3209,16 +3505,22 @@ class DataStructCodeGeneratorTest {
 
         // Test parameter type inference for UPDATE statement
         val newNameType = dataStructGenerator.inferParameterType("newName", mockUpdateStatement)
-        assertEquals("kotlin.String", newNameType.toString(),
-            "newName parameter should be non-nullable String (name column is NOT NULL)")
+        assertEquals(
+            "kotlin.String", newNameType.toString(),
+            "newName parameter should be non-nullable String (name column is NOT NULL)"
+        )
 
         val newAgeType = dataStructGenerator.inferParameterType("newAge", mockUpdateStatement)
-        assertEquals("kotlin.Long?", newAgeType.toString(),
-            "newAge parameter should be nullable Long (age column allows NULL)")
+        assertEquals(
+            "kotlin.Long?", newAgeType.toString(),
+            "newAge parameter should be nullable Long (age column allows NULL)"
+        )
 
         val personIdType = dataStructGenerator.inferParameterType("personId", mockUpdateStatement)
-        assertEquals("kotlin.Long", personIdType.toString(),
-            "personId parameter should be non-nullable Long (id column is NOT NULL)")
+        assertEquals(
+            "kotlin.Long", personIdType.toString(),
+            "personId parameter should be non-nullable Long (id column is NOT NULL)"
+        )
 
         // Clean up
         tempDir.toFile().deleteRecursively()
@@ -3271,8 +3573,7 @@ class DataStructCodeGeneratorTest {
                     annotations = FieldAnnotationOverrides(
                         propertyName = null,
                         propertyType = null,
-                        nonNull = null,
-                        nullable = null,
+                        notNull = null,
                         adapter = false
                     )
                 ),
@@ -3286,8 +3587,7 @@ class DataStructCodeGeneratorTest {
                     annotations = FieldAnnotationOverrides(
                         propertyName = null,
                         propertyType = null,
-                        nonNull = null,
-                        nullable = null,
+                        notNull = null,
                         adapter = false
                     )
                 )
@@ -3308,18 +3608,24 @@ class DataStructCodeGeneratorTest {
 
         // Test parameter type inference for LIMIT parameter
         val limitParamType = dataStructGenerator.inferParameterType("pageSize", mockSelectStatement)
-        assertEquals("kotlin.Long", limitParamType.toString(),
-            "pageSize parameter (LIMIT) should be kotlin.Long type")
+        assertEquals(
+            "kotlin.Long", limitParamType.toString(),
+            "pageSize parameter (LIMIT) should be kotlin.Long type"
+        )
 
         // Test parameter type inference for OFFSET parameter
         val offsetParamType = dataStructGenerator.inferParameterType("skipRows", mockSelectStatement)
-        assertEquals("kotlin.Long", offsetParamType.toString(),
-            "skipRows parameter (OFFSET) should be kotlin.Long type")
+        assertEquals(
+            "kotlin.Long", offsetParamType.toString(),
+            "skipRows parameter (OFFSET) should be kotlin.Long type"
+        )
 
         // Test parameter type inference for regular parameter (should still be String if no column found)
         val regularParamType = dataStructGenerator.inferParameterType("someOtherParam", mockSelectStatement)
-        assertEquals("kotlin.String", regularParamType.toString(),
-            "Regular parameters should still default to kotlin.String type")
+        assertEquals(
+            "kotlin.String", regularParamType.toString(),
+            "Regular parameters should still default to kotlin.String type"
+        )
 
         realConnection.close()
     }

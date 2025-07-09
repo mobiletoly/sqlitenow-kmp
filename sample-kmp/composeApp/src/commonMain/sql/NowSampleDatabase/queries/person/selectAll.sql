@@ -1,6 +1,4 @@
--- @@sharedResult=Row
--- @@implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields
--- @@excludeOverrideFields=[phone, birthDate, createdAt, notes, totalPersonCount]
+-- @@{ sharedResult=Row }
 SELECT
     *
 FROM Person

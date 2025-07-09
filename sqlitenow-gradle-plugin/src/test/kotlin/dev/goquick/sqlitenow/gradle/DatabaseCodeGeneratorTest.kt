@@ -36,15 +36,15 @@ class DatabaseCodeGeneratorTest {
 
         // Create SQL files with field-specific adapter annotations
         File(personDir, "selectWithAdapters.sql").writeText("""
-            -- @@name=SelectWithAdapters
-            -- @@field=birth_date @@adapter
+            -- @@{name=SelectWithAdapters}
+            -- @@{field=birth_date, adapter=custom}
             SELECT id, name, birth_date
             FROM users
             WHERE birth_date >= :myBirthDateStart;
         """.trimIndent())
 
         File(personDir, "insertWithAdapters.sql").writeText("""
-            -- @@name=InsertWithAdapters
+            -- @@{name=InsertWithAdapters}
             INSERT INTO users (name, birth_date, notes)
             VALUES (:name, :birthDate, :notes);
         """.trimIndent())
@@ -143,7 +143,7 @@ class DatabaseCodeGeneratorTest {
                             autoIncrement = false,
                             unique = false
                         ),
-                        annotations = mapOf(AnnotationConstants.ADAPTER to null)
+                        annotations = mapOf(AnnotationConstants.ADAPTER to "custom")
                     ),
                     AnnotatedCreateTableStatement.Column(
                         src = CreateTableStatement.Column(
@@ -154,7 +154,7 @@ class DatabaseCodeGeneratorTest {
                             autoIncrement = false,
                             unique = false
                         ),
-                        annotations = mapOf(AnnotationConstants.ADAPTER to null)
+                        annotations = mapOf(AnnotationConstants.ADAPTER to "custom")
                     )
                 )
             )
@@ -227,13 +227,13 @@ class DatabaseCodeGeneratorTest {
 
         // Person namespace without adapters (to test the fix)
         File(personDir, "selectWithoutAdapters.sql").writeText("""
-            -- @@name=SelectWithoutAdapters
+            -- @@{name=SelectWithoutAdapters}
             SELECT id, name FROM users WHERE id = :userId;
         """.trimIndent())
 
         // Utils namespace without adapters
         File(utilsDir, "simpleQuery.sql").writeText("""
-            -- @@name=SimpleQuery
+            -- @@{name=SimpleQuery}
             SELECT id, name FROM users WHERE id = :userId;
         """.trimIndent())
 
@@ -296,13 +296,13 @@ class DatabaseCodeGeneratorTest {
 
         // SELECT statement without parameters
         File(personDir, "selectAll.sql").writeText("""
-            -- @@name=SelectAll
+            -- @@{name=SelectAll}
             SELECT id, name FROM users;
         """.trimIndent())
 
         // SELECT statement with parameters
         File(personDir, "selectById.sql").writeText("""
-            -- @@name=SelectById
+            -- @@{name=SelectById}
             SELECT id, name FROM users WHERE id = :userId;
         """.trimIndent())
 
@@ -358,7 +358,7 @@ class DatabaseCodeGeneratorTest {
                   "Should contain asFlow() method implementation")
 
         // Should have function type for parameterized queries
-        assertTrue(fileContent.contains("{ params -> object : SelectRunners<"),
+        assertTrue(fileContent.contains("{ params ->") && fileContent.contains("object : SelectRunners<"),
                   "Should have lambda function for parameterized queries")
         realConnection.close()
     }
@@ -372,19 +372,19 @@ class DatabaseCodeGeneratorTest {
 
         // INSERT statement without parameters
         File(personDir, "addSimple.sql").writeText("""
-            -- @@name=AddSimple
+            -- @@{name=AddSimple}
             INSERT INTO users (name) VALUES ('test');
         """.trimIndent())
 
         // INSERT statement with parameters
         File(personDir, "addWithParams.sql").writeText("""
-            -- @@name=AddWithParams
+            -- @@{name=AddWithParams}
             INSERT INTO users (name, email) VALUES (:name, :email);
         """.trimIndent())
 
         // UPDATE statement with parameters
         File(personDir, "updateById.sql").writeText("""
-            -- @@name=UpdateById
+            -- @@{name=UpdateById}
             UPDATE users SET name = :name WHERE id = :id;
         """.trimIndent())
 
@@ -434,7 +434,7 @@ class DatabaseCodeGeneratorTest {
                   "Should contain execute() method implementation")
 
         // Should have function type for parameterized queries
-        assertTrue(fileContent.contains("{ params -> object : ExecuteRunners"),
+        assertTrue(fileContent.contains("{ params ->") && fileContent.contains("object : ExecuteRunners"),
                   "Should have lambda function for parameterized execute queries")
 
         // Should have table change notifications
@@ -452,14 +452,14 @@ class DatabaseCodeGeneratorTest {
         personDir.mkdirs()
 
         File(personDir, "query1.sql").writeText("""
-            -- @@name=Query1
-            -- @@field=created_at @@adapter
+            -- @@{name=Query1}
+            -- @@{field=created_at, adapter=custom}
             SELECT id, created_at FROM users WHERE id = :userId;
         """.trimIndent())
 
         File(personDir, "query2.sql").writeText("""
-            -- @@name=Query2
-            -- @@field=created_at @@adapter
+            -- @@{name=Query2}
+            -- @@{field=created_at, adapter=custom}
             SELECT name, created_at FROM users WHERE name = :userName;
         """.trimIndent())
 
@@ -516,7 +516,7 @@ class DatabaseCodeGeneratorTest {
                             name = "created_at", dataType = "TEXT", notNull = false,
                             primaryKey = false, autoIncrement = false, unique = false
                         ),
-                        annotations = mapOf(AnnotationConstants.ADAPTER to null)
+                        annotations = mapOf(AnnotationConstants.ADAPTER to "custom")
                     )
                 )
             )
@@ -553,12 +553,12 @@ class DatabaseCodeGeneratorTest {
         val personAdaptersContent = fileContent.substringAfter("public data class PersonAdapters(")
             .substringBefore(")")
 
-        val sqlColumnToCreatedAtCount = personAdaptersContent.split("sqlColumnToCreatedAt").size - 1
+        val sqlColumnToCreatedAtCount = personAdaptersContent.split("sqlValueToCreatedAt").size - 1
         assertEquals(1, sqlColumnToCreatedAtCount,
-            "sqlColumnToCreatedAt should appear exactly once in PersonAdapters data class, but found $sqlColumnToCreatedAtCount occurrences")
+            "sqlValueToCreatedAt should appear exactly once in PersonAdapters data class, but found $sqlColumnToCreatedAtCount occurrences")
 
         // Verify the adapter is present
-        assertTrue(fileContent.contains("sqlColumnToCreatedAt"), "Should contain sqlColumnToCreatedAt adapter")
+        assertTrue(fileContent.contains("sqlValueToCreatedAt"), "Should contain sqlValueToCreatedAt adapter")
     }
 
     @Test
@@ -570,14 +570,14 @@ class DatabaseCodeGeneratorTest {
 
         // Create multiple SQL files that reference the same column with adapter
         File(personDir, "selectWithCreatedAt1.sql").writeText("""
-            -- @@name=SelectWithCreatedAt1
-            -- @@field=created_at @@adapter
+            -- @@{name=SelectWithCreatedAt1}
+            -- @@{field=created_at, adapter=custom}
             SELECT id, name, created_at FROM users WHERE id = :userId;
         """.trimIndent())
 
         File(personDir, "selectWithCreatedAt2.sql").writeText("""
-            -- @@name=SelectWithCreatedAt2
-            -- @@field=created_at @@adapter
+            -- @@{name=SelectWithCreatedAt2}
+            -- @@{field=created_at, adapter=custom}
             SELECT name, created_at FROM users WHERE name = :userName;
         """.trimIndent())
 
@@ -634,7 +634,7 @@ class DatabaseCodeGeneratorTest {
                             name = "created_at", dataType = "TEXT", notNull = false,
                             primaryKey = false, autoIncrement = false, unique = false
                         ),
-                        annotations = mapOf(AnnotationConstants.ADAPTER to null)
+                        annotations = mapOf(AnnotationConstants.ADAPTER to "custom")
                     )
                 )
             )
@@ -672,8 +672,190 @@ class DatabaseCodeGeneratorTest {
             .substringAfter("Adapters(")
             .substringBefore(")")
 
-        val sqlColumnToCreatedAtCount = adapterDataClassContent.split("sqlColumnToCreatedAt").size - 1
-        assertEquals(1, sqlColumnToCreatedAtCount,
-            "sqlColumnToCreatedAt should appear exactly once in adapter data class, but found $sqlColumnToCreatedAtCount occurrences")
+        val sqlValueToCreatedAtCount = adapterDataClassContent.split("sqlValueToCreatedAt").size - 1
+        assertEquals(1, sqlValueToCreatedAtCount,
+            "sqlValueToCreatedAt should appear exactly once in adapter data class, but found $sqlValueToCreatedAtCount occurrences")
+    }
+
+    @Test
+    @DisplayName("Test adapter assignment for built-in types vs custom types")
+    fun testAdapterAssignmentForBuiltInVsCustomTypes() {
+        // Create test SQL files with built-in type adapter vs custom type adapter
+        val personDir = File(queriesDir, "person")
+        personDir.mkdirs()
+
+        // INSERT statement that uses both built-in type with adapter and custom type with adapter
+        File(personDir, "insertPerson.sql").writeText("""
+            -- @@{name=InsertPerson}
+            INSERT INTO users (name, phone, birth_date) VALUES (:name, :phone, :birthDate);
+        """.trimIndent())
+
+        // SELECT statement that also uses the same columns - this creates both input and output adapters
+        File(personDir, "selectPerson.sql").writeText("""
+            -- @@{name=SelectPerson}
+            -- @@{field=phone, adapter=custom}
+            -- @@{field=birth_date, adapter=custom}
+            SELECT id, name, phone, birth_date FROM users WHERE id = :userId;
+        """.trimIndent())
+
+        // Create an in-memory SQLite database for testing
+        val realConnection = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
+        realConnection.createStatement().execute("""
+            CREATE TABLE users (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                phone TEXT,
+                birth_date TEXT
+            )
+        """.trimIndent())
+
+        // Create test CREATE TABLE statements with different adapter configurations
+        val testCreateTableStatements = listOf(
+            AnnotatedCreateTableStatement(
+                name = "CreateUsers",
+                src = CreateTableStatement(
+                    sql = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, phone TEXT, birth_date TEXT)",
+                    tableName = "users",
+                    columns = listOf(
+                        CreateTableStatement.Column(
+                            name = "id",
+                            dataType = "INTEGER",
+                            notNull = true,
+                            primaryKey = true,
+                            autoIncrement = false,
+                            unique = false
+                        ),
+                        CreateTableStatement.Column(
+                            name = "name",
+                            dataType = "TEXT",
+                            notNull = true,
+                            primaryKey = false,
+                            autoIncrement = false,
+                            unique = false
+                        ),
+                        CreateTableStatement.Column(
+                            name = "phone",
+                            dataType = "TEXT",
+                            notNull = false,
+                            primaryKey = false,
+                            autoIncrement = false,
+                            unique = false
+                        ),
+                        CreateTableStatement.Column(
+                            name = "birth_date",
+                            dataType = "TEXT",
+                            notNull = false,
+                            primaryKey = false,
+                            autoIncrement = false,
+                            unique = false
+                        )
+                    )
+                ),
+                annotations = StatementAnnotationOverrides(
+                    name = null,
+                    propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
+                    sharedResult = null,
+                    implements = null,
+                    excludeOverrideFields = null
+                ),
+                columns = listOf(
+                    AnnotatedCreateTableStatement.Column(
+                        src = CreateTableStatement.Column(
+                            name = "id",
+                            dataType = "INTEGER",
+                            notNull = true,
+                            primaryKey = true,
+                            autoIncrement = false,
+                            unique = false
+                        ),
+                        annotations = emptyMap()
+                    ),
+                    AnnotatedCreateTableStatement.Column(
+                        src = CreateTableStatement.Column(
+                            name = "name",
+                            dataType = "TEXT",
+                            notNull = true,
+                            primaryKey = false,
+                            autoIncrement = false,
+                            unique = false
+                        ),
+                        annotations = emptyMap()
+                    ),
+                    AnnotatedCreateTableStatement.Column(
+                        src = CreateTableStatement.Column(
+                            name = "phone",
+                            dataType = "TEXT",
+                            notNull = false,
+                            primaryKey = false,
+                            autoIncrement = false,
+                            unique = false
+                        ),
+                        annotations = mapOf(
+                            AnnotationConstants.ADAPTER to "custom",
+                            AnnotationConstants.NOT_NULL to true
+                            // No propertyType specified - defaults to built-in String type
+                        )
+                    ),
+                    AnnotatedCreateTableStatement.Column(
+                        src = CreateTableStatement.Column(
+                            name = "birth_date",
+                            dataType = "TEXT",
+                            notNull = false,
+                            primaryKey = false,
+                            autoIncrement = false,
+                            unique = false
+                        ),
+                        annotations = mapOf(
+                            AnnotationConstants.ADAPTER to "custom",
+                            AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDate"
+                            // Custom type specified
+                        )
+                    )
+                )
+            )
+        )
+
+        val dataStructGenerator = createDataStructCodeGeneratorWithMockExecutors(
+            conn = realConnection,
+            queriesDir = queriesDir,
+            createTableStatements = testCreateTableStatements,
+            packageName = "com.example.db",
+            outputDir = outputDir
+        )
+
+        val nsWithStatements = dataStructGenerator.nsWithStatements
+        val createTableStatements = dataStructGenerator.createTableStatements
+
+        val databaseGenerator = DatabaseCodeGenerator(
+            nsWithStatements = nsWithStatements,
+            createTableStatements = createTableStatements,
+            createViewStatements = dataStructGenerator.createViewStatements,
+            packageName = "com.example.db",
+            outputDir = outputDir,
+            databaseClassName = "AdapterTestDatabase"
+        )
+
+        databaseGenerator.generateDatabaseClass()
+
+        val databaseFile = File(outputDir, "com/example/db/AdapterTestDatabase.kt")
+        assertTrue(databaseFile.exists(), "AdapterTestDatabase.kt file should be created")
+
+        val fileContent = databaseFile.readText()
+
+        // Check the INSERT statement adapter assignments
+        val insertPersonContent = fileContent.substringAfter("insertPerson")
+            .substringBefore("}")
+
+        // For built-in type (phone with String type), should use phoneToSqlValue (not sqlValueToPhone)
+        assertTrue(insertPersonContent.contains("phoneToSqlValue = ref.personAdapters.phoneToSqlValue"),
+            "Built-in type adapter should use phoneToSqlValue, not sqlValueToPhone. Content: $insertPersonContent")
+
+        // For custom type (birth_date with LocalDate type), should also use birthDateToSqlValue
+        assertTrue(insertPersonContent.contains("birthDateToSqlValue = ref.personAdapters.birthDateToSqlValue"),
+            "Custom type adapter should use birthDateToSqlValue. Content: $insertPersonContent")
+
+        // Verify that the wrong assignment is NOT present
+        assertFalse(insertPersonContent.contains("phoneToSqlValue = ref.personAdapters.sqlValueToPhone"),
+            "Should NOT have reversed adapter assignment for built-in type")
     }
 }

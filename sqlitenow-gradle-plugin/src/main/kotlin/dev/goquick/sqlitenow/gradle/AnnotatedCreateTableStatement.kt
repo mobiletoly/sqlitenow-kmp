@@ -11,15 +11,15 @@ data class AnnotatedCreateTableStatement(
 
     data class Column(
         val src: CreateTableStatement.Column,
-        val annotations: Map<String, String?>
+        val annotations: Map<String, Any?>
     ) {
         fun isNullable(): Boolean {
-            // Explicit annotations take precedence over database constraints
-            return when {
-                annotations.containsKey(AnnotationConstants.NULLABLE) -> true
-                annotations.containsKey(AnnotationConstants.NON_NULL) -> false
-                else -> !src.notNull // Default to database constraint
+            if (annotations.containsKey(AnnotationConstants.NOT_NULL)) {
+                val notNull = parseNotNullValue(annotations[AnnotationConstants.NOT_NULL])
+                return !notNull
             }
+            // No notNull annotation specified - inherit from table structure
+            return !src.notNull
         }
     }
 

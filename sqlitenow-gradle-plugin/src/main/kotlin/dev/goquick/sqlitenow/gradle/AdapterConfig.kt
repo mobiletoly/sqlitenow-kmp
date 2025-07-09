@@ -26,15 +26,11 @@ class AdapterConfig(
 
         when (statement) {
             is AnnotatedSelectStatement -> {
-                // Add input adapters for WHERE clause parameters
                 configs.addAll(collectInputParamConfigs(statement, processedAdapters))
-
-                // Add output adapters for SELECT result fields
                 configs.addAll(collectOutputParamConfigs(statement, processedAdapters))
             }
 
             is AnnotatedExecuteStatement -> {
-                // Add input adapters for INSERT/DELETE parameters
                 configs.addAll(collectInputParamConfigs(statement, processedAdapters))
             }
 
@@ -46,7 +42,6 @@ class AdapterConfig(
                 // CREATE VIEW statements don't need adapter parameters
             }
         }
-
         return configs
     }
 
@@ -69,7 +64,7 @@ class AdapterConfig(
         }
 
         // Generate one adapter per unique column (not per parameter)
-        columnToParameters.forEach { (columnKey, paramNames) ->
+        columnToParameters.forEach { (_, paramNames) ->
             val firstParamName = paramNames.first()
             val column = columnLookup.findColumnForParameter(statement, firstParamName)!!
 
@@ -136,7 +131,7 @@ class AdapterConfig(
         column: AnnotatedCreateTableStatement.Column
     ): ParamConfig {
         val baseType = SqliteTypeToKotlinCodeConverter.mapSqlTypeToKotlinType(column.src.dataType)
-        val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE]
+        val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE] as? String
         val isNullable = column.isNullable()
 
         val targetType = SqliteTypeToKotlinCodeConverter.determinePropertyType(baseType, propertyType, isNullable, packageName)
@@ -164,8 +159,7 @@ class AdapterConfig(
         val property = selectFieldGenerator.generateProperty(field, propertyNameGenerator)
         val targetType = property.type
 
-        // Determine input type and nullability based on the underlying column type
-        val inputNullable = isFieldNullable(field, selectFieldGenerator)
+        val inputNullable = property.type.isNullable
         val underlyingType = SqliteTypeToKotlinCodeConverter.mapSqlTypeToKotlinType(field.src.dataType)
         val inputType = underlyingType.copy(nullable = inputNullable)
 
@@ -178,26 +172,17 @@ class AdapterConfig(
         )
     }
 
-    /** Helper function to determine if a field should have nullable input for adapter functions. */
-    private fun isFieldNullable(
-        field: AnnotatedSelectStatement.Field,
-        selectFieldGenerator: SelectFieldCodeGenerator
-    ): Boolean {
-        val property = selectFieldGenerator.generateProperty(field, PropertyNameGeneratorType.LOWER_CAMEL_CASE)
-        return property.type.isNullable
-    }
-
     /**
      * Helper function to check if a field has an adapter annotation.
      * Checks both SELECT field annotations and CREATE TABLE column annotations.
      */
     fun hasAdapterAnnotation(field: AnnotatedSelectStatement.Field): Boolean {
-        // First check if the field has a direct @@adapter annotation in the SELECT statement
+        // First check if the field has a direct adapter annotation in the SELECT statement
         if (field.annotations.adapter == true) {
             return true
         }
 
-        // If not, check if the underlying column in CREATE TABLE has an @@adapter annotation
+        // If not, check if the underlying column in CREATE TABLE has an adapter annotation
         val fieldSource = field.src
         if (fieldSource.tableName.isNotEmpty() && fieldSource.originalColumnName.isNotEmpty()) {
             val createTableStatement = createTableStatements
@@ -208,7 +193,7 @@ class AdapterConfig(
                 val column = createTableStatement.findColumnByName(fieldSource.originalColumnName)
 
                 if (column != null) {
-                    // Check if the column has an @@adapter annotation
+                    // Check if the column has an adapter annotation
                     return column.annotations.containsKey(AnnotationConstants.ADAPTER)
                 }
             }
@@ -229,17 +214,17 @@ class AdapterConfig(
 
     /**
      * Generates an adapter function name for input parameters (parameter -> SQL column).
-     * Example: "birthDate" -> "birthDateToSqlColumn"
+     * Example: "birthDate" -> "birthDateToSqlValue"
      */
     private fun getInputAdapterFunctionName(propertyName: String): String {
-        return "${propertyName}ToSqlColumn"
+        return "${propertyName}ToSqlValue"
     }
 
     /**
      * Generates an adapter function name for output fields (SQL column -> property).
-     * Example: "birthDate" -> "sqlColumnToBirthDate"
+     * Example: "birthDate" -> "sqlValueToBirthDate"
      */
     fun getOutputAdapterFunctionName(propertyName: String): String {
-        return "sqlColumnTo${propertyName.capitalized()}"
+        return "sqlValueTo${propertyName.capitalized()}"
     }
 }

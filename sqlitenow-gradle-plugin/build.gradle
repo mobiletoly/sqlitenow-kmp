@@ -33,6 +33,7 @@ dependencies {
     implementation(localGroovy())
     implementation("com.squareup:kotlinpoet:2.2.0")
     compileOnly("org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.0")
+    implementation("com.typesafe:config:1.4.3")
     // SQLite JDBC for database access
     implementation("org.xerial:sqlite-jdbc:3.50.2.0")
     implementation("com.github.jsqlparser:jsqlparser:4.9")

@@ -135,3 +135,5 @@ Always ensure your `schema/` files match the result of applying all migrations t
 Users upgrading from any previous version will have all necessary migrations applied automatically.
 
 ## Next Steps
+
+[Recipes]({{ site.baseurl }}/documentation/recipes/) - Learn about common patterns and best practices

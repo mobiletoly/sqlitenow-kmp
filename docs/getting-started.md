@@ -107,19 +107,19 @@ CREATE TABLE Person
     -- this annotation will generate `userPhone` property for `phone` column, instead of `phone` name,
     -- in this case it's not very useful, but shows how to assign custom name to property
     --
-    -- @@field=phone @@propertyName=userPhone
+    -- @@{field=phone, propertyName=userPhone}
     phone      TEXT,
 
     -- this annotation will generate `birthDate` property for `birth_date` column
     -- and expects adapter to be provided for String <=> LocalDate conversion
     --
-    -- @@field=birth_date @@propertyType=kotlinx.datetime.LocalDate @@adapter
+    -- @@{field=birth_date, propertyType=kotlinx.datetime.LocalDate, adapter=custom}
     birth_date TEXT,
 
     -- this annotation will generate `createdAt` property for `created_at` column
     -- and will use adapter to convert between LocalDateTime and String
     --
-    -- @@field=created_at @@propertyType=kotlinx.datetime.LocalDateTime @@adapter
+    -- @@{field=created_at, propertyType=kotlinx.datetime.LocalDateTime, adapter=custom}
     created_at TEXT                NOT NULL DEFAULT current_timestamp
 );
 
@@ -134,7 +134,7 @@ because we don't have any queries yet.
 ## Create Your First Query
 
 Each query should be in its own file and generated code will use file name as a query name (you 
-can override the name with `-- @@name=YourName` annotation).
+can override the name with `-- @@{name=YourName}` annotation).
 The file path will be used to determine the query namespace. For example,
 `queries/person/selectAll.sql` will generate `selectAll` query in `person` namespace.
 You can create namespace based on your needs, for example you can use namespace per table,

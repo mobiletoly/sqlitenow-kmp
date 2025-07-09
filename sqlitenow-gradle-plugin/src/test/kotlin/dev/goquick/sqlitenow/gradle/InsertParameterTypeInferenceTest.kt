@@ -82,7 +82,7 @@ class InsertParameterTypeInferenceTest {
                         ),
                         annotations = mapOf(
                             AnnotationConstants.FIELD to "birth_date",
-                            AnnotationConstants.ADAPTER to "",
+                            AnnotationConstants.ADAPTER to "custom",
                             AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDate"
                         )
                     ),
@@ -97,7 +97,7 @@ class InsertParameterTypeInferenceTest {
                         ),
                         annotations = mapOf(
                             AnnotationConstants.FIELD to "created_at",
-                            AnnotationConstants.ADAPTER to "",
+                            AnnotationConstants.ADAPTER to "custom",
                             AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDateTime"
                         )
                     ),
@@ -112,7 +112,7 @@ class InsertParameterTypeInferenceTest {
                         ),
                         annotations = mapOf(
                             AnnotationConstants.FIELD to "notes",
-                            AnnotationConstants.ADAPTER to "",
+                            AnnotationConstants.ADAPTER to "custom",
                             AnnotationConstants.PROPERTY_TYPE to "dev.goquick.sqlitenow.samplekmp.model.PersonNote"
                         )
                     )
@@ -164,19 +164,19 @@ class InsertParameterTypeInferenceTest {
         val birthDateType = dataStructGenerator.inferParameterType("birthDate", annotatedInsertStatement)
         println("birthDate -> $birthDateType")
         assertEquals("kotlinx.datetime.LocalDate?", birthDateType.toString(), 
-            "birthDate should map to nullable LocalDate due to @@propertyType annotation")
+            "birthDate should map to nullable LocalDate due to propertyType annotation")
         
         // notes should map to PersonNote? (nullable because column allows NULL)
         val notesType = dataStructGenerator.inferParameterType("notes", annotatedInsertStatement)
         println("notes -> $notesType")
         assertEquals("dev.goquick.sqlitenow.samplekmp.model.PersonNote?", notesType.toString(),
-            "notes should map to nullable PersonNote due to @@propertyType annotation")
+            "notes should map to nullable PersonNote due to propertyType annotation")
         
         // newNotes should also map to PersonNote? (same column)
         val newNotesType = dataStructGenerator.inferParameterType("newNotes", annotatedInsertStatement)
         println("newNotes -> $newNotesType")
         assertEquals("dev.goquick.sqlitenow.samplekmp.model.PersonNote?", newNotesType.toString(),
-            "newNotes should map to nullable PersonNote due to @@propertyType annotation")
+            "newNotes should map to nullable PersonNote due to propertyType annotation")
         
         conn.close()
     }

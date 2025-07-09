@@ -139,7 +139,7 @@ class SelectFieldCodeGenerator(
         if (field != null) {
             val column = findColumnForField(field)
             if (column != null) {
-                val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE]
+                val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE] as? String
                 if (propertyType != null) {
                     return SqliteTypeToKotlinCodeConverter.determinePropertyType(kotlinType, propertyType, false, packageName)
                 }
@@ -180,18 +180,21 @@ class SelectFieldCodeGenerator(
      * @return True if the property should be nullable, false otherwise
      */
     private fun determineNullability(field: AnnotatedSelectStatement.Field): Boolean {
-        // Check for explicit nullability annotations first (highest priority)
-        if (field.annotations.nonNull == true) return false
-        if (field.annotations.nullable == true) return true
+        // Check for explicit notNull annotation first (highest priority)
+        when (field.annotations.notNull) {
+            true -> return false   // notNull=true means not nullable
+            false -> return true   // notNull=false means nullable
+            null -> {
+                // notNull not specified - check table schema
+                val column = findColumnForField(field)
+                if (column != null) {
+                    return column.isNullable()
+                }
 
-        // If no explicit annotation, check the table schema
-        val column = findColumnForField(field)
-        if (column != null) {
-            return column.isNullable()
+                // Default to nullable if no explicit annotation or schema constraint is found
+                return true
+            }
         }
-
-        // Default to nullable if no explicit annotation or schema constraint is found
-        return true
     }
 
     /**

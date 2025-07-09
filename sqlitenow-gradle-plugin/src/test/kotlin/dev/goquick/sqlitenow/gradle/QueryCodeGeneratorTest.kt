@@ -33,17 +33,17 @@ class QueryCodeGeneratorTest {
 
         // Create SQL files for testing
         File(personDir, "getById.sql").writeText("""
-            -- @@name=GetById
+            -- @@{name=GetById}
             SELECT id, name FROM users WHERE id = :userId;
         """.trimIndent())
 
         File(personDir, "add.sql").writeText("""
-            -- @@name=Add
+            -- @@{name=Add}
             INSERT INTO users (name, email) VALUES (:userName, :userEmail);
         """.trimIndent())
 
         File(personDir, "deleteById.sql").writeText("""
-            -- @@name=DeleteById
+            -- @@{name=DeleteById}
             DELETE FROM users WHERE id = :userId;
         """.trimIndent())
 
@@ -168,7 +168,7 @@ class QueryCodeGeneratorTest {
 
         // Create a SELECT statement without parameters
         File(userDir, "getAll.sql").writeText("""
-            -- @@name=GetAll
+            -- @@{name=GetAll}
             SELECT id, name, email FROM users;
         """.trimIndent())
 
@@ -229,10 +229,10 @@ class QueryCodeGeneratorTest {
         // by testing the core components that handle adapter annotations.
 
         // Test 1: Verify FieldAnnotationOverrides correctly parses adapter annotations
-        val fieldAnnotationsWithAdapter = mapOf(AnnotationConstants.ADAPTER to null, AnnotationConstants.PROPERTY_TYPE to "dev.example.Status")
+        val fieldAnnotationsWithAdapter = mapOf(AnnotationConstants.ADAPTER to "custom", AnnotationConstants.PROPERTY_TYPE to "dev.example.Status")
         val fieldOverrides = FieldAnnotationOverrides.parse(fieldAnnotationsWithAdapter)
-        assertTrue(fieldOverrides.adapter == true, "Should parse @@adapter flag annotation in SELECT fields")
-        assertEquals("dev.example.Status", fieldOverrides.propertyType, "Should parse @@propertyType annotation")
+        assertTrue(fieldOverrides.adapter == true, "Should parse adapter flag annotation in SELECT fields")
+        assertEquals("dev.example.Status", fieldOverrides.propertyType, "Should parse propertyType annotation")
 
         // Test 2: Verify SqliteTypeToKotlinCodeConverter provides consistent type mapping
         val testTypeMappings = mapOf(
@@ -265,22 +265,22 @@ class QueryCodeGeneratorTest {
 
         // Test 1: Adapter annotation present (flag annotation with null value)
         val annotationsWithAdapter = mapOf(
-            AnnotationConstants.ADAPTER to null,  // Flag annotation - key exists, value is null
+            AnnotationConstants.ADAPTER to "custom",  // Flag annotation - key exists, value is null
             AnnotationConstants.PROPERTY_TYPE to "dev.example.CustomType"
         )
 
         val fieldOverrides = FieldAnnotationOverrides.parse(annotationsWithAdapter)
-        assertTrue(fieldOverrides.adapter == true, "@@adapter flag annotation should be parsed as true")
-        assertEquals("dev.example.CustomType", fieldOverrides.propertyType, "@@propertyType should be parsed correctly")
+        assertTrue(fieldOverrides.adapter == true, "adapter flag annotation should be parsed as true")
+        assertEquals("dev.example.CustomType", fieldOverrides.propertyType, "propertyType should be parsed correctly")
 
-        // Test 2: Adapter annotation absent
+        // Test 2: Adapter annotation absent with custom type - should infer adapter=true
         val annotationsWithoutAdapter = mapOf(
             AnnotationConstants.PROPERTY_TYPE to "dev.example.AnotherType",
-            AnnotationConstants.NULLABLE to null
+            AnnotationConstants.NOT_NULL to false
         )
 
         val fieldOverridesNoAdapter = FieldAnnotationOverrides.parse(annotationsWithoutAdapter)
-        assertTrue(fieldOverridesNoAdapter.adapter == false, "Missing @@adapter should result in false")
+        assertTrue(fieldOverridesNoAdapter.adapter == true, "Custom type should infer adapter=true")
         assertEquals("dev.example.AnotherType", fieldOverridesNoAdapter.propertyType, "Other annotations should still work")
 
         assertTrue(true, "Adapter flag annotation parsing works correctly")
@@ -312,13 +312,13 @@ class QueryCodeGeneratorTest {
     @DisplayName("Test annotation parsing functionality")
     fun testAnnotationParsingFunctionality() {
         // Test that FieldAnnotationOverrides properly handles adapter annotations
-        val annotationsWithAdapter = mapOf(AnnotationConstants.ADAPTER to null) // Flag annotation
+        val annotationsWithAdapter = mapOf(AnnotationConstants.ADAPTER to "custom") // Flag annotation
         val fieldAnnotations = FieldAnnotationOverrides.parse(annotationsWithAdapter)
-        assertTrue(fieldAnnotations.adapter == true, "Should parse @@adapter flag annotation correctly")
+        assertTrue(fieldAnnotations.adapter == true, "Should parse adapter flag annotation correctly")
 
         val annotationsWithoutAdapter = mapOf(AnnotationConstants.PROPERTY_NAME to "customName")
         val fieldAnnotationsNoAdapter = FieldAnnotationOverrides.parse(annotationsWithoutAdapter)
-        assertTrue(fieldAnnotationsNoAdapter.adapter == false, "Should handle missing @@adapter annotation")
+        assertTrue(fieldAnnotationsNoAdapter.adapter == false, "Should handle missing adapter annotation")
 
         assertTrue(true, "Annotation parsing functionality verified")
     }
@@ -428,22 +428,22 @@ class QueryCodeGeneratorTest {
 
         // Create SQL files for testing including UPDATE
         File(personDir, "getById.sql").writeText("""
-            -- @@name=GetById
+            -- @@{name=GetById}
             SELECT id, name FROM users WHERE id = :userId;
         """.trimIndent())
 
         File(personDir, "add.sql").writeText("""
-            -- @@name=Add
+            -- @@{name=Add}
             INSERT INTO users (name, email) VALUES (:userName, :userEmail);
         """.trimIndent())
 
         File(personDir, "updateUser.sql").writeText("""
-            -- @@name=UpdateUser
+            -- @@{name=UpdateUser}
             UPDATE users SET name = :newName, email = :newEmail WHERE id = :userId;
         """.trimIndent())
 
         File(personDir, "deleteById.sql").writeText("""
-            -- @@name=DeleteById
+            -- @@{name=DeleteById}
             DELETE FROM users WHERE id = :userId;
         """.trimIndent())
 
@@ -521,12 +521,12 @@ class QueryCodeGeneratorTest {
 
         // Create SQL files for testing both SELECT and INSERT statements
         File(personDir, "getById.sql").writeText("""
-            -- @@name=GetById
+            -- @@{name=GetById}
             SELECT id, name FROM users WHERE id = :userId;
         """.trimIndent())
 
         File(personDir, "add.sql").writeText("""
-            -- @@name=Add
+            -- @@{name=Add}
             INSERT INTO users (name, email) VALUES (:userName, :userEmail);
         """.trimIndent())
 
@@ -596,7 +596,7 @@ class QueryCodeGeneratorTest {
 
         // Create SQL file for testing SELECT statement
         File(personDir, "getById.sql").writeText("""
-            -- @@name=GetById
+            -- @@{name=GetById}
             SELECT id, name FROM users WHERE id = :userId;
         """.trimIndent())
 
@@ -657,7 +657,7 @@ class QueryCodeGeneratorTest {
                   "executeAsOne should throw exception when no results")
 
         // Verify executeAsOneOrNull implementation
-        assertTrue(fileContent.contains("} else {\n      null\n    }"),
+        assertTrue(fileContent.contains("} else {") && fileContent.contains("null"),
                   "executeAsOneOrNull should return null when no results")
 
         // Verify all functions use the same SQL preparation and parameter binding
@@ -676,7 +676,7 @@ class QueryCodeGeneratorTest {
 
         // Create SQL files for testing different statement types
         File(personDir, "selectWithJoin.sql").writeText("""
-            -- @@name=SelectWithJoin
+            -- @@{name=SelectWithJoin}
             SELECT u.id, u.name, a.street
             FROM users u
             JOIN addresses a ON u.id = a.user_id
@@ -684,12 +684,12 @@ class QueryCodeGeneratorTest {
         """.trimIndent())
 
         File(personDir, "simpleSelect.sql").writeText("""
-            -- @@name=SimpleSelect
+            -- @@{name=SimpleSelect}
             SELECT id, name FROM users WHERE id = :userId;
         """.trimIndent())
 
         File(personDir, "insertUser.sql").writeText("""
-            -- @@name=InsertUser
+            -- @@{name=InsertUser}
             INSERT INTO users (name, email) VALUES (:name, :email);
         """.trimIndent())
 

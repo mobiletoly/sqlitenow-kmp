@@ -3,7 +3,7 @@ CREATE TABLE PersonAddress
     id           INTEGER PRIMARY KEY NOT NULL,
     person_id    INTEGER             NOT NULL,
 
-    -- @@field=address_type @@propertyType=AddressType @@adapter
+    -- @@{ field=address_type, propertyType=AddressType }
     address_type TEXT                NOT NULL,
 
     street       TEXT                NOT NULL,
@@ -14,10 +14,10 @@ CREATE TABLE PersonAddress
 
     country      TEXT                NOT NULL,
 
-    -- @@field=is_primary @@propertyType=Boolean
+    -- @@{ field=is_primary, propertyType=Boolean }
     is_primary   INTEGER             NOT NULL DEFAULT 0,
 
-    -- @@field=created_at @@propertyType=kotlinx.datetime.LocalDateTime @@adapter
+    -- @@{ field=created_at, propertyType=kotlinx.datetime.LocalDateTime }
     created_at   TEXT                NOT NULL DEFAULT current_timestamp,
 
     FOREIGN KEY (person_id) REFERENCES Person (id) ON DELETE CASCADE

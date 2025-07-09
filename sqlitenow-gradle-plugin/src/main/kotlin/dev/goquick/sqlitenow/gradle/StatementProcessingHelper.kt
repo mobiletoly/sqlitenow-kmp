@@ -196,12 +196,12 @@ ${sqlStatement.sql}
      */
     private fun mergeFieldAnnotations(
         column: SelectStatement.FieldSource,
-        selectFieldAnnotations: Map<String, Map<String, String?>>,
+        selectFieldAnnotations: Map<String, Map<String, Any?>>,
         selectStatement: SelectStatement,
         annotationResolver: FieldAnnotationResolver?
     ): FieldAnnotationOverrides {
         // Start with resolved annotations as base (from tables/views)
-        val mergedAnnotations = mutableMapOf<String, String?>()
+        val mergedAnnotations = mutableMapOf<String, Any?>()
 
         // If we have a resolver and this SELECT queries a table/view, get resolved annotations
         val fromTable = selectStatement.fromTable

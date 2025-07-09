@@ -1,4 +1,4 @@
--- @@sharedResult=Row
+-- @@{ sharedResult=Row }
 SELECT p.id         AS person_id,
        p.first_name,
        p.last_name,
@@ -16,6 +16,5 @@ SELECT p.id         AS person_id,
        a.is_primary,
        a.created_at AS address_created_at
 FROM Person p
-         JOIN
-     PersonAddress a ON p.id = a.person_id
+         JOIN PersonAddress a ON p.id = a.person_id
 WHERE p.id = :person_id;

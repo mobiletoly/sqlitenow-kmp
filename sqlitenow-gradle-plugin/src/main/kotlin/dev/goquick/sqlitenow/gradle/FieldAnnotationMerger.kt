@@ -10,7 +10,7 @@ object FieldAnnotationMerger {
      * The field annotations will override existing annotations in the map.
      */
     fun mergeFieldAnnotations(
-        targetAnnotations: MutableMap<String, String?>,
+        targetAnnotations: MutableMap<String, Any?>,
         fieldAnnotations: FieldAnnotationOverrides
     ) {
         if (fieldAnnotations.propertyName != null) {
@@ -20,13 +20,10 @@ object FieldAnnotationMerger {
             targetAnnotations[AnnotationConstants.PROPERTY_TYPE] = fieldAnnotations.propertyType
         }
         if (fieldAnnotations.adapter == true) {
-            targetAnnotations[AnnotationConstants.ADAPTER] = null // adapter annotation has no value
+            targetAnnotations[AnnotationConstants.ADAPTER] = "custom" // custom adapter
         }
-        if (fieldAnnotations.nullable == true) {
-            targetAnnotations[AnnotationConstants.NULLABLE] = null
-        }
-        if (fieldAnnotations.nonNull == true) {
-            targetAnnotations[AnnotationConstants.NON_NULL] = null
+        if (fieldAnnotations.notNull != null) {
+            targetAnnotations[AnnotationConstants.NOT_NULL] = fieldAnnotations.notNull
         }
     }
 }

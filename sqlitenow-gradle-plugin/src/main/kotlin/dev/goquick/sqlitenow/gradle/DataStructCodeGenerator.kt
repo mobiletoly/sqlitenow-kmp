@@ -29,12 +29,32 @@ open class DataStructCodeGenerator(
     open val createTableStatements = providedCreateTableStatements ?: statementExecutors
         .filterIsInstance<CreateTableStatementExecutor>()
         .map {
-            it.execute(conn) as AnnotatedCreateTableStatement
+            try {
+                it.execute(conn) as AnnotatedCreateTableStatement
+            } catch (e: Exception) {
+                System.err.println(
+                    """
+                    |Failed to execute CREATE TABLE statement:
+                    |${it.reportContext()}
+                    """.trimMargin()
+                )
+                throw e
+            }
         }
     val createViewStatements = statementExecutors
         .filterIsInstance<CreateViewStatementExecutor>()
         .map {
-            it.execute(conn) as AnnotatedCreateViewStatement
+            try {
+                it.execute(conn) as AnnotatedCreateViewStatement
+            } catch (e: Exception) {
+                System.err.println(
+                    """
+                    |Failed to execute CREATE VIEW statement:
+                    |${it.reportContext()}
+                    """.trimIndent()
+                )
+                throw e
+            }
         }
 
     private val annotationResolver = FieldAnnotationResolver(createTableStatements, createViewStatements)
@@ -151,7 +171,7 @@ open class DataStructCodeGenerator(
     private fun generateSharedResultDataClass(sharedResult: SharedResultManager.SharedResult): TypeSpec {
         val dataClassBuilder = TypeSpec.classBuilder(sharedResult.name)
             .addModifiers(KModifier.DATA)
-            .addKdoc("Shared result data class for queries using @@sharedResult=${sharedResult.name}.")
+            .addKdoc("Shared result data class for queries using sharedResult=${sharedResult.name}")
 
         // Add interface implementation if specified
         if (sharedResult.implements != null) {
@@ -191,7 +211,10 @@ open class DataStructCodeGenerator(
         return dataClassBuilder.build()
     }
 
-    private fun generateResultDataClassForSelectStatement(statement: AnnotatedSelectStatement, namespace: String): TypeSpec {
+    private fun generateResultDataClassForSelectStatement(
+        statement: AnnotatedSelectStatement,
+        namespace: String
+    ): TypeSpec {
         val dataClassBuilder = TypeSpec.classBuilder("Result")
             .addModifiers(KModifier.DATA)
             .addKdoc("Data class for ${statement.name} query results.")
@@ -225,7 +248,8 @@ open class DataStructCodeGenerator(
             val propertyBuilder = property.toBuilder()
             if (statement.annotations.implements != null) {
                 val fieldName = property.name
-                val effectiveExcludeOverrideFields = sharedResultManager.getEffectiveExcludeOverrideFields(statement, namespace)
+                val effectiveExcludeOverrideFields =
+                    sharedResultManager.getEffectiveExcludeOverrideFields(statement, namespace)
                 val isExcluded = effectiveExcludeOverrideFields?.contains(fieldName) == true
                 if (!isExcluded) {
                     propertyBuilder.addModifiers(KModifier.OVERRIDE)
@@ -334,10 +358,15 @@ open class DataStructCodeGenerator(
 
         if (column != null) {
             val baseType = SqliteTypeToKotlinCodeConverter.mapSqlTypeToKotlinType(column.src.dataType)
-            val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE]
+            val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE] as? String
             val isNullable = column.isNullable()
 
-            return SqliteTypeToKotlinCodeConverter.determinePropertyType(baseType, propertyType, isNullable, fileGenerationHelper.packageName)
+            return SqliteTypeToKotlinCodeConverter.determinePropertyType(
+                baseType,
+                propertyType,
+                isNullable,
+                fileGenerationHelper.packageName
+            )
         }
 
         return ClassName("kotlin", "String")
@@ -352,9 +381,11 @@ open class DataStructCodeGenerator(
             is AnnotatedSelectStatement -> {
                 statement.src.parameterCastTypes[paramName]
             }
+
             is AnnotatedExecuteStatement -> {
                 statement.src.parameterCastTypes[paramName]
             }
+
             else -> null
         }
     }
@@ -386,14 +417,17 @@ open class DataStructCodeGenerator(
                 tables.addAll(statement.src.joinTables)
                 tables // Set automatically handles duplicates
             }
+
             is AnnotatedExecuteStatement -> {
                 // For INSERT/UPDATE/DELETE, return the main table
                 setOf(statement.src.table)
             }
+
             is AnnotatedCreateTableStatement -> {
                 // For CREATE TABLE, return the table being created
                 setOf(statement.src.tableName)
             }
+
             is AnnotatedCreateViewStatement -> {
                 // For CREATE VIEW, we could potentially extract tables from the view definition
                 // but for now, return empty set as views don't directly affect tables
@@ -417,9 +451,11 @@ open class DataStructCodeGenerator(
                         // For now, return null as InsertStatement typically doesn't have IN clauses
                         null
                     }
+
                     else -> null
                 }
             }
+
             is AnnotatedSelectStatement -> statement.src.namedParametersToColumns[paramName]
             else -> null
         }
@@ -433,7 +469,7 @@ open class DataStructCodeGenerator(
     ): TypeName {
         if (column != null) {
             val baseType = SqliteTypeToKotlinCodeConverter.mapSqlTypeToKotlinType(column.src.dataType)
-            val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE]
+            val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE] as? String
             val isNullable = column.isNullable()
 
             val elementType = SqliteTypeToKotlinCodeConverter.determinePropertyType(baseType, propertyType, isNullable)

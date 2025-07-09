@@ -1,5 +1,6 @@
 package dev.goquick.sqlitenow.gradle
 
+import com.typesafe.config.ConfigFactory
 import java.io.File
 import java.io.FileNotFoundException
 import java.sql.Connection

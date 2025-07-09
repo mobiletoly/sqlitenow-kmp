@@ -54,11 +54,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import kotlinx.datetime.Clock
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
-import kotlinx.datetime.TimeZone
-import kotlinx.datetime.toLocalDateTime
 import org.jetbrains.compose.ui.tooling.preview.Preview
 import kotlin.random.Random
 
@@ -77,46 +74,55 @@ private val domains = listOf("gmail.com", "yahoo.com", "hotmail.com", "outlook.c
 val db = NowSampleDatabase(
     resolveDatabasePath("test04.db"),
     personAdapters = NowSampleDatabase.PersonAdapters(
-        birthDateToSqlColumn = { it?.toSqliteDate() },
-        notesToSqlColumn = { it?.let { PersonNote.serialize(it) } },
-        sqlColumnToBirthDate = {
+        notesToSqlValue = { it?.let { PersonNote.serialize(it) } },
+        birthDateToSqlValue = {
+            it?.toSqliteDate()
+        },
+        sqlValueToBirthDate = {
             it?.let { LocalDate.fromSqliteDate(it) }
         },
-        sqlColumnToAddressType = {
+        sqlValueToAddressType = {
             AddressType.from(it)
         },
-        sqlColumnToCreatedAt = {
+        sqlValueToCreatedAt = {
             LocalDateTime.fromSqliteTimestamp(it)
         },
-        sqlColumnToNotes = { it?.let { PersonNote.deserialize(it) } }
+        sqlValueToNotes = { it?.let { PersonNote.deserialize(it) } },
+        sqlValueToPhone = {
+            it
+        },
+        phoneToSqlValue = {
+            it
+        }
     ),
     commentAdapters = NowSampleDatabase.CommentAdapters(
-        sqlColumnToCreatedAt = {
+        sqlValueToCreatedAt = {
             LocalDateTime.fromSqliteTimestamp(it)
         },
-        createdAtToSqlColumn = {
+        createdAtToSqlValue = {
             it.toSqliteTimestamp()
         },
-        sqlColumnToTags = { it?.jsonDecodeFromSqlite() ?: emptyList() },
-        tagsToSqlColumn = { it?.jsonEncodeToSqlite() }
+        sqlValueToTags = { it?.jsonDecodeFromSqlite() ?: emptyList() },
+        tagsToSqlValue = { it?.jsonEncodeToSqlite() }
     ),
     personAddressAdapters = NowSampleDatabase.PersonAddressAdapters(
-        addressTypeToSqlColumn = { it.value },
-        sqlColumnToAddressType = { AddressType.from(it) },
-        sqlColumnToCreatedAt = {
+        addressTypeToSqlValue = { it.value },
+        sqlValueToAddressType = { AddressType.from(it) },
+        sqlValueToCreatedAt = {
             it.let { LocalDateTime.fromSqliteTimestamp(it) }
         },
     ),
     mixedAdapters = NowSampleDatabase.MixedAdapters(
-        sqlColumnToBirthDate = {
+        sqlValueToBirthDate = {
             it?.let { LocalDate.fromSqliteDate(it) }
         },
-        sqlColumnToCreatedAt = {
+        sqlValueToCreatedAt = {
             it.let { LocalDateTime.fromSqliteTimestamp(it) }
         },
-        sqlColumnToAddressType = {
+        sqlValueToAddressType = {
             AddressType.from(it)
-        }
+        },
+        sqlValueToPhone = { it }
     ),
     migration = VersionBasedDatabaseMigrations()
 )
@@ -366,13 +372,11 @@ fun PersonCard(
                     overflow = TextOverflow.Ellipsis
                 )
 
-                if (person.phone != null) {
-                    Text(
-                        text = person.phone,
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f)
-                    )
-                }
+                Text(
+                    text = person.phone,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f)
+                )
 
                 if (person.birthDate != null) {
                     Text(
@@ -438,8 +442,8 @@ suspend fun addRandomPerson(onError: (String) -> Unit) {
     val birthDate = if (Random.nextBoolean()) {
         LocalDate(
             year = Random.nextInt(1950, 2005),
-            monthNumber = Random.nextInt(1, 13),
-            dayOfMonth = Random.nextInt(1, 29)
+            month = Random.nextInt(1, 13),
+            day = Random.nextInt(1, 29)
         )
     } else null
 
@@ -456,7 +460,7 @@ suspend fun addRandomPerson(onError: (String) -> Unit) {
                 firstName = firstName,
                 lastName = lastName,
                 email = email,
-                phone = phone,
+                phone = phone ?: "",        // because we marked "phone" as not-null
                 birthDate = birthDate,
                 notes = notes,
             )

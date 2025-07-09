@@ -100,7 +100,7 @@ class DatabaseCodeGenerator(
         val adaptersByName = adapters.groupBy { it.functionName }
         val result = mutableListOf<UniqueAdapter>()
 
-        adaptersByName.forEach { (functionName, adapterList) ->
+        adaptersByName.forEach { (_, adapterList) ->
             val uniqueSignatures = adapterList.distinctBy { it.signatureKey() }
 
             if (uniqueSignatures.size == 1) {
@@ -117,6 +117,31 @@ class DatabaseCodeGenerator(
         }
 
         return result
+    }
+
+    /**
+     * Simple helper function to find the correct adapter name.
+     * Uses direct lookup by expected function name pattern.
+     */
+    private fun findAdapterName(
+        namespace: String,
+        expectedFunctionName: String,
+        adaptersByNamespace: Map<String, List<UniqueAdapter>>
+    ): String {
+        val deduplicatedAdapters = adaptersByNamespace[namespace] ?: return expectedFunctionName
+
+        // Look for exact match first
+        val exactMatch = deduplicatedAdapters.find { it.functionName == expectedFunctionName }
+        if (exactMatch != null) {
+            return exactMatch.functionName
+        }
+
+        // Look for renamed version (e.g., phoneToSqlValueForString)
+        val renamedMatch = deduplicatedAdapters.find {
+            it.functionName.startsWith(expectedFunctionName + "For")
+        }
+
+        return renamedMatch?.functionName ?: expectedFunctionName
     }
 
     /**
@@ -147,7 +172,8 @@ class DatabaseCodeGenerator(
         val adaptersByNamespace = collectAdaptersByNamespace()
 
         // Filter out namespaces with no adapters
-        val namespacesWithAdapters = adaptersByNamespace.filter { (_, adapters) -> adapters.isNotEmpty() }
+        val namespacesWithAdapters = adaptersByNamespace
+            .filter { (_, adapters) -> adapters.isNotEmpty() }
 
         // Add constructor with adapter wrapper parameters
         val constructorBuilder = FunSpec.constructorBuilder()
@@ -155,7 +181,7 @@ class DatabaseCodeGenerator(
             .addParameter("migration", ClassName("dev.goquick.sqlitenow.core", "DatabaseMigrations"))
 
         // Add adapter wrapper parameters to constructor only for namespaces that have adapters
-        namespacesWithAdapters.forEach { (namespace, adapters) ->
+        namespacesWithAdapters.forEach { (namespace, _) ->
             val adapterClassName = "${namespace.capitalized()}Adapters"
             constructorBuilder.addParameter("${namespace}Adapters", ClassName("", adapterClassName))
 
@@ -190,7 +216,7 @@ class DatabaseCodeGenerator(
 
         // Generate router classes
         nsWithStatements.forEach { (namespace, statements) ->
-            val routerClass = generateRouterClass(namespace, statements)
+            val routerClass = generateRouterClass(namespace, statements, adaptersByNamespace)
             classBuilder.addType(routerClass)
         }
 
@@ -224,7 +250,8 @@ class DatabaseCodeGenerator(
     /** Generates a router class for a specific namespace. */
     private fun generateRouterClass(
         namespace: String,
-        statements: List<AnnotatedStatement>
+        statements: List<AnnotatedStatement>,
+        adaptersByNamespace: Map<String, List<UniqueAdapter>>
     ): TypeSpec {
         val routerClassName = "${namespace.capitalized()}Router"
         val classBuilder = TypeSpec.classBuilder(routerClassName)
@@ -247,12 +274,12 @@ class DatabaseCodeGenerator(
             when (statement) {
                 is AnnotatedSelectStatement -> {
                     // Generate SelectRunners object for SELECT statements
-                    classBuilder.addProperty(generateSelectRunnersProperty(statement, namespace))
+                    classBuilder.addProperty(generateSelectRunnersProperty(statement, namespace, adaptersByNamespace))
                 }
 
                 is AnnotatedExecuteStatement -> {
                     // Generate ExecuteRunners object for INSERT/UPDATE/DELETE statements
-                    classBuilder.addProperty(generateExecuteRunnersProperty(statement, namespace))
+                    classBuilder.addProperty(generateExecuteRunnersProperty(statement, namespace, adaptersByNamespace))
                 }
 
                 else -> {
@@ -264,91 +291,11 @@ class DatabaseCodeGenerator(
         return classBuilder.build()
     }
 
-    /**
-     * Helper function to create a method builder with suspend modifier and params parameter if needed.
-     * @return Pair of (methodBuilder, namedParameters) for further use.
-     */
-    private fun createMethodBuilder(
-        methodName: String,
-        statement: AnnotatedStatement,
-        className: String,
-        namespace: String
-    ): Pair<FunSpec.Builder, List<String>> {
-        val methodBuilder = FunSpec.builder(methodName)
-            .addModifiers(KModifier.SUSPEND)
-
-        // Add params parameter if statement has parameters
-        val namedParameters = StatementUtils.getNamedParameters(statement)
-        if (namedParameters.isNotEmpty()) {
-            val paramsType = ClassName(packageName, namespace.capitalized())
-                .nestedClass(className)
-                .nestedClass("Params")
-            methodBuilder.addParameter("params", paramsType)
-        }
-
-        return methodBuilder to namedParameters
-    }
-
-    /** Helper function to generate method body with connection, params, and adapter parameters. */
-    private fun generateMethodBody(
-        methodBuilder: FunSpec.Builder,
-        statement: AnnotatedStatement,
-        namedParameters: List<String>,
-        namespace: String,
-        methodCall: String
-    ): FunSpec {
-        val codeBuilder = StringBuilder()
-        codeBuilder.append(methodCall)
-        codeBuilder.append("    conn = ref.connection(),\n")
-
-        if (namedParameters.isNotEmpty()) {
-            codeBuilder.append("    params = params,\n")
-        }
-
-        // Add adapter parameters only if the namespace has adapters
-        val statementAdapters = adapterConfig.collectAllParamConfigs(statement)
-        if (statementAdapters.isNotEmpty()) {
-            statementAdapters.forEach { config ->
-                codeBuilder.append("    ${config.adapterFunctionName} = ref.${namespace}Adapters.${config.adapterFunctionName},\n")
-            }
-        }
-
-        codeBuilder.append(")")
-        methodBuilder.addStatement(codeBuilder.toString())
-
-        return methodBuilder.build()
-    }
-
-    /** Generates a SELECT method (executeAsList, executeAsOne, or executeAsOneOrNull). */
-    private fun generateSelectMethod(
-        statement: AnnotatedSelectStatement,
-        methodType: String,
-        namespace: String
-    ): FunSpec {
-        val className = statement.getDataClassName()
-        val methodName = "${className.replaceFirstChar { it.lowercase() }}${methodType.removePrefix("execute")}"
-
-        val (methodBuilder, namedParameters) = createMethodBuilder(methodName, statement, className, namespace)
-
-        // Determine return type (handles shared results)
-        val resultType = SharedResultTypeUtils.createResultTypeName(packageName, namespace, statement)
-
-        val returnType = when (methodType) {
-            "executeAsList" -> ClassName("kotlin.collections", "List").parameterizedBy(resultType)
-            "executeAsOne" -> resultType
-            "executeAsOneOrNull" -> resultType.copy(nullable = true)
-            else -> resultType
-        }
-        methodBuilder.returns(returnType)
-
-        val methodCall = "return ${namespace.capitalized()}.$className.$methodType(\n"
-        return generateMethodBody(methodBuilder, statement, namedParameters, namespace, methodCall)
-    }
-
     /** Generates an ExecuteRunners property for INSERT/UPDATE/DELETE statements. */
     private fun generateExecuteRunnersProperty(
         statement: AnnotatedExecuteStatement,
-        namespace: String
+        namespace: String,
+        adaptersByNamespace: Map<String, List<UniqueAdapter>>
     ): PropertySpec {
         val className = statement.getDataClassName()
         val propertyName = className.replaceFirstChar { it.lowercase() }
@@ -371,72 +318,19 @@ class DatabaseCodeGenerator(
         }
 
         // Generate the object expression implementing ExecuteRunners
-        val objectExpression = generateExecuteRunnersObjectExpression(statement, namespace, className, hasParams)
+        val objectExpression = generateExecuteRunnersObjectExpression(statement, namespace, className,
+            hasParams, adaptersByNamespace)
 
         return PropertySpec.builder(propertyName, propertyType)
             .initializer(objectExpression)
             .build()
     }
 
-    /** Generates a flow method for reactive SELECT queries. */
-    private fun generateFlowMethod(
-        statement: AnnotatedSelectStatement,
-        namespace: String
-    ): FunSpec {
-        val className = statement.getDataClassName()
-        val methodName = "${className.replaceFirstChar { it.lowercase() }}Flow"
-
-        val methodBuilder = FunSpec.builder(methodName)
-            .addKdoc("Creates a reactive Flow that emits ${className} results whenever the underlying data changes.")
-
-        // Add params parameter if statement has parameters
-        val namedParameters = StatementUtils.getNamedParameters(statement)
-        if (namedParameters.isNotEmpty()) {
-            val paramsType = ClassName(packageName, namespace.capitalized())
-                .nestedClass(className)
-                .nestedClass("Params")
-            methodBuilder.addParameter("params", paramsType)
-        }
-
-        // Determine return type (handles shared results)
-        val resultType = SharedResultTypeUtils.createResultTypeName(packageName, namespace, statement)
-        val returnType = ClassName("kotlinx.coroutines.flow", "Flow").parameterizedBy(
-            ClassName("kotlin.collections", "List").parameterizedBy(resultType)
-        )
-        methodBuilder.returns(returnType)
-
-        // Generate method body
-        val codeBuilder = StringBuilder()
-        codeBuilder.append("return ref.createReactiveQueryFlow(\n")
-        codeBuilder.append("    affectedTables = ${namespace.capitalized()}.$className.affectedTables,\n")
-        codeBuilder.append("    queryExecutor = {\n")
-        codeBuilder.append("        ${namespace.capitalized()}.$className.executeAsList(\n")
-        codeBuilder.append("            conn = ref.connection(),\n")
-
-        if (namedParameters.isNotEmpty()) {
-            codeBuilder.append("            params = params,\n")
-        }
-
-        // Add adapter parameters only if the namespace has adapters
-        val statementAdapters = adapterConfig.collectAllParamConfigs(statement)
-        if (statementAdapters.isNotEmpty()) {
-            statementAdapters.forEach { config ->
-                codeBuilder.append("            ${config.adapterFunctionName} = ref.${namespace}Adapters.${config.adapterFunctionName},\n")
-            }
-        }
-
-        codeBuilder.append("        )\n")
-        codeBuilder.append("    }\n")
-        codeBuilder.append(")")
-
-        methodBuilder.addStatement(codeBuilder.toString())
-        return methodBuilder.build()
-    }
-
     /** Generates a SelectRunners property for SELECT statements. */
     private fun generateSelectRunnersProperty(
         statement: AnnotatedSelectStatement,
-        namespace: String
+        namespace: String,
+        adaptersByNamespace: Map<String, List<UniqueAdapter>>
     ): PropertySpec {
         val className = statement.getDataClassName()
         val propertyName = className.replaceFirstChar { it.lowercase() }
@@ -464,7 +358,7 @@ class DatabaseCodeGenerator(
         }
 
         // Generate the object expression implementing SelectRunners
-        val objectExpression = generateSelectRunnersObjectExpression(statement, namespace, className, hasParams)
+        val objectExpression = generateSelectRunnersObjectExpression(statement, namespace, className, hasParams, adaptersByNamespace)
 
         return PropertySpec.builder(propertyName, propertyType)
             .initializer(objectExpression)
@@ -476,7 +370,8 @@ class DatabaseCodeGenerator(
         statement: AnnotatedSelectStatement,
         namespace: String,
         className: String,
-        hasParams: Boolean
+        hasParams: Boolean,
+        adaptersByNamespace: Map<String, List<UniqueAdapter>>
     ): String {
         val capitalizedNamespace = namespace.capitalized()
         val statementAdapters = adapterConfig.collectAllParamConfigs(statement)
@@ -486,11 +381,12 @@ class DatabaseCodeGenerator(
         val commonParams = buildString {
             append("conn = ref.connection()")
             if (hasParams) {
-                append(",\n                params = params")
+                append(",\n            params = params")
             }
             if (hasAdapters) {
                 statementAdapters.forEach { config ->
-                    append(",\n                ${config.adapterFunctionName} = ref.${namespace}Adapters.${config.adapterFunctionName}")
+                    val actualAdapterName = findAdapterName(namespace, config.adapterFunctionName, adaptersByNamespace)
+                    append(",\n            ${config.adapterFunctionName} = ref.${namespace}Adapters.${actualAdapterName}")
                 }
             }
         }
@@ -498,10 +394,9 @@ class DatabaseCodeGenerator(
         // Build the object expression
         return buildString {
             if (hasParams) {
-                append("{ params -> object : SelectRunners<${statement.getResultTypeName(namespace)}> {\n")
-            } else {
-                append("object : SelectRunners<${statement.getResultTypeName(namespace)}> {\n")
+                append("{ params ->\n")
             }
+            append("    object : SelectRunners<${statement.getResultTypeName(namespace)}> {\n")
 
             append("        override suspend fun asList() = $capitalizedNamespace.$className.executeAsList(\n")
             append("            $commonParams\n")
@@ -519,7 +414,7 @@ class DatabaseCodeGenerator(
             append("            affectedTables = $capitalizedNamespace.$className.affectedTables,\n")
             append("            queryExecutor = {\n")
             append("                $capitalizedNamespace.$className.executeAsList(\n")
-            append("                    $commonParams\n")
+            append("                    ${commonParams.lines().joinToString("\n        ")}\n")
             append("                )\n")
             append("            }\n")
             append("        )\n")
@@ -536,7 +431,8 @@ class DatabaseCodeGenerator(
         statement: AnnotatedExecuteStatement,
         namespace: String,
         className: String,
-        hasParams: Boolean
+        hasParams: Boolean,
+        adaptersByNamespace: Map<String, List<UniqueAdapter>>
     ): String {
         val capitalizedNamespace = namespace.capitalized()
         val statementAdapters = adapterConfig.collectAllParamConfigs(statement)
@@ -550,7 +446,8 @@ class DatabaseCodeGenerator(
             }
             if (hasAdapters) {
                 statementAdapters.forEach { config ->
-                    append(",\n                ${config.adapterFunctionName} = ref.${namespace}Adapters.${config.adapterFunctionName}")
+                    val actualAdapterName = findAdapterName(namespace, config.adapterFunctionName, adaptersByNamespace)
+                    append(",\n                ${config.adapterFunctionName} = ref.${namespace}Adapters.${actualAdapterName}")
                 }
             }
         }
@@ -558,11 +455,9 @@ class DatabaseCodeGenerator(
         // Build the object expression
         return buildString {
             if (hasParams) {
-                append("{ params -> object : ExecuteRunners {\n")
-            } else {
-                append("object : ExecuteRunners {\n")
+                append("\n{ params ->\n")
             }
-
+            append("    object : ExecuteRunners {\n")
             append("        override suspend fun execute() {\n")
             append("            $capitalizedNamespace.$className.execute(\n")
             append("                $commonParams\n")
@@ -583,4 +478,6 @@ class DatabaseCodeGenerator(
         val resultType = SharedResultTypeUtils.createResultTypeName(packageName, namespace, this)
         return resultType.toString()
     }
+
+
 }

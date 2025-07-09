@@ -152,7 +152,7 @@ You can use annotations in SELECT queries to customize the generated code and ov
 Assuming that you have file `queries/person/selectSummary.sql`:
 
 ```sql
--- @@class=PersonSummary
+-- @@{ class=PersonSummary }
 SELECT id, first_name, last_name FROM Person;
 ```
 
@@ -167,7 +167,7 @@ SELECT
     id, 
     first_name,
     last_name,
-    -- @@field=phone @@propertyName=contactPhone
+    -- @@{ field=phone, propertyName=contactPhone }
     phone
 FROM Person;
 ```
@@ -184,14 +184,14 @@ Assuming that you have two (or more) queries in two different files:
 **File: `queries/person/selectActive.sql`**
 
 ```sql
--- @@sharedResult=Row
+-- @@{ sharedResult=Row }
 SELECT * FROM Person WHERE active = 1;
 ```
 
 **File: `queries/person/selectNew.sql`**
 
 ```sql
--- @@sharedResult=Row
+-- @@{ sharedResult=Row }
 SELECT * FROM Person WHERE created_at > :since;
 ```
 

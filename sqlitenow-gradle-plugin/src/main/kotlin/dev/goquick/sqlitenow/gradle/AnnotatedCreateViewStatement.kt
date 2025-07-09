@@ -44,16 +44,5 @@ data class AnnotatedCreateViewStatement(
                 }
             )
         }
-
-    }
-
-    /**
-     * Finds a field that corresponds to the given column/field name.
-     * Matches by both fieldName and originalColumnName.
-     */
-    fun findField(columnName: String): Field? {
-        return fields.find { field ->
-            field.src.fieldName == columnName || field.src.originalColumnName == columnName
-        }
     }
 }

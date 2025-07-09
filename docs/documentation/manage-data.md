@@ -149,3 +149,5 @@ db.person.deleteByIds(
 ```
 
 ## Next Steps
+
+[Initialize Data]({{ site.baseurl }}/documentation/initialize-data/) - Learn about provisioning initial data

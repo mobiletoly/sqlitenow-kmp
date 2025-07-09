@@ -139,9 +139,7 @@ class ColumnLookup(
         }
     }
 
-    /**
-     * Find a column in a table using both direct name match and property name conversion.
-     */
+    /** Find a column in a table using both direct name match and property name conversion. */
     private fun findColumnInTable(
         table: AnnotatedCreateTableStatement,
         columnName: String,
@@ -174,7 +172,6 @@ class ColumnLookup(
         val associatedColumn = statement.src.namedParametersToColumns[paramName]
         val columnName = associatedColumn?.columnName ?: paramName
 
-        // Get the underlying SELECT statement from the VIEW
         val viewSelectStatement = view.src.selectStatement
 
         // Look for the column in the tables referenced by the VIEW

@@ -223,7 +223,7 @@ internal class QueryCodeGenerator(
         fnBld.returns(Unit::class)
 
         // Add common SQL statement processing logic
-        addSqlStatementProcessing(fnBld, statement, namespace, className)
+        addSqlStatementProcessing(fnBld, statement, namespace, className, functionName = "execute")
 
         return fnBld.build()
     }
@@ -352,7 +352,7 @@ internal class QueryCodeGenerator(
         statement: AnnotatedSelectStatement
     ) {
         addAdapterParameters(fnBld, statement) { config ->
-            config.adapterFunctionName.startsWith("sqlColumnTo")
+            config.adapterFunctionName.startsWith("sqlValueTo")
         }
     }
 
@@ -387,7 +387,7 @@ internal class QueryCodeGenerator(
         statement: AnnotatedStatement
     ) {
         addAdapterParameters(fnBld, statement) { config ->
-            config.adapterFunctionName.endsWith("ToSqlColumn")
+            config.adapterFunctionName.endsWith("ToSqlValue")
         }
     }
 
@@ -404,7 +404,6 @@ internal class QueryCodeGenerator(
 
     /**
      * Helper function to get filtered adapter function names.
-     * Consolidates duplicate adapter filtering logic.
      */
     private fun getFilteredAdapterNames(
         statement: AnnotatedStatement,
@@ -416,7 +415,7 @@ internal class QueryCodeGenerator(
 
     /**
      * Helper function to create Result type name for SELECT statements.
-     * Uses SharedResult if the statement has @@sharedResult annotation, otherwise uses regular Result.
+     * Uses SharedResult if the statement has sharedResult annotation, otherwise uses regular Result.
      */
     private fun createSelectResultTypeName(namespace: String, statement: AnnotatedSelectStatement): ClassName {
         return SharedResultTypeUtils.createResultTypeName(packageName, namespace, statement)
@@ -463,7 +462,7 @@ internal class QueryCodeGenerator(
         statement: AnnotatedStatement,
         namespace: String,
         className: String,
-        functionName: String = "execute"
+        functionName: String,
     ) {
         val capitalizedNamespace = namespace.capitalized()
 
@@ -486,7 +485,7 @@ internal class QueryCodeGenerator(
 
             // Add parameter binding adapter function names
             val parameterBindingAdapters = getFilteredAdapterNames(statement) { config ->
-                config.adapterFunctionName.endsWith("ToSqlColumn")
+                config.adapterFunctionName.endsWith("ToSqlValue")
             }
             paramsList.addAll(parameterBindingAdapters)
 
@@ -623,7 +622,7 @@ internal class QueryCodeGenerator(
 
         // Add result conversion adapter function names
         val resultConversionAdapters = getFilteredAdapterNames(statement) { config ->
-            config.adapterFunctionName.startsWith("sqlColumnTo")
+            config.adapterFunctionName.startsWith("sqlValueTo")
         }
         paramsList.addAll(resultConversionAdapters)
 
@@ -633,27 +632,27 @@ internal class QueryCodeGenerator(
 
         when (functionName) {
             "executeAsList" -> {
-                codeBuilder.append("    val results = mutableListOf<$resultType>()\n")
-                codeBuilder.append("    while (statement.step()) {\n")
-                codeBuilder.append("      results.add($capitalizedNamespace.$className.readStatementResult($paramsString))\n")
-                codeBuilder.append("    }\n")
-                codeBuilder.append("    results\n")
+                codeBuilder.append("  val results = mutableListOf<$resultType>()\n")
+                codeBuilder.append("  while (statement.step()) {\n")
+                codeBuilder.append("    results.add($capitalizedNamespace.$className.readStatementResult($paramsString))\n")
+                codeBuilder.append("  }\n")
+                codeBuilder.append("  results\n")
             }
 
             "executeAsOne" -> {
-                codeBuilder.append("    if (statement.step()) {\n")
-                codeBuilder.append("      $capitalizedNamespace.$className.readStatementResult($paramsString)\n")
-                codeBuilder.append("    } else {\n")
-                codeBuilder.append("      throw IllegalStateException(\"Query returned no results, but exactly one result was expected\")\n")
-                codeBuilder.append("    }\n")
+                codeBuilder.append("  if (statement.step()) {\n")
+                codeBuilder.append("    $capitalizedNamespace.$className.readStatementResult($paramsString)\n")
+                codeBuilder.append("  } else {\n")
+                codeBuilder.append("    throw IllegalStateException(\"Query returned no results, but exactly one result was expected\")\n")
+                codeBuilder.append("  }\n")
             }
 
             "executeAsOneOrNull" -> {
-                codeBuilder.append("    if (statement.step()) {\n")
-                codeBuilder.append("      $capitalizedNamespace.$className.readStatementResult($paramsString)\n")
-                codeBuilder.append("    } else {\n")
-                codeBuilder.append("      null\n")
-                codeBuilder.append("    }\n")
+                codeBuilder.append("  if (statement.step()) {\n")
+                codeBuilder.append("    $capitalizedNamespace.$className.readStatementResult($paramsString)\n")
+                codeBuilder.append("  } else {\n")
+                codeBuilder.append("    null\n")
+                codeBuilder.append("  }\n")
             }
         }
 
@@ -687,7 +686,7 @@ internal class QueryCodeGenerator(
     /**
      * Helper function to generate the appropriate getter call for a field.
      * Uses type-specific getters like getLong(), getText(), etc.
-     * If the field has an @@adapter annotation, uses the adapter function.
+     * If the field has an 'adapter' annotation, uses the adapter function.
      */
     private fun generateGetterCall(
         field: AnnotatedSelectStatement.Field,

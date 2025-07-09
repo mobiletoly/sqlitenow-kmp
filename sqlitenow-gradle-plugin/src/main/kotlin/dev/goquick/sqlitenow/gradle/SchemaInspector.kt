@@ -80,11 +80,12 @@ internal class SchemaInspector(
 
 interface DeferredStatementExecutor {
     fun execute(conn: Connection): AnnotatedStatement
+    fun reportContext(): String
 }
 
 class CreateTableStatementExecutor(
     private val sqlStatement: SqlSingleStatement,
-    private val createTable: CreateTable
+    private val createTable: CreateTable,
 ) : DeferredStatementExecutor {
     override fun execute(conn: Connection): AnnotatedStatement {
         return conn.createStatement().use { stmt ->
@@ -98,6 +99,10 @@ class CreateTableStatementExecutor(
             stmt.executeUpdate(annotatedCreateTableStatement.src.sql)
             annotatedCreateTableStatement
         }
+    }
+
+    override fun reportContext(): String {
+        return sqlStatement.sql
     }
 }
 
@@ -117,5 +122,9 @@ class CreateViewStatementExecutor(
             stmt.executeUpdate(annotatedCreateViewStatement.src.sql)
             annotatedCreateViewStatement
         }
+    }
+
+    override fun reportContext(): String {
+        return sqlStatement.sql
     }
 }

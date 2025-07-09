@@ -8,7 +8,7 @@ import org.junit.jupiter.api.assertThrows
 class ImplementsAnnotationTest {
 
     @Test
-    @DisplayName("Test @@implements annotation parsing")
+    @DisplayName("Test implements annotation parsing")
     fun testImplementsAnnotationParsing() {
         val annotations = mapOf(
             AnnotationConstants.SHARED_RESULT to "All",
@@ -22,10 +22,10 @@ class ImplementsAnnotationTest {
     }
 
     @Test
-    @DisplayName("Test extractAnnotations function with @@implements")
+    @DisplayName("Test extractAnnotations function with implements")
     fun testExtractAnnotationsWithImplements() {
         val comments = listOf(
-            "-- @@sharedResult=All @@implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields"
+            "-- @@{sharedResult=All, implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields}"
         )
 
         val extracted = extractAnnotations(comments)
@@ -39,7 +39,7 @@ class ImplementsAnnotationTest {
     fun testFullAnnotationPipeline() {
         // Test the exact comment format you're using
         val comments = listOf(
-            "-- @@sharedResult=All @@implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields"
+            "-- @@{sharedResult=All, implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields}"
         )
 
         // Step 1: Extract annotations
@@ -80,11 +80,11 @@ class ImplementsAnnotationTest {
     }
 
     @Test
-    @DisplayName("Test conflicting @@implements annotations throw error")
+    @DisplayName("Test conflicting implements annotations throw error")
     fun testConflictingImplementsAnnotations() {
         val sharedResultManager = SharedResultManager()
 
-        // First statement with @@implements
+        // First statement with implements
         val firstStatement = AnnotatedSelectStatement(
             name = "SelectAll",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
@@ -107,7 +107,7 @@ class ImplementsAnnotationTest {
             fields = emptyList()
         )
 
-        // Second statement without @@implements (conflicting)
+        // Second statement without implements (conflicting)
         val secondStatement = AnnotatedSelectStatement(
             name = "SelectAllFiltered",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
@@ -140,7 +140,7 @@ class ImplementsAnnotationTest {
             sharedResultManager.registerSharedResult(secondStatement, "person")
         }
 
-        assertTrue(exception.message!!.contains("Conflicting @@implements annotations"))
+        assertTrue(exception.message!!.contains("Conflicting 'implements' annotations"))
         assertTrue(exception.message!!.contains("person.All"))
         assertTrue(exception.message!!.contains("SelectAllFiltered"))
         assertTrue(exception.message!!.contains("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields"))
@@ -148,12 +148,12 @@ class ImplementsAnnotationTest {
     }
 
     @Test
-    @DisplayName("Test @@excludeOverrideFields annotation parsing")
+    @DisplayName("Test excludeOverrideFields annotation parsing")
     fun testExcludeOverrideFieldsAnnotation() {
         val annotations = mapOf(
             AnnotationConstants.SHARED_RESULT to "All",
             AnnotationConstants.IMPLEMENTS to "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
-            AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS to "phone,birthDate,age,score,createdAt,notes"
+            AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS to listOf("phone", "birthDate", "age", "score", "createdAt", "notes")
         )
 
         val parsed = StatementAnnotationOverrides.parse(annotations)
@@ -164,29 +164,29 @@ class ImplementsAnnotationTest {
     }
 
     @Test
-    @DisplayName("Test extractAnnotations with @@excludeOverrideFields")
+    @DisplayName("Test extractAnnotations with excludeOverrideFields")
     fun testExtractAnnotationsWithExcludeOverrideFields() {
         val comments = listOf(
-            "-- @@sharedResult=All @@implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields @@excludeOverrideFields=phone,birthDate,age,score,createdAt,notes"
+            "-- @@{sharedResult=All, implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields, excludeOverrideFields=[phone,birthDate,age,score,createdAt,notes]}"
         )
 
         val extracted = extractAnnotations(comments)
 
         assertEquals("All", extracted[AnnotationConstants.SHARED_RESULT])
         assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", extracted[AnnotationConstants.IMPLEMENTS])
-        assertEquals("phone,birthDate,age,score,createdAt,notes", extracted[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS])
+        assertEquals(listOf("phone", "birthDate", "age", "score", "createdAt", "notes"), extracted[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS])
 
         val parsed = StatementAnnotationOverrides.parse(extracted)
         assertEquals(setOf("phone", "birthDate", "age", "score", "createdAt", "notes"), parsed.excludeOverrideFields)
     }
 
     @Test
-    @DisplayName("Test @@excludeOverrideFields with bracket syntax")
+    @DisplayName("Test excludeOverrideFields with bracket syntax")
     fun testExcludeOverrideFieldsWithBrackets() {
         val annotations = mapOf(
             AnnotationConstants.SHARED_RESULT to "All",
             AnnotationConstants.IMPLEMENTS to "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
-            AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS to "[phone,birthDate,age,score,createdAt,notes]"
+            AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS to listOf("phone", "birthDate", "age", "score", "createdAt", "notes")
         )
 
         val parsed = StatementAnnotationOverrides.parse(annotations)
@@ -197,10 +197,10 @@ class ImplementsAnnotationTest {
     }
 
     @Test
-    @DisplayName("Test @@excludeOverrideFields with bracket syntax and spaces")
+    @DisplayName("Test excludeOverrideFields with bracket syntax and spaces")
     fun testExcludeOverrideFieldsWithBracketsAndSpaces() {
         val annotations = mapOf(
-            AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS to "[ phone , birthDate , age ]"
+            AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS to listOf("phone", "birthDate", "age")
         )
 
         val parsed = StatementAnnotationOverrides.parse(annotations)
@@ -208,10 +208,10 @@ class ImplementsAnnotationTest {
     }
 
     @Test
-    @DisplayName("Test exact case: @@excludeOverrideFields=[phone, birthDate]")
+    @DisplayName("Test exact case: excludeOverrideFields=[phone, birthDate]")
     fun testExactUserCase() {
         val annotations = mapOf(
-            AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS to "[phone, birthDate]"
+            AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS to listOf("phone", "birthDate")
         )
 
         val parsed = StatementAnnotationOverrides.parse(annotations)
@@ -224,10 +224,10 @@ class ImplementsAnnotationTest {
     }
 
     @Test
-    @DisplayName("Test problematic case with spaces: @@excludeOverrideFields=[phone, birthDate]")
+    @DisplayName("Test problematic case with spaces: excludeOverrideFields=[phone, birthDate]")
     fun testProblematicSpaceCase() {
         // Test the exact problematic case you mentioned
-        val input = "[phone, birthDate]"
+        val input = listOf("phone", "birthDate")
 
         // Test the parsing function directly
         val annotations = mapOf(AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS to input)
@@ -247,29 +247,20 @@ class ImplementsAnnotationTest {
     }
 
     @Test
-    @DisplayName("Test comprehensive space handling")
+    @DisplayName("Test HOCON list handling")
     fun testComprehensiveSpaceHandling() {
-        val testCases = listOf(
-            "[phone,birthDate]" to setOf("phone", "birthDate"),
-            "[phone, birthDate]" to setOf("phone", "birthDate"),
-            "[ phone , birthDate ]" to setOf("phone", "birthDate"),
-            "[  phone  ,  birthDate  ]" to setOf("phone", "birthDate"),
-            "phone,birthDate" to setOf("phone", "birthDate"),
-            "phone, birthDate" to setOf("phone", "birthDate"),
-            " phone , birthDate " to setOf("phone", "birthDate"),
-            "  phone  ,  birthDate  " to setOf("phone", "birthDate")
+        // Test that HOCON lists work correctly
+        val annotations = mapOf(
+            AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS to listOf("phone", "birthDate", "age")
         )
 
-        testCases.forEach { (input, expected) ->
-            val annotations = mapOf(AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS to input)
-            val parsed = StatementAnnotationOverrides.parse(annotations)
-            assertEquals(expected, parsed.excludeOverrideFields, "Failed for input: '$input'")
+        val parsed = StatementAnnotationOverrides.parse(annotations)
+        assertEquals(setOf("phone", "birthDate", "age"), parsed.excludeOverrideFields)
 
-            // Verify no spaces in field names
-            parsed.excludeOverrideFields?.forEach { field ->
-                assertFalse(field.startsWith(" "), "Field '$field' should not start with space")
-                assertFalse(field.endsWith(" "), "Field '$field' should not end with space")
-            }
+        // Verify no spaces in field names (HOCON handles this automatically)
+        parsed.excludeOverrideFields?.forEach { field ->
+            assertFalse(field.startsWith(" "), "Field '$field' should not start with space")
+            assertFalse(field.endsWith(" "), "Field '$field' should not end with space")
         }
     }
 
@@ -277,7 +268,7 @@ class ImplementsAnnotationTest {
     @DisplayName("Test EXACT failing case: [ phone, birthDate]")
     fun testExactFailingCase() {
         // Test the exact case that's failing for the user
-        val input = "[ phone, birthDate]"
+        val input = listOf("phone", "birthDate")
         val annotations = mapOf(AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS to input)
         val parsed = StatementAnnotationOverrides.parse(annotations)
         assertEquals(setOf("phone", "birthDate"), parsed.excludeOverrideFields)
@@ -317,16 +308,14 @@ class ImplementsAnnotationTest {
     @DisplayName("Test extractAnnotations with bracket syntax")
     fun testExtractAnnotationsWithBracketSyntax() {
         val comments = listOf(
-            "-- @@sharedResult=All",
-            "-- @@implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
-            "-- @@excludeOverrideFields=[phone,birthDate]"
+            "-- @@{sharedResult=All, implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields, excludeOverrideFields=[phone,birthDate]}"
         )
 
         val extracted = extractAnnotations(comments)
 
         assertEquals("All", extracted[AnnotationConstants.SHARED_RESULT])
         assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", extracted[AnnotationConstants.IMPLEMENTS])
-        assertEquals("[phone,birthDate]", extracted[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS])
+        assertEquals(listOf("phone", "birthDate"), extracted[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS])
 
         val parsed = StatementAnnotationOverrides.parse(extracted)
         assertEquals(setOf("phone", "birthDate"), parsed.excludeOverrideFields)
@@ -336,14 +325,14 @@ class ImplementsAnnotationTest {
     @DisplayName("Test extractAnnotations with spaces in brackets - THE FAILING CASE")
     fun testExtractAnnotationsWithSpacesInBrackets() {
         val comments = listOf(
-            "-- @@sharedResult=All @@implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields @@excludeOverrideFields=[phone, birthDate]"
+            "-- @@{sharedResult=All, implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields, excludeOverrideFields=[phone, birthDate]}"
         )
 
         val extracted = extractAnnotations(comments)
 
         assertEquals("All", extracted[AnnotationConstants.SHARED_RESULT])
         assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", extracted[AnnotationConstants.IMPLEMENTS])
-        assertEquals("[phone, birthDate]", extracted[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS])
+        assertEquals(listOf("phone", "birthDate"), extracted[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS])
 
         val parsed = StatementAnnotationOverrides.parse(extracted)
         assertEquals(setOf("phone", "birthDate"), parsed.excludeOverrideFields)
@@ -353,16 +342,14 @@ class ImplementsAnnotationTest {
     @DisplayName("Test extractAnnotations with multiple lines and spaces")
     fun testExtractAnnotationsMultipleLinesWithSpaces() {
         val comments = listOf(
-            "-- @@sharedResult=All",
-            "-- @@implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
-            "-- @@excludeOverrideFields=[ phone , birthDate ]"
+            "-- @@{sharedResult=All, implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields, excludeOverrideFields=[ phone , birthDate ]}"
         )
 
         val extracted = extractAnnotations(comments)
 
         assertEquals("All", extracted[AnnotationConstants.SHARED_RESULT])
         assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", extracted[AnnotationConstants.IMPLEMENTS])
-        assertEquals("[ phone , birthDate ]", extracted[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS])
+        assertEquals(listOf("phone", "birthDate"), extracted[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS])
 
         val parsed = StatementAnnotationOverrides.parse(extracted)
         assertEquals(setOf("phone", "birthDate"), parsed.excludeOverrideFields)
@@ -375,7 +362,7 @@ class ImplementsAnnotationTest {
     fun testExcludeOverrideFieldsInheritanceForSharedResults() {
         val sharedResultManager = SharedResultManager()
 
-        // First statement with @@excludeOverrideFields specified
+        // First statement with excludeOverrideFields specified
         val firstStatement = AnnotatedSelectStatement(
             name = "SelectAll",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
@@ -398,7 +385,7 @@ class ImplementsAnnotationTest {
             fields = emptyList()
         )
 
-        // Second statement WITHOUT @@excludeOverrideFields (should inherit)
+        // Second statement WITHOUT excludeOverrideFields (should inherit)
         val secondStatement = AnnotatedSelectStatement(
             name = "SelectFiltered",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
@@ -451,7 +438,7 @@ class ImplementsAnnotationTest {
     fun testExcludeOverrideFieldsInheritanceReverseOrder() {
         val sharedResultManager = SharedResultManager()
 
-        // First statement WITHOUT @@excludeOverrideFields
+        // First statement WITHOUT excludeOverrideFields
         val firstStatement = AnnotatedSelectStatement(
             name = "SelectAll",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
@@ -474,7 +461,7 @@ class ImplementsAnnotationTest {
             fields = emptyList()
         )
 
-        // Second statement WITH @@excludeOverrideFields (should update the shared result)
+        // Second statement WITH excludeOverrideFields (should update the shared result)
         val secondStatement = AnnotatedSelectStatement(
             name = "SelectFiltered",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
@@ -538,8 +525,7 @@ class ImplementsAnnotationTest {
                 annotations = FieldAnnotationOverrides(
                     propertyName = null,
                     propertyType = null,
-                    nonNull = null,
-                    nullable = null,
+                    notNull = null,
                     adapter = false
                 )
             )
@@ -556,14 +542,13 @@ class ImplementsAnnotationTest {
                 annotations = FieldAnnotationOverrides(
                     propertyName = null,
                     propertyType = null,
-                    nonNull = null,
-                    nullable = null,
+                    notNull = null,
                     adapter = false
                 )
             )
         )
 
-        // First statement with @@excludeOverrideFields
+        // First statement with excludeOverrideFields
         val firstStatement = AnnotatedSelectStatement(
             name = "SelectWithLimit",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
@@ -586,7 +571,7 @@ class ImplementsAnnotationTest {
             fields = firstQueryFields
         )
 
-        // Second statement WITHOUT @@excludeOverrideFields (should inherit)
+        // Second statement WITHOUT excludeOverrideFields (should inherit)
         val secondStatement = AnnotatedSelectStatement(
             name = "SelectWithFilter",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
@@ -646,8 +631,7 @@ class ImplementsAnnotationTest {
                 annotations = FieldAnnotationOverrides(
                     propertyName = null,
                     propertyType = null,
-                    nonNull = null,
-                    nullable = null,
+                    notNull = null,
                     adapter = false
                 )
             ),
@@ -661,8 +645,7 @@ class ImplementsAnnotationTest {
                 annotations = FieldAnnotationOverrides(
                     propertyName = null,
                     propertyType = "kotlin.Long", // First query gets this annotation
-                    nonNull = null,
-                    nullable = null,
+                    notNull = null,
                     adapter = false
                 )
             )
@@ -679,8 +662,7 @@ class ImplementsAnnotationTest {
                 annotations = FieldAnnotationOverrides(
                     propertyName = null,
                     propertyType = null,
-                    nonNull = null,
-                    nullable = null,
+                    notNull = null,
                     adapter = false
                 )
             ),
@@ -694,14 +676,13 @@ class ImplementsAnnotationTest {
                 annotations = FieldAnnotationOverrides(
                     propertyName = null,
                     propertyType = null, // Second query doesn't get the annotation - this causes the issue!
-                    nonNull = null,
-                    nullable = null,
+                    notNull = null,
                     adapter = false
                 )
             )
         )
 
-        // First statement with @@excludeOverrideFields
+        // First statement with excludeOverrideFields
         val firstStatement = AnnotatedSelectStatement(
             name = "SelectWithLimit",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
@@ -724,7 +705,7 @@ class ImplementsAnnotationTest {
             fields = firstQueryFields
         )
 
-        // Second statement WITHOUT @@excludeOverrideFields (should inherit)
+        // Second statement WITHOUT excludeOverrideFields (should inherit)
         val secondStatement = AnnotatedSelectStatement(
             name = "SelectWithFilter",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
@@ -779,8 +760,7 @@ class ImplementsAnnotationTest {
                 annotations = FieldAnnotationOverrides(
                     propertyName = null,
                     propertyType = null,
-                    nonNull = null,
-                    nullable = null,
+                    notNull = null,
                     adapter = false
                 )
             ),
@@ -794,14 +774,13 @@ class ImplementsAnnotationTest {
                 annotations = FieldAnnotationOverrides(
                     propertyName = null,
                     propertyType = null,
-                    nonNull = null,
-                    nullable = null,
+                    notNull = null,
                     adapter = false
                 )
             )
         )
 
-        // First statement with @@excludeOverrideFields
+        // First statement with excludeOverrideFields
         val firstStatement = AnnotatedSelectStatement(
             name = "SelectWithLimit",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
@@ -824,7 +803,7 @@ class ImplementsAnnotationTest {
             fields = commonFields
         )
 
-        // Second statement WITHOUT @@excludeOverrideFields (should inherit)
+        // Second statement WITHOUT excludeOverrideFields (should inherit)
         val secondStatement = AnnotatedSelectStatement(
             name = "SelectWithFilter",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(

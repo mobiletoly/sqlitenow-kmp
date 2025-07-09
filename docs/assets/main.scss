@@ -1,0 +1,33 @@
+---
+---
+
+@import "minima";
+
+/* Custom styles to make the main content wider */
+.wrapper {
+  max-width: 1000px !important; /* Increased from default ~800px */
+  width: 95% !important; /* Use more of the available width */
+}
+
+/* Ensure code blocks don't overflow */
+pre, code {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* Make tables more responsive in wider layout */
+table {
+  width: 100%;
+  max-width: 100%;
+}
+
+/* Adjust post content for better readability with wider layout */
+.post-content {
+  line-height: 1.6;
+}
+
+/* Ensure images scale properly */
+.post-content img {
+  max-width: 100%;
+  height: auto;
+}

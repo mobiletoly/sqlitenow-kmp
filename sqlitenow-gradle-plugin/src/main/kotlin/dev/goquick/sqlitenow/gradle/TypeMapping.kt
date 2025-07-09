@@ -1,6 +1,7 @@
 package dev.goquick.sqlitenow.gradle
 
 import com.squareup.kotlinpoet.TypeName
+import dev.goquick.sqlitenow.gradle.SqliteTypeToKotlinCodeConverter.Companion.KOTLIN_STDLIB_TYPES
 
 /**
  * Service responsible for mapping Kotlin types to SQLite binding and getter operations.
@@ -57,16 +58,6 @@ class TypeMapping {
     /** Checks if a type string represents a standard Kotlin type that we can handle directly. */
     fun isStandardKotlinType(typeString: String): Boolean {
         val baseType = typeString.removePrefix("kotlin.").removeSuffix("?")
-        return baseType in SUPPORTED_TYPES
-    }
-
-    companion object Companion {
-        /**
-         * Set of Kotlin types that have direct SQLite binding/getter support.
-         */
-        private val SUPPORTED_TYPES = setOf(
-            "Int", "Long", "Double", "Float", "Boolean", 
-            "String", "ByteArray", "Byte"
-        )
+        return baseType in KOTLIN_STDLIB_TYPES
     }
 }

@@ -1,135 +1,253 @@
 package dev.goquick.sqlitenow.gradle
 
+import com.typesafe.config.ConfigFactory
+import com.typesafe.config.ConfigParseOptions
+import dev.goquick.sqlitenow.gradle.SqliteTypeToKotlinCodeConverter.Companion.KOTLIN_STDLIB_TYPES
 import org.gradle.internal.extensions.stdlib.capitalized
 
-fun extractAnnotations(comments: List<String>): Map<String, String?> {
-    return comments.flatMap { comment ->
-        extractAnnotationsFromComment(comment)
-    }.toMap()
+fun extractAnnotations(comments: List<String>): Map<String, Any?> {
+    val combinedComment = cleanedUpComments(comments)
+    val allAnnotations = mutableMapOf<String, Any?>()
+
+    val annotationBlocks = iterateBlockAnnotations(combinedComment)
+    annotationBlocks.forEach { blockAnnotations ->
+        // Merge annotations from this block
+        allAnnotations.putAll(blockAnnotations)
+    }
+    return allAnnotations
 }
 
-private fun extractAnnotationsFromComment(comment: String): List<Pair<String, String?>> {
-    val annotations = mutableListOf<Pair<String, String?>>()
-
-    // Split on spaces first, then handle bracket values specially
-    val tokens = comment.split(" ")
-    var i = 0
-
-    while (i < tokens.size) {
-        val token = tokens[i]
-        if (!token.startsWith("@@")) {
-            i++
-            continue
-        }
-
-        val annotationPart = token.substring(2) // Remove @@
-
-        // Check if this annotation has a bracket value that might span multiple tokens
-        val equalIndex = annotationPart.indexOf('=')
-        if (equalIndex != -1) {
-            val key = annotationPart.substring(0, equalIndex)
-            var value = annotationPart.substring(equalIndex + 1)
-
-            // If value starts with '[' but doesn't end with ']', collect more tokens
-            if (value.startsWith('[') && !value.endsWith(']')) {
-                val valueTokens = mutableListOf(value)
-                i++
-                while (i < tokens.size && !valueTokens.last().endsWith(']')) {
-                    valueTokens.add(tokens[i])
-                    i++
-                }
-                value = valueTokens.joinToString(" ")
-            }
-
-            annotations.add(key to value)
-        } else {
-            // Annotation without value
-            annotations.add(annotationPart to "")
-        }
-
-        i++
+private fun cleanedUpComments(comments: List<String>): String {
+    val cleanedComments = comments.map { comment ->
+        // Remove comment markers (-- or /* */) and trim
+        comment.replace(Regex("^\\s*--\\s*"), "").replace(Regex("/\\*|\\*/"), "").trim()
     }
+    return cleanedComments.joinToString(" ")
+}
 
-    return annotations
+private fun iterateBlockAnnotations(content: String): List<Map<String, Any?>> {
+    var searchStart = 0
+    val allAnnotations = mutableListOf<Map<String, Any?>>()
+    while (true) {
+        val startIndex = content.indexOf("@@{", searchStart)
+        if (startIndex == -1) break
+
+        val endIndex = content.indexOf("}", startIndex)
+        if (endIndex == -1) break
+
+        val hoconContent = content.substring(startIndex + 3, endIndex).trim()
+        val blockAnnotations = parseHoconAnnotations(hoconContent)
+
+        // Merge annotations from this block
+        allAnnotations.add(blockAnnotations)
+
+        // Continue searching after this block
+        searchStart = endIndex + 1
+    }
+    return allAnnotations
 }
 
 /**
- * Extracts field-associated annotations from SQL comments.
+ * Parses HOCON-style annotation content.
+ * Example: field=birth_date, adapter=default, propertyType=kotlinx.datetime.LocalDate
+ */
+private fun parseHoconAnnotations(content: String): Map<String, Any?> {
+    return try {
+        // Wrap the content in braces to make it a valid HOCON object
+        val hoconText = "{ $content }"
+
+        // Parse with HOCON
+        val config = ConfigFactory.parseString(
+            hoconText,
+            ConfigParseOptions.defaults().setAllowMissing(false)
+        )
+
+        // Convert to our annotation format
+        val annotations = mutableMapOf<String, Any?>()
+
+        for (entry in config.entrySet()) {
+            val key = entry.key
+            val value = entry.value.unwrapped()
+
+            annotations[key] = when (value) {
+                is String, is Boolean, is List<*> -> value
+                null -> null
+                else -> value.toString()  // Convert other types to string
+            }
+        }
+
+        annotations
+    } catch (e: Exception) {
+        System.err.println(
+            """
+            Failed to parse HOCON annotations
+            ---------------------------------
+            $content
+            ---------------------------------
+        """.trimIndent()
+        )
+        throw e
+    }
+}
+
+/**
+ * Extracts field-associated annotations from SQL comments using HOCON syntax.
  *
- * This function parses SQL comments to find annotations that start with @@
- * and associates them with specific fields when they have a @@field=column_name format.
+ * This function parses SQL comments to find HOCON-style annotations @@{...}
+ * and associates them with specific fields when they have a field=column_name format.
  *
  * Example:
- * -- @@field=user_id @@nullable
- * -- @@field=username @@unique
+ * -- @@{field=user_id, nullable=true, adapter=default}
  *
  * @param comments List of SQL comment strings
  * @return Map where keys are field names and values are maps of annotations for that field
  */
-fun extractFieldAssociatedAnnotations(comments: List<String>): Map<String, Map<String, String?>> {
-    val result = mutableMapOf<String, MutableMap<String, String?>>()
-    var currentField: String? = null
+fun extractFieldAssociatedAnnotations(comments: List<String>): Map<String, Map<String, Any?>> {
+    val combinedComment = cleanedUpComments(comments)
+    val annotationBlocks = iterateBlockAnnotations(combinedComment)
 
-    // Process each comment line
-    for (comment in comments) {
-        // Extract annotations (words starting with @@)
-        val annotations = comment.split("\\s+".toRegex())
-            .filter { it.startsWith("@@") }
-            .map { it.substring(2) } // Remove @@ prefix
+    val result = mutableMapOf<String, MutableMap<String, Any?>>()
+    annotationBlocks.forEach { blockAnnotations ->
+        // Every annotation block must have a 'field' annotation with a non-empty value
+        val fieldName = blockAnnotations[AnnotationConstants.FIELD] as? String
+        if (fieldName == null || fieldName.isBlank()) {
+            throw IllegalArgumentException("Annotation block must contain a 'field' annotation with a non-empty value to specify which field it applies to")
+        }
 
-        if (annotations.isEmpty()) continue
+        val fieldAnnotations = blockAnnotations.toMutableMap()
+        // Remove the field annotation from the result since it's used for association
+        fieldAnnotations.remove(AnnotationConstants.FIELD)
 
-        // Check if this comment has a field annotation
-        val fieldAnnotation = annotations.find { it.startsWith("${AnnotationConstants.FIELD}=") }
+        // Apply adapter logic: validate and normalize adapter values
+        val propertyType = fieldAnnotations[AnnotationConstants.PROPERTY_TYPE] as? String
+        val adapterValue = fieldAnnotations[AnnotationConstants.ADAPTER] as? String
+        if (fieldAnnotations.containsKey(AnnotationConstants.ADAPTER)) {
+            validateAdapterValue(adapterValue)
+        }
 
-        if (fieldAnnotation != null) {
-            // Extract field name from the field annotation
-            currentField = fieldAnnotation.substring(6)
+        // Determine if custom adapter should be generated and update annotations accordingly
+        if (shouldGenerateCustomAdapter(adapterValue, propertyType)) {
+            fieldAnnotations[AnnotationConstants.ADAPTER] = "custom"
+        } else {
+            fieldAnnotations.remove(AnnotationConstants.ADAPTER)
+        }
 
-            // Create an entry for this field if it doesn't exist
-            if (!result.containsKey(currentField)) {
-                result[currentField] = mutableMapOf()
-            }
+        result[fieldName] = fieldAnnotations
+    }
+    return result
+}
 
-            // Process other annotations for this field
-            annotations.filter { it != fieldAnnotation }
-                .forEach { annotation ->
-                    val parts = annotation.split("=", limit = 2)
-                    val annotationName = parts[0]
-                    val annotationValue = if (parts.size > 1) parts[1] else null
+/**
+ * Validates an adapter annotation value and throws an exception if invalid.
+ * Only "default" and "custom" are allowed values.
+ */
+private fun validateAdapterValue(adapterValue: String?) {
+    if (adapterValue != "default" && adapterValue != "custom") {
+        throw IllegalArgumentException("Adapter annotation can be adapter=\"default\" or adapter=\"custom\" only")
+    }
+}
 
-                    result[currentField]!![annotationName] = annotationValue
-                }
-        } else if (currentField != null) {
-            // If no field annotation in this comment, use the current field
-            annotations.forEach { annotation ->
-                val parts = annotation.split("=", limit = 2)
-                val annotationName = parts[0]
-                val annotationValue = if (parts.size > 1) parts[1] else null
+/**
+ * Determines the effective adapter behavior based on adapter value and property type.
+ * Returns true if custom adapter should be generated, false otherwise.
+ */
+private fun shouldGenerateCustomAdapter(adapterValue: String?, propertyType: String?): Boolean {
+    return when (adapterValue) {
+        "custom" -> true
+        "default" -> {
+            // adapter=default: use custom adapter only if propertyType is custom
+            propertyType != null && isCustomType(propertyType)
+        }
 
-                result[currentField]!![annotationName] = annotationValue
-            }
+        null -> {
+            // No adapter specified: same as adapter=default
+            propertyType != null && isCustomType(propertyType)
+        }
+
+        else -> {
+            // This should never happen due to validation, but just in case
+            throw IllegalArgumentException("Unexpected adapter value: \"$adapterValue\"")
         }
     }
+}
 
-    return result
+/**
+ * Converts a value (Boolean or String) to a Boolean, with validation.
+ * Used for parsing notNull annotation values from HOCON.
+ */
+internal fun parseNotNullValue(value: Any?): Boolean {
+    return when (value) {
+        is Boolean -> value
+        is String -> when (value.lowercase()) {
+            "true" -> true
+            "false" -> false
+            else -> throw IllegalArgumentException("Invalid notNull value: \"$value\". Must be true or false")
+        }
+
+        else -> throw IllegalArgumentException("Invalid notNull value type: ${value?.javaClass?.simpleName}. Must be boolean")
+    }
+}
+
+/**
+ * Determines if a property type is a custom type that needs an adapter.
+ * Returns true for custom types, false for built-in Kotlin types.
+ */
+private fun isCustomType(propertyType: String): Boolean {
+    // Extract the base type name (remove package, nullability, and generics)
+    val baseType = extractBaseTypeName(propertyType)
+    return baseType !in KOTLIN_STDLIB_TYPES
+}
+
+/**
+ * Extracts the base type name from a property type string.
+ * Examples:
+ * - "kotlinx.datetime.LocalDate" -> "LocalDate"
+ * - "kotlin.String?" -> "String"
+ * - "List<String>" -> "List"
+ * - "dev.example.CustomType" -> "CustomType"
+ */
+private fun extractBaseTypeName(propertyType: String): String {
+    // Remove nullability marker
+    val withoutNullability = propertyType.removeSuffix("?").trim()
+
+    // Remove generics (everything after <)
+    val withoutGenerics = withoutNullability.substringBefore('<').trim()
+
+    // Get the simple class name (everything after the last dot)
+    return withoutGenerics.substringAfterLast('.')
 }
 
 data class FieldAnnotationOverrides(
     val propertyName: String?,
     val propertyType: String?,
-    val nonNull: Boolean?,
-    val nullable: Boolean?,
+    val notNull: Boolean?,
     val adapter: Boolean?,
 ) {
     companion object {
-        fun parse(annotations: Map<String, String?>): FieldAnnotationOverrides {
+        fun parse(annotations: Map<String, Any?>): FieldAnnotationOverrides {
+            val propertyType = annotations[AnnotationConstants.PROPERTY_TYPE] as? String
+            val adapterValue = annotations[AnnotationConstants.ADAPTER] as? String
+
+            // Validate adapter value if present
+            if (annotations.containsKey(AnnotationConstants.ADAPTER)) {
+                validateAdapterValue(adapterValue)
+            }
+
+            // Determine if custom adapter should be used based on new adapter system
+            val adapter = shouldGenerateCustomAdapter(adapterValue, propertyType)
+
+            // Parse notNull boolean annotation using HOCON's hasPath() for proper null detection
+            val notNull = if (annotations.containsKey(AnnotationConstants.NOT_NULL)) {
+                parseNotNullValue(annotations[AnnotationConstants.NOT_NULL])
+            } else {
+                null // Not specified - inherit from table structure
+            }
+
             return FieldAnnotationOverrides(
-                propertyName = annotations[AnnotationConstants.PROPERTY_NAME],
-                propertyType = annotations[AnnotationConstants.PROPERTY_TYPE],
-                nonNull = annotations.containsKey(AnnotationConstants.NON_NULL),
-                nullable = annotations.containsKey(AnnotationConstants.NULLABLE),
-                adapter = annotations.containsKey(AnnotationConstants.ADAPTER),
+                propertyName = annotations[AnnotationConstants.PROPERTY_NAME] as? String,
+                propertyType = propertyType,
+                notNull = notNull,
+                adapter = adapter,
             )
         }
     }
@@ -163,40 +281,45 @@ data class StatementAnnotationOverrides(
     val excludeOverrideFields: Set<String>?
 ) {
     companion object {
-        fun parse(annotations: Map<String, String?>): StatementAnnotationOverrides {
-            if (annotations.containsKey(AnnotationConstants.NAME) && annotations[AnnotationConstants.NAME]!!.isBlank()) {
+        fun parse(annotations: Map<String, Any?>): StatementAnnotationOverrides {
+            val name = annotations[AnnotationConstants.NAME] as? String
+            val propertyNameGenerator = annotations[AnnotationConstants.PROPERTY_NAME_GENERATOR] as? String
+            val sharedResult = annotations[AnnotationConstants.SHARED_RESULT] as? String
+            val implements = annotations[AnnotationConstants.IMPLEMENTS] as? String
+            val excludeOverrideFields = annotations[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS]
+
+            if (annotations.containsKey(AnnotationConstants.NAME) && name?.isBlank() == true) {
                 throw IllegalArgumentException("Annotation @@${AnnotationConstants.NAME} cannot be blank")
             }
-            if (annotations.containsKey(AnnotationConstants.PROPERTY_NAME_GENERATOR) && annotations[AnnotationConstants.PROPERTY_NAME_GENERATOR]!!.isBlank()) {
+            if (annotations.containsKey(AnnotationConstants.PROPERTY_NAME_GENERATOR) && propertyNameGenerator?.isBlank() == true) {
                 throw IllegalArgumentException("Annotation @@${AnnotationConstants.PROPERTY_NAME_GENERATOR} cannot be blank")
             }
-            if (annotations.containsKey(AnnotationConstants.SHARED_RESULT) && annotations[AnnotationConstants.SHARED_RESULT]!!.isBlank()) {
+            if (annotations.containsKey(AnnotationConstants.SHARED_RESULT) && sharedResult?.isBlank() == true) {
                 throw IllegalArgumentException("Annotation @@${AnnotationConstants.SHARED_RESULT} cannot be blank")
             }
-            if (annotations.containsKey(AnnotationConstants.IMPLEMENTS) && annotations[AnnotationConstants.IMPLEMENTS]!!.isBlank()) {
+            if (annotations.containsKey(AnnotationConstants.IMPLEMENTS) && implements?.isBlank() == true) {
                 throw IllegalArgumentException("Annotation @@${AnnotationConstants.IMPLEMENTS} cannot be blank")
             }
+
             return StatementAnnotationOverrides(
-                name = annotations[AnnotationConstants.NAME],
-                propertyNameGenerator = annotations[AnnotationConstants.PROPERTY_NAME_GENERATOR].parsePropertyNameGeneratorType(),
-                sharedResult = annotations[AnnotationConstants.SHARED_RESULT],
-                implements = annotations[AnnotationConstants.IMPLEMENTS],
-                excludeOverrideFields = annotations[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS]?.let { parseExcludeOverrideFields(it) }
+                name = name,
+                propertyNameGenerator = propertyNameGenerator.parsePropertyNameGeneratorType(),
+                sharedResult = sharedResult,
+                implements = implements,
+                excludeOverrideFields = parseExcludeOverrideFieldsFromHocon(excludeOverrideFields)
             )
         }
 
-        private fun parseExcludeOverrideFields(excludeFieldsStr: String): Set<String> {
-            // Remove square brackets if present: [phone, birthDate] -> phone, birthDate
-            val cleanedStr = excludeFieldsStr.trim()
-                .removePrefix("[")
-                .removeSuffix("]")
-                .trim()
+        private fun parseExcludeOverrideFieldsFromHocon(excludeFields: Any?): Set<String>? {
+            return when (excludeFields) {
+                is List<*> -> {
+                    // HOCON parsed it as a native list - use it directly
+                    excludeFields.filterIsInstance<String>().toSet()
+                }
 
-            val strs = cleanedStr.split(",")
-                .map { it.trim() }  // This already trims each field name
-                .filter { it.isNotEmpty() }
-                .toSet()
-            return strs
+                null -> null
+                else -> throw IllegalArgumentException("excludeOverrideFields must be a list, got: ${excludeFields::class.simpleName}")
+            }
         }
 
         private fun String?.parsePropertyNameGeneratorType(): PropertyNameGeneratorType {

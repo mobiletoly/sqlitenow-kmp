@@ -10,7 +10,7 @@ import kotlin.test.assertTrue
 class ViewColumnLookupTest {
 
     @Test
-    @DisplayName("Test VIEW parameter type resolution with @@propertyType annotation")
+    @DisplayName("Test VIEW parameter type resolution with propertyType annotation")
     fun testViewParameterTypeResolution() {
         // Create mock CREATE TABLE statements
         val createTableStatements = listOf(
@@ -68,7 +68,7 @@ class ViewColumnLookupTest {
                         ),
                         annotations = mapOf(
                             AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDate",
-                            AnnotationConstants.ADAPTER to null
+                            AnnotationConstants.ADAPTER to "custom"
                         )
                     )
                 )
@@ -208,19 +208,19 @@ class ViewColumnLookupTest {
     fun testViewFieldAnnotationsParsing() {
         // Test SQL with field annotations
         val viewSql = """
-            -- @@name=PersonWithAddressEntity
+            -- @@{name=PersonWithAddressEntity}
             CREATE VIEW PersonWithAddressView AS
             SELECT
                 p.id AS person_id,
-                -- @@field=birth_date @@propertyName=myBirthDateAAA @@propertyType=kotlinx.datetime.LocalDateTime @@adapter
+                -- @@{field=birth_date, propertyName=myBirthDateAAA, propertyType=kotlinx.datetime.LocalDateTime, adapter=custom}
                 p.birth_date,
                 p.first_name
             FROM Person p
         """.trimIndent()
 
         // Parse the VIEW statement with annotations
-        val topComments = listOf("-- @@name=PersonWithAddressEntity")
-        val innerComments = listOf("-- @@field=birth_date @@propertyName=myBirthDateAAA @@propertyType=kotlinx.datetime.LocalDateTime @@adapter")
+        val topComments = listOf("-- @@{name=PersonWithAddressEntity}")
+        val innerComments = listOf("-- @@{field=birth_date, propertyName=myBirthDateAAA, propertyType=kotlinx.datetime.LocalDateTime, adapter=custom}")
 
         val createViewStatement = CreateViewStatement(
             sql = viewSql,
@@ -359,8 +359,7 @@ class ViewColumnLookupTest {
                         propertyName = "myCustomBirthDate",
                         propertyType = "kotlinx.datetime.LocalDateTime",
                         adapter = true,
-                        nullable = null,
-                        nonNull = null
+                        notNull = null
                     )
                 )
             )
@@ -453,8 +452,7 @@ class ViewColumnLookupTest {
                         propertyName = "myCustomBirthDate",
                         propertyType = "kotlinx.datetime.LocalDateTime",
                         adapter = true,
-                        nullable = null,
-                        nonNull = null
+                        notNull = null
                     )
                 )
             )
@@ -485,7 +483,7 @@ class ViewColumnLookupTest {
         // Build fields with merged annotations manually for the test
         val fieldAnnotations = extractFieldAssociatedAnnotations(emptyList())
         val fields = selectStatement.fields.map { column ->
-            val mergedAnnotations = mutableMapOf<String, String?>()
+            val mergedAnnotations = mutableMapOf<String, Any?>()
 
             // Get resolved annotations from the VIEW
             val resolvedAnnotations = annotationResolver.getFieldAnnotations("PersonWithAddressView", column.fieldName)
@@ -534,8 +532,7 @@ class ViewColumnLookupTest {
                 propertyName = "myCustomBirthDate",
                 propertyType = "kotlinx.datetime.LocalDateTime",
                 adapter = true,
-                nullable = null,
-                nonNull = null
+                notNull = null
             )
         )
 
@@ -598,8 +595,7 @@ class ViewColumnLookupTest {
                         propertyName = "viewPropertyName",
                         propertyType = "kotlinx.datetime.LocalDate",
                         adapter = true,
-                        nullable = null,
-                        nonNull = null
+                        notNull = null
                     )
                 )
             )
@@ -628,10 +624,10 @@ class ViewColumnLookupTest {
         val annotationResolver = FieldAnnotationResolver(emptyList(), listOf(viewWithAnnotations))
 
         // Build fields with merged annotations manually for the test
-        val innerComments = listOf("-- @@field=birth_date @@propertyName=selectPropertyName @@propertyType=kotlinx.datetime.LocalDateTime")
+        val innerComments = listOf("-- @@{field=birth_date, propertyName=selectPropertyName, propertyType=kotlinx.datetime.LocalDateTime}")
         val fieldAnnotations = extractFieldAssociatedAnnotations(innerComments)
         val fields = selectStatement.fields.map { column ->
-            val mergedAnnotations = mutableMapOf<String, String?>()
+            val mergedAnnotations = mutableMapOf<String, Any?>()
 
             // Get resolved annotations from the VIEW (as base)
             val resolvedAnnotations = annotationResolver.getFieldAnnotations("PersonWithAddressView", column.fieldName)

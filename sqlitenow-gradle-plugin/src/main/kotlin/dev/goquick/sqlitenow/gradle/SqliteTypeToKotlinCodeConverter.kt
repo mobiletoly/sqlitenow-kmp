@@ -43,7 +43,8 @@ class SqliteTypeToKotlinCodeConverter {
 
         // List of Kotlin standard library types
         val KOTLIN_STDLIB_TYPES = listOf(
-            "String", "Int", "Long", "Double", "Float", "Boolean", "Byte", "Short", "Char", "Any", "Unit", "Nothing"
+            "String", "Int", "Long", "Double", "Float", "Boolean", "Byte", "Short", "Char",
+            "ByteArray", "Any", "Unit", "Nothing"
         )
 
         // List of Kotlin collection types that should be mapped to kotlin.collections

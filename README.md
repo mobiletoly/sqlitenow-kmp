@@ -37,9 +37,9 @@ Third, I wanted to have a more flexible and extensible code generation system th
 and customized. For example, you can declare this SQL statement in your file:  
 
 ```sqlite
--- @@sharedResult=PersonEntity
--- @@implements=com.example.app.PersonEssentialFields
--- @@excludeOverrideFields=[phone, birthDate]
+-- @@{  sharedResult=PersonEntity,
+--      implements=com.example.app.PersonEssentialFields,
+--      excludeOverrideFields=[phone, birthDate]  }
 SELECT * FROM Person
 LIMIT :limit OFFSET :offset
 ```

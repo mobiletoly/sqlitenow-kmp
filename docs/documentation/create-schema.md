@@ -17,8 +17,8 @@ SQLiteNow expects your SQL files to be organized in a specific directory structu
 src/commonMain/sql/SampleDatabase/
 ├── schema/          # CREATE TABLE, CREATE INDEX statements
 ├── queries/         # SELECT, INSERT, UPDATE, DELETE queries
-├── init/           # Initial data (optional)
-└── migration/      # Migration scripts (optional)
+├── init/            # Initial data (optional)
+└── migration/       # Migration scripts (optional)
 ```
 
 ## Basic Table Definition
@@ -36,7 +36,7 @@ CREATE TABLE Person
     last_name  TEXT                NOT NULL,
     email      TEXT                NOT NULL UNIQUE,
 
-    -- @@field=phone @@propertyName=userPhone
+    -- @@{ field=phone, propertyName=userPhone }
     phone      TEXT,
 
     created_at TEXT                NOT NULL DEFAULT current_timestamp
@@ -54,13 +54,14 @@ This generates a `Person` data class with:
 - `userPhone: String?` (custom name via annotation)
 - `createdAt: String`
 
-**Note: In current version when working with field-level annotations (such as `@@propertyName` etc),
-you must use `@@field` annotation to target specific column. It is a good idea to keep field-level annotations
+**Note: In current version when working with field-level annotations (such as `@@{ field=..., propertyName=... }` etc),
+you must always use `field` annotation to target specific column. It is a good idea to keep field-level annotations
 as close to the column definition as possible, but it is not required to do so.**
 
 ## Custom Types with Adapters
 
-For complex types that don't map directly to SQLite types, use the `@@adapter` annotation:
+For complex types that don't map directly to SQLite types, use the the combination of `propertyType` and `adapter`
+annotations:
 
 ```sql
 CREATE TABLE Person
@@ -70,13 +71,14 @@ CREATE TABLE Person
     last_name  TEXT                NOT NULL,
     email      TEXT                NOT NULL UNIQUE,
 
-    -- @@field=birth_date @@adapter
-    -- @@propertyType=kotlinx.datetime.LocalDate
+    -- @@{field=birth_date, adapter=custom, propertyType=kotlinx.datetime.LocalDate}
     birth_date TEXT,
 
-    -- @@field=created_at @@adapter
-    -- @@propertyType=kotlinx.datetime.LocalDateTime
+    -- @@{field=created_at, adapter=custom, propertyType=kotlinx.datetime.LocalDateTime}
     created_at TEXT                NOT NULL DEFAULT current_timestamp,
+    
+    -- @@{field=is_active, adapter=default, propertyType=Boolean}
+    is_active INTEGER NOT NULL DEFAULT 1
 );
 ```
 
@@ -85,34 +87,85 @@ This generates a `Person` data class with custom types:
 - `birthDate: kotlinx.datetime.LocalDate?`
 - `createdAt: kotlinx.datetime.LocalDateTime`
 
-## Forced nullability Control
+There are two values can be assigned to `adapter` annotation: `default` and `custom`:
+- `default` value means that developer will be required to provide conversion adapter if `propertyType` is
+  custom type and will not be required for built-in types (such as `String`, `Int`, `Long`, etc.), because
+  SQLiteNow can handle some of the built-in types out of the box.
+- `custom` value means that adapter will be required to provide regardless of `propertyType` value.
+
+**Note: If you specify propertyType, in most cases you don't need to specify `adapter` annotation,
+because SQLiteNow will try to automatically determine if adapter is required or not, based on the
+type of `propertyType`.**
+
+## Forced Nullability Control
+
+With database schema, you can define columns as `NOT NULL` or `NULL`. However, in some cases you may want
+to override this behavior for specific properties. You can use `notNull` annotation to do so:
 
 ```sql
 CREATE TABLE Person
 (
     id    INTEGER PRIMARY KEY NOT NULL,
 
-    -- Column is NOT NULL but property will be nullable
-    -- @@field=phone @@nullable
+    -- Column is NOT NULL but generated property will be nullable
+    -- @@{ field=phone, notNull=false }
     phone TEXT                NOT NULL,
 
     -- Column allows NULL but property will be non-null
-    -- @@field=bio @@nonNull
+    -- @@{ field=bio, notNull=true }
     bio   TEXT
 );
 ```
 
-## Available Annotations
+It can be useful when you want to make property nullable despite of `NOT NULL` constraint in database,
+or vice versa. Also it can be useful if SQLiteNow is not able to guess the nullability of the property
+correctly, for example in SELECT statement in the code such as:
 
-| Annotation            | Purpose                         | Example                                     |
-|-----------------------|---------------------------------|---------------------------------------------|
-| `@@name=Name`         | Custom class name               | `@@name=PersonEntity`                       |
-| `@@field=column_name` | Target a specific column        | `@@field=user_name`                         |
-| `@@propertyName=name` | Custom property name            | `@@propertyName=myUserName`                 |
-| `@@propertyType=Type` | Custom property type            | `@@propertyType=kotlinx.datetime.LocalDate` |
-| `@@adapter`           | Request type adapter generation | `@@adapter`                                 |
-| `@@nullable`          | Make property nullable          | `@@nullable`                                |
-| `@@nonNull`           | Make property non-null          | `@@nonNull`                                 |
+```sql
+SELECT 
+    COUNT(*) AS total_person_count,
+    *
+FROM Person;
+```
+
+In this case `total_person_count` column is not defined in the table and by default SQLiteNow will
+treat it as nullable. In this case you can use `notNull` annotation to override this behavior:
+
+```sql
+SELECT 
+    -- @@{ field=total_person_count, notNull=true }
+    COUNT(*) AS total_person_count,
+    *
+FROM Person;
+```
+
+It will result in `totalPersonCount: Long` property that is guaranteed to be non-null.
+
+## Statement-level Annotations
+
+Statement-level annotations can be used to customize the generated code for specific statements.
+For example, you can use `name` annotation to customize the generated class name or change
+`propertyNameGenerator` to change the generated property name format.
+
+
+| Annotation                        | Purpose                                   | Example                                        |
+|-----------------------------------|-------------------------------------------|------------------------------------------------|
+| `name=Name`                       | Custom class name                         | `name=PersonWithAddressEntity`                 |
+| `propertyNameGenerator=generator` | Change property name format               | `propertyNameGenerator=lowerCamelCase`         |
+| `sharedResult=Name`               | Class name reused across multiple queires | `sharedResult=PersonEntity`                    |
+| `implements=Interface`            | Implement interface                       | `implements=PersonEssentialFields`             |
+| `excludeOverrideFields=fields`    | Exclude fields from override              | `excludeOverrideFields=['phone', 'birthDate']` |
+
+## Field-level Annotations
+
+| Annotation                    | Purpose                         | Example                                     |
+|-------------------------------|---------------------------------|---------------------------------------------|
+| `name=Name`                   | Custom class name               | `name=PersonEntity`                         |
+| `field=sql_column_name`       | Target a specific column        | `field=user_name`                           |
+| `propertyName=name`           | Custom generated property name  | `field=user_name, propertyName=myUserName`  |
+| `propertyType=type`           | Custom property type            | `field=birth_date, propertyType=LocalDate`  |
+| `adapter={custom or default}` | Request type adapter generation | `field=birth_date, adapter=custom`          |
+| `notNull={true or false}`     | Control property nullability    | `field=phone, notNull=false`                |
 
 ## Example
 
@@ -123,21 +176,25 @@ CREATE TABLE Person
 (
     id         INTEGER PRIMARY KEY NOT NULL,
 
-    -- @@field=first_name @@propertyName=myFirstName
+    /* block-level comments are supported:
+       @@{ field=first_name,
+           propertyName=myFirstName } */
     first_name TEXT                NOT NULL,
 
-    -- @@field=last_name @@propertyName=myLastName
+    -- @@{ field=last_name, propertyName=myLastName }
     last_name  TEXT                NOT NULL,
 
     email      TEXT                NOT NULL UNIQUE,
+  
+    -- @@{ field=phone, adapter=custom, notNull=true }
     phone      TEXT,
 
-    -- @@field=birth_date @@adapter
-    -- @@propertyType=kotlinx.datetime.LocalDate
+    -- Multi-line comments are supported:
+    -- @@{ field=birth_date,
+    --     propertyType=kotlinx.datetime.LocalDate }
     birth_date TEXT,
 
-    -- @@field=created_at @@adapter
-    -- @@propertyType=kotlinx.datetime.LocalDateTime
+    -- @@{ field=created_at, propertyType=kotlinx.datetime.LocalDateTime }
     created_at TEXT                NOT NULL DEFAULT current_timestamp
 );
 
@@ -152,13 +209,16 @@ This generates a `Person` data class with:
 - `myFirstName: String` (custom property name)
 - `myLastName: String` (custom property name)
 - `email: String`
-- `phone: String?`
+- `phone: String?` (custom adapter will be requested from a developer, can be useful
+  to convert phone number format, validate phone number and throw exception if invalid,
+  etc.)
 - `birthDate: kotlinx.datetime.LocalDate?` (custom type with adapter)
 - `createdAt: kotlinx.datetime.LocalDateTime` (custom type with adapter)
 
 ## Type Adapters
 
-When you use `@@adapter`, SQLiteNow generates adapter data classes that you must provide when creating the database.
+When you use `@@{adapter=custom}` (or when you use custom type without specifying adapter),
+SQLiteNow generates adapter data classes that you must provide when creating the database.
 Based on the example above, this generates:
 
 ```kotlin
@@ -173,6 +233,7 @@ class SampleDatabase(
         val sqlColumnToBirthDate: (String?) -> LocalDate?,
         val birthDateToSqlColumn: (LocalDate?) -> String?,
         val sqlColumnToCreatedAt: (String) -> LocalDateTime,
+        val phoneToSqlColumn: (String) -> String
     )
 }
 ```
@@ -186,14 +247,15 @@ val db = SampleDatabase(
     personAdapters = SampleDatabase.PersonAdapters(
         sqlColumnToBirthDate = { it?.let { LocalDate.parse(it) } },
         birthDateToSqlColumn = { it?.toString() },
-        sqlColumnToCreatedAt = { LocalDateTime.parse(it) }
+        sqlColumnToCreatedAt = { LocalDateTime.parse(it) },
+        phoneToSqlColumn = { it }
     )
 )
 ```
 
 Code generator scans through all CREATE TABLE/VIEW definitions and all SELECT queries within
 a specific namespace (e.g. Person) and generate adapter parameters that developer must to provide
-for all columns that have `@@adapter` annotation. Some adapter parameters may be merged if they have
+for all columns that have `@@{adapter=custom}` annotation. Some adapter parameters may be merged if they have
 the identical function signature (to make adapters list less verbose).
 
 ## Next Steps

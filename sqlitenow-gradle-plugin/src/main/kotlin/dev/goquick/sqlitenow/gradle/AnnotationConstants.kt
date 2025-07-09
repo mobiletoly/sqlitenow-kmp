@@ -4,8 +4,7 @@ object AnnotationConstants {
     
     // Field-level annotations
     const val ADAPTER = "adapter"
-    const val NON_NULL = "nonNull"
-    const val NULLABLE = "nullable"
+    const val NOT_NULL = "notNull"
     const val PROPERTY_NAME = "propertyName"
     const val PROPERTY_TYPE = "propertyType"
     const val FIELD = "field"

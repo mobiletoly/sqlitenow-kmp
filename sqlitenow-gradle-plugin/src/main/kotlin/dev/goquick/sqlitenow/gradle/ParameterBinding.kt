@@ -6,12 +6,6 @@ import com.squareup.kotlinpoet.TypeName
 /**
  * Service responsible for generating parameter binding code for SQL statements.
  * Centralizes the logic for handling nullable parameters, adapter parameters, and regular parameters.
- * 
- * This service eliminates duplication between:
- * - Adapter parameter binding (lines 557-571)
- * - Regular parameter binding (lines 576-584)
- * 
- * Both patterns had identical null checking logic that is now centralized here.
  */
 class ParameterBinding(
     private val columnLookup: ColumnLookup,
@@ -105,7 +99,7 @@ class ParameterBinding(
         className: String
     ) {
         val isParameterNullable = columnLookup.isParameterNullable(statement, paramName)
-        val actualType = getActualParameterType(namespace, className, propertyName, statement)
+        val actualType = getActualParameterType(namespace, className, propertyName)
 
         if (isParameterNullable) {
             generateNullableBinding(fnBld, paramIndex, "params.$propertyName") {
@@ -160,7 +154,7 @@ class ParameterBinding(
      * Generates an adapter function name for input parameters.
      */
     private fun getInputAdapterFunctionName(propertyName: String): String {
-        return "${propertyName}ToSqlColumn"
+        return "${propertyName}ToSqlValue"
     }
 
     /**
@@ -171,7 +165,6 @@ class ParameterBinding(
         namespace: String,
         className: String,
         propertyName: String,
-        statement: AnnotatedStatement
     ): String {
         val statements = dataStructCodeGenerator.nsWithStatements[namespace] ?: return "String"
 

@@ -23,8 +23,7 @@ CREATE TABLE Comment
 (
     id INTEGER PRIMARY KEY NOT NULL,
 
-    -- @@field=tags @@adapter
-    -- @@propertyType=List<String>
+    -- @@{ field=tags, adapter=custom, propertyType=List<String> }
     tags TEXT
 )
 ```
@@ -57,8 +56,7 @@ CREATE TABLE Comment
 (
     id INTEGER PRIMARY KEY NOT NULL,
 
-    -- @@field=created_at @@adapter
-    -- @@propertyType=kotlinx.datetime.LocalDateTime
+    -- @@{ field=created_at, adapter=custom, propertyType=kotlinx.datetime.LocalDateTime }
     created_at TEXT NOT NULL DEFAULT current_timestamp
 )
 ```
@@ -95,8 +93,7 @@ CREATE TABLE PersonAddress
 (
     id           INTEGER PRIMARY KEY NOT NULL,
 
-    -- @@field=address_type @@adapter
-    -- @@propertyType=AddressType
+    -- @@{ field=address_type, adapter=custom, propertyType=AddressType }
     address_type TEXT                NOT NULL
 )
 ```

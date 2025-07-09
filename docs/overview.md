@@ -21,9 +21,9 @@ Since we use comment-based annotations (with plans for user-defined annotations)
 SQLiteNow provides a flexible and extensible code generation system that can be easily extended and customized. For example:
 
 ```sql
--- @@sharedResult=PersonEntity
--- @@implements=com.example.app.PersonEssentialFields
--- @@excludeOverrideFields=[phone, birthDate]
+-- @@{ sharedResult=PersonEntity
+--     implements=com.example.app.PersonEssentialFields}
+--     excludeOverrideFields=[phone, birthDate] }
 SELECT * FROM Person
 LIMIT :limit OFFSET :offset
 ```
@@ -36,13 +36,13 @@ This generates a shared data class `PersonEntity` that implements your custom `P
 Write your queries in SQL files and get type-safe Kotlin code generated automatically. No need to learn a custom DSL or query language.
 
 ### Comment-Based Annotations
-Control code generation using simple `-- @@annotation` comments directly in your SQL files:
+Control code generation using simple `-- @@{ annotation annotation ... }` comments directly in your SQL files:
 
-- `@@field` - Customize property names and types
-- `@@adapter` - Add custom type converters
-- `@@sharedResult` - Share data classes across queries
-- `@@implements` - Make generated classes implement interfaces
-- `@@nullable` - Control nullability
+- `field` - Customize property names and types
+- `adapter` - Add custom type converters
+- `sharedResult` - Share data classes across queries
+- `implements` - Make generated classes implement interfaces
+- `notNull` - Control nullability
 - And many more...
 
 ### No IDE Plugin Required
@@ -74,4 +74,5 @@ SQLiteNow follows a simple architecture:
 
 ## Next Step
 
-Ready to get started? Check out our [Getting Started]({{ site.baseurl }}/getting-started/) guide to set up SQLiteNow in your project.
+Ready to get started? Check out our [Getting Started]({{ site.baseurl }}/getting-started/) guide to
+set up SQLiteNow in your project.

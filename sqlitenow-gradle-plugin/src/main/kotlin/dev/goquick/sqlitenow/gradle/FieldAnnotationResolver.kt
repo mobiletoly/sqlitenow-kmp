@@ -87,7 +87,6 @@ class FieldAnnotationResolver(
         return annotations.propertyName != null ||
                annotations.propertyType != null ||
                annotations.adapter == true ||
-               annotations.nullable == true ||
-               annotations.nonNull == true
+               annotations.notNull != null
     }
 }

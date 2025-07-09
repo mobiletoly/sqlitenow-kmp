@@ -12,7 +12,7 @@ class SharedResultTest {
     fun testSharedResultManagerBasicFunctionality() {
         val sharedResultManager = SharedResultManager()
 
-        // Create a SELECT statement with @@sharedResult=All
+        // Create a SELECT statement with sharedResult=All
         val statement1 = AnnotatedSelectStatement(
             name = "SelectAllPaginated",
             src = SelectStatement(
@@ -90,7 +90,7 @@ class SharedResultTest {
     fun testSharedResultStructureValidation() {
         val sharedResultManager = SharedResultManager()
 
-        // Create first statement with @@sharedResult=All
+        // Create first statement with sharedResult=All
         val statement1 = AnnotatedSelectStatement(
             name = "SelectAllPaginated",
             src = SelectStatement(
@@ -125,7 +125,7 @@ class SharedResultTest {
             )
         )
 
-        // Create second statement with same @@sharedResult=All but different structure
+        // Create second statement with same sharedResult=All but different structure
         val statement2 = AnnotatedSelectStatement(
             name = "SelectAllFiltered",
             src = SelectStatement(
