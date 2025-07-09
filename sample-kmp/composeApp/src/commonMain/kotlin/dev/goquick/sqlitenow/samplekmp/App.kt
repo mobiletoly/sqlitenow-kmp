@@ -74,7 +74,6 @@ private val lastNames = listOf(
 )
 private val domains = listOf("gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "example.com")
 
-
 val db = NowSampleDatabase(
     resolveDatabasePath("test04.db"),
     personAdapters = NowSampleDatabase.PersonAdapters(
@@ -107,6 +106,17 @@ val db = NowSampleDatabase(
         sqlColumnToCreatedAt = {
             it.let { LocalDateTime.fromSqliteTimestamp(it) }
         },
+    ),
+    mixedAdapters = NowSampleDatabase.MixedAdapters(
+        sqlColumnToBirthDate = {
+            it?.let { LocalDate.fromSqliteDate(it) }
+        },
+        sqlColumnToCreatedAt = {
+            it.let { LocalDateTime.fromSqliteTimestamp(it) }
+        },
+        sqlColumnToAddressType = {
+            AddressType.from(it)
+        }
     ),
     migration = VersionBasedDatabaseMigrations()
 )

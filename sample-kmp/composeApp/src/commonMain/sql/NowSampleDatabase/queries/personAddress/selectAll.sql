@@ -1,3 +1,3 @@
--- @@sharedResult=PersonAddress
+-- @@sharedResult=Row
 SELECT *
 FROM PersonAddress

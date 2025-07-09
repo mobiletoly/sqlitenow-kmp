@@ -184,19 +184,19 @@ Assuming that you have two (or more) queries in two different files:
 **File: `queries/person/selectActive.sql`**
 
 ```sql
--- @@sharedResult=PersonEntity
+-- @@sharedResult=Row
 SELECT * FROM Person WHERE active = 1;
 ```
 
 **File: `queries/person/selectNew.sql`**
 
 ```sql
--- @@sharedResult=PersonEntity
+-- @@sharedResult=Row
 SELECT * FROM Person WHERE created_at > :since;
 ```
 
 Instead of two separate result classes `Person`/**`SelectActive`** and `Person`/**`SelectNew`**, both queries
-will use the same `Person`/**`SharedResult`**/**`PersonEntity`** result class, reducing code duplication.
+will use the same `Person`/**`SharedResult`**/**`Row`** result class, reducing code duplication.
 
 `Person`/`SharedResult` object contains all shared result classes for the `person` namespace.
 
