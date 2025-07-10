@@ -18,7 +18,7 @@ allowing for deeper integration and SQLite-specific optimizations.
 ## Key Features
 
 - **Pure SQL Control** - Write your queries in SQL files, get type-safe Kotlin code
-- **Comment-based Annotations** - Control code generation using simple `-- @@annotation` comments in your SQL
+- **Comment-based Annotations** - Control code generation using simple `-- @@{ annotations }` comments in your SQL
 - **No IDE Plugin Required** - Works with any editor, uses Gradle plugin for code generation
 - **Kotlin Multiplatform** - Supports all KMP targets using [androidx.sqlite](https://developer.android.com/kotlin/multiplatform/sqlite) driver
 - **SQLite Focused** - Optimized specifically for SQLite features and capabilities
