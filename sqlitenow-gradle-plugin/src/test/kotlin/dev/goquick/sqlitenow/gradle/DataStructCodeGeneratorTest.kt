@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import java.sql.Connection
 
@@ -3628,5 +3629,135 @@ class DataStructCodeGeneratorTest {
         )
 
         realConnection.close()
+    }
+
+    @Test
+    @DisplayName("Test shared result data class generation with dynamic fields")
+    fun testSharedResultWithDynamicFieldsCodeGeneration() {
+        // Create a statement with both regular and dynamic fields
+        val statement = AnnotatedSelectStatement(
+            name = "SelectWithDynamicField",
+            src = SelectStatement(
+                sql = "SELECT id, name FROM Person",
+                fromTable = "Person",
+                joinTables = emptyList(),
+                namedParameters = emptyList(),
+                namedParametersToColumns = emptyMap(),
+                offsetNamedParam = null,
+                limitNamedParam = null,
+                fields = listOf(
+                    SelectStatement.FieldSource("id", "Person", "id", "INTEGER"),
+                    SelectStatement.FieldSource("name", "Person", "name", "TEXT")
+                )
+            ),
+            annotations = StatementAnnotationOverrides(
+                name = null,
+                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
+                sharedResult = "PersonWithExtras",
+                implements = null,
+                excludeOverrideFields = null
+            ),
+            fields = listOf(
+                // Regular database fields
+                AnnotatedSelectStatement.Field(
+                    src = SelectStatement.FieldSource("id", "Person", "id", "INTEGER"),
+                    annotations = FieldAnnotationOverrides.parse(emptyMap())
+                ),
+                AnnotatedSelectStatement.Field(
+                    src = SelectStatement.FieldSource("name", "Person", "name", "TEXT"),
+                    annotations = FieldAnnotationOverrides.parse(emptyMap())
+                ),
+                // Dynamic field
+                AnnotatedSelectStatement.Field(
+                    src = SelectStatement.FieldSource("addresses", "", "addresses", "DYNAMIC"),
+                    annotations = FieldAnnotationOverrides.parse(mapOf(
+                        AnnotationConstants.IS_DYNAMIC_FIELD to true,
+                        AnnotationConstants.PROPERTY_TYPE to "List<String>",
+                        AnnotationConstants.DEFAULT_VALUE to "listOf()"
+                    ))
+                )
+            )
+        )
+
+        // Create shared result manager and register the statement
+        val testSharedResultManager = SharedResultManager()
+        val sharedResult = testSharedResultManager.registerSharedResult(statement, "person")
+        assertNotNull(sharedResult)
+
+        // Create minimal create table statements for the test
+        val createTableStatements = listOf(
+            AnnotatedCreateTableStatement(
+                name = "Person",
+                src = CreateTableStatement(
+                    sql = "",
+                    tableName = "Person",
+                    columns = listOf(
+                        CreateTableStatement.Column("id", "INTEGER", true, true, false, false),
+                        CreateTableStatement.Column("name", "TEXT", true, false, false, false)
+                    )
+                ),
+                annotations = StatementAnnotationOverrides(null, PropertyNameGeneratorType.LOWER_CAMEL_CASE, null, null, null),
+                columns = emptyList()
+            )
+        )
+
+        // Create a real in-memory SQLite connection
+        val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
+
+        // Create the Person table
+        conn.createStatement().execute(
+            """
+            CREATE TABLE Person (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL
+            )
+        """.trimIndent()
+        )
+
+        // Create data structure generator using the helper function
+        val dataStructGenerator = createDataStructCodeGeneratorWithMockExecutors(
+            conn = conn,
+            queriesDir = tempDir.resolve("queries").toFile(),
+            createTableStatements = createTableStatements,
+            packageName = "com.example.db",
+            outputDir = tempDir.resolve("output").toFile()
+        )
+
+        // Manually set the shared results using reflection to access the SharedResultManager
+        val sharedResultManagerField = dataStructGenerator.javaClass.getDeclaredField("sharedResultManager")
+        sharedResultManagerField.isAccessible = true
+        val sharedResultManager = sharedResultManagerField.get(dataStructGenerator) as SharedResultManager
+
+        // Register the shared result manually
+        sharedResultManager.registerSharedResult(statement, "person")
+
+        // Generate the shared result data class
+        val generatedFileSpec = dataStructGenerator.generateNamespaceDataStructuresCode("person", "com.example.db")
+        val generatedCode = generatedFileSpec.build().toString()
+
+        // Verify the shared result data class is generated correctly
+        assertTrue(
+            generatedCode.contains("data class PersonWithExtras"),
+            "Should generate PersonWithExtras data class"
+        )
+
+        // Verify regular fields are included
+        assertTrue(
+            generatedCode.contains("val id: Long"),
+            "Should include regular id field"
+        )
+        assertTrue(
+            generatedCode.contains("val name: String"),
+            "Should include regular name field"
+        )
+
+        // Verify dynamic field is included with default value
+        assertTrue(
+            generatedCode.contains("val addresses: List<String> = listOf()"),
+            "Should include dynamic field with default value"
+        )
+
+        println("Generated code:")
+        println(generatedCode)
     }
 }

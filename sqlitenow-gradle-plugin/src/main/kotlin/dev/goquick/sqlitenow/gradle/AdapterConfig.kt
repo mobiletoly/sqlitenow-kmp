@@ -99,6 +99,11 @@ class AdapterConfig(
         val selectFieldGenerator = SelectFieldCodeGenerator(createTableStatements, packageName)
 
         statement.fields.forEach { field: AnnotatedSelectStatement.Field ->
+            // Skip dynamic fields - they don't need adapters since they're not read from database
+            if (field.annotations.isDynamicField) {
+                return@forEach
+            }
+
             if (hasAdapterAnnotation(field)) {
                 // Use actual column name for adapter function name (ignore property name customizations)
                 val columnName = PropertyNameGeneratorType.LOWER_CAMEL_CASE.convertToPropertyName(field.src.originalColumnName)

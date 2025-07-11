@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -51,6 +52,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.flatMap
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -60,6 +62,7 @@ import org.jetbrains.compose.ui.tooling.preview.Preview
 import kotlin.random.Random
 
 typealias PersonEntity = Person.SharedResult.Row
+typealias PersonWithAddressEntity = Person.SharedResult.PersonWithAddressRow
 
 private val firstNames = listOf(
     "John", "Jane", "Alice", "Bob", "Charlie", "Diana", "Eve",
@@ -112,18 +115,6 @@ val db = NowSampleDatabase(
             it.let { LocalDateTime.fromSqliteTimestamp(it) }
         },
     ),
-    mixedAdapters = NowSampleDatabase.MixedAdapters(
-        sqlValueToBirthDate = {
-            it?.let { LocalDate.fromSqliteDate(it) }
-        },
-        sqlValueToCreatedAt = {
-            it.let { LocalDateTime.fromSqliteTimestamp(it) }
-        },
-        sqlValueToAddressType = {
-            AddressType.from(it)
-        },
-        sqlValueToPhone = { it }
-    ),
     migration = VersionBasedDatabaseMigrations()
 )
 
@@ -173,19 +164,33 @@ fun App() {
                 isLoading = false
             }
     }
+
+//    LaunchedEffect(Unit) {
+//        db.person
+//            .selectAllByBirthdayRange(
+//                Person.SelectAllByBirthdayRange.Params(
+//                    startDate = LocalDate(1990, 1, 1),
+//                    endDate = LocalDate(2000, 1, 1)
+//                )
+//            )
+//            .asFlow()
+//            .flowOn(Dispatchers.Main)
+//            .collect {
+//                println("----> Persons born between 1990 and 2000: $it")
+//            }
+//    }
+
     LaunchedEffect(Unit) {
-        delay(2000L)
-        db.person
-            .selectAllByBirthdayRange(
-                Person.SelectAllByBirthdayRange.Params(
-                    startDate = LocalDate(1990, 1, 1),
-                    endDate = LocalDate(2000, 1, 1)
-                )
-            )
+        db.person.selectAllWithAddresses
             .asFlow()
             .flowOn(Dispatchers.Main)
             .collect {
-                println("----> Persons born between 1990 and 2000: $it")
+                val persons = it.groupBy { person ->
+                    person.personId
+                }
+                for (person in persons) {
+                    println("----> Person: $person")
+                }
             }
     }
 
@@ -398,35 +403,41 @@ fun PersonCard(
             }
 
             // Randomize Button
-            TextButton(
-                onClick = { onRandomize(person) },
-                modifier = Modifier
-                    .background(
-                        color = MaterialTheme.colors.error.copy(alpha = 0.1f),
-                        shape = RoundedCornerShape(8.dp)
+            Column {
+                TextButton(
+                    onClick = { onRandomize(person) },
+                    contentPadding = PaddingValues(start = 1.dp, top = 1.dp, end = 1.dp, bottom = 1.dp),
+                    modifier = Modifier
+                        .padding(2.dp)
+                        .background(
+                            color = MaterialTheme.colors.error.copy(alpha = 0.1f),
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                ) {
+                    Text(
+                        text = "Rnd",
+                        color = MaterialTheme.colors.error,
+                        fontSize = 14.sp
                     )
-            ) {
-                Text(
-                    text = "R",
-                    color = MaterialTheme.colors.error,
-                    fontSize = 14.sp
-                )
-            }
+                }
 
-            // Delete Button
-            TextButton(
-                onClick = { onDelete(person) },
-                modifier = Modifier
-                    .background(
-                        color = MaterialTheme.colors.error.copy(alpha = 0.1f),
-                        shape = RoundedCornerShape(8.dp)
+                // Delete Button
+                TextButton(
+                    onClick = { onDelete(person) },
+                    contentPadding = PaddingValues(start = 1.dp, top = 1.dp, end = 1.dp, bottom = 1.dp),
+                    modifier = Modifier
+                        .padding(2.dp)
+                        .background(
+                            color = MaterialTheme.colors.error.copy(alpha = 0.1f),
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                ) {
+                    Text(
+                        text = "Del",
+                        color = MaterialTheme.colors.error,
+                        fontSize = 14.sp
                     )
-            ) {
-                Text(
-                    text = "X",
-                    color = MaterialTheme.colors.error,
-                    fontSize = 14.sp
-                )
+                }
             }
         }
     }

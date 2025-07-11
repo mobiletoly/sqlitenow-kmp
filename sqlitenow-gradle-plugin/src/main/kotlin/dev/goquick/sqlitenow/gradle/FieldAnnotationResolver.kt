@@ -87,6 +87,8 @@ class FieldAnnotationResolver(
         return annotations.propertyName != null ||
                annotations.propertyType != null ||
                annotations.adapter == true ||
-               annotations.notNull != null
+               annotations.notNull != null ||
+               annotations.isDynamicField ||
+               annotations.defaultValue != null
     }
 }

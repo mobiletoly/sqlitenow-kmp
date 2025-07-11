@@ -1,5 +1,6 @@
 package dev.goquick.sqlitenow.gradle
 
+import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
@@ -32,6 +33,24 @@ class SelectFieldCodeGenerator(
         field: AnnotatedSelectStatement.Field,
         propertyNameGeneratorType: PropertyNameGeneratorType
     ): Pair<String, TypeName> {
+        // For dynamic fields, use the field name directly and get type from propertyType annotation
+        if (field.annotations.isDynamicField) {
+            val propertyName = generatePropertyName(field.src.fieldName, field.annotations, propertyNameGeneratorType)
+            // For dynamic fields, we must have a propertyType annotation
+            val propertyType = field.annotations.propertyType?.let {
+                // Use determinePropertyType with a dummy base type since we only care about the annotation
+                SqliteTypeToKotlinCodeConverter.determinePropertyType(
+                    baseType = ClassName("kotlin", "String"),
+                    propertyType = it,
+                    isNullable = false,
+                    packageName = packageName
+                )
+            } ?: throw IllegalStateException("Dynamic field must have propertyType annotation")
+
+            return Pair(propertyName, propertyType)
+        }
+
+        // Regular field processing
         val fieldName = field.src.fieldName
         val propertyName = generatePropertyName(fieldName, field.annotations, propertyNameGeneratorType)
         val baseType = mapSqlTypeToKotlinType(field.src.dataType, field)
@@ -81,8 +100,15 @@ class SelectFieldCodeGenerator(
     ): ParameterSpec {
         val (propertyName, propertyType) = generateFieldInfo(field, propertyNameGeneratorType)
 
-        // Build and return the parameter spec
-        return ParameterSpec.builder(propertyName, propertyType).build()
+        // Build the parameter spec
+        val parameterBuilder = ParameterSpec.builder(propertyName, propertyType)
+
+        // Add default value for dynamic fields if specified
+        if (field.annotations.isDynamicField && field.annotations.defaultValue != null) {
+            parameterBuilder.defaultValue(field.annotations.defaultValue)
+        }
+
+        return parameterBuilder.build()
     }
 
     /**

@@ -139,17 +139,38 @@ ${sqlStatement.sql}
         val fieldAnnotations = extractFieldAssociatedAnnotations(sqlStatement.innerComments)
 
         // Build fields with merged annotations
-        val fields = stmt.fields.map { column ->
+        val fields = mutableListOf<AnnotatedSelectStatement.Field>()
+
+        // Add regular database fields
+        stmt.fields.forEach { column ->
             val annotations = mergeFieldAnnotations(
                 column,
                 fieldAnnotations,
                 stmt,
                 annotationResolver
             )
-            AnnotatedSelectStatement.Field(
+            fields.add(AnnotatedSelectStatement.Field(
                 src = column,
                 annotations = annotations
-            )
+            ))
+        }
+
+        // Add dynamic fields from annotations
+        fieldAnnotations.forEach { (fieldName, annotations) ->
+            if (annotations[AnnotationConstants.IS_DYNAMIC_FIELD] == true) {
+                // Create a dummy FieldSource for dynamic fields
+                val dummyFieldSource = SelectStatement.FieldSource(
+                    fieldName = fieldName,
+                    tableName = "", // Dynamic fields don't belong to any table
+                    originalColumnName = fieldName,
+                    dataType = "DYNAMIC" // Special type for dynamic fields
+                )
+                val fieldAnnotationOverrides = FieldAnnotationOverrides.parse(annotations)
+                fields.add(AnnotatedSelectStatement.Field(
+                    src = dummyFieldSource,
+                    annotations = fieldAnnotationOverrides
+                ))
+            }
         }
 
         return AnnotatedSelectStatement(

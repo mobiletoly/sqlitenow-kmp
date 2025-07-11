@@ -233,4 +233,73 @@ class SharedResultTest {
         assertEquals(1, resultsByNamespace["person"]!!.size)
         assertEquals(1, resultsByNamespace["order"]!!.size)
     }
+
+    @Test
+    @DisplayName("Test SharedResult with dynamic fields generates correctly")
+    fun testSharedResultWithDynamicFields() {
+        val sharedResultManager = SharedResultManager()
+
+        // Create a statement with both regular fields and dynamic fields
+        val statement = AnnotatedSelectStatement(
+            name = "SelectWithDynamicField",
+            src = SelectStatement(
+                sql = "SELECT id, name FROM Person",
+                fromTable = "Person",
+                joinTables = emptyList(),
+                namedParameters = emptyList(),
+                namedParametersToColumns = emptyMap(),
+                offsetNamedParam = null,
+                limitNamedParam = null,
+                fields = listOf(
+                    SelectStatement.FieldSource("id", "Person", "id", "INTEGER"),
+                    SelectStatement.FieldSource("name", "Person", "name", "TEXT")
+                )
+            ),
+            annotations = StatementAnnotationOverrides(
+                name = null,
+                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
+                sharedResult = "PersonWithExtras",
+                implements = null,
+                excludeOverrideFields = null
+            ),
+            fields = listOf(
+                // Regular database field
+                AnnotatedSelectStatement.Field(
+                    src = SelectStatement.FieldSource("id", "Person", "id", "INTEGER"),
+                    annotations = FieldAnnotationOverrides.parse(emptyMap())
+                ),
+                // Regular database field
+                AnnotatedSelectStatement.Field(
+                    src = SelectStatement.FieldSource("name", "Person", "name", "TEXT"),
+                    annotations = FieldAnnotationOverrides.parse(emptyMap())
+                ),
+                // Dynamic field
+                AnnotatedSelectStatement.Field(
+                    src = SelectStatement.FieldSource("addresses", "", "addresses", "DYNAMIC"),
+                    annotations = FieldAnnotationOverrides.parse(mapOf(
+                        AnnotationConstants.IS_DYNAMIC_FIELD to true,
+                        AnnotationConstants.PROPERTY_TYPE to "List<String>",
+                        AnnotationConstants.DEFAULT_VALUE to "listOf()"
+                    ))
+                )
+            )
+        )
+
+        // Register the shared result
+        val sharedResult = sharedResultManager.registerSharedResult(statement, "person")
+
+        // Verify the shared result was created and includes all fields (regular + dynamic)
+        assertNotNull(sharedResult)
+        assertEquals("PersonWithExtras", sharedResult!!.name)
+        assertEquals("person", sharedResult.namespace)
+        assertEquals(3, sharedResult.fields.size, "Should include 2 regular fields + 1 dynamic field")
+
+        // Verify that dynamic field is included in the fields list
+        val dynamicField = sharedResult.fields.find { it.annotations.isDynamicField }
+        assertNotNull(dynamicField, "Dynamic field should be included in shared result")
+        assertEquals("addresses", dynamicField!!.src.fieldName)
+        assertEquals("List<String>", dynamicField.annotations.propertyType)
+        assertEquals("listOf()", dynamicField.annotations.defaultValue)
+        assertTrue(dynamicField.annotations.isDynamicField)
+    }
 }

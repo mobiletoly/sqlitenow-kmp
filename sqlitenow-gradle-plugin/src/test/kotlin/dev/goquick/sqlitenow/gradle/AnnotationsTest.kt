@@ -4,6 +4,7 @@ import dev.goquick.sqlitenow.gradle.SqliteTypeToKotlinCodeConverter.Companion.KO
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.test.fail
 
 class AnnotationsTest {
 
@@ -549,8 +550,8 @@ class AnnotationsTest {
             ))
             assertEquals(true, false, "Should have thrown exception for missing field annotation")
         } catch (e: IllegalArgumentException) {
-            assertEquals(true, e.message?.contains("must contain a 'field' annotation with a non-empty value"),
-                "Should mention missing field annotation error")
+            assertEquals(true, e.message?.contains("must contain either a 'field' or 'dynamicField' annotation with a non-empty value"),
+                "Should mention missing field or dynamicField annotation error")
         }
     }
 
@@ -563,8 +564,66 @@ class AnnotationsTest {
             ))
             assertEquals(true, false, "Should have thrown exception for empty field name")
         } catch (e: IllegalArgumentException) {
-            assertEquals(true, e.message?.contains("must contain a 'field' annotation with a non-empty value"),
-                "Should mention missing field annotation error")
+            assertEquals(true, e.message?.contains("must contain either a 'field' or 'dynamicField' annotation with a non-empty value"),
+                "Should mention missing field or dynamicField annotation error")
         }
+    }
+
+    @Test
+    fun testDynamicFieldAnnotation() {
+        val comments = listOf(
+            "-- @@{ dynamicField=addresses, propertyType=List<String>, defaultValue=listOf() }"
+        )
+
+        val result = extractFieldAssociatedAnnotations(comments)
+
+        assertTrue(result.containsKey("addresses"))
+        val fieldAnnotations = result["addresses"]!!
+        assertEquals("List<String>", fieldAnnotations[AnnotationConstants.PROPERTY_TYPE])
+        assertEquals("listOf()", fieldAnnotations[AnnotationConstants.DEFAULT_VALUE])
+        assertEquals(true, fieldAnnotations[AnnotationConstants.IS_DYNAMIC_FIELD])
+    }
+
+    @Test
+    fun testDynamicFieldRequiresPropertyType() {
+        val comments = listOf(
+            "-- @@{ dynamicField=addresses }"
+        )
+
+        try {
+            extractFieldAssociatedAnnotations(comments)
+            fail("Should have thrown IllegalArgumentException")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message?.contains("dynamicField annotation requires a 'propertyType'") == true)
+        }
+    }
+
+    @Test
+    fun testCannotHaveBothFieldAndDynamicField() {
+        val comments = listOf(
+            "-- @@{ field=name, dynamicField=addresses, propertyType=String }"
+        )
+
+        try {
+            extractFieldAssociatedAnnotations(comments)
+            fail("Should have thrown IllegalArgumentException")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message?.contains("cannot contain both 'field' and 'dynamicField'") == true)
+        }
+    }
+
+    @Test
+    fun testFieldAnnotationOverridesWithDynamicField() {
+        val annotations = mapOf(
+            AnnotationConstants.IS_DYNAMIC_FIELD to true,
+            AnnotationConstants.PROPERTY_TYPE to "List<String>",
+            AnnotationConstants.DEFAULT_VALUE to "listOf()"
+        )
+
+        val result = FieldAnnotationOverrides.parse(annotations)
+
+        assertEquals(true, result.isDynamicField)
+        assertEquals("List<String>", result.propertyType)
+        assertEquals("listOf()", result.defaultValue)
     }
 }

@@ -22,58 +22,58 @@ INSERT INTO Person (id, first_name, last_name, email, phone, birth_date) VALUES 
 -- Insert PersonAddress records
 -- Home addresses
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (1, 1, 'HOME', '123 Main St', 'New York', 'NY', '10001', 'USA', 1);
+VALUES (1, 1, 'home', '123 Main St', 'New York', 'NY', '10001', 'USA', 1);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (2, 2, 'HOME', '456 Oak Ave', 'Los Angeles', 'CA', '90001', 'USA', 1);
+VALUES (2, 2, 'home', '456 Oak Ave', 'Los Angeles', 'CA', '90001', 'USA', 1);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (3, 3, 'HOME', '789 Pine Rd', 'Chicago', 'IL', '60601', 'USA', 1);
+VALUES (3, 3, 'home', '789 Pine Rd', 'Chicago', 'IL', '60601', 'USA', 1);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (4, 4, 'HOME', '101 Maple Dr', 'Houston', 'TX', '77001', 'USA', 1);
+VALUES (4, 4, 'home', '101 Maple Dr', 'Houston', 'TX', '77001', 'USA', 1);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (5, 5, 'HOME', '202 Cedar Ln', 'Phoenix', 'AZ', '85001', 'USA', 1);
+VALUES (5, 5, 'home', '202 Cedar Ln', 'Phoenix', 'AZ', '85001', 'USA', 1);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (6, 6, 'HOME', '303 Birch Blvd', 'Philadelphia', 'PA', '19101', 'USA', 1);
+VALUES (6, 6, 'home', '303 Birch Blvd', 'Philadelphia', 'PA', '19101', 'USA', 1);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (7, 7, 'HOME', '404 Elm St', 'San Antonio', 'TX', '78201', 'USA', 1);
+VALUES (7, 7, 'home', '404 Elm St', 'San Antonio', 'TX', '78201', 'USA', 1);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (8, 8, 'HOME', '505 Willow Way', 'San Diego', 'CA', '92101', 'USA', 1);
+VALUES (8, 8, 'home', '505 Willow Way', 'San Diego', 'CA', '92101', 'USA', 1);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (9, 9, 'HOME', '606 Spruce St', 'Dallas', 'TX', '75201', 'USA', 1);
+VALUES (9, 9, 'home', '606 Spruce St', 'Dallas', 'TX', '75201', 'USA', 1);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (10, 10, 'HOME', '707 Aspen Ave', 'San Jose', 'CA', '95101', 'USA', 1);
+VALUES (10, 10, 'home', '707 Aspen Ave', 'San Jose', 'CA', '95101', 'USA', 1);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (11, 11, 'HOME', '808 Redwood Rd', 'Austin', 'TX', '73301', 'USA', 1);
+VALUES (11, 11, 'home', '808 Redwood Rd', 'Austin', 'TX', '73301', 'USA', 1);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (12, 12, 'HOME', '--- 909 Sequoia St', 'Jacksonville', 'FL', '32099', 'USA', 1);
+VALUES (12, 12, 'home', '--- 909 Sequoia St', 'Jacksonville', 'FL', '32099', 'USA', 1);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (13, 13, 'HOME', '1010 Magnolia Dr', 'Fort Worth', 'TX', '76101', 'USA', 1);
+VALUES (13, 13, 'home', '1010 Magnolia Dr', 'Fort Worth', 'TX', '76101', 'USA', 1);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (14, 14, 'HOME', '1111 Dogwood Dr', 'Columbus', 'OH', '43085', 'USA', 1);
+VALUES (14, 14, 'home', '1111 Dogwood Dr', 'Columbus', 'OH', '43085', 'USA', 1);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (15, 15, 'HOME', '1212 Sycamore St', 'Charlotte', 'NC', '28201', 'USA', 1);
+VALUES (15, 15, 'home', '1212 Sycamore St', 'Charlotte', 'NC', '28201', 'USA', 1);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (16, 16, 'HOME', '1313 Poplar Pl', 'Seattle', 'WA', '98101', 'USA', 1);
+VALUES (16, 16, 'home', '1313 Poplar Pl', 'Seattle', 'WA', '98101', 'USA', 1);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (17, 17, 'HOME', '1414 Juniper Ln', 'Denver', 'CO', '80201', 'USA', 1);
+VALUES (17, 17, 'home', '1414 Juniper Ln', 'Denver', 'CO', '80201', 'USA', 1);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (18, 18, 'HOME', '1515 Hawthorn Rd', 'Boston', 'MA', '02101', 'USA', 1);
+VALUES (18, 18, 'home', '1515 Hawthorn Rd', 'Boston', 'MA', '02101', 'USA', 1);
 
 -- Work addresses for some people
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (19, 1, 'WORK', '100 Business Plaza', 'New York', 'NY', '10002', 'USA', 0);
+VALUES (19, 1, 'work', '100 Business Plaza', 'New York', 'NY', '10002', 'USA', 0);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (20, 3, 'WORK', '200 Corporate Center', 'Chicago', 'IL', '60602', 'USA', 0);
+VALUES (20, 3, 'work', '200 Corporate Center', 'Chicago', 'IL', '60602', 'USA', 0);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (21, 5, 'WORK', '300 Office Park', 'Phoenix', 'AZ', '85002', 'USA', 0);
+VALUES (21, 5, 'work', '300 Office Park', 'Phoenix', 'AZ', '85002', 'USA', 0);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (22, 7, 'WORK', '400 Tech Campus', 'San Antonio', 'TX', '78202', 'USA', 0);
+VALUES (22, 7, 'work', '400 Tech Campus', 'San Antonio', 'TX', '78202', 'USA', 0);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (23, 9, 'WORK', '500 Innovation Hub', 'Dallas', 'TX', '75202', 'USA', 0);
+VALUES (23, 9, 'work', '500 Innovation Hub', 'Dallas', 'TX', '75202', 'USA', 0);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (24, 11, 'WORK', '600 Research Park', 'Austin', 'TX', '73302', 'USA', 0);
+VALUES (24, 11, 'work', '600 Research Park', 'Austin', 'TX', '73302', 'USA', 0);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (25, 13, 'WORK', '700 Industrial Blvd', 'Fort Worth', 'TX', '76102', 'USA', 0);
+VALUES (25, 13, 'work', '700 Industrial Blvd', 'Fort Worth', 'TX', '76102', 'USA', 0);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (26, 15, 'WORK', '800 Commerce St', 'Charlotte', 'NC', '28202', 'USA', 0);
+VALUES (26, 15, 'work', '800 Commerce St', 'Charlotte', 'NC', '28202', 'USA', 0);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
-VALUES (27, 17, 'WORK', '900 Enterprise Way', 'Denver', 'CO', '80202', 'USA', 0);
+VALUES (27, 17, 'work', '900 Enterprise Way', 'Denver', 'CO', '80202', 'USA', 0);

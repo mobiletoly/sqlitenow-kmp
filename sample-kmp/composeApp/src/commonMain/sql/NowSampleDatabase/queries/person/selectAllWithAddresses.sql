@@ -1,4 +1,6 @@
--- @@{ sharedResult=Row }
+/* @@{
+    sharedResult=PersonWithAddressRow
+} */
 SELECT p.id         AS person_id,
        p.first_name,
        p.last_name,
@@ -15,6 +17,8 @@ SELECT p.id         AS person_id,
        a.country,
        a.is_primary,
        a.created_at AS address_created_at
+
+-- @@{ dynamicField=addresses, propertyType=List<String>, defaultValue=listOf<String>() }
+
 FROM Person p
          JOIN PersonAddress a ON p.id = a.person_id
-WHERE p.id = :person_id;

@@ -550,13 +550,28 @@ internal class QueryCodeGenerator(
         val constructorCall = buildString {
             append("return $resultType(\n")
 
-            statement.fields.forEachIndexed { index, field ->
+            // Separate dynamic fields from regular fields
+            val regularFields = statement.fields.filter { !it.annotations.isDynamicField }
+            val dynamicFields = statement.fields.filter { it.annotations.isDynamicField }
+
+            // Process regular fields (read from database)
+            regularFields.forEachIndexed { index, field ->
                 val propertyName = getPropertyName(field, statement.annotations.propertyNameGenerator)
                 val getterCall = generateGetterCall(field, index, statement.annotations.propertyNameGenerator)
-                val isLast = index == statement.fields.size - 1
+                val isLast = index == regularFields.size - 1 && dynamicFields.isEmpty()
                 val comma = if (isLast) "" else ","
 
                 append("  $propertyName = $getterCall$comma\n")
+            }
+
+            // Process dynamic fields (use default values)
+            dynamicFields.forEachIndexed { index, field ->
+                val propertyName = getPropertyName(field, statement.annotations.propertyNameGenerator)
+                val defaultValue = field.annotations.defaultValue ?: "null"
+                val isLast = index == dynamicFields.size - 1
+                val comma = if (isLast) "" else ","
+
+                append("  $propertyName = $defaultValue$comma\n")
             }
 
             append(")")

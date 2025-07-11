@@ -108,15 +108,33 @@ fun extractFieldAssociatedAnnotations(comments: List<String>): Map<String, Map<S
 
     val result = mutableMapOf<String, MutableMap<String, Any?>>()
     annotationBlocks.forEach { blockAnnotations ->
-        // Every annotation block must have a 'field' annotation with a non-empty value
+        // Every annotation block must have either 'field' or 'dynamicField' annotation with a non-empty value
         val fieldName = blockAnnotations[AnnotationConstants.FIELD] as? String
-        if (fieldName == null || fieldName.isBlank()) {
-            throw IllegalArgumentException("Annotation block must contain a 'field' annotation with a non-empty value to specify which field it applies to")
+        val dynamicFieldName = blockAnnotations[AnnotationConstants.DYNAMIC_FIELD] as? String
+
+        val targetFieldName = when {
+            fieldName != null && fieldName.isNotBlank() && dynamicFieldName != null && dynamicFieldName.isNotBlank() -> {
+                throw IllegalArgumentException("Annotation block cannot contain both 'field' and 'dynamicField' annotations")
+            }
+            fieldName != null && fieldName.isNotBlank() -> fieldName
+            dynamicFieldName != null && dynamicFieldName.isNotBlank() -> dynamicFieldName
+            else -> throw IllegalArgumentException("Annotation block must contain either a 'field' or 'dynamicField' annotation with a non-empty value")
         }
 
         val fieldAnnotations = blockAnnotations.toMutableMap()
-        // Remove the field annotation from the result since it's used for association
+        // Remove the field/dynamicField annotation from the result since it's used for association
         fieldAnnotations.remove(AnnotationConstants.FIELD)
+        fieldAnnotations.remove(AnnotationConstants.DYNAMIC_FIELD)
+
+        // For dynamicField annotations, propertyType is required
+        if (dynamicFieldName != null) {
+            val propertyType = fieldAnnotations[AnnotationConstants.PROPERTY_TYPE] as? String
+            if (propertyType == null || propertyType.isBlank()) {
+                throw IllegalArgumentException("dynamicField annotation requires a 'propertyType' annotation with a non-empty value")
+            }
+            // Mark this as a dynamic field for later processing
+            fieldAnnotations[AnnotationConstants.IS_DYNAMIC_FIELD] = true
+        }
 
         // Apply adapter logic: validate and normalize adapter values
         val propertyType = fieldAnnotations[AnnotationConstants.PROPERTY_TYPE] as? String
@@ -132,7 +150,7 @@ fun extractFieldAssociatedAnnotations(comments: List<String>): Map<String, Map<S
             fieldAnnotations.remove(AnnotationConstants.ADAPTER)
         }
 
-        result[fieldName] = fieldAnnotations
+        result[targetFieldName] = fieldAnnotations
     }
     return result
 }
@@ -222,6 +240,8 @@ data class FieldAnnotationOverrides(
     val propertyType: String?,
     val notNull: Boolean?,
     val adapter: Boolean?,
+    val isDynamicField: Boolean = false,
+    val defaultValue: String? = null,
 ) {
     companion object {
         fun parse(annotations: Map<String, Any?>): FieldAnnotationOverrides {
@@ -248,6 +268,8 @@ data class FieldAnnotationOverrides(
                 propertyType = propertyType,
                 notNull = notNull,
                 adapter = adapter,
+                isDynamicField = annotations[AnnotationConstants.IS_DYNAMIC_FIELD] as? Boolean ?: false,
+                defaultValue = annotations[AnnotationConstants.DEFAULT_VALUE] as? String,
             )
         }
     }
