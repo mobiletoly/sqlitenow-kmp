@@ -109,9 +109,27 @@ class SqliteTypeToKotlinCodeConverter {
                 in KOTLIN_STDLIB_TYPES -> ClassName("kotlin", trimmed)
                 in KOTLIN_COLLECTION_TYPES -> ClassName("kotlin.collections", trimmed)
                 else -> {
-                    // If the type name doesn't contain a dot, it's likely a class in the same package
+                    // Handle qualified type names (e.g., PersonAddress.SharedResult.Row)
                     if (trimmed.contains('.')) {
-                        ClassName.bestGuess(trimmed)
+                        val parts = trimmed.split('.')
+                        val rootClassName = parts[0]
+
+                        // Check if this looks like a same-package nested class
+                        if (!rootClassName.contains('.') &&
+                            rootClassName.isNotEmpty() &&
+                            rootClassName[0].isUpperCase() &&
+                            packageName != null) {
+                            // Create a ClassName for same-package nested class
+                            var className = ClassName(packageName, rootClassName)
+                            // Add nested class names
+                            for (i in 1 until parts.size) {
+                                className = className.nestedClass(parts[i])
+                            }
+                            className
+                        } else {
+                            // Use bestGuess for fully qualified names with packages
+                            ClassName.bestGuess(trimmed)
+                        }
                     } else {
                         // Use the provided package name for same-package classes
                         ClassName(packageName ?: "", trimmed)
@@ -143,9 +161,30 @@ class SqliteTypeToKotlinCodeConverter {
                 rawTypeName in KOTLIN_STDLIB_TYPES -> ClassName("kotlin", rawTypeName)
                 rawTypeName in KOTLIN_COLLECTION_TYPES -> ClassName("kotlin.collections", rawTypeName)
                 else -> {
-                    // If the type name doesn't contain a dot, it's likely a class in the same package
+                    // Handle qualified type names (e.g., PersonAddress.SharedResult.Row)
                     if (rawTypeName.contains('.')) {
-                        ClassName.bestGuess(rawTypeName)
+                        val parts = rawTypeName.split('.')
+                        val rootClassName = parts[0]
+
+                        // Check if this looks like a same-package nested class:
+                        // - Root class name doesn't contain dots (not a package)
+                        // - Root class name starts with uppercase (class naming convention)
+                        // - We have a packageName to use
+                        if (!rootClassName.contains('.') &&
+                            rootClassName.isNotEmpty() &&
+                            rootClassName[0].isUpperCase() &&
+                            packageName != null) {
+                            // Create a ClassName for same-package nested class
+                            var className = ClassName(packageName, rootClassName)
+                            // Add nested class names
+                            for (i in 1 until parts.size) {
+                                className = className.nestedClass(parts[i])
+                            }
+                            className
+                        } else {
+                            // Use bestGuess for fully qualified names with packages
+                            ClassName.bestGuess(rawTypeName)
+                        }
                     } else {
                         // Use the provided package name for same-package classes
                         ClassName(packageName ?: "", rawTypeName)

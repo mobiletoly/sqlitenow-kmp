@@ -45,6 +45,7 @@ import dev.goquick.sqlitenow.core.util.toSqliteTimestamp
 import dev.goquick.sqlitenow.samplekmp.db.AddressType
 import dev.goquick.sqlitenow.samplekmp.db.NowSampleDatabase
 import dev.goquick.sqlitenow.samplekmp.db.Person
+import dev.goquick.sqlitenow.samplekmp.db.PersonAddress
 import dev.goquick.sqlitenow.samplekmp.db.VersionBasedDatabaseMigrations
 import dev.goquick.sqlitenow.samplekmp.model.PersonNote
 import kotlinx.coroutines.DelicateCoroutinesApi
@@ -62,7 +63,8 @@ import org.jetbrains.compose.ui.tooling.preview.Preview
 import kotlin.random.Random
 
 typealias PersonEntity = Person.SharedResult.Row
-typealias PersonWithAddressEntity = Person.SharedResult.PersonWithAddressRow
+typealias PersonAddressEntity = PersonAddress.SharedResult.Row
+typealias PersonWithAddressesEntity = Person.SharedResult.PersonWithAddressRow
 
 private val firstNames = listOf(
     "John", "Jane", "Alice", "Bob", "Charlie", "Diana", "Eve",
@@ -181,17 +183,51 @@ fun App() {
 //    }
 
     LaunchedEffect(Unit) {
+        delay(1000)
         db.person.selectAllWithAddresses
             .asFlow()
             .flowOn(Dispatchers.Main)
             .collect {
                 val persons = it.groupBy { person ->
                     person.personId
-                }
+                } /*.map { v: Map.Entry<Long, List<Person.SharedResult.PersonWithAddressRow>> ->
+                    val personWithAddress = v.value.first()
+                    val person = PersonEntity(
+                        id = personWithAddress.personId,
+                        myFirstName = personWithAddress.myFirstName,
+                        myLastName = personWithAddress.myLastName,
+                        email = personWithAddress.email,
+                        phone = personWithAddress.phone,
+                        birthDate = personWithAddress.birthDate,
+                        createdAt = personWithAddress.personCreatedAt,
+                        notes = null
+                    )
+                } */
                 for (person in persons) {
                     println("----> Person: $person")
                 }
             }
+    }
+
+    val p = PersonWithAddressesEntity(
+        personId = 1,
+        myFirstName = "",
+        myLastName = "",
+        email = "",
+        phone = "",
+        birthDate = null,
+        personCreatedAt = LocalDateTime(1990, 1, 1, 0, 0),
+        addressId = 1,
+        addressType = AddressType.HOME,
+        street = "",
+        city = "",
+        state = "",
+        postalCode = "",
+        country = "",
+        isPrimary = true,
+        addressCreatedAt = LocalDateTime(1990, 1, 1, 0, 0),
+    ).also {
+        it.copy(addresses = listOf())
     }
 
     MaterialTheme {
