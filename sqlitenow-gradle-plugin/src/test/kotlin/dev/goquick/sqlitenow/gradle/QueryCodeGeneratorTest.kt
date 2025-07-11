@@ -84,12 +84,12 @@ class QueryCodeGeneratorTest {
         }
 
         // Verify that separate query files were created
-        val personGetByIdFile = File(outputDir, "com/example/db/Person_GetById.kt")
-        val personAddFile = File(outputDir, "com/example/db/Person_Add.kt")
-        val personDeleteByIdFile = File(outputDir, "com/example/db/Person_DeleteById.kt")
-        assertTrue(personGetByIdFile.exists(), "Person_GetById.kt file should be created")
-        assertTrue(personAddFile.exists(), "Person_Add.kt file should be created")
-        assertTrue(personDeleteByIdFile.exists(), "Person_DeleteById.kt file should be created")
+        val personGetByIdFile = File(outputDir, "com/example/db/PersonQuery_GetById.kt")
+        val personAddFile = File(outputDir, "com/example/db/PersonQuery_Add.kt")
+        val personDeleteByIdFile = File(outputDir, "com/example/db/PersonQuery_DeleteById.kt")
+        assertTrue(personGetByIdFile.exists(), "PersonQuery_GetById.kt file should be created")
+        assertTrue(personAddFile.exists(), "PersonQuery_Add.kt file should be created")
+        assertTrue(personDeleteByIdFile.exists(), "PersonQuery_DeleteById.kt file should be created")
 
         // Read the file content from one of the generated files
         val getByIdFileContent = personGetByIdFile.readText()
@@ -97,32 +97,32 @@ class QueryCodeGeneratorTest {
         val deleteByIdFileContent = personDeleteByIdFile.readText()
 
         // Verify that extension functions are generated with new structure
-        assertTrue(getByIdFileContent.contains("fun Person.GetById.execute"), "Should contain GetById.execute extension function")
-        assertTrue(getByIdFileContent.contains("fun Person.GetById.bindStatementParams"), "Should contain GetById.bindStatementParams extension function")
-        assertTrue(getByIdFileContent.contains("fun Person.GetById.readStatementResult"), "Should contain GetById.readStatementResult extension function")
-        assertTrue(addFileContent.contains("fun Person.Add.execute"), "Should contain Add.execute extension function")
-        assertTrue(addFileContent.contains("fun Person.Add.bindStatementParams"), "Should contain Add.bindStatementParams extension function")
-        assertTrue(deleteByIdFileContent.contains("fun Person.DeleteById.execute"), "Should contain DeleteById.execute extension function")
-        assertTrue(deleteByIdFileContent.contains("fun Person.DeleteById.bindStatementParams"), "Should contain DeleteById.bindStatementParams extension function")
+        assertTrue(getByIdFileContent.contains("fun PersonQuery.GetById.execute"), "Should contain GetById.execute extension function")
+        assertTrue(getByIdFileContent.contains("fun PersonQuery.GetById.bindStatementParams"), "Should contain GetById.bindStatementParams extension function")
+        assertTrue(getByIdFileContent.contains("fun PersonQuery.GetById.readStatementResult"), "Should contain GetById.readStatementResult extension function")
+        assertTrue(addFileContent.contains("fun PersonQuery.Add.execute"), "Should contain Add.execute extension function")
+        assertTrue(addFileContent.contains("fun PersonQuery.Add.bindStatementParams"), "Should contain Add.bindStatementParams extension function")
+        assertTrue(deleteByIdFileContent.contains("fun PersonQuery.DeleteById.execute"), "Should contain DeleteById.execute extension function")
+        assertTrue(deleteByIdFileContent.contains("fun PersonQuery.DeleteById.bindStatementParams"), "Should contain DeleteById.bindStatementParams extension function")
 
         // Verify function signatures with new structure
         assertTrue(getByIdFileContent.contains("conn: SafeSQLiteConnection"), "Should have SafeSQLiteConnection parameter")
-        assertTrue(getByIdFileContent.contains("params: Person.GetById.Params"), "Should have GetById.Params parameter")
-        assertTrue(addFileContent.contains("params: Person.Add.Params"), "Should have Add.Params parameter")
-        assertTrue(deleteByIdFileContent.contains("params: Person.DeleteById.Params"), "Should have DeleteById.Params parameter")
+        assertTrue(getByIdFileContent.contains("params: PersonQuery.GetById.Params"), "Should have GetById.Params parameter")
+        assertTrue(addFileContent.contains("params: PersonQuery.Add.Params"), "Should have Add.Params parameter")
+        assertTrue(deleteByIdFileContent.contains("params: PersonQuery.DeleteById.Params"), "Should have DeleteById.Params parameter")
 
         // Verify return types with new structure
-        assertTrue(getByIdFileContent.contains("List<Person.GetById.Result>"), "SELECT should return List of results")
+        assertTrue(getByIdFileContent.contains("List<PersonQuery.GetById.Result>"), "SELECT should return List of results")
         // For Unit return type, Kotlin doesn't require explicit declaration, so check for function without return type
-        assertTrue(addFileContent.contains("fun Person.Add.execute(conn: SafeSQLiteConnection, params: Person.Add.Params)"),
+        assertTrue(addFileContent.contains("fun PersonQuery.Add.execute(conn: SafeSQLiteConnection, params: PersonQuery.Add.Params)"),
                   "INSERT should have Unit return type (implicit)")
-        assertTrue(deleteByIdFileContent.contains("fun Person.DeleteById.execute(conn: SafeSQLiteConnection, params: Person.DeleteById.Params)"),
+        assertTrue(deleteByIdFileContent.contains("fun PersonQuery.DeleteById.execute(conn: SafeSQLiteConnection, params: PersonQuery.DeleteById.Params)"),
                   "DELETE should have Unit return type (implicit)")
 
         // Verify SQL statement variables (now uses SQL constants from query objects)
-        assertTrue(getByIdFileContent.contains("val sql = Person.GetById.SQL"), "Should use SQL constants from query objects")
-        assertTrue(addFileContent.contains("val sql = Person.Add.SQL"), "Should use SQL constants from query objects")
-        assertTrue(deleteByIdFileContent.contains("val sql = Person.DeleteById.SQL"), "Should use SQL constants from query objects")
+        assertTrue(getByIdFileContent.contains("val sql = PersonQuery.GetById.SQL"), "Should use SQL constants from query objects")
+        assertTrue(addFileContent.contains("val sql = PersonQuery.Add.SQL"), "Should use SQL constants from query objects")
+        assertTrue(deleteByIdFileContent.contains("val sql = PersonQuery.DeleteById.SQL"), "Should use SQL constants from query objects")
 
         // Verify statement preparation in execute functions
         assertTrue(getByIdFileContent.contains("val statement = conn.ref.prepare(sql)"), "Should prepare SQL statement")
@@ -130,9 +130,9 @@ class QueryCodeGeneratorTest {
         assertTrue(deleteByIdFileContent.contains("val statement = conn.ref.prepare(sql)"), "Should prepare SQL statement")
 
         // Verify that execute functions call bindStatementParams
-        assertTrue(getByIdFileContent.contains("Person.GetById.bindStatementParams("), "Execute should call bindStatementParams")
-        assertTrue(addFileContent.contains("Person.Add.bindStatementParams("), "Execute should call bindStatementParams")
-        assertTrue(deleteByIdFileContent.contains("Person.DeleteById.bindStatementParams("), "Execute should call bindStatementParams")
+        assertTrue(getByIdFileContent.contains("PersonQuery.GetById.bindStatementParams("), "Execute should call bindStatementParams")
+        assertTrue(addFileContent.contains("PersonQuery.Add.bindStatementParams("), "Execute should call bindStatementParams")
+        assertTrue(deleteByIdFileContent.contains("PersonQuery.DeleteById.bindStatementParams("), "Execute should call bindStatementParams")
 
         // Verify SELECT-specific implementation (only for SELECT statements)
         assertTrue(getByIdFileContent.contains("val results = mutableListOf<"), "Should contain results collection for SELECT")
@@ -140,7 +140,7 @@ class QueryCodeGeneratorTest {
         assertTrue(getByIdFileContent.contains("results.add("), "Should contain result addition for SELECT")
 
         // Verify that executeAsList calls readStatementResult for SELECT statements
-        assertTrue(getByIdFileContent.contains("Person.GetById.readStatementResult("), "ExecuteAsList should call readStatementResult for SELECT")
+        assertTrue(getByIdFileContent.contains("PersonQuery.GetById.readStatementResult("), "ExecuteAsList should call readStatementResult for SELECT")
 
         // Verify INSERT/DELETE-specific implementation (no return value)
         assertTrue(addFileContent.contains("statement.use { statement ->"), "Should contain statement execution for INSERT")
@@ -154,9 +154,9 @@ class QueryCodeGeneratorTest {
         assertTrue(getByIdFileContent.contains("import dev.goquick.sqlitenow.core.SafeSQLiteConnection"), "Should import dev.goquick.sqlitenow.core.SafeSQLiteConnection")
 
         // Verify suspend functions
-        assertTrue(getByIdFileContent.contains("public suspend fun Person.GetById.executeAsList("), "ExecuteAsList function should be suspend")
-        assertTrue(addFileContent.contains("public suspend fun Person.Add.execute("), "Execute function should be suspend")
-        assertTrue(deleteByIdFileContent.contains("public suspend fun Person.DeleteById.execute("), "Execute function should be suspend")
+        assertTrue(getByIdFileContent.contains("public suspend fun PersonQuery.GetById.executeAsList("), "ExecuteAsList function should be suspend")
+        assertTrue(addFileContent.contains("public suspend fun PersonQuery.Add.execute("), "Execute function should be suspend")
+        assertTrue(deleteByIdFileContent.contains("public suspend fun PersonQuery.DeleteById.execute("), "Execute function should be suspend")
     }
 
     @Test
@@ -203,23 +203,23 @@ class QueryCodeGeneratorTest {
         // Generate the query code
         queryGenerator.generateCode()
 
-        // Verify that the User_GetAll.kt file was created
-        val userGetAllFile = File(outputDir, "com/example/db/User_GetAll.kt")
-        assertTrue(userGetAllFile.exists(), "User_GetAll.kt file should be created")
+        // Verify that the UserQuery_GetAll.kt file was created
+        val userGetAllFile = File(outputDir, "com/example/db/UserQuery_GetAll.kt")
+        assertTrue(userGetAllFile.exists(), "UserQuery_GetAll.kt file should be created")
 
         // Read the file content
         val fileContent = userGetAllFile.readText()
 
         // Verify that extension function is generated without params parameter
-        assertTrue(fileContent.contains("suspend fun User.GetAll.executeAsList(conn: SafeSQLiteConnection): List<User.GetAll.Result>"),
+        assertTrue(fileContent.contains("suspend fun UserQuery.GetAll.executeAsList(conn: SafeSQLiteConnection): List<UserQuery.GetAll.Result>"),
                   "Should contain GetAll.executeAsList extension function without params parameter and with suspend modifier")
-        assertTrue(fileContent.contains("fun User.GetAll.bindStatementParams(statement: SQLiteStatement)"),
+        assertTrue(fileContent.contains("fun UserQuery.GetAll.bindStatementParams(statement: SQLiteStatement)"),
                   "Should contain GetAll.bindStatementParams extension function without params parameter")
-        assertTrue(fileContent.contains("fun User.GetAll.readStatementResult(statement: SQLiteStatement"),
+        assertTrue(fileContent.contains("fun UserQuery.GetAll.readStatementResult(statement: SQLiteStatement"),
                   "Should contain GetAll.readStatementResult extension function")
 
         // Should not contain params parameter for statements without named parameters
-        assertTrue(!fileContent.contains("params: User.GetAll.Params"), "Should not have params parameter for parameterless queries")
+        assertTrue(!fileContent.contains("params: UserQuery.GetAll.Params"), "Should not have params parameter for parameterless queries")
     }
 
     @Test
@@ -480,36 +480,36 @@ class QueryCodeGeneratorTest {
         queryGenerator.generateCode()
 
         // Verify that separate query files were created
-        val personGetByIdFile = File(outputDir, "com/example/db/Person_GetById.kt")
-        val personAddFile = File(outputDir, "com/example/db/Person_Add.kt")
-        val personUpdateUserFile = File(outputDir, "com/example/db/Person_UpdateUser.kt")
-        val personDeleteByIdFile = File(outputDir, "com/example/db/Person_DeleteById.kt")
-        assertTrue(personGetByIdFile.exists(), "Person_GetById.kt file should be created")
-        assertTrue(personAddFile.exists(), "Person_Add.kt file should be created")
-        assertTrue(personUpdateUserFile.exists(), "Person_UpdateUser.kt file should be created")
-        assertTrue(personDeleteByIdFile.exists(), "Person_DeleteById.kt file should be created")
+        val personGetByIdFile = File(outputDir, "com/example/db/PersonQuery_GetById.kt")
+        val personAddFile = File(outputDir, "com/example/db/PersonQuery_Add.kt")
+        val personUpdateUserFile = File(outputDir, "com/example/db/PersonQuery_UpdateUser.kt")
+        val personDeleteByIdFile = File(outputDir, "com/example/db/PersonQuery_DeleteById.kt")
+        assertTrue(personGetByIdFile.exists(), "PersonQuery_GetById.kt file should be created")
+        assertTrue(personAddFile.exists(), "PersonQuery_Add.kt file should be created")
+        assertTrue(personUpdateUserFile.exists(), "PersonQuery_UpdateUser.kt file should be created")
+        assertTrue(personDeleteByIdFile.exists(), "PersonQuery_DeleteById.kt file should be created")
 
         // Read the UPDATE file content
         val updateFileContent = personUpdateUserFile.readText()
 
         // Verify that UPDATE extension functions are generated
-        assertTrue(updateFileContent.contains("suspend fun Person.UpdateUser.execute"), "Should contain UpdateUser.execute extension function with suspend modifier")
-        assertTrue(updateFileContent.contains("fun Person.UpdateUser.bindStatementParams"), "Should contain UpdateUser.bindStatementParams extension function")
+        assertTrue(updateFileContent.contains("suspend fun PersonQuery.UpdateUser.execute"), "Should contain UpdateUser.execute extension function with suspend modifier")
+        assertTrue(updateFileContent.contains("fun PersonQuery.UpdateUser.bindStatementParams"), "Should contain UpdateUser.bindStatementParams extension function")
 
         // Verify UPDATE function signature
-        assertTrue(updateFileContent.contains("params: Person.UpdateUser.Params"), "Should have UpdateUser.Params parameter")
+        assertTrue(updateFileContent.contains("params: PersonQuery.UpdateUser.Params"), "Should have UpdateUser.Params parameter")
 
         // Verify UPDATE return type (should be Unit, implicit)
-        assertTrue(updateFileContent.contains("suspend fun Person.UpdateUser.execute(conn: SafeSQLiteConnection, params: Person.UpdateUser.Params)"),
+        assertTrue(updateFileContent.contains("suspend fun PersonQuery.UpdateUser.execute(conn: SafeSQLiteConnection, params: PersonQuery.UpdateUser.Params)"),
                   "UPDATE should have Unit return type (implicit) and suspend modifier")
 
         // Verify UPDATE SQL execution implementation
-        assertTrue(updateFileContent.contains("val sql = Person.UpdateUser.SQL"), "Should use SQL constant for UPDATE")
+        assertTrue(updateFileContent.contains("val sql = PersonQuery.UpdateUser.SQL"), "Should use SQL constant for UPDATE")
         assertTrue(updateFileContent.contains("statement.use { statement ->"), "Should contain statement execution for UPDATE")
         assertTrue(updateFileContent.contains("statement.step()"), "Should execute UPDATE statement")
 
         // Verify that execute calls bindStatementParams
-        assertTrue(updateFileContent.contains("Person.UpdateUser.bindStatementParams("), "Execute should call bindStatementParams")
+        assertTrue(updateFileContent.contains("PersonQuery.UpdateUser.bindStatementParams("), "Execute should call bindStatementParams")
     }
 
     @Test
@@ -562,28 +562,28 @@ class QueryCodeGeneratorTest {
         // Generate the query code
         queryGenerator.generateCode()
 
-        // Verify that the Person_GetById.kt and Person_Add.kt files were created
-        val personGetByIdFile = File(outputDir, "com/example/db/Person_GetById.kt")
-        val personAddFile = File(outputDir, "com/example/db/Person_Add.kt")
-        assertTrue(personGetByIdFile.exists(), "Person_GetById.kt file should be created")
-        assertTrue(personAddFile.exists(), "Person_Add.kt file should be created")
+        // Verify that the PersonQuery_GetById.kt and PersonQuery_Add.kt files were created
+        val personGetByIdFile = File(outputDir, "com/example/db/PersonQuery_GetById.kt")
+        val personAddFile = File(outputDir, "com/example/db/PersonQuery_Add.kt")
+        assertTrue(personGetByIdFile.exists(), "PersonQuery_GetById.kt file should be created")
+        assertTrue(personAddFile.exists(), "PersonQuery_Add.kt file should be created")
 
         // Read the file contents
         val getByIdFileContent = personGetByIdFile.readText()
         val addFileContent = personAddFile.readText()
 
         // Verify suspend modifier is present in execute functions
-        assertTrue(getByIdFileContent.contains("public suspend fun Person.GetById.executeAsList("),
+        assertTrue(getByIdFileContent.contains("public suspend fun PersonQuery.GetById.executeAsList("),
                   "SELECT executeAsList function should be suspend")
-        assertTrue(addFileContent.contains("public suspend fun Person.Add.execute("),
+        assertTrue(addFileContent.contains("public suspend fun PersonQuery.Add.execute("),
                   "INSERT execute function should be suspend")
 
         // Verify that bindStatementParams and readStatementResult functions are NOT suspend
-        assertTrue(getByIdFileContent.contains("public fun Person.GetById.bindStatementParams("),
+        assertTrue(getByIdFileContent.contains("public fun PersonQuery.GetById.bindStatementParams("),
                   "bindStatementParams should NOT be suspend")
-        assertTrue(getByIdFileContent.contains("public fun Person.GetById.readStatementResult("),
+        assertTrue(getByIdFileContent.contains("public fun PersonQuery.GetById.readStatementResult("),
                   "readStatementResult should NOT be suspend")
-        assertTrue(addFileContent.contains("public fun Person.Add.bindStatementParams("),
+        assertTrue(addFileContent.contains("public fun PersonQuery.Add.bindStatementParams("),
                   "bindStatementParams should NOT be suspend")
     }
 
@@ -631,23 +631,23 @@ class QueryCodeGeneratorTest {
         // Generate the query code
         queryGenerator.generateCode()
 
-        // Verify that the Person_GetById.kt file was created
-        val personGetByIdFile = File(outputDir, "com/example/db/Person_GetById.kt")
-        assertTrue(personGetByIdFile.exists(), "Person_GetById.kt file should be created")
+        // Verify that the PersonQuery_GetById.kt file was created
+        val personGetByIdFile = File(outputDir, "com/example/db/PersonQuery_GetById.kt")
+        assertTrue(personGetByIdFile.exists(), "PersonQuery_GetById.kt file should be created")
 
         // Read the file content
         val fileContent = personGetByIdFile.readText()
 
         // Verify all three execute functions are generated
-        assertTrue(fileContent.contains("public suspend fun Person.GetById.executeAsList("),
+        assertTrue(fileContent.contains("public suspend fun PersonQuery.GetById.executeAsList("),
                   "Should contain executeAsList function")
-        assertTrue(fileContent.contains("public suspend fun Person.GetById.executeAsOne("),
+        assertTrue(fileContent.contains("public suspend fun PersonQuery.GetById.executeAsOne("),
                   "Should contain executeAsOne function")
-        assertTrue(fileContent.contains("public suspend fun Person.GetById.executeAsOneOrNull("),
+        assertTrue(fileContent.contains("public suspend fun PersonQuery.GetById.executeAsOneOrNull("),
                   "Should contain executeAsOneOrNull function")
 
         // Verify executeAsList implementation
-        assertTrue(fileContent.contains("val results = mutableListOf<Person.GetById.Result>()"),
+        assertTrue(fileContent.contains("val results = mutableListOf<PersonQuery.GetById.Result>()"),
                   "executeAsList should use mutableListOf")
         assertTrue(fileContent.contains("while (statement.step())"),
                   "executeAsList should use while loop")
@@ -661,8 +661,8 @@ class QueryCodeGeneratorTest {
                   "executeAsOneOrNull should return null when no results")
 
         // Verify all functions use the same SQL preparation and parameter binding
-        val sqlPreparationCount = fileContent.split("val sql = Person.GetById.SQL").size - 1
-        val paramBindingCallCount = fileContent.split("Person.GetById.bindStatementParams(statement, params)").size - 1
+        val sqlPreparationCount = fileContent.split("val sql = PersonQuery.GetById.SQL").size - 1
+        val paramBindingCallCount = fileContent.split("PersonQuery.GetById.bindStatementParams(statement, params)").size - 1
         assertEquals(3, sqlPreparationCount, "Should have 3 SQL preparation statements")
         assertEquals(3, paramBindingCallCount, "Should have 3 parameter binding calls in execute functions")
     }
@@ -726,16 +726,16 @@ class QueryCodeGeneratorTest {
         // Generate the data structure code
         dataStructGenerator.generateCode()
 
-        // Verify that the Person.kt file was created
-        val personFile = File(outputDir, "com/example/db/Person.kt")
-        assertTrue(personFile.exists(), "Person.kt file should be created")
+        // Verify that the PersonQuery.kt file was created
+        val personFile = File(outputDir, "com/example/db/PersonQuery.kt")
+        assertTrue(personFile.exists(), "PersonQuery.kt file should be created")
 
         // Read the file content
         val fileContent = personFile.readText()
 
         // Verify affectedTables field exists for all query objects
         assertTrue(fileContent.contains("public val affectedTables: Set<String>"),
-                  "Person.kt should contain affectedTables fields")
+                  "PersonQuery.kt should contain affectedTables fields")
 
         // Verify correct table sets for JOIN query (should include both users and addresses)
         assertTrue(fileContent.contains("affectedTables: Set<String> = setOf(\"users\", \"addresses\")"),

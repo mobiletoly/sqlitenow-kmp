@@ -18,7 +18,7 @@ SELECT p.id         AS person_id,
        a.is_primary,
        a.created_at AS address_created_at
 
--- @@{ dynamicField=addresses, propertyType=List<PersonAddress.SharedResult.Row>, defaultValue=listOf() }
+-- @@{ dynamicField=addresses, propertyType=List<PersonAddressQuery.SharedResult.Row>, defaultValue=listOf() }
 
 FROM Person p
          JOIN PersonAddress a ON p.id = a.person_id

@@ -157,16 +157,16 @@ class DataStructCodeGeneratorTest {
         )
 
         // Verify that FileSpec.Builders were created successfully
-        assertTrue(userFileSpec.build().name == "User", "Should generate User file")
-        assertTrue(productFileSpec.build().name == "Product", "Should generate Product file")
+        assertTrue(userFileSpec.build().name == "UserQuery", "Should generate UserQuery file")
+        assertTrue(productFileSpec.build().name == "ProductQuery", "Should generate ProductQuery file")
 
         // Verify the generated code contains expected structures
         val userCode = userFileSpec.build().toString()
         val productCode = productFileSpec.build().toString()
 
-        assertTrue(userCode.contains("object User"), "User code should contain 'object User'")
+        assertTrue(userCode.contains("object UserQuery"), "User code should contain 'object UserQuery'")
         assertTrue(userCode.contains("object CustomClassName"), "User code should contain query-specific object")
-        assertTrue(productCode.contains("object Product"), "Product code should contain 'object Product'")
+        assertTrue(productCode.contains("object ProductQuery"), "Product code should contain 'object ProductQuery'")
         assertTrue(productCode.contains("object CustomClassName"), "Product code should contain query-specific object")
     }
 
@@ -180,21 +180,21 @@ class DataStructCodeGeneratorTest {
         generator.generateCode()
 
         // Verify that the files were created
-        val userQueriesFile = File(tempDir.resolve("output").toFile(), "com/example/db/User.kt")
+        val userQueriesFile = File(tempDir.resolve("output").toFile(), "com/example/db/UserQuery.kt")
 
-        assertTrue(userQueriesFile.exists(), "User.kt should be created")
+        assertTrue(userQueriesFile.exists(), "UserQuery.kt should be created")
 
         // Verify file contents
         val userQueriesContent = userQueriesFile.readText()
 
-        assertTrue(userQueriesContent.contains("object User"), "User.kt should contain 'object User'")
+        assertTrue(userQueriesContent.contains("object UserQuery"), "UserQuery.kt should contain 'object UserQuery'")
         assertTrue(
             userQueriesContent.contains("object CustomClassName"),
-            "User.kt should contain query-specific object"
+            "UserQuery.kt should contain query-specific object"
         )
-        assertTrue(userQueriesContent.contains("const val SQL"), "User.kt should contain SQL constant")
-        assertTrue(userQueriesContent.contains("data class Result"), "User.kt should contain 'data class Result'")
-        assertTrue(userQueriesContent.contains("val name: String"), "User.kt should contain 'val name: String'")
+        assertTrue(userQueriesContent.contains("const val SQL"), "UserQuery.kt should contain SQL constant")
+        assertTrue(userQueriesContent.contains("data class Result"), "UserQuery.kt should contain 'data class Result'")
+        assertTrue(userQueriesContent.contains("val name: String"), "UserQuery.kt should contain 'val name: String'")
     }
 
     @Test
@@ -207,17 +207,17 @@ class DataStructCodeGeneratorTest {
         generator.generateCode()
 
         // Verify that the files were created
-        val userQueriesFile = File(tempDir.resolve("output").toFile(), "com/example/db/User.kt")
+        val userQueriesFile = File(tempDir.resolve("output").toFile(), "com/example/db/UserQuery.kt")
 
-        assertTrue(userQueriesFile.exists(), "User.kt should be created")
+        assertTrue(userQueriesFile.exists(), "UserQuery.kt should be created")
 
         // Verify file contents
         val userQueriesContent = userQueriesFile.readText()
 
-        assertTrue(userQueriesContent.contains("object User"), "User.kt should contain 'object User'")
-        assertTrue(userQueriesContent.contains("object TestQuery"), "User.kt should contain query-specific object")
-        assertTrue(userQueriesContent.contains("const val SQL"), "User.kt should contain SQL constant")
-        assertTrue(userQueriesContent.contains("data class Result"), "User.kt should contain 'data class Result'")
+        assertTrue(userQueriesContent.contains("object UserQuery"), "UserQuery.kt should contain 'object UserQuery'")
+        assertTrue(userQueriesContent.contains("object TestQuery"), "UserQuery.kt should contain query-specific object")
+        assertTrue(userQueriesContent.contains("const val SQL"), "UserQuery.kt should contain SQL constant")
+        assertTrue(userQueriesContent.contains("data class Result"), "UserQuery.kt should contain 'data class Result'")
     }
 
     @Test
@@ -233,34 +233,34 @@ class DataStructCodeGeneratorTest {
 
         // Verify that the files were created
         val outputDir = tempDir.resolve("output").toFile()
-        val userQueriesFile = File(outputDir, "com/example/db/User.kt")
-        val productQueriesFile = File(outputDir, "com/example/db/Product.kt")
+        val userQueriesFile = File(outputDir, "com/example/db/UserQuery.kt")
+        val productQueriesFile = File(outputDir, "com/example/db/ProductQuery.kt")
 
-        assertTrue(userQueriesFile.exists(), "User.kt should be created")
-        assertTrue(productQueriesFile.exists(), "Product.kt should be created")
+        assertTrue(userQueriesFile.exists(), "UserQuery.kt should be created")
+        assertTrue(productQueriesFile.exists(), "ProductQuery.kt should be created")
 
         // Verify file contents
         val userQueriesContent = userQueriesFile.readText()
         val productQueriesContent = productQueriesFile.readText()
 
-        assertTrue(userQueriesContent.contains("object User"), "User.kt should contain 'object User'")
+        assertTrue(userQueriesContent.contains("object UserQuery"), "UserQuery.kt should contain 'object UserQuery'")
         assertTrue(
             userQueriesContent.contains("object CustomClassName"),
-            "User.kt should contain query-specific object"
+            "UserQuery.kt should contain query-specific object"
         )
-        assertTrue(userQueriesContent.contains("const val SQL"), "User.kt should contain SQL constant")
-        assertTrue(productQueriesContent.contains("object Product"), "Product.kt should contain 'object Product'")
+        assertTrue(userQueriesContent.contains("const val SQL"), "UserQuery.kt should contain SQL constant")
+        assertTrue(productQueriesContent.contains("object ProductQuery"), "ProductQuery.kt should contain 'object ProductQuery'")
         assertTrue(
             productQueriesContent.contains("object CustomClassName"),
-            "Product.kt should contain query-specific object"
+            "ProductQuery.kt should contain query-specific object"
         )
-        assertTrue(productQueriesContent.contains("const val SQL"), "Product.kt should contain SQL constant")
+        assertTrue(productQueriesContent.contains("const val SQL"), "ProductQuery.kt should contain SQL constant")
 
         // Since we didn't add parameters, the Params data class should not be present
-        assertFalse(userQueriesContent.contains("data class Params"), "User.kt should not contain 'data class Params'")
+        assertFalse(userQueriesContent.contains("data class Params"), "UserQuery.kt should not contain 'data class Params'")
         assertFalse(
             productQueriesContent.contains("data class Params"),
-            "Product.kt should not contain 'data class Params'"
+            "ProductQuery.kt should not contain 'data class Params'"
         )
     }
 
@@ -274,25 +274,25 @@ class DataStructCodeGeneratorTest {
         generator.generateCode()
 
         // Verify that the files were created
-        val userQueriesFile = File(tempDir.resolve("output").toFile(), "com/example/db/User.kt")
+        val userQueriesFile = File(tempDir.resolve("output").toFile(), "com/example/db/UserQuery.kt")
 
-        assertTrue(userQueriesFile.exists(), "User.kt should be created")
+        assertTrue(userQueriesFile.exists(), "UserQuery.kt should be created")
 
         // Verify file contents
         val userQueriesContent = userQueriesFile.readText()
 
-        assertTrue(userQueriesContent.contains("object User"), "User.kt should contain 'object User'")
+        assertTrue(userQueriesContent.contains("object UserQuery"), "UserQuery.kt should contain 'object UserQuery'")
         assertTrue(
             userQueriesContent.contains("object CustomClassName"),
-            "User.kt should contain query-specific object"
+            "UserQuery.kt should contain query-specific object"
         )
-        assertTrue(userQueriesContent.contains("const val SQL"), "User.kt should contain SQL constant")
-        assertTrue(userQueriesContent.contains("data class Params"), "User.kt should contain 'data class Params'")
-        assertTrue(userQueriesContent.contains("data class Result"), "User.kt should contain 'data class Result'")
+        assertTrue(userQueriesContent.contains("const val SQL"), "UserQuery.kt should contain SQL constant")
+        assertTrue(userQueriesContent.contains("data class Params"), "UserQuery.kt should contain 'data class Params'")
+        assertTrue(userQueriesContent.contains("data class Result"), "UserQuery.kt should contain 'data class Result'")
 
         // Check for parameter properties (defaulting to String until proper type inference is implemented)
-        assertTrue(userQueriesContent.contains("val userId: String"), "User.kt should contain 'val userId: String'")
-        assertTrue(userQueriesContent.contains("val email: String"), "User.kt should contain 'val email: String'")
+        assertTrue(userQueriesContent.contains("val userId: String"), "UserQuery.kt should contain 'val userId: String'")
+        assertTrue(userQueriesContent.contains("val email: String"), "UserQuery.kt should contain 'val email: String'")
     }
 
     @Test
@@ -1867,7 +1867,7 @@ class DataStructCodeGeneratorTest {
 
         // Verify that the execute function prepares statement and calls bindStatementParams
         assertTrue(
-            generatedCode.contains("val sql = Person.Add.SQL"),
+            generatedCode.contains("val sql = PersonQuery.Add.SQL"),
             "Execute function should use SQL constant"
         )
         assertTrue(
@@ -1875,7 +1875,7 @@ class DataStructCodeGeneratorTest {
             "Execute function should prepare statement"
         )
         assertTrue(
-            generatedCode.contains("Person.Add.bindStatementParams("),
+            generatedCode.contains("PersonQuery.Add.bindStatementParams("),
             "Execute function should call bindStatementParams"
         )
 

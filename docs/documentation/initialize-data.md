@@ -68,8 +68,8 @@ by using the correct foreign key relationships.
 
 ## When Initialization Runs
 
-The initialization scripts run automatically when **Database is created for the first time** (when your
-app starts and the database file doesn't exist)
+The initialization scripts run automatically when **Database is created for the first time** (when
+your app starts and the database file doesn't exist)
 
 The init scripts are executed **after** the schema is created.
 

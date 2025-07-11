@@ -11,7 +11,8 @@ Learn how to define your database schema using SQL files with SQLiteNow annotati
 
 ## Directory Structure
 
-SQLiteNow expects your SQL files to be organized in a specific directory structure within your `commonMain` source set:
+SQLiteNow expects your SQL files to be organized in a specific directory structure within
+your `commonMain` source set:
 
 ```
 src/commonMain/sql/SampleDatabase/
@@ -23,8 +24,8 @@ src/commonMain/sql/SampleDatabase/
 
 ## Basic Table Definition
 
-Create your table definitions in the `schema/` directory. By default, SQLiteNow converts column names to camelCase
-properties. You can customize property names using annotations:
+Create your table definitions in the `schema/` directory. By default, SQLiteNow converts column
+names to camelCase properties. You can customize property names using annotations:
 
 **File: `schema/Person.sql`**
 
@@ -45,7 +46,12 @@ CREATE TABLE Person
 CREATE INDEX idx_person_email ON Person (email);
 ```
 
-This generates a `Person` data class with:
+While this construction will not generate any Kotlin data structures, it is still required to be
+present, because it is used to determine the schema of the database. Data classes will be
+generated later,  based on the SELECT, INSERT, UPDATE, DELETE queries.
+
+As for now it is important to understand that listed columns are associated with
+the following properties:
 
 - `id: Long`
 - `firstName: String`
@@ -60,8 +66,8 @@ as close to the column definition as possible, but it is not required to do so.*
 
 ## Custom Types with Adapters
 
-For complex types that don't map directly to SQLite types, use the the combination of `propertyType` and `adapter`
-annotations:
+For complex types that don't map directly to SQLite types, use the combination of `propertyType`
+and `adapter` annotations:
 
 ```sql
 CREATE TABLE Person
@@ -82,7 +88,7 @@ CREATE TABLE Person
 );
 ```
 
-This generates a `Person` data class with custom types:
+This will result in the following properties:
 
 - `birthDate: kotlinx.datetime.LocalDate?`
 - `createdAt: kotlinx.datetime.LocalDateTime`
@@ -99,8 +105,9 @@ type of `propertyType`.**
 
 ## Forced Nullability Control
 
-With database schema, you can define columns as `NOT NULL` or `NULL`. However, in some cases you may want
-to override this behavior for specific properties. You can use `notNull` annotation to do so:
+With database schema, you can define columns as `NOT NULL` or `NULL`. However, in some cases you
+may want to override this behavior for specific properties. You can use `notNull` annotation to
+do so:
 
 ```sql
 CREATE TABLE Person
@@ -128,7 +135,7 @@ SELECT
 FROM Person;
 ```
 
-In this case `total_person_count` column is not defined in the table and by default SQLiteNow will
+`total_person_count` column is not defined in the table and by default SQLiteNow will
 treat it as nullable. In this case you can use `notNull` annotation to override this behavior:
 
 ```sql
@@ -158,14 +165,16 @@ For example, you can use `name` annotation to customize the generated class name
 
 ## Field-level Annotations
 
-| Annotation                    | Purpose                         | Example                                     |
-|-------------------------------|---------------------------------|---------------------------------------------|
-| `name=Name`                   | Custom class name               | `name=PersonEntity`                         |
-| `field=sql_column_name`       | Target a specific column        | `field=user_name`                           |
-| `propertyName=name`           | Custom generated property name  | `field=user_name, propertyName=myUserName`  |
-| `propertyType=type`           | Custom property type            | `field=birth_date, propertyType=LocalDate`  |
-| `adapter={custom or default}` | Request type adapter generation | `field=birth_date, adapter=custom`          |
-| `notNull={true or false}`     | Control property nullability    | `field=phone, notNull=false`                |
+| Annotation                    | Purpose                           | Example                                              |
+|-------------------------------|-----------------------------------|------------------------------------------------------|
+| `name=Name`                   | Custom class name                 | `name=PersonEntity`                                  |
+| `field=sql_column_name`       | Target a specific column          | `field=user_name`                                    |
+| `propertyName=name`           | Custom generated property name    | `field=user_name, propertyName=myUserName`           |
+| `propertyType=type`           | Custom property type              | `field=birth_date, propertyType=LocalDate`           |
+| `adapter={custom or default}` | Request type adapter generation   | `field=birth_date, adapter=custom`                   |
+| `notNull={true or false}`     | Control property nullability      | `field=phone, notNull=false`                         |
+| `dynamicField=name`           | Generate non-table dynamic field  | `dynamicField=addresses, propertyType=List<String>`  |
+| `defaultValue=value`          | Default value for dynamic field   | `dynamicField=addresses, defaultValue=listOf()`   |
 
 ## Example
 
@@ -203,7 +212,7 @@ CREATE INDEX idx_person_name ON Person (last_name, first_name);
 CREATE INDEX idx_person_email ON Person (email);
 ```
 
-This generates a `Person` data class with:
+This will result in the following properties:
 
 - `id: Long`
 - `myFirstName: String` (custom property name)

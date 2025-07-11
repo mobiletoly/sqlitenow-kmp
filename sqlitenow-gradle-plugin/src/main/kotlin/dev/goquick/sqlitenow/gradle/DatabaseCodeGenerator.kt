@@ -307,7 +307,7 @@ class DatabaseCodeGenerator(
         // Create the property type
         val propertyType = if (hasParams) {
             // Function type: (Params) -> ExecuteRunners
-            val paramsType = ClassName(packageName, namespace.capitalized())
+            val paramsType = ClassName(packageName, "${namespace.capitalized()}Query")
                 .nestedClass(className)
                 .nestedClass("Params")
             val executeRunnersType = ClassName("dev.goquick.sqlitenow.core", "ExecuteRunners")
@@ -345,7 +345,7 @@ class DatabaseCodeGenerator(
         // Create the property type
         val propertyType = if (hasParams) {
             // Function type: (Params) -> SelectRunners<ResultType>
-            val paramsType = ClassName(packageName, namespace.capitalized())
+            val paramsType = ClassName(packageName, "${namespace.capitalized()}Query")
                 .nestedClass(className)
                 .nestedClass("Params")
             val selectRunnersType = ClassName("dev.goquick.sqlitenow.core", "SelectRunners")
@@ -373,7 +373,7 @@ class DatabaseCodeGenerator(
         hasParams: Boolean,
         adaptersByNamespace: Map<String, List<UniqueAdapter>>
     ): String {
-        val capitalizedNamespace = namespace.capitalized()
+        val capitalizedNamespace = "${namespace.capitalized()}Query"
         val statementAdapters = adapterConfig.collectAllParamConfigs(statement)
         val hasAdapters = statementAdapters.isNotEmpty()
 
@@ -434,7 +434,7 @@ class DatabaseCodeGenerator(
         hasParams: Boolean,
         adaptersByNamespace: Map<String, List<UniqueAdapter>>
     ): String {
-        val capitalizedNamespace = namespace.capitalized()
+        val capitalizedNamespace = "${namespace.capitalized()}Query"
         val statementAdapters = adapterConfig.collectAllParamConfigs(statement)
         val hasAdapters = statementAdapters.isNotEmpty()
 

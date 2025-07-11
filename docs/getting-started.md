@@ -104,8 +104,9 @@ CREATE TABLE Person
     last_name  TEXT                NOT NULL,
     email      TEXT                NOT NULL UNIQUE,
 
-    -- this annotation will generate `userPhone` property for `phone` column, instead of `phone` name,
-    -- in this case it's not very useful, but shows how to assign custom name to property
+    -- this annotation will generate `userPhone` property for `phone` column, instead
+    -- of `phone` name, in this case it's not very useful, but shows how to assign custom
+    -- name to property
     --
     -- @@{field=phone, propertyName=userPhone}
     phone      TEXT,
@@ -226,9 +227,9 @@ LaunchedEffect(Unit) {
     db.open()
     
     // Query all persons
-    val personList: List<Person.SelectAll.Result> = db.person
+    val personList: List<PersonQuery.SelectAll.Result> = db.person
         .selectAll(
-            Person.SelectAll.Params(
+            PersonQuery.SelectAll.Params(
                 limit = -1,
                 offset = 0
             )
@@ -243,7 +244,7 @@ LaunchedEffect(Unit) {
 // Add a new person
 db.person
     .add(
-        Person.Add.Params(
+        PersonQuery.Add.Params(
             firstName = "John",
             lastName = "Doe",
             email = "john.doe@example.com",
@@ -261,7 +262,7 @@ SQLiteNow supports reactive queries with Flow:
 ```kotlin
 // Listen for changes to the Person table
 db.person
-    .selectAll(Person.SelectAll.Params(limit = -1, offset = 0))
+    .selectAll(PersonQuery.SelectAll.Params(limit = -1, offset = 0))
     .asFlow()
     .collect { personList ->
         println("Person list: $personList")

@@ -49,7 +49,7 @@ internal class QueryCodeGenerator(
 
     /**
      * Generates a separate file for a specific query.
-     * Example: Person_SelectWeird.kt
+     * Example: PersonQuery_SelectWeird.kt
      */
     private fun generateQueryFile(
         namespace: String,
@@ -57,7 +57,7 @@ internal class QueryCodeGenerator(
         packageName: String
     ) {
         val className = statement.getDataClassName()
-        val fileName = "${namespace.capitalized()}_$className"
+        val fileName = "${namespace.capitalized()}Query_$className"
 
         val fileSpecBuilder = FileSpec.builder(packageName, fileName)
             .addFileComment("Generated query extension functions for ${namespace}.${className}")
@@ -181,7 +181,7 @@ internal class QueryCodeGenerator(
         namespace: String,
         statement: AnnotatedSelectStatement
     ): FunSpec {
-        val capitalizedNamespace = namespace.capitalized()
+        val capitalizedNamespace = "${namespace.capitalized()}Query"
         val className = statement.getDataClassName()
 
         // Create the extension function
@@ -238,9 +238,9 @@ internal class QueryCodeGenerator(
         namespace: String,
         className: String
     ) {
-        val capitalizedNamespace = namespace.capitalized()
+        val capitalizedNamespace = "${namespace.capitalized()}Query"
 
-        // Add receiver type: Person.SelectWeird
+        // Add receiver type: PersonQuery.SelectWeird
         val receiverType = ClassName(packageName, capitalizedNamespace).nestedClass(className)
         fnBld.receiver(receiverType)
 
@@ -272,9 +272,9 @@ internal class QueryCodeGenerator(
         includeParamsParameter: Boolean = false,
         adapterType: AdapterType = AdapterType.NONE
     ) {
-        val capitalizedNamespace = namespace.capitalized()
+        val capitalizedNamespace = "${namespace.capitalized()}Query"
 
-        // Add receiver type: Person.SelectWeird
+        // Add receiver type: PersonQuery.SelectWeird
         val receiverType = ClassName(packageName, capitalizedNamespace).nestedClass(className)
         fnBld.receiver(receiverType)
 
@@ -426,7 +426,7 @@ internal class QueryCodeGenerator(
      * Consolidates duplicate ClassName construction for Params types.
      */
     private fun createParamsTypeName(namespace: String, className: String): ClassName {
-        val capitalizedNamespace = namespace.capitalized()
+        val capitalizedNamespace = "${namespace.capitalized()}Query"
         return ClassName(packageName, capitalizedNamespace)
             .nestedClass(className)
             .nestedClass("Params")
@@ -464,7 +464,7 @@ internal class QueryCodeGenerator(
         className: String,
         functionName: String,
     ) {
-        val capitalizedNamespace = namespace.capitalized()
+        val capitalizedNamespace = "${namespace.capitalized()}Query"
 
         // Build the complete withContext block as a single statement
         val codeBuilder = StringBuilder()
@@ -627,7 +627,7 @@ internal class QueryCodeGenerator(
         className: String,
         functionName: String = "executeAsList"
     ) {
-        val capitalizedNamespace = namespace.capitalized()
+        val capitalizedNamespace = "${namespace.capitalized()}Query"
 
         // Use the correct result type (handles shared results)
         val resultType = SharedResultTypeUtils.createResultTypeString(namespace, statement)

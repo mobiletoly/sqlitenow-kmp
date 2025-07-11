@@ -68,12 +68,12 @@ open class DataStructCodeGenerator(
         namespace: String,
         packageName: String,
     ): FileSpec.Builder {
-        val fileName = namespace.capitalized()
+        val fileName = "${namespace.capitalized()}Query"
         val fileSpecBuilder = FileSpec.builder(packageName, fileName)
             .addFileComment("Generated code for $namespace namespace queries")
             .addFileComment("\nDo not modify this file manually")
 
-        val capitalizedNamespace = namespace.capitalized()
+        val capitalizedNamespace = "${namespace.capitalized()}Query"
         val namespaceObject = TypeSpec.objectBuilder(capitalizedNamespace)
             .addKdoc("Contains queries for the $namespace namespace")
 

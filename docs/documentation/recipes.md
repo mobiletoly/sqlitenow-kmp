@@ -81,12 +81,13 @@ val db = SampleDatabase(
 ---
 ## Serialize/deserialize enums
 
-There are different strategies to serialize/deserialize enums to database. It could be a serialization
-by enum constant name, by unique integer number assigned to each enum constant, or by some other
-unique value, such as string name. We suggest not to use enum ordinal or enum name, as it is not guaranteed to be
-stable across different versions of your application, so our suggestion is to assign a stable unique
-text value to each enum constant. For this we have created a helper class `EnumByValueLookup` that
-you can use to create a lookup between enum constant and its unique value. Here is an example:
+There are different strategies to serialize/deserialize enums to database. It could be a
+serialization by enum constant name, by unique integer number assigned to each enum constant,
+or by some other unique value, such as string name. We suggest not to use enum ordinal or enum
+name, as it is not guaranteed to be stable across different versions of your application,
+so our suggestion is to assign a stable unique text value to each enum constant. For this we
+have created a helper class `EnumByValueLookup` that you can use to create a lookup between
+enum constant and its unique value. Here is an example:
 
 ```sql
 CREATE TABLE PersonAddress
@@ -141,6 +142,6 @@ sqliteNow {
 ```
 
 This will result in `schema.db` file being created in `tmp/` directory every time you run
-**generateNowSampleDatabase** task. This can be convenient if you want to inspect the generated schema
-or if you want to associate your .sql files with database schema in some external tool (or in IntelliJ
-SQL plugin etc).
+**generateNowSampleDatabase** task. This can be convenient if you want to inspect the generated
+schema or if you want to associate your .sql files with database schema in some external
+tool (or in IntelliJ SQL plugin etc).

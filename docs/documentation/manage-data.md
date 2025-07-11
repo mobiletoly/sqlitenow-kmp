@@ -36,7 +36,7 @@ VALUES (:firstName, :lastName, :email, :phone, :birthDate);
 This generates a query object with input parameters:
 
 ```kotlin
-object Person {
+object PersonQuery {
     object Add {
         data class Params(
             val firstName: String,
@@ -52,7 +52,7 @@ object Person {
 ```
 
 As you can see Params class is generated automatically based on the SQL query parameters
-and reside under `Person`/`Add` object (object name is generated from file name).
+and reside under `PersonQuery/Add` object (object name is generated from file name).
 
 
 ## UPDATE Queries
@@ -68,7 +68,7 @@ WHERE id = :id;
 This generates:
 
 ```kotlin
-object Person {
+object PersonQuery {
     object UpdateEmail {
         data class Params(
             val email: String,
@@ -81,7 +81,7 @@ object Person {
 ```
 
 As you can see Params class is generated automatically based on the SQL query parameters
-and reside under `Person`/`UpdateEmail` object.
+and reside under `PersonQuery/UpdateEmail` object.
 
 ## DELETE Queries
 
@@ -95,7 +95,7 @@ WHERE id IN :ids;
 This generates:
 
 ```kotlin
-object Person {
+object PersonQuery {
     object DeleteByIds {
         data class Params(
             val ids: Collection<Long>
@@ -119,7 +119,7 @@ Executes the INSERT, UPDATE, or DELETE operation:
 ```kotlin
 // Insert new person
 db.person.add(
-    Person.Add.Params(
+    PersonQuery.Add.Params(
         firstName = "John",
         lastName = "Doe",
         email = "john@example.com",
@@ -132,7 +132,7 @@ db.person.add(
 ```kotlin
 // Update email
 db.person.updateEmail(
-    Person.UpdateEmail.Params(
+    PersonQuery.UpdateEmail.Params(
         id = 1,
         email = "newemail@example.com"
     )
@@ -142,7 +142,7 @@ db.person.updateEmail(
 ```kotlin
 // Delete multiple persons by IDs
 db.person.deleteByIds(
-    Person.DeleteByIds.Params(
+    PersonQuery.DeleteByIds.Params(
         ids = listOf(1L, 2L, 3L)
     )
 ).execute()

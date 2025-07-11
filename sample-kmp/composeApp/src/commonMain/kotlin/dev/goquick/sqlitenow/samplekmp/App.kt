@@ -44,8 +44,8 @@ import dev.goquick.sqlitenow.core.util.toSqliteDate
 import dev.goquick.sqlitenow.core.util.toSqliteTimestamp
 import dev.goquick.sqlitenow.samplekmp.db.AddressType
 import dev.goquick.sqlitenow.samplekmp.db.NowSampleDatabase
-import dev.goquick.sqlitenow.samplekmp.db.Person
-import dev.goquick.sqlitenow.samplekmp.db.PersonAddress
+import dev.goquick.sqlitenow.samplekmp.db.PersonAddressQuery
+import dev.goquick.sqlitenow.samplekmp.db.PersonQuery
 import dev.goquick.sqlitenow.samplekmp.db.VersionBasedDatabaseMigrations
 import dev.goquick.sqlitenow.samplekmp.model.PersonNote
 import kotlinx.coroutines.DelicateCoroutinesApi
@@ -62,9 +62,9 @@ import kotlinx.datetime.LocalDateTime
 import org.jetbrains.compose.ui.tooling.preview.Preview
 import kotlin.random.Random
 
-typealias PersonEntity = Person.SharedResult.Row
-typealias PersonAddressEntity = PersonAddress.SharedResult.Row
-typealias PersonWithAddressesEntity = Person.SharedResult.PersonWithAddressRow
+typealias PersonEntity = PersonQuery.SharedResult.Row
+typealias PersonAddressEntity = PersonAddressQuery.SharedResult.Row
+typealias PersonWithAddressesEntity = PersonQuery.SharedResult.PersonWithAddressRow
 
 private val firstNames = listOf(
     "John", "Jane", "Alice", "Bob", "Charlie", "Diana", "Eve",
@@ -148,7 +148,7 @@ fun App() {
         // Listen for real-time changes from Person/SelectAll query
         db.person
             .selectAll(
-                Person.SelectAll.Params(
+                PersonQuery.SelectAll.Params(
                     limit = -1,
                     offset = 0
                 )
@@ -503,7 +503,7 @@ suspend fun addRandomPerson(onError: (String) -> Unit) {
 
     try {
         db.person.add(
-            Person.Add.Params(
+            PersonQuery.Add.Params(
                 firstName = firstName,
                 lastName = lastName,
                 email = email,
@@ -530,7 +530,7 @@ suspend fun addRandomPerson(onError: (String) -> Unit) {
 suspend fun deletePerson(personId: Long, onError: (String) -> Unit = {}) {
     try {
         db.person.deleteByIds(
-            Person.DeleteByIds.Params(
+            PersonQuery.DeleteByIds.Params(
                 ids = listOf(personId)
             )
         ).execute()
@@ -552,7 +552,7 @@ suspend fun randomizePerson(person: PersonEntity, onError: (String) -> Unit = {}
         val birthDate = person.birthDate
         val notes = person.notes
         db.person.updateById(
-            Person.UpdateById.Params(
+            PersonQuery.UpdateById.Params(
                 id = person.id,
                 firstName = firstName,
                 lastName = lastName,

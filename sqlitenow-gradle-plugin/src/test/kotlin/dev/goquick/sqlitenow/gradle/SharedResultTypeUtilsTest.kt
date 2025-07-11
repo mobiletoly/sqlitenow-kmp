@@ -16,7 +16,7 @@ class SharedResultTypeUtilsTest {
             sharedResultName = "All"
         )
         
-        assertEquals("com.example.db.Person.SharedResult.All", typeName.toString())
+        assertEquals("com.example.db.PersonQuery.SharedResult.All", typeName.toString())
     }
 
     @Test
@@ -50,7 +50,7 @@ class SharedResultTypeUtilsTest {
             statement = statement
         )
         
-        assertEquals("com.example.db.Person.SharedResult.All", typeName.toString())
+        assertEquals("com.example.db.PersonQuery.SharedResult.All", typeName.toString())
     }
 
     @Test
@@ -84,7 +84,7 @@ class SharedResultTypeUtilsTest {
             statement = statement
         )
         
-        assertEquals("com.example.db.Person.SelectWeird.Result", typeName.toString())
+        assertEquals("com.example.db.PersonQuery.SelectWeird.Result", typeName.toString())
     }
 
     @Test
@@ -113,7 +113,7 @@ class SharedResultTypeUtilsTest {
         )
         
         val sharedResultString = SharedResultTypeUtils.createResultTypeString("person", sharedStatement)
-        assertEquals("Person.SharedResult.All", sharedResultString)
+        assertEquals("PersonQuery.SharedResult.All", sharedResultString)
         
         val regularStatement = AnnotatedSelectStatement(
             name = "SelectWeird",
@@ -138,7 +138,7 @@ class SharedResultTypeUtilsTest {
         )
         
         val regularResultString = SharedResultTypeUtils.createResultTypeString("person", regularStatement)
-        assertEquals("Person.SelectWeird.Result", regularResultString)
+        assertEquals("PersonQuery.SelectWeird.Result", regularResultString)
     }
 
     @Test

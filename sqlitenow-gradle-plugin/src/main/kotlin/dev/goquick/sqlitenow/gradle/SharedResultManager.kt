@@ -24,7 +24,7 @@ object SharedResultTypeUtils {
         namespace: String,
         sharedResultName: String
     ): ClassName {
-        return ClassName(packageName, namespace.capitalized())
+        return ClassName(packageName, "${namespace.capitalized()}Query")
             .nestedClass(SHARED_RESULT_OBJECT_NAME)
             .nestedClass(sharedResultName)
     }
@@ -44,7 +44,7 @@ object SharedResultTypeUtils {
             createSharedResultTypeName(packageName, namespace, statement.annotations.sharedResult!!)
         } else {
             val className = statement.getDataClassName()
-            ClassName(packageName, namespace.capitalized())
+            ClassName(packageName, "${namespace.capitalized()}Query")
                 .nestedClass(className)
                 .nestedClass("Result")
         }
@@ -59,7 +59,7 @@ object SharedResultTypeUtils {
         namespace: String,
         statement: AnnotatedSelectStatement
     ): String {
-        val capitalizedNamespace = namespace.capitalized()
+        val capitalizedNamespace = "${namespace.capitalized()}Query"
         return if (statement.annotations.sharedResult != null) {
             "$capitalizedNamespace.$SHARED_RESULT_OBJECT_NAME.${statement.annotations.sharedResult}"
         } else {

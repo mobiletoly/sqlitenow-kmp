@@ -7,11 +7,14 @@ parent: Documentation
 
 # Query Data
 
-Learn how to write SELECT queries to retrieve data from your database as lists, single items, or reactive flows.
+Learn how to write SELECT queries to retrieve data from your database as lists, single items,
+or reactive flows.
 
 ## Query Organization
 
-SELECT queries are organized in the `queries/` directory using namespaces (subdirectories). Typically, you'll create one namespace per table, but you can organize them however makes sense for your application.
+SELECT queries are organized in the `queries/` directory using namespaces (subdirectories).
+Typically, you'll create one namespace per table, but you can organize them however makes
+sense for your application.
 
 ```
 src/commonMain/sql/SampleDatabase/queries/
@@ -34,7 +37,7 @@ LIMIT :limit OFFSET :offset;
 This generates a complete query object with query input parameters and output result:
 
 ```kotlin
-object Person {
+object PersonQuery {
     object SelectAll {
         data class Params(
             val limit: Long,
@@ -57,7 +60,7 @@ object Person {
 ```
 
 As you can see both Params and Result classes are generated automatically based on the SQL query
-and reside under `Person`/`SelectAll` object (object name is generated from file name).
+and reside under `PersonQuery/SelectAll` object (object name is generated from file name).
 
 ### SELECT by ID
 
@@ -71,7 +74,7 @@ WHERE id = :id;
 This generates:
 
 ```kotlin
-object Person {
+object PersonQuery {
     object SelectById {
         data class Params(
             val id: Long
@@ -93,7 +96,7 @@ object Person {
 ```
 
 As you can see both Params and Result classes are generated automatically based on the SQL query
-and reside under `Person`/`SelectAll` object.
+and reside under `PersonQuery/SelectAll` object.
 
 ## Execution Methods
 
@@ -103,8 +106,8 @@ SQLiteNow generates four different execution methods for SELECT queries:
 Returns all matching rows as a List. Best for queries that return multiple rows:
 
 ```kotlin
-val persons: List<Person.SelectAll.Result> = db.person
-    .selectAll(Person.SelectAll.Params(limit = 10, offset = 0))
+val persons: List<PersonQuery.SelectAll.Result> = db.person
+    .selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0))
     .asList()
 ```
 
@@ -112,8 +115,8 @@ val persons: List<Person.SelectAll.Result> = db.person
 Returns exactly one row. Throws an exception if zero or multiple rows are found:
 
 ```kotlin
-val person: Person.SelectById.Result = db.person
-    .selectById(Person.SelectById.Params(id = 1))
+val person: PersonQuery.SelectById.Result = db.person
+    .selectById(PersonQuery.SelectById.Params(id = 1))
     .asOne()
 ```
 
@@ -121,8 +124,8 @@ val person: Person.SelectById.Result = db.person
 Returns one row or null if no rows are found. Throws an exception if multiple rows are found:
 
 ```kotlin
-val person: Person.SelectById.Result? = db.person
-    .selectById(Person.SelectById.Params(id = 1))
+val person: PersonQuery.SelectById.Result? = db.person
+    .selectById(PersonQuery.SelectById.Params(id = 1))
     .asOneOrNull()
 ```
 
@@ -131,7 +134,7 @@ Returns a reactive Flow that re-executes the query when relevant tables change:
 
 ```kotlin
 db.person
-    .selectAll(Person.SelectAll.Params(limit = -1, offset = 0))
+    .selectAll(PersonQuery.SelectAll.Params(limit = -1, offset = 0))
     .asFlow()
     .collect { persons ->
         println("Persons updated: ${persons.size}")
@@ -145,7 +148,8 @@ modified by INSERT, UPDATE, or DELETE operations.
 
 ## Query Annotations
 
-You can use annotations in SELECT queries to customize the generated code and override schema-level annotations:
+You can use annotations in SELECT queries to customize the generated code and override
+schema-level annotations:
 
 ### Custom Class Names
 
@@ -156,7 +160,7 @@ Assuming that you have file `queries/person/selectSummary.sql`:
 SELECT id, first_name, last_name FROM Person;
 ```
 
-This generates `Person`/`PersonSummary` object instead of `Person`/`SelectSummary`.
+This generates `PersonQuery/PersonSummary` object instead of `PersonQuery/SelectSummary`.
 
 ### Overriding Schema Annotations
 
@@ -195,10 +199,11 @@ SELECT * FROM Person WHERE active = 1;
 SELECT * FROM Person WHERE created_at > :since;
 ```
 
-Instead of two separate result classes `Person`/**`SelectActive`** and `Person`/**`SelectNew`**, both queries
-will use the same `Person`/**`SharedResult`**/**`Row`** result class, reducing code duplication.
+Instead of two separate result classes `PersonQuery/SelectActive` and
+`PersonQuery/SelectNew`, both queries will use the same `Person/SharedResult/Row` result
+class, reducing code duplication.
 
-`Person`/`SharedResult` object contains all shared result classes for the `person` namespace.
+`Person/SharedResult` object contains all shared result classes for the `person` namespace.
 
 ## Collection Parameters
 
@@ -219,8 +224,8 @@ data class Params(
 And can be used as:
 
 ```kotlin
-val personList: List<Person.SelectAll.Result> = db.person
-    .selectAll(Person.SelectAll.Params(ids = listOf(1L, 2L, 3L)))
+val personList: List<PersonQuery.SelectAll.Result> = db.person
+    .selectAll(PersonQuery.SelectAll.Params(ids = listOf(1L, 2L, 3L)))
     .asList()
 ```
 
