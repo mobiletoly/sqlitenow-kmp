@@ -77,13 +77,13 @@ CREATE TABLE Person
     last_name  TEXT                NOT NULL,
     email      TEXT                NOT NULL UNIQUE,
 
-    -- @@{field=birth_date, adapter=custom, propertyType=kotlinx.datetime.LocalDate}
+    -- @@{ field=birth_date, adapter=custom, propertyType=kotlinx.datetime.LocalDate }
     birth_date TEXT,
 
-    -- @@{field=created_at, adapter=custom, propertyType=kotlinx.datetime.LocalDateTime}
+    -- @@{ field=created_at, adapter=custom, propertyType=kotlinx.datetime.LocalDateTime }
     created_at TEXT                NOT NULL DEFAULT current_timestamp,
     
-    -- @@{field=is_active, adapter=default, propertyType=Boolean}
+    -- @@{ field=is_active, adapter=default, propertyType=Boolean }
     is_active INTEGER NOT NULL DEFAULT 1
 );
 ```
@@ -226,7 +226,7 @@ This will result in the following properties:
 
 ## Type Adapters
 
-When you use `@@{adapter=custom}` (or when you use custom type without specifying adapter),
+When you use `adapter=custom` annotation (or when you use custom type without specifying adapter),
 SQLiteNow generates adapter data classes that you must provide when creating the database.
 Based on the example above, this generates:
 
@@ -264,7 +264,7 @@ val db = SampleDatabase(
 
 Code generator scans through all CREATE TABLE/VIEW definitions and all SELECT queries within
 a specific namespace (e.g. Person) and generate adapter parameters that developer must to provide
-for all columns that have `@@{adapter=custom}` annotation. Some adapter parameters may be merged if they have
+for all columns that have `adapter=custom` annotation. Some adapter parameters may be merged if they have
 the identical function signature (to make adapters list less verbose).
 
 ## Next Steps

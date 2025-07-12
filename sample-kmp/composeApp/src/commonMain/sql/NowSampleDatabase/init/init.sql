@@ -77,3 +77,14 @@ INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, pos
 VALUES (26, 15, 'work', '800 Commerce St', 'Charlotte', 'NC', '28202', 'USA', 0);
 INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
 VALUES (27, 17, 'work', '900 Enterprise Way', 'Denver', 'CO', '80202', 'USA', 0);
+
+
+-- Add comments
+INSERT INTO Comment (person_id, comment, created_at, tags)
+VALUES (1, 'Hello World #1', '2021-01-01 12:00:00', '["hello", "world"]');
+INSERT INTO Comment (person_id, comment, created_at, tags)
+VALUES (1, 'Hello World #2', '2021-01-01 12:00:00', '["hello", "world"]');
+INSERT INTO Comment (person_id, comment, created_at, tags)
+VALUES (2, 'This is a comment.', '2021-01-02 12:00:00', '["comment"]');
+INSERT INTO Comment (person_id, comment, created_at, tags)
+VALUES (3, 'Another comment.', '2021-01-03 12:00:00', '["comment"]');

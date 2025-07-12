@@ -44,9 +44,7 @@ class DatabaseCodeGenerator(
         }
     }
 
-    /**
-     * Collects and deduplicates adapters per namespace.
-     */
+    /** Collects and deduplicates adapters per namespace. */
     private fun collectAdaptersByNamespace(): Map<String, List<UniqueAdapter>> {
         val adaptersByNamespace = mutableMapOf<String, MutableList<UniqueAdapter>>()
 
@@ -71,7 +69,6 @@ class DatabaseCodeGenerator(
                     processedSharedResults.add(sharedResultKey)
                 }
 
-                // Collect adapters for this statement
                 val statementAdapters = adapterConfig.collectAllParamConfigs(statement)
                 statementAdapters.forEach { config ->
                     namespaceAdapters.add(
@@ -93,9 +90,7 @@ class DatabaseCodeGenerator(
         return adaptersByNamespace
     }
 
-    /**
-     * Deduplicates adapters within a single namespace.
-     */
+    /** Deduplicates adapters within a single namespace. */
     private fun deduplicateAdaptersForNamespace(adapters: List<UniqueAdapter>): List<UniqueAdapter> {
         val adaptersByName = adapters.groupBy { it.functionName }
         val result = mutableListOf<UniqueAdapter>()
@@ -402,13 +397,20 @@ class DatabaseCodeGenerator(
             append("            $commonParams\n")
             append("        )\n\n")
 
-            append("        override suspend fun asOne() = $capitalizedNamespace.$className.executeAsOne(\n")
-            append("            $commonParams\n")
-            append("        )\n\n")
+            // Only generate single-row methods for non-collection queries
+            if (!statement.hasCollectionMapping()) {
+                append("        override suspend fun asOne() = $capitalizedNamespace.$className.executeAsOne(\n")
+                append("            $commonParams\n")
+                append("        )\n\n")
 
-            append("        override suspend fun asOneOrNull() = $capitalizedNamespace.$className.executeAsOneOrNull(\n")
-            append("            $commonParams\n")
-            append("        )\n\n")
+                append("        override suspend fun asOneOrNull() = $capitalizedNamespace.$className.executeAsOneOrNull(\n")
+                append("            $commonParams\n")
+                append("        )\n\n")
+            } else {
+                // For collection mapping queries, single-row methods don't make sense
+                append("        override suspend fun asOne(): ${statement.getResultTypeName(namespace)} = throw UnsupportedOperationException(\"asOne() is not supported for collection mapping queries. Use asList() instead.\")\n\n")
+                append("        override suspend fun asOneOrNull(): ${statement.getResultTypeName(namespace)}? = throw UnsupportedOperationException(\"asOneOrNull() is not supported for collection mapping queries. Use asList() instead.\")\n\n")
+            }
 
             append("        override fun asFlow() = ref.createReactiveQueryFlow(\n")
             append("            affectedTables = $capitalizedNamespace.$className.affectedTables,\n")

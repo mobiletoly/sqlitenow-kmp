@@ -249,7 +249,10 @@ class DataStructCodeGeneratorTest {
             "UserQuery.kt should contain query-specific object"
         )
         assertTrue(userQueriesContent.contains("const val SQL"), "UserQuery.kt should contain SQL constant")
-        assertTrue(productQueriesContent.contains("object ProductQuery"), "ProductQuery.kt should contain 'object ProductQuery'")
+        assertTrue(
+            productQueriesContent.contains("object ProductQuery"),
+            "ProductQuery.kt should contain 'object ProductQuery'"
+        )
         assertTrue(
             productQueriesContent.contains("object CustomClassName"),
             "ProductQuery.kt should contain query-specific object"
@@ -257,7 +260,10 @@ class DataStructCodeGeneratorTest {
         assertTrue(productQueriesContent.contains("const val SQL"), "ProductQuery.kt should contain SQL constant")
 
         // Since we didn't add parameters, the Params data class should not be present
-        assertFalse(userQueriesContent.contains("data class Params"), "UserQuery.kt should not contain 'data class Params'")
+        assertFalse(
+            userQueriesContent.contains("data class Params"),
+            "UserQuery.kt should not contain 'data class Params'"
+        )
         assertFalse(
             productQueriesContent.contains("data class Params"),
             "ProductQuery.kt should not contain 'data class Params'"
@@ -291,7 +297,10 @@ class DataStructCodeGeneratorTest {
         assertTrue(userQueriesContent.contains("data class Result"), "UserQuery.kt should contain 'data class Result'")
 
         // Check for parameter properties (defaulting to String until proper type inference is implemented)
-        assertTrue(userQueriesContent.contains("val userId: String"), "UserQuery.kt should contain 'val userId: String'")
+        assertTrue(
+            userQueriesContent.contains("val userId: String"),
+            "UserQuery.kt should contain 'val userId: String'"
+        )
         assertTrue(userQueriesContent.contains("val email: String"), "UserQuery.kt should contain 'val email: String'")
     }
 
@@ -337,7 +346,8 @@ class DataStructCodeGeneratorTest {
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
                     implements = null,
-                    excludeOverrideFields = null
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -395,7 +405,8 @@ class DataStructCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             )
         )
 
@@ -452,7 +463,8 @@ class DataStructCodeGeneratorTest {
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
                     implements = null,
-                    excludeOverrideFields = null
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -501,7 +513,8 @@ class DataStructCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             )
         )
 
@@ -571,7 +584,8 @@ class DataStructCodeGeneratorTest {
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
                     implements = null,
-                    excludeOverrideFields = null
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -620,7 +634,8 @@ class DataStructCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             )
         )
 
@@ -695,7 +710,8 @@ class DataStructCodeGeneratorTest {
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
                     implements = null,
-                    excludeOverrideFields = null
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -745,7 +761,8 @@ class DataStructCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             )
         )
 
@@ -808,7 +825,8 @@ class DataStructCodeGeneratorTest {
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
                     implements = null,
-                    excludeOverrideFields = null
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -858,7 +876,8 @@ class DataStructCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             )
         )
 
@@ -932,7 +951,8 @@ class DataStructCodeGeneratorTest {
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
                     implements = null,
-                    excludeOverrideFields = null
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -981,7 +1001,8 @@ class DataStructCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             )
         )
 
@@ -1010,7 +1031,8 @@ class DataStructCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = listOf(
                 AnnotatedSelectStatement.Field(
@@ -1107,7 +1129,8 @@ class DataStructCodeGeneratorTest {
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
                     implements = null,
-                    excludeOverrideFields = null
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -1174,7 +1197,8 @@ class DataStructCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = listOf(
                 AnnotatedSelectStatement.Field(
@@ -1274,7 +1298,8 @@ class DataStructCodeGeneratorTest {
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
                     implements = null,
-                    excludeOverrideFields = null
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -1361,7 +1386,8 @@ class DataStructCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             )
         )
 
@@ -1465,7 +1491,8 @@ class DataStructCodeGeneratorTest {
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
                     implements = null,
-                    excludeOverrideFields = null
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -1539,7 +1566,8 @@ class DataStructCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             )
         )
 
@@ -1607,7 +1635,8 @@ class DataStructCodeGeneratorTest {
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
                     implements = null,
-                    excludeOverrideFields = null
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -1673,7 +1702,8 @@ class DataStructCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = listOf(
                 AnnotatedSelectStatement.Field(
@@ -1772,7 +1802,8 @@ class DataStructCodeGeneratorTest {
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
                     implements = null,
-                    excludeOverrideFields = null
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -1844,7 +1875,8 @@ class DataStructCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             )
         )
 
@@ -1940,7 +1972,8 @@ class DataStructCodeGeneratorTest {
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
                     implements = null,
-                    excludeOverrideFields = null
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -1998,7 +2031,8 @@ class DataStructCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = listOf(
                 AnnotatedSelectStatement.Field(
@@ -2094,7 +2128,8 @@ class DataStructCodeGeneratorTest {
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
                     implements = null,
-                    excludeOverrideFields = null
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -2166,7 +2201,8 @@ class DataStructCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = listOf(
                 AnnotatedSelectStatement.Field(
@@ -2267,7 +2303,8 @@ class DataStructCodeGeneratorTest {
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
                     implements = null,
-                    excludeOverrideFields = null
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -2323,7 +2360,8 @@ class DataStructCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = listOf(
                 AnnotatedSelectStatement.Field(
@@ -2455,7 +2493,8 @@ class DataStructCodeGeneratorTest {
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
                     implements = null,
-                    excludeOverrideFields = null
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -2600,7 +2639,8 @@ class DataStructCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             )
         )
 
@@ -2723,7 +2763,8 @@ class DataStructCodeGeneratorTest {
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
                     implements = null,
-                    excludeOverrideFields = null
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -2834,7 +2875,8 @@ class DataStructCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             )
         )
 
@@ -2933,7 +2975,8 @@ class DataStructCodeGeneratorTest {
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
                     implements = null,
-                    excludeOverrideFields = null
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -3051,7 +3094,8 @@ class DataStructCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             )
         )
 
@@ -3192,7 +3236,8 @@ class DataStructCodeGeneratorTest {
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
                     implements = null,
-                    excludeOverrideFields = null
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -3323,7 +3368,8 @@ class DataStructCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             )
         )
 
@@ -3427,7 +3473,8 @@ class DataStructCodeGeneratorTest {
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
                     implements = null,
-                    excludeOverrideFields = null
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -3500,7 +3547,8 @@ class DataStructCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             )
         )
 
@@ -3561,7 +3609,8 @@ class DataStructCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = listOf(
                 AnnotatedSelectStatement.Field(
@@ -3655,7 +3704,8 @@ class DataStructCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = "PersonWithExtras",
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = listOf(
                 // Regular database fields
@@ -3670,11 +3720,13 @@ class DataStructCodeGeneratorTest {
                 // Dynamic field
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource("addresses", "", "addresses", "DYNAMIC"),
-                    annotations = FieldAnnotationOverrides.parse(mapOf(
-                        AnnotationConstants.IS_DYNAMIC_FIELD to true,
-                        AnnotationConstants.PROPERTY_TYPE to "List<String>",
-                        AnnotationConstants.DEFAULT_VALUE to "listOf()"
-                    ))
+                    annotations = FieldAnnotationOverrides.parse(
+                        mapOf(
+                            AnnotationConstants.IS_DYNAMIC_FIELD to true,
+                            AnnotationConstants.PROPERTY_TYPE to "List<String>",
+                            AnnotationConstants.DEFAULT_VALUE to "listOf()"
+                        )
+                    )
                 )
             )
         )
@@ -3696,7 +3748,14 @@ class DataStructCodeGeneratorTest {
                         CreateTableStatement.Column("name", "TEXT", true, false, false, false)
                     )
                 ),
-                annotations = StatementAnnotationOverrides(null, PropertyNameGeneratorType.LOWER_CAMEL_CASE, null, null, null),
+                annotations = StatementAnnotationOverrides(
+                    null,
+                    PropertyNameGeneratorType.LOWER_CAMEL_CASE,
+                    null,
+                    null,
+                    null,
+                    null
+                ),
                 columns = emptyList()
             )
         )

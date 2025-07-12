@@ -1,3 +1,4 @@
+-- @@{ sharedResult=Row }
 SELECT
     id,
     person_id,

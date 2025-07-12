@@ -21,28 +21,34 @@ class SharedResultDatabaseTest {
         queriesDir.mkdirs()
 
         // Create two queries that use the same sharedResult
-        File(queriesDir, "selectAllPaginated.sql").writeText("""
+        File(queriesDir, "selectAllPaginated.sql").writeText(
+            """
             -- @@{sharedResult=All}
             -- @@{field=birth_date, adapter=custom}
             SELECT * FROM Person LIMIT :limit OFFSET :offset;
-        """.trimIndent())
+        """.trimIndent()
+        )
 
-        File(queriesDir, "selectAllFiltered.sql").writeText("""
+        File(queriesDir, "selectAllFiltered.sql").writeText(
+            """
             -- @@{sharedResult=All}
             -- @@{field=birth_date, adapter=custom}
             SELECT * FROM Person WHERE active = :active;
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Create an in-memory SQLite database for testing
         val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
-        conn.createStatement().execute("""
+        conn.createStatement().execute(
+            """
             CREATE TABLE Person (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL,
                 birth_date TEXT,
                 active INTEGER DEFAULT 1
             )
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Create CREATE TABLE statements with adapter annotations
         val createTableStatements = listOf(
@@ -62,8 +68,9 @@ class SharedResultDatabaseTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    implements = null,
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -103,6 +110,9 @@ class SharedResultDatabaseTest {
         )
 
         // If we get here without exceptions, the SharedResultManager integration is working
-        assertNotNull(databaseGenerator, "DatabaseCodeGenerator should be created successfully with SharedResultManager")
+        assertNotNull(
+            databaseGenerator,
+            "DatabaseCodeGenerator should be created successfully with SharedResultManager"
+        )
     }
 }

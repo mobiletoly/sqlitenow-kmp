@@ -16,7 +16,6 @@ import dev.goquick.sqlitenow.gradle.inspect.UpdateStatement
 import java.io.File
 import java.sql.Connection
 import org.gradle.internal.extensions.stdlib.capitalized
-import kotlin.collections.filterIsInstance
 
 open class DataStructCodeGenerator(
     conn: Connection,
@@ -80,32 +79,32 @@ open class DataStructCodeGenerator(
         val allStatements = nsWithStatements[namespace] ?: emptyList()
         val statementProcessor = StatementProcessor(allStatements)
 
-        // Register shared results for SELECT statements
+        // Track shared results and their source statements for table alias access
+        val sharedResultsWithContext = mutableMapOf<String, AnnotatedSelectStatement>()
+
+        // Generate query-specific objects and register shared results
         statementProcessor.processStatements(
-            onSelectStatement = { statement ->
+            onSelectStatement = { statement: AnnotatedSelectStatement ->
+                // Register shared result and track context
                 sharedResultManager.registerSharedResult(statement, namespace)
+                if (statement.annotations.sharedResult != null) {
+                    sharedResultsWithContext[statement.annotations.sharedResult] = statement
+                }
+                val queryObject = generateQueryObject(statement, namespace)
+                namespaceObject.addType(queryObject)
             },
-            onExecuteStatement = { /* No shared results for execute statements */ }
+            onExecuteStatement = { statement: AnnotatedExecuteStatement ->
+                val queryObject = generateQueryObject(statement, namespace)
+                namespaceObject.addType(queryObject)
+            }
         )
 
         // Generate SharedResult object if there are any shared results
         val sharedResults = sharedResultManager.getSharedResultsByNamespace()[namespace]
         if (!sharedResults.isNullOrEmpty()) {
-            val sharedResultObject = generateSharedResultObject(sharedResults)
+            val sharedResultObject = generateSharedResultObject(sharedResults, sharedResultsWithContext)
             namespaceObject.addType(sharedResultObject)
         }
-
-        // Generate query-specific objects
-        statementProcessor.processStatements(
-            onSelectStatement = { statement ->
-                val queryObject = generateQueryObject(statement, namespace)
-                namespaceObject.addType(queryObject)
-            },
-            onExecuteStatement = { statement ->
-                val queryObject = generateQueryObject(statement, namespace)
-                namespaceObject.addType(queryObject)
-            }
-        )
 
         fileSpecBuilder.addType(namespaceObject.build())
 
@@ -151,24 +150,51 @@ open class DataStructCodeGenerator(
             queryObjectBuilder.addType(resultDataClass)
         }
 
+        // Add Joined data class for SELECT statements with dynamic field mapping (unless they use shared results)
+        if (statement is AnnotatedSelectStatement && statement.annotations.sharedResult == null) {
+            if (statement.hasDynamicFieldMapping()) {
+                val joinedDataClass = generateJoinedDataClass(statement)
+                queryObjectBuilder.addType(joinedDataClass)
+            }
+        }
+
         return queryObjectBuilder.build()
     }
 
     /** Generates the SharedResult object containing all shared result classes for a namespace. */
-    private fun generateSharedResultObject(sharedResults: List<SharedResultManager.SharedResult>): TypeSpec {
+    private fun generateSharedResultObject(
+        sharedResults: List<SharedResultManager.SharedResult>,
+        sharedResultsWithContext: Map<String, AnnotatedSelectStatement>
+    ): TypeSpec {
         val sharedResultObjectBuilder = TypeSpec.objectBuilder(SharedResultTypeUtils.SHARED_RESULT_OBJECT_NAME)
             .addKdoc("Contains shared result classes that can be used across multiple queries.")
 
         sharedResults.forEach { sharedResult ->
-            val resultDataClass = generateSharedResultDataClass(sharedResult)
+            val sourceStatement = sharedResultsWithContext[sharedResult.name]
+            val resultDataClass = generateSharedResultDataClass(sharedResult, sourceStatement)
             sharedResultObjectBuilder.addType(resultDataClass)
+
+            // Add Joined data class for shared results with dynamic field mapping
+            if (sourceStatement != null) {
+                if (sharedResult.hasDynamicFieldMapping()) {
+                    val joinedDataClass = generateJoinedDataClassInternal(
+                        joinedClassName = "${sharedResult.name}_Joined",
+                        fields = sharedResult.fields,
+                        propertyNameGenerator = sharedResult.propertyNameGenerator
+                    )
+                    sharedResultObjectBuilder.addType(joinedDataClass)
+                }
+            }
         }
 
         return sharedResultObjectBuilder.build()
     }
 
     /** Generates a shared result data class. */
-    private fun generateSharedResultDataClass(sharedResult: SharedResultManager.SharedResult): TypeSpec {
+    private fun generateSharedResultDataClass(
+        sharedResult: SharedResultManager.SharedResult,
+        sourceStatement: AnnotatedSelectStatement?
+    ): TypeSpec {
         val dataClassBuilder = TypeSpec.classBuilder(sharedResult.name)
             .addModifiers(KModifier.DATA)
             .addKdoc("Shared result data class for queries using sharedResult=${sharedResult.name}")
@@ -187,24 +213,22 @@ open class DataStructCodeGenerator(
         val constructorBuilder = FunSpec.constructorBuilder()
         val fieldCodeGenerator = SelectFieldCodeGenerator(createTableStatements, fileGenerationHelper.packageName)
 
-        sharedResult.fields.forEach { field ->
-            val parameter = fieldCodeGenerator.generateParameter(field, sharedResult.propertyNameGenerator)
-            constructorBuilder.addParameter(parameter)
+        val mappedColumns = if (sourceStatement != null) {
+            DynamicFieldMapper.getMappedColumns(sharedResult.fields, sourceStatement.src.tableAliases)
+        } else {
+            emptySet()
+        }
 
-            val property = fieldCodeGenerator.generateProperty(field, sharedResult.propertyNameGenerator)
-
-            // Add override modifier if implementing an interface and field is not excluded
-            val propertyBuilder = property.toBuilder()
-            if (sharedResult.implements != null) {
-                val fieldName = property.name
-                val isExcluded = sharedResult.excludeOverrideFields?.contains(fieldName) == true
-
-                if (!isExcluded) {
-                    propertyBuilder.addModifiers(KModifier.OVERRIDE)
-                }
-            }
-
-            dataClassBuilder.addProperty(propertyBuilder.build())
+        generatePropertiesWithInterfaceSupport(
+            fields = sharedResult.fields,
+            mappedColumns = mappedColumns,
+            propertyNameGenerator = sharedResult.propertyNameGenerator,
+            implementsInterface = sharedResult.implements,
+            excludeOverrideFields = sharedResult.excludeOverrideFields,
+            fieldCodeGenerator = fieldCodeGenerator,
+            constructorBuilder = constructorBuilder
+        ) { property ->
+            dataClassBuilder.addProperty(property)
         }
 
         dataClassBuilder.primaryConstructor(constructorBuilder.build())
@@ -237,33 +261,27 @@ open class DataStructCodeGenerator(
         // already handles searching across all tables when needed.
         val fieldCodeGenerator = SelectFieldCodeGenerator(createTableStatements, fileGenerationHelper.packageName)
         val propertyNameGeneratorType = statement.annotations.propertyNameGenerator
-
-        statement.fields.forEach { field ->
-            val parameter = fieldCodeGenerator.generateParameter(field, propertyNameGeneratorType)
-            constructorBuilder.addParameter(parameter)
-
-            val property = fieldCodeGenerator.generateProperty(field, propertyNameGeneratorType)
-
-            // Add override modifier if implementing an interface and field is not excluded
-            val propertyBuilder = property.toBuilder()
-            if (statement.annotations.implements != null) {
-                val fieldName = property.name
-                val effectiveExcludeOverrideFields =
-                    sharedResultManager.getEffectiveExcludeOverrideFields(statement, namespace)
-                val isExcluded = effectiveExcludeOverrideFields?.contains(fieldName) == true
-                if (!isExcluded) {
-                    propertyBuilder.addModifiers(KModifier.OVERRIDE)
-                }
-            }
-
-            dataClassBuilder.addProperty(propertyBuilder.build())
+        val mappedColumns = DynamicFieldMapper.getMappedColumns(statement.fields, statement.src.tableAliases)
+        val effectiveExcludeOverrideFields = sharedResultManager.getEffectiveExcludeOverrideFields(statement, namespace)
+        generatePropertiesWithInterfaceSupport(
+            fields = statement.fields,
+            mappedColumns = mappedColumns,
+            propertyNameGenerator = propertyNameGeneratorType,
+            implementsInterface = statement.annotations.implements,
+            excludeOverrideFields = effectiveExcludeOverrideFields,
+            fieldCodeGenerator = fieldCodeGenerator,
+            constructorBuilder = constructorBuilder
+        ) { property ->
+            dataClassBuilder.addProperty(property)
         }
 
         dataClassBuilder.primaryConstructor(constructorBuilder.build())
         return dataClassBuilder.build()
     }
 
-    /** Generates all Kotlin code files for queries. */
+    /**
+     * Generates all Kotlin code files for queries.
+     */
     fun generateCode() {
         fileGenerationHelper.generateFiles(
             namespaces = nsWithStatements.keys,
@@ -273,17 +291,17 @@ open class DataStructCodeGenerator(
         )
     }
 
-    /** Generates a parameter data class for statements with named parameters. */
+    /**
+     * Generates a parameter data class for statements with named parameters.
+     */
     private fun generateParameterDataClass(statement: AnnotatedStatement): TypeSpec {
-        val uniqueParams = StatementUtils.getAllNamedParameters(statement)
-
         val paramClassBuilder = TypeSpec.classBuilder("Params")
             .addModifiers(KModifier.DATA)
             .addKdoc("Data class for ${statement.name} query parameters.")
-
         val paramConstructorBuilder = FunSpec.constructorBuilder()
         val propertyNameGeneratorType = statement.annotations.propertyNameGenerator
 
+        val uniqueParams = StatementUtils.getAllNamedParameters(statement)
         uniqueParams.forEach { paramName ->
             val propertyName = propertyNameGeneratorType.convertToPropertyName(paramName)
             val propertyType = inferParameterType(paramName, statement)
@@ -319,7 +337,8 @@ open class DataStructCodeGenerator(
                             propertyNameGenerator = statement.annotations.propertyNameGenerator,
                             sharedResult = null,
                             implements = statement.annotations.implements,
-                            excludeOverrideFields = statement.annotations.excludeOverrideFields
+                            excludeOverrideFields = statement.annotations.excludeOverrideFields,
+                            collectionKey = null
                         ),
                         fields = withSelectStatement.fields.map { field ->
                             AnnotatedSelectStatement.Field(
@@ -355,7 +374,6 @@ open class DataStructCodeGenerator(
         }
 
         val column = columnLookup.findColumnForParameter(statement, paramName)
-
         if (column != null) {
             val baseType = SqliteTypeToKotlinCodeConverter.mapSqlTypeToKotlinType(column.src.dataType)
             val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE] as? String
@@ -392,7 +410,6 @@ open class DataStructCodeGenerator(
 
     /**
      * Helper function to extract SQL string from any statement type.
-     * Consolidates duplicate SQL extraction logic.
      */
     private fun getSqlFromStatement(statement: AnnotatedStatement): String {
         return when (statement) {
@@ -415,7 +432,7 @@ open class DataStructCodeGenerator(
                 statement.src.fromTable?.let { tables.add(it) }
                 // Add joined tables
                 tables.addAll(statement.src.joinTables)
-                tables // Set automatically handles duplicates
+                tables
             }
 
             is AnnotatedExecuteStatement -> {
@@ -470,13 +487,158 @@ open class DataStructCodeGenerator(
         if (column != null) {
             val baseType = SqliteTypeToKotlinCodeConverter.mapSqlTypeToKotlinType(column.src.dataType)
             val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE] as? String
-            val isNullable = column.isNullable()
-
-            val elementType = SqliteTypeToKotlinCodeConverter.determinePropertyType(baseType, propertyType, isNullable)
-
+            val elementType = SqliteTypeToKotlinCodeConverter.determinePropertyType(
+                baseType, propertyType, column.isNullable(),
+            )
             return ClassName("kotlin.collections", "Collection").parameterizedBy(elementType)
         }
-
         return ClassName("kotlin.collections", "Collection").parameterizedBy(ClassName("kotlin", "String"))
+    }
+
+    /**
+     * Generates a Joined data class for dynamic field mapping that includes ALL columns from the SELECT statement.
+     * This class contains all fields without any dynamic field mapping or column exclusions.
+     * The removeAliasPrefix annotation is ignored - joined column names are used.
+     * Used for both mappingType=collection and mappingType=perRow.
+     */
+    private fun generateJoinedDataClass(
+        statement: AnnotatedSelectStatement,
+    ): TypeSpec {
+        // Determine the class name based on whether this is a shared result or regular result
+        val baseClassName = statement.annotations.sharedResult ?: "Result"
+        return generateJoinedDataClassInternal(
+            joinedClassName = "${baseClassName}_Joined",
+            fields = statement.fields,
+            propertyNameGenerator = statement.annotations.propertyNameGenerator
+        )
+    }
+
+    /**
+     * Internal method that contains the common logic for generating joined data classes.
+     * This eliminates code duplication between generateJoinedDataClass and generateJoinedDataClassForSharedResult.
+     */
+    private fun generateJoinedDataClassInternal(
+        joinedClassName: String,
+        fields: List<AnnotatedSelectStatement.Field>,
+        propertyNameGenerator: PropertyNameGeneratorType
+    ): TypeSpec {
+        val dataClassBuilder = TypeSpec.classBuilder(joinedClassName)
+            .addModifiers(KModifier.DATA)
+            .addKdoc("Joined row data containing all fields from the SQL query without any dynamic field mapping")
+
+        val constructorBuilder = FunSpec.constructorBuilder()
+        val fieldCodeGenerator = SelectFieldCodeGenerator(createTableStatements, fileGenerationHelper.packageName)
+
+        // Add ALL fields from the SELECT statement (including those that would normally be mapped to dynamic fields)
+        fields.forEach { field ->
+            // Skip dynamic fields themselves, but include all regular database columns
+            if (!field.annotations.isDynamicField) {
+                // Generate the property using the public method which correctly applies custom property name annotations
+                val generatedProperty = fieldCodeGenerator.generateProperty(field, propertyNameGenerator)
+
+                // For joined data classes, make all fields from joined tables nullable
+                // This is critical because LEFT JOINs can result in NULL values when no matching record exists
+                val adjustedType = adjustTypeForJoinNullability(generatedProperty.type, field, fields)
+                val property = PropertySpec.builder(generatedProperty.name, adjustedType)
+                    .initializer(generatedProperty.name)
+                    .build()
+
+                dataClassBuilder.addProperty(property)
+                constructorBuilder.addParameter(generatedProperty.name, adjustedType)
+            }
+        }
+
+        dataClassBuilder.primaryConstructor(constructorBuilder.build())
+        return dataClassBuilder.build()
+    }
+
+    /**
+     * Adjusts the type for JOIN nullability in joined data classes.
+     * For LEFT JOINs, all fields from joined tables must be nullable even if they're non-nullable in the schema.
+     *
+     * @param originalType The original type from the field code generator
+     * @param field The field being processed
+     * @param allFields All fields in the statement (to determine main table vs joined tables)
+     * @return The adjusted type (nullable if from joined table)
+     */
+    private fun adjustTypeForJoinNullability(
+        originalType: TypeName,
+        field: AnnotatedSelectStatement.Field,
+        allFields: List<AnnotatedSelectStatement.Field>
+    ): TypeName {
+        val fieldTableAlias = field.src.tableName
+        if (fieldTableAlias.isBlank()) {
+            return originalType
+        }
+        // Find the main table alias (the one that appears first in the FROM clause)
+        // For queries with dynamic field mapping, we can identify this by finding the table alias
+        // that appears in non-dynamic fields first, or by checking if it's the sourceTable of any dynamic field
+        val mainTableAlias = findMainTableAlias(allFields)
+        // If this field comes from a joined table (not the main table), make it nullable
+        if (fieldTableAlias != mainTableAlias) {
+            return originalType.copy(nullable = true)
+        }
+        // Field is from the main table, keep original nullability
+        return originalType
+    }
+
+    /**
+     * Finds the main table alias (FROM table) by analyzing the fields.
+     * The main table is typically the one that doesn't have a sourceTable annotation in dynamic fields.
+     */
+    fun findMainTableAlias(allFields: List<AnnotatedSelectStatement.Field>): String? {
+        // Find dynamic fields with sourceTable annotation
+        val sourceTableAliases = allFields
+            .filter { it.annotations.isDynamicField && it.annotations.sourceTable != null }
+            .map { it.annotations.sourceTable!! }
+            .toSet()
+
+        // Find the first table alias that is NOT a sourceTable (this should be the main table)
+        val allTableAliases = allFields
+            .map { it.src.tableName }
+            .filter { it.isNotBlank() }
+            .distinct()
+
+        return allTableAliases.firstOrNull { it !in sourceTableAliases }
+    }
+
+    /**
+     * Generates properties for a data class with interface implementation support.
+     */
+    fun generatePropertiesWithInterfaceSupport(
+        fields: List<AnnotatedSelectStatement.Field>,
+        mappedColumns: Set<String>,
+        propertyNameGenerator: PropertyNameGeneratorType,
+        implementsInterface: String?,
+        excludeOverrideFields: Set<String>?,
+        fieldCodeGenerator: SelectFieldCodeGenerator,
+        constructorBuilder: FunSpec.Builder,
+        onPropertyGenerated: (PropertySpec) -> Unit
+    ) {
+        fields.forEach { field ->
+            // Skip columns that are mapped to dynamic fields
+            if (!mappedColumns.contains(field.src.fieldName)) {
+                val parameter = fieldCodeGenerator.generateParameter(field, propertyNameGenerator)
+                constructorBuilder.addParameter(parameter)
+
+                val property = fieldCodeGenerator.generateProperty(field, propertyNameGenerator)
+
+                // Add override modifier if implementing an interface and field is not excluded
+                val finalProperty = if (implementsInterface != null) {
+                    val fieldName = property.name
+                    val isExcluded = excludeOverrideFields?.contains(fieldName) == true
+
+                    if (!isExcluded) {
+                        property.toBuilder().addModifiers(KModifier.OVERRIDE).build()
+                    } else {
+                        property
+                    }
+                } else {
+                    property
+                }
+
+                onPropertyGenerated(finalProperty)
+            }
+        }
     }
 }

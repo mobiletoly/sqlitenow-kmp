@@ -1,8 +1,6 @@
-/* @@{
-    sharedResult=PersonWithAddressRow,
-    collectionKey=person_id } */
+-- @@{ sharedResult=PersonWithLimitedAddressRow }
 SELECT p.id         AS person_id,
-       p.first_name AS hello_first_name,
+       p.first_name,
        p.last_name,
        p.email,
        p.phone,
@@ -26,24 +24,20 @@ SELECT p.id         AS person_id,
        c.created_at AS comment_created_at,
        c.tags
 
-/* @@{ dynamicField=addresses,
-       mappingType=collection,
-       propertyType=List<PersonAddressQuery.SharedResult.Row>,
+/* @@{ dynamicField=address,
+       mappingType=perRow,
+       propertyType=PersonAddressQuery.SharedResult.Row,
        sourceTable=a,
-       collectionKey=address_id,
-       notNull=true,
        removeAliasPrefix=address_ } */
 
-/* @@{ dynamicField=comments,
-       mappingType=collection,
-       propertyType=List<CommentQuery.SharedResult.Row>,
-       collectionKey=comment_id,
+/* @@{ dynamicField=comment,
+       mappingType=perRow,
+       propertyType=CommentQuery.SharedResult.Row,
        sourceTable=c,
-       notNull=true,
        removeAliasPrefix=comment_ } */
 
 FROM Person p
          LEFT JOIN PersonAddress a ON p.id = a.person_id
          LEFT JOIN Comment c ON p.id = c.person_id
 ORDER BY p.id, a.address_type
-LIMIT :limit OFFSET :offset
+LIMIT 100

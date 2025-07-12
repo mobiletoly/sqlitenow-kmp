@@ -135,7 +135,7 @@ because we don't have any queries yet.
 ## Create Your First Query
 
 Each query should be in its own file and generated code will use file name as a query name (you 
-can override the name with `-- @@{name=YourName}` annotation).
+can override the name with `-- @@{ name=YourName }` annotation).
 The file path will be used to determine the query namespace. For example,
 `queries/person/selectAll.sql` will generate `selectAll` query in `person` namespace.
 You can create namespace based on your needs, for example you can use namespace per table,

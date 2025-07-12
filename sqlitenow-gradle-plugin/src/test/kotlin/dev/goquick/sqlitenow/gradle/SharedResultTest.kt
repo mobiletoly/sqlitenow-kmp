@@ -43,7 +43,8 @@ class SharedResultTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = "All",
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = listOf(
                 AnnotatedSelectStatement.Field(
@@ -69,16 +70,16 @@ class SharedResultTest {
 
         // Register the shared result
         val sharedResult = sharedResultManager.registerSharedResult(statement1, "person")
-        
+
         // Verify the shared result was created
         assertNotNull(sharedResult)
         assertEquals("All", sharedResult!!.name)
         assertEquals("person", sharedResult.namespace)
         assertEquals(2, sharedResult.fields.size)
-        
+
         // Verify isSharedResult works
         assertTrue(sharedResultManager.isSharedResult(statement1))
-        
+
         // Verify getSharedResult works
         val retrievedSharedResult = sharedResultManager.getSharedResult(statement1, "person")
         assertNotNull(retrievedSharedResult)
@@ -111,7 +112,8 @@ class SharedResultTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = "All",
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = listOf(
                 AnnotatedSelectStatement.Field(
@@ -146,7 +148,8 @@ class SharedResultTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = "All",
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = listOf(
                 AnnotatedSelectStatement.Field(
@@ -193,7 +196,8 @@ class SharedResultTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = "All",
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = emptyList()
         )
@@ -215,7 +219,8 @@ class SharedResultTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = "All",
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = emptyList()
         )
@@ -260,7 +265,8 @@ class SharedResultTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = "PersonWithExtras",
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = listOf(
                 // Regular database field
@@ -276,11 +282,13 @@ class SharedResultTest {
                 // Dynamic field
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource("addresses", "", "addresses", "DYNAMIC"),
-                    annotations = FieldAnnotationOverrides.parse(mapOf(
-                        AnnotationConstants.IS_DYNAMIC_FIELD to true,
-                        AnnotationConstants.PROPERTY_TYPE to "List<String>",
-                        AnnotationConstants.DEFAULT_VALUE to "listOf()"
-                    ))
+                    annotations = FieldAnnotationOverrides.parse(
+                        mapOf(
+                            AnnotationConstants.IS_DYNAMIC_FIELD to true,
+                            AnnotationConstants.PROPERTY_TYPE to "List<String>",
+                            AnnotationConstants.DEFAULT_VALUE to "listOf()"
+                        )
+                    )
                 )
             )
         )

@@ -36,13 +36,25 @@ class SelectFieldCodeGenerator(
         // For dynamic fields, use the field name directly and get type from propertyType annotation
         if (field.annotations.isDynamicField) {
             val propertyName = generatePropertyName(field.src.fieldName, field.annotations, propertyNameGeneratorType)
+
+            // Determine nullability for dynamic fields
+            val isNullable = when (field.annotations.notNull) {
+                true -> false   // Explicitly marked as notNull
+                false -> true   // Explicitly marked as nullable
+                null -> {
+                    // Default behavior: mapped dynamic fields (with mappingType) are nullable by default
+                    // since they typically come from JOINs which can be null
+                    field.annotations.mappingType != null
+                }
+            }
+
             // For dynamic fields, we must have a propertyType annotation
             val propertyType = field.annotations.propertyType?.let {
                 // Use determinePropertyType with a dummy base type since we only care about the annotation
                 SqliteTypeToKotlinCodeConverter.determinePropertyType(
                     baseType = ClassName("kotlin", "String"),
                     propertyType = it,
-                    isNullable = false,
+                    isNullable = isNullable,
                     packageName = packageName
                 )
             } ?: throw IllegalStateException("Dynamic field must have propertyType annotation")
@@ -205,7 +217,7 @@ class SelectFieldCodeGenerator(
      * @param field The field to check
      * @return True if the property should be nullable, false otherwise
      */
-    private fun determineNullability(field: AnnotatedSelectStatement.Field): Boolean {
+    fun determineNullability(field: AnnotatedSelectStatement.Field): Boolean {
         // Check for explicit notNull annotation first (highest priority)
         when (field.annotations.notNull) {
             true -> return false   // notNull=true means not nullable

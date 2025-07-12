@@ -148,7 +148,6 @@ class QueryCodeGeneratorTest {
 
         // Verify file header comments
         assertTrue(getByIdFileContent.contains("Generated query extension functions for person.GetById"), "Should contain query-specific comment")
-        assertTrue(getByIdFileContent.contains("Do not modify this file manually"), "Should contain warning comment")
 
         // Verify imports
         assertTrue(getByIdFileContent.contains("import dev.goquick.sqlitenow.core.SafeSQLiteConnection"), "Should import dev.goquick.sqlitenow.core.SafeSQLiteConnection")

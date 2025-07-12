@@ -16,7 +16,17 @@ class SelectStatement(
     val offsetNamedParam: String?,
     val limitNamedParam: String?,
     val parameterCastTypes: Map<String, String> = emptyMap(),
+    val tableAliases: Map<String, String> = emptyMap(), // alias -> tableName mapping
+    val joinConditions: List<JoinCondition> = emptyList()
 ) : SqlStatement {
+
+    data class JoinCondition(
+        val leftTable: String,
+        val leftColumn: String,
+        val rightTable: String,
+        val rightColumn: String
+    )
+
     data class FieldSource(
         val fieldName: String,
         val tableName: String,
@@ -43,6 +53,47 @@ class SelectStatement(
                     }
                 }
             } ?: emptyList()
+
+            // Extract table aliases (alias -> tableName mapping)
+            val tableAliases = mutableMapOf<String, String>()
+
+            // Extract FROM table alias
+            select.fromItem?.let { fromItem ->
+                if (fromItem is Table) {
+                    val tableName = fromItem.nameParts[0]
+                    val alias = fromItem.alias?.name ?: tableName
+                    tableAliases[alias] = tableName
+                }
+            }
+
+            // Extract JOIN table aliases and conditions
+            val joinConditions = mutableListOf<JoinCondition>()
+            select.joins?.forEach { join ->
+                join.fromItem?.let { joinItem ->
+                    if (joinItem is Table) {
+                        val tableName = joinItem.nameParts[0]
+                        val alias = joinItem.alias?.name ?: tableName
+                        tableAliases[alias] = tableName
+                    }
+                }
+
+                // Extract JOIN conditions (e.g., p.id = a.person_id)
+                join.onExpressions?.forEach { onExpression ->
+                    if (onExpression is net.sf.jsqlparser.expression.operators.relational.EqualsTo) {
+                        val leftExpr = onExpression.leftExpression
+                        val rightExpr = onExpression.rightExpression
+
+                        if (leftExpr is net.sf.jsqlparser.schema.Column && rightExpr is net.sf.jsqlparser.schema.Column) {
+                            val leftTable = leftExpr.table?.name ?: ""
+                            val leftColumn = leftExpr.columnName
+                            val rightTable = rightExpr.table?.name ?: ""
+                            val rightColumn = rightExpr.columnName
+
+                            joinConditions.add(JoinCondition(leftTable, leftColumn, rightTable, rightColumn))
+                        }
+                    }
+                }
+            }
             val fields = extractSelectFieldInfo(
                 conn,
                 select,
@@ -66,6 +117,8 @@ class SelectStatement(
                 offsetNamedParam = offsetNamedParam,
                 limitNamedParam = limitNamedParam,
                 parameterCastTypes = processor.parameterCastTypes,
+                tableAliases = tableAliases,
+                joinConditions = joinConditions
             )
         }
 
@@ -135,12 +188,12 @@ class SelectStatement(
         private fun rewriteLimitOffset(sql: String): String =
             // Add LIMIT 0 to avoid retrieving actual data for SQL metadata extraction
             listOf(
-                " LIMIT ?"  to " LIMIT 0",
+                " LIMIT ?" to " LIMIT 0",
                 " OFFSET ?" to " OFFSET 0"
             ).fold(sql) { acc, (find, replace) ->
                 if (acc.contains(find, ignoreCase = true)) {
                     acc.replace(find, replace, ignoreCase = true)
-                }  else {
+                } else {
                     acc
                 }
             }

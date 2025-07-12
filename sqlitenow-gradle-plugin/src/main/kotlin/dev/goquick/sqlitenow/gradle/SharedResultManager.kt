@@ -87,21 +87,14 @@ class SharedResultManager {
         val excludeOverrideFields: Set<String>?
     ) {
         /**
-         * Creates a unique key for this shared result based on field structure.
-         * Used for validation to ensure all queries with same sharedResult name have identical structure.
-         */
-        fun getStructureKey(): String {
-            val fieldSignatures = fields.map { field ->
-                "${field.src.fieldName}:${field.src.dataType}:${field.annotations.propertyType ?: "default"}"
-            }.sorted().joinToString("|")
-            return fieldSignatures
-        }
-        
-        /**
          * Gets the TypeName for this shared result class.
          */
         fun getTypeName(packageName: String): TypeName {
             return SharedResultTypeUtils.createSharedResultTypeName(packageName, namespace, name)
+        }
+
+        fun hasDynamicFieldMapping() = fields.any {
+            it.annotations.isDynamicField && it.annotations.mappingType != null
         }
     }
     

@@ -59,8 +59,9 @@ class UpdateColumnLookupTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    implements = null,
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -129,7 +130,7 @@ class UpdateColumnLookupTest {
                 namedParametersToColumnNames = mapOf(
                     // SET clause parameters - this is the key fix!
                     "myAge" to "age",
-                    "myScore" to "score", 
+                    "myScore" to "score",
                     "myNotes" to "notes"
                 ),
                 withSelectStatements = emptyList()
@@ -139,7 +140,8 @@ class UpdateColumnLookupTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             )
         )
 
@@ -203,8 +205,9 @@ class UpdateColumnLookupTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    implements = null,
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -255,7 +258,8 @@ class UpdateColumnLookupTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             )
         )
 

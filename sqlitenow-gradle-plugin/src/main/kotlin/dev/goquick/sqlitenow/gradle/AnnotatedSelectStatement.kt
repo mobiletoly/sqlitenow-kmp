@@ -12,4 +12,12 @@ data class AnnotatedSelectStatement(
         val src: SelectStatement.FieldSource,
         val annotations: FieldAnnotationOverrides
     )
+
+    fun hasDynamicFieldMapping() = fields.any {
+        it.annotations.isDynamicField && it.annotations.mappingType != null
+    }
+
+    fun hasCollectionMapping() = fields.any {
+        it.annotations.isDynamicField && it.annotations.mappingType == "collection"
+    }
 }

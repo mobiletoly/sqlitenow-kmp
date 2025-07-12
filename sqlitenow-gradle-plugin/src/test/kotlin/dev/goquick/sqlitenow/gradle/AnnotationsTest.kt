@@ -2,6 +2,7 @@ package dev.goquick.sqlitenow.gradle
 
 import dev.goquick.sqlitenow.gradle.SqliteTypeToKotlinCodeConverter.Companion.KOTLIN_STDLIB_TYPES
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.fail
@@ -625,5 +626,66 @@ class AnnotationsTest {
         assertEquals(true, result.isDynamicField)
         assertEquals("List<String>", result.propertyType)
         assertEquals("listOf()", result.defaultValue)
+    }
+
+    @Test
+    fun testFieldAnnotationOverridesWithMappingType() {
+        val annotations = mapOf<String, Any>(
+            AnnotationConstants.IS_DYNAMIC_FIELD to true,
+            AnnotationConstants.PROPERTY_TYPE to "PersonAddressQuery.SharedResult.Row",
+            AnnotationConstants.MAPPING_TYPE to "perRow",
+            AnnotationConstants.SOURCE_TABLE to "a",
+            AnnotationConstants.REMOVE_ALIAS_PREFIX to "address_"
+        )
+
+        val result = FieldAnnotationOverrides.parse(annotations)
+
+        assertEquals(true, result.isDynamicField)
+        assertEquals("PersonAddressQuery.SharedResult.Row", result.propertyType)
+        assertEquals("perRow", result.mappingType)
+        assertEquals("a", result.sourceTable)
+        assertEquals("address_", result.removeAliasPrefix)
+    }
+
+    @Test
+    fun testMappingTypeValidationRequiresSourceTable() {
+        val annotations = mapOf(
+            AnnotationConstants.IS_DYNAMIC_FIELD to true,
+            AnnotationConstants.MAPPING_TYPE to "perRow"
+            // Missing sourceTable
+        )
+
+        val exception = assertThrows<IllegalArgumentException> {
+            FieldAnnotationOverrides.parse(annotations)
+        }
+        assertTrue(exception.message!!.contains("When annotation 'mappingType' is specified, 'sourceTable' is required"))
+    }
+
+    @Test
+    fun testMappingTypeValidationRequiresDynamicField() {
+        val annotations = mapOf(
+            AnnotationConstants.MAPPING_TYPE to "perRow",
+            AnnotationConstants.SOURCE_TABLE to "a"
+            // Missing isDynamicField
+        )
+
+        val exception = assertThrows<IllegalArgumentException> {
+            FieldAnnotationOverrides.parse(annotations)
+        }
+        assertTrue(exception.message!!.contains("can only be used with dynamic fields"))
+    }
+
+    @Test
+    fun testInvalidMappingTypeValue() {
+        val annotations = mapOf(
+            AnnotationConstants.IS_DYNAMIC_FIELD to true,
+            AnnotationConstants.MAPPING_TYPE to "invalidType",
+            AnnotationConstants.SOURCE_TABLE to "a"
+        )
+
+        val exception = assertThrows<IllegalArgumentException> {
+            FieldAnnotationOverrides.parse(annotations)
+        }
+        assertTrue(exception.message!!.contains("Currently supported: 'perRow'"))
     }
 }

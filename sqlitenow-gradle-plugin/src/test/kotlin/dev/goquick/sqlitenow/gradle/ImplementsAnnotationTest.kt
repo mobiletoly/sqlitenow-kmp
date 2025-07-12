@@ -102,7 +102,8 @@ class ImplementsAnnotationTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = "All",
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = emptyList()
         )
@@ -125,7 +126,8 @@ class ImplementsAnnotationTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = "All",
                 implements = null,  // Conflicting - missing implements
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = emptyList()
         )
@@ -380,7 +382,8 @@ class ImplementsAnnotationTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = "All",
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
-                excludeOverrideFields = setOf("phone", "birthDate") // Specified here
+                excludeOverrideFields = setOf("phone", "birthDate"), // Specified here
+                collectionKey = null
             ),
             fields = emptyList()
         )
@@ -403,7 +406,8 @@ class ImplementsAnnotationTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = "All", // Same shared result
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
-                excludeOverrideFields = null // NOT specified - should inherit
+                excludeOverrideFields = null, // NOT specified - should inherit
+                collectionKey = null
             ),
             fields = emptyList()
         )
@@ -456,7 +460,8 @@ class ImplementsAnnotationTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = "All",
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
-                excludeOverrideFields = null // NOT specified
+                excludeOverrideFields = null, // NOT specified
+                collectionKey = null
             ),
             fields = emptyList()
         )
@@ -479,7 +484,8 @@ class ImplementsAnnotationTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = "All", // Same shared result
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
-                excludeOverrideFields = setOf("phone") // Specified here
+                excludeOverrideFields = setOf("phone"), // Specified here
+                collectionKey = null
             ),
             fields = emptyList()
         )
@@ -566,7 +572,8 @@ class ImplementsAnnotationTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = "Person",
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
-                excludeOverrideFields = setOf("phone", "birthDate", "age", "score", "createdAt", "notes", "totalPersonCount")
+                excludeOverrideFields = setOf("phone", "birthDate", "age", "score", "createdAt", "notes", "totalPersonCount"),
+                collectionKey = null
             ),
             fields = firstQueryFields
         )
@@ -589,7 +596,8 @@ class ImplementsAnnotationTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = "Person", // Same shared result
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
-                excludeOverrideFields = null // Should inherit
+                excludeOverrideFields = null, // Should inherit
+                collectionKey = null
             ),
             fields = secondQueryFields
         )
@@ -700,7 +708,8 @@ class ImplementsAnnotationTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = "Person",
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
-                excludeOverrideFields = setOf("phone", "birthDate", "age", "score", "createdAt", "notes", "totalPersonCount")
+                excludeOverrideFields = setOf("phone", "birthDate", "age", "score", "createdAt", "notes", "totalPersonCount"),
+                collectionKey = null
             ),
             fields = firstQueryFields
         )
@@ -723,7 +732,8 @@ class ImplementsAnnotationTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = "Person", // Same shared result
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
-                excludeOverrideFields = null // Should inherit
+                excludeOverrideFields = null, // Should inherit
+                collectionKey = null
             ),
             fields = secondQueryFields // Different field annotations!
         )
@@ -798,7 +808,8 @@ class ImplementsAnnotationTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = "Person",
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
-                excludeOverrideFields = setOf("phone", "birthDate", "age", "score", "createdAt", "notes", "totalPersonCount")
+                excludeOverrideFields = setOf("phone", "birthDate", "age", "score", "createdAt", "notes", "totalPersonCount"),
+                collectionKey = null
             ),
             fields = commonFields
         )
@@ -821,7 +832,8 @@ class ImplementsAnnotationTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = "Person", // Same shared result
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
-                excludeOverrideFields = null // Should inherit
+                excludeOverrideFields = null, // Should inherit
+                collectionKey = null
             ),
             fields = commonFields // Same field structure
         )

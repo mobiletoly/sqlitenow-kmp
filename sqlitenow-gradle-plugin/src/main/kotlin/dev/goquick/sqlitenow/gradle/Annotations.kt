@@ -11,18 +11,17 @@ fun extractAnnotations(comments: List<String>): Map<String, Any?> {
 
     val annotationBlocks = iterateBlockAnnotations(combinedComment)
     annotationBlocks.forEach { blockAnnotations ->
-        // Merge annotations from this block
         allAnnotations.putAll(blockAnnotations)
     }
     return allAnnotations
 }
 
 private fun cleanedUpComments(comments: List<String>): String {
-    val cleanedComments = comments.map { comment ->
+    val cleanedComments = comments.joinToString(" ") { comment ->
         // Remove comment markers (-- or /* */) and trim
         comment.replace(Regex("^\\s*--\\s*"), "").replace(Regex("/\\*|\\*/"), "").trim()
     }
-    return cleanedComments.joinToString(" ")
+    return cleanedComments
 }
 
 private fun iterateBlockAnnotations(content: String): List<Map<String, Any?>> {
@@ -56,7 +55,6 @@ private fun parseHoconAnnotations(content: String): Map<String, Any?> {
         // Wrap the content in braces to make it a valid HOCON object
         val hoconText = "{ $content }"
 
-        // Parse with HOCON
         val config = ConfigFactory.parseString(
             hoconText,
             ConfigParseOptions.defaults().setAllowMissing(false)
@@ -64,7 +62,6 @@ private fun parseHoconAnnotations(content: String): Map<String, Any?> {
 
         // Convert to our annotation format
         val annotations = mutableMapOf<String, Any?>()
-
         for (entry in config.entrySet()) {
             val key = entry.key
             val value = entry.value.unwrapped()
@@ -122,7 +119,6 @@ fun extractFieldAssociatedAnnotations(comments: List<String>): Map<String, Map<S
         }
 
         val fieldAnnotations = blockAnnotations.toMutableMap()
-        // Remove the field/dynamicField annotation from the result since it's used for association
         fieldAnnotations.remove(AnnotationConstants.FIELD)
         fieldAnnotations.remove(AnnotationConstants.DYNAMIC_FIELD)
 
@@ -145,7 +141,7 @@ fun extractFieldAssociatedAnnotations(comments: List<String>): Map<String, Map<S
 
         // Determine if custom adapter should be generated and update annotations accordingly
         if (shouldGenerateCustomAdapter(adapterValue, propertyType)) {
-            fieldAnnotations[AnnotationConstants.ADAPTER] = "custom"
+            fieldAnnotations[AnnotationConstants.ADAPTER] = AnnotationConstants.ADAPTER_CUSTOM
         } else {
             fieldAnnotations.remove(AnnotationConstants.ADAPTER)
         }
@@ -160,7 +156,7 @@ fun extractFieldAssociatedAnnotations(comments: List<String>): Map<String, Map<S
  * Only "default" and "custom" are allowed values.
  */
 private fun validateAdapterValue(adapterValue: String?) {
-    if (adapterValue != "default" && adapterValue != "custom") {
+    if (adapterValue != AnnotationConstants.ADAPTER_CUSTOM && adapterValue != AnnotationConstants.ADAPTER_DEFAULT) {
         throw IllegalArgumentException("Adapter annotation can be adapter=\"default\" or adapter=\"custom\" only")
     }
 }
@@ -171,8 +167,8 @@ private fun validateAdapterValue(adapterValue: String?) {
  */
 private fun shouldGenerateCustomAdapter(adapterValue: String?, propertyType: String?): Boolean {
     return when (adapterValue) {
-        "custom" -> true
-        "default" -> {
+        AnnotationConstants.ADAPTER_CUSTOM -> true
+        AnnotationConstants.ADAPTER_DEFAULT -> {
             // adapter=default: use custom adapter only if propertyType is custom
             propertyType != null && isCustomType(propertyType)
         }
@@ -242,6 +238,10 @@ data class FieldAnnotationOverrides(
     val adapter: Boolean?,
     val isDynamicField: Boolean = false,
     val defaultValue: String? = null,
+    val removeAliasPrefix: String? = null,
+    val mappingType: String? = null,
+    val sourceTable: String? = null,
+    val collectionKey: String? = null,
 ) {
     companion object {
         fun parse(annotations: Map<String, Any?>): FieldAnnotationOverrides {
@@ -251,6 +251,37 @@ data class FieldAnnotationOverrides(
             // Validate adapter value if present
             if (annotations.containsKey(AnnotationConstants.ADAPTER)) {
                 validateAdapterValue(adapterValue)
+            }
+
+            // Validate mapping type annotations
+            val mappingType = annotations[AnnotationConstants.MAPPING_TYPE] as? String
+            val sourceTable = annotations[AnnotationConstants.SOURCE_TABLE] as? String
+            val removeAliasPrefix = annotations[AnnotationConstants.REMOVE_ALIAS_PREFIX] as? String
+            val collectionKey = annotations[AnnotationConstants.COLLECTION_KEY] as? String
+
+            if (mappingType != null) {
+                // When mappingType is specified, sourceTable is required
+                if (sourceTable == null) {
+                    throw IllegalArgumentException("When annotation '${AnnotationConstants.MAPPING_TYPE}' is specified, '${AnnotationConstants.SOURCE_TABLE}' is required")
+                }
+
+                // Validate mappingType value
+                if (mappingType !in setOf(AnnotationConstants.MAPPING_TYPE_PER_ROW, AnnotationConstants.MAPPING_TYPE_COLLECTION)) {
+                    throw IllegalArgumentException("Invalid annotation '${AnnotationConstants.MAPPING_TYPE}' value: '$mappingType'. " +
+                            "Currently supported: '${AnnotationConstants.MAPPING_TYPE_PER_ROW}', '${AnnotationConstants.MAPPING_TYPE_COLLECTION}'")
+                }
+
+                // When mappingType=collection, collectionKey is required
+                if (mappingType == AnnotationConstants.MAPPING_TYPE_COLLECTION) {
+                    if (collectionKey == null || collectionKey.isBlank()) {
+                        throw IllegalArgumentException("When annotation '${AnnotationConstants.MAPPING_TYPE}=collection' is specified, '${AnnotationConstants.COLLECTION_KEY}' is required")
+                    }
+                }
+
+                // When mappingType is used, this should be a dynamic field
+                if (annotations[AnnotationConstants.IS_DYNAMIC_FIELD] != true) {
+                    throw IllegalArgumentException("Annotation '${AnnotationConstants.MAPPING_TYPE}' can only be used with dynamic fields")
+                }
             }
 
             // Determine if custom adapter should be used based on new adapter system
@@ -270,6 +301,10 @@ data class FieldAnnotationOverrides(
                 adapter = adapter,
                 isDynamicField = annotations[AnnotationConstants.IS_DYNAMIC_FIELD] as? Boolean ?: false,
                 defaultValue = annotations[AnnotationConstants.DEFAULT_VALUE] as? String,
+                removeAliasPrefix = removeAliasPrefix,
+                mappingType = mappingType,
+                sourceTable = sourceTable,
+                collectionKey = collectionKey,
             )
         }
     }
@@ -300,7 +335,8 @@ data class StatementAnnotationOverrides(
     val propertyNameGenerator: PropertyNameGeneratorType,
     val sharedResult: String?,
     val implements: String?,
-    val excludeOverrideFields: Set<String>?
+    val excludeOverrideFields: Set<String>?,
+    val collectionKey: String?
 ) {
     companion object {
         fun parse(annotations: Map<String, Any?>): StatementAnnotationOverrides {
@@ -309,18 +345,19 @@ data class StatementAnnotationOverrides(
             val sharedResult = annotations[AnnotationConstants.SHARED_RESULT] as? String
             val implements = annotations[AnnotationConstants.IMPLEMENTS] as? String
             val excludeOverrideFields = annotations[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS]
+            val collectionKey = annotations[AnnotationConstants.COLLECTION_KEY] as? String
 
             if (annotations.containsKey(AnnotationConstants.NAME) && name?.isBlank() == true) {
-                throw IllegalArgumentException("Annotation @@${AnnotationConstants.NAME} cannot be blank")
+                throw IllegalArgumentException("Annotation '${AnnotationConstants.NAME}' cannot be blank")
             }
             if (annotations.containsKey(AnnotationConstants.PROPERTY_NAME_GENERATOR) && propertyNameGenerator?.isBlank() == true) {
-                throw IllegalArgumentException("Annotation @@${AnnotationConstants.PROPERTY_NAME_GENERATOR} cannot be blank")
+                throw IllegalArgumentException("Annotation '${AnnotationConstants.PROPERTY_NAME_GENERATOR}' cannot be blank")
             }
             if (annotations.containsKey(AnnotationConstants.SHARED_RESULT) && sharedResult?.isBlank() == true) {
-                throw IllegalArgumentException("Annotation @@${AnnotationConstants.SHARED_RESULT} cannot be blank")
+                throw IllegalArgumentException("Annotation '${AnnotationConstants.SHARED_RESULT}' cannot be blank")
             }
             if (annotations.containsKey(AnnotationConstants.IMPLEMENTS) && implements?.isBlank() == true) {
-                throw IllegalArgumentException("Annotation @@${AnnotationConstants.IMPLEMENTS} cannot be blank")
+                throw IllegalArgumentException("Annotation '${AnnotationConstants.IMPLEMENTS}' cannot be blank")
             }
 
             return StatementAnnotationOverrides(
@@ -328,7 +365,8 @@ data class StatementAnnotationOverrides(
                 propertyNameGenerator = propertyNameGenerator.parsePropertyNameGeneratorType(),
                 sharedResult = sharedResult,
                 implements = implements,
-                excludeOverrideFields = parseExcludeOverrideFieldsFromHocon(excludeOverrideFields)
+                excludeOverrideFields = parseExcludeOverrideFieldsFromHocon(excludeOverrideFields),
+                collectionKey = collectionKey
             )
         }
 

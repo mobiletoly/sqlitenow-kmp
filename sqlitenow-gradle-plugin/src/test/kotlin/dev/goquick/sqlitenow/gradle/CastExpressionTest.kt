@@ -114,7 +114,8 @@ class CastExpressionTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = emptyList()
         )

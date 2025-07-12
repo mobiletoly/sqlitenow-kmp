@@ -172,7 +172,8 @@ class SelectFieldCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             columns = listOf(mockAnnotatedColumn)
         )
@@ -255,7 +256,8 @@ class SelectFieldCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             columns = listOf(mockAnnotatedUserColumn)
         )
@@ -273,7 +275,8 @@ class SelectFieldCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             columns = listOf(mockAnnotatedAddressColumn)
         )
@@ -287,7 +290,10 @@ class SelectFieldCodeGeneratorTest {
         // Verify the property name and type
         assertEquals("address", property.name)
         assertEquals("kotlin.String", property.type.toString())
-        assertFalse(property.type.isNullable, "Property should be non-nullable due to NOT NULL constraint in joined table schema")
+        assertFalse(
+            property.type.isNullable,
+            "Property should be non-nullable due to NOT NULL constraint in joined table schema"
+        )
     }
 
     @Test
@@ -342,7 +348,8 @@ class SelectFieldCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             columns = listOf(mockAnnotatedIdColumn)
         )
@@ -356,7 +363,10 @@ class SelectFieldCodeGeneratorTest {
         // Verify the property name and type
         assertEquals("myAddressId", property.name)
         assertEquals("kotlin.Long", property.type.toString())
-        assertFalse(property.type.isNullable, "Property should be non-nullable due to NOT NULL constraint in original column")
+        assertFalse(
+            property.type.isNullable,
+            "Property should be non-nullable due to NOT NULL constraint in original column"
+        )
     }
 
     @Test
@@ -483,7 +493,8 @@ class SelectFieldCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             columns = listOf(mockAnnotatedColumn)
         )
@@ -497,7 +508,10 @@ class SelectFieldCodeGeneratorTest {
         // Verify the property name and type
         assertEquals("id", property.name)
         assertEquals("kotlin.Long?", property.type.toString())
-        assertTrue(property.type.isNullable, "Property should be nullable due to @@nullable annotation in CREATE TABLE despite NOT NULL constraint")
+        assertTrue(
+            property.type.isNullable,
+            "Property should be nullable due to @@nullable annotation in CREATE TABLE despite NOT NULL constraint"
+        )
     }
 
     @Test
@@ -552,7 +566,8 @@ class SelectFieldCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             columns = listOf(mockAnnotatedColumn)
         )
@@ -621,7 +636,8 @@ class SelectFieldCodeGeneratorTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             columns = listOf(mockAnnotatedColumn)
         )

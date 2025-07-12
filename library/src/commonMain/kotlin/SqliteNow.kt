@@ -59,9 +59,9 @@ open class SqliteNowDatabase {
             flags = SQLITE_OPEN_CREATE or SQLITE_OPEN_READWRITE
         )
         conn = SafeSQLiteConnection(realConn)
+        conn.ref.execSQL("""PRAGMA foreign_keys = ON;""")
 
         transaction {
-            conn.ref.execSQL("""PRAGMA foreign_keys = ON;""")
             val currentVersion = if (!dbFileExists) {
                 setUserVersion(-1)
                 -1

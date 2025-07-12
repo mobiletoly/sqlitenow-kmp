@@ -156,6 +156,7 @@ ${sqlStatement.sql}
         }
 
         // Add dynamic fields from annotations
+        val dynamicFields = mutableListOf<AnnotatedSelectStatement.Field>()
         fieldAnnotations.forEach { (fieldName, annotations) ->
             if (annotations[AnnotationConstants.IS_DYNAMIC_FIELD] == true) {
                 // Create a dummy FieldSource for dynamic fields
@@ -166,11 +167,18 @@ ${sqlStatement.sql}
                     dataType = "DYNAMIC" // Special type for dynamic fields
                 )
                 val fieldAnnotationOverrides = FieldAnnotationOverrides.parse(annotations)
-                fields.add(AnnotatedSelectStatement.Field(
+                val dynamicField = AnnotatedSelectStatement.Field(
                     src = dummyFieldSource,
                     annotations = fieldAnnotationOverrides
-                ))
+                )
+                dynamicFields.add(dynamicField)
+                fields.add(dynamicField)
             }
+        }
+
+        // Validate alias.column format if mappingType is used
+        if (dynamicFields.any { it.annotations.mappingType != null }) {
+            DynamicFieldMapper.validateAliasColumnFormat(stmt, dynamicFields)
         }
 
         return AnnotatedSelectStatement(

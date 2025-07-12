@@ -20,7 +20,7 @@ object FieldAnnotationMerger {
             targetAnnotations[AnnotationConstants.PROPERTY_TYPE] = fieldAnnotations.propertyType
         }
         if (fieldAnnotations.adapter == true) {
-            targetAnnotations[AnnotationConstants.ADAPTER] = "custom" // custom adapter
+            targetAnnotations[AnnotationConstants.ADAPTER] = AnnotationConstants.ADAPTER_CUSTOM // custom adapter
         }
         if (fieldAnnotations.notNull != null) {
             targetAnnotations[AnnotationConstants.NOT_NULL] = fieldAnnotations.notNull
@@ -30,6 +30,15 @@ object FieldAnnotationMerger {
         }
         if (fieldAnnotations.defaultValue != null) {
             targetAnnotations[AnnotationConstants.DEFAULT_VALUE] = fieldAnnotations.defaultValue
+        }
+        if (fieldAnnotations.removeAliasPrefix != null) {
+            targetAnnotations[AnnotationConstants.REMOVE_ALIAS_PREFIX] = fieldAnnotations.removeAliasPrefix
+        }
+        if (fieldAnnotations.mappingType != null) {
+            targetAnnotations[AnnotationConstants.MAPPING_TYPE] = fieldAnnotations.mappingType
+        }
+        if (fieldAnnotations.sourceTable != null) {
+            targetAnnotations[AnnotationConstants.SOURCE_TABLE] = fieldAnnotations.sourceTable
         }
     }
 }

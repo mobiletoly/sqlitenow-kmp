@@ -53,7 +53,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.flatMap
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -93,11 +92,8 @@ val db = NowSampleDatabase(
             LocalDateTime.fromSqliteTimestamp(it)
         },
         sqlValueToNotes = { it?.let { PersonNote.deserialize(it) } },
-        sqlValueToPhone = {
-            it
-        },
-        phoneToSqlValue = {
-            it
+        sqlValueToTags = {
+            it?.jsonDecodeFromSqlite() ?: emptyList()
         }
     ),
     commentAdapters = NowSampleDatabase.CommentAdapters(
@@ -182,52 +178,52 @@ fun App() {
 //            }
 //    }
 
+//    LaunchedEffect(Unit) {
+//        delay(1000)
+//        db.person.selectLimitedWithAddresses
+//            .asFlow()
+//            .flowOn(Dispatchers.Main)
+//            .collect { personWithAddressList ->
+//                for (person in personWithAddressList) {
+//                    println("----> Person: ${person.myFirstName} ${person.myLastName} - <${person.phone}> <${person.birthDate}>")
+//                    val address = person.address
+//                    if (address == null) {
+//                        println("    ----> Address: null")
+//                    } else {
+//                        println("    ----> Address: ${address.street}, ${address.city}, ${address.state}")
+//                    }
+//                    val comments = person.comment
+//                    if (comments == null) {
+//                        println("    ----> Comment: null")
+//                    } else {
+//                        println("    ----> Comment: ${comments}")
+//                    }
+//                }
+//            }
+//    }
+
     LaunchedEffect(Unit) {
         delay(1000)
-        db.person.selectAllWithAddresses
+        db.person
+            .selectAllWithAddresses(
+                PersonQuery.SelectAllWithAddresses.Params(
+                    limit = 20,
+                    offset = 0
+                )
+            )
             .asFlow()
-            .flowOn(Dispatchers.Main)
-            .collect {
-                val persons = it.groupBy { person ->
-                    person.personId
-                } /*.map { v: Map.Entry<Long, List<Person.SharedResult.PersonWithAddressRow>> ->
-                    val personWithAddress = v.value.first()
-                    val person = PersonEntity(
-                        id = personWithAddress.personId,
-                        myFirstName = personWithAddress.myFirstName,
-                        myLastName = personWithAddress.myLastName,
-                        email = personWithAddress.email,
-                        phone = personWithAddress.phone,
-                        birthDate = personWithAddress.birthDate,
-                        createdAt = personWithAddress.personCreatedAt,
-                        notes = null
-                    )
-                } */
-                for (person in persons) {
-                    println("----> Person: $person")
+            .flowOn(Dispatchers.IO) // DB runs on Dispatchers.IO
+            .collect { personWithAddressList: List<PersonQuery.SharedResult.PersonWithAddressRow> ->
+                for (person in personWithAddressList) {
+                    println("----> Person: ${person.myFirstName} ${person.myLastName} - <${person.phone}> <${person.birthDate}>")
+                    for (address in person.addresses) {
+                        println("    ----> Address: $address")
+                    }
+                    for (comment in person.comments) {
+                        println("    ----> Comment: $comment")
+                    }
                 }
             }
-    }
-
-    val p = PersonWithAddressesEntity(
-        personId = 1,
-        myFirstName = "",
-        myLastName = "",
-        email = "",
-        phone = "",
-        birthDate = null,
-        personCreatedAt = LocalDateTime(1990, 1, 1, 0, 0),
-        addressId = 1,
-        addressType = AddressType.HOME,
-        street = "",
-        city = "",
-        state = "",
-        postalCode = "",
-        country = "",
-        isPrimary = true,
-        addressCreatedAt = LocalDateTime(1990, 1, 1, 0, 0),
-    ).also {
-        it.copy(addresses = listOf())
     }
 
     MaterialTheme {
@@ -414,7 +410,7 @@ fun PersonCard(
                 )
 
                 Text(
-                    text = person.phone,
+                    text = person.phone ?: "",
                     fontSize = 12.sp,
                     color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f)
                 )
@@ -570,3 +566,18 @@ suspend fun randomizePerson(person: PersonEntity, onError: (String) -> Unit = {}
         onError("Unexpected error: ${e.message}")
     }
 }
+
+/*
+ ----> Person: John Smith - <+1-555-123-4567> <1985-03-15>
+     ----> Address: Row(id=1, personId=1, addressType=HOME, street=123 Main St, city=New York, state=NY, postalCode=10001, country=USA, isPrimary=true, createdAt=2025-07-12T21:34:08)
+     ----> Address: Row(id=1, personId=1, addressType=HOME, street=123 Main St, city=New York, state=NY, postalCode=10001, country=USA, isPrimary=true, createdAt=2025-07-12T21:34:08)
+     ----> Address: Row(id=19, personId=1, addressType=WORK, street=100 Business Plaza, city=New York, state=NY, postalCode=10002, country=USA, isPrimary=false, createdAt=2025-07-12T21:34:08)
+     ----> Address: Row(id=19, personId=1, addressType=WORK, street=100 Business Plaza, city=New York, state=NY, postalCode=10002, country=USA, isPrimary=false, createdAt=2025-07-12T21:34:08)
+     ----> Comment: Row(id=1, personId=1, comment=Hello World #1, createdAt=2021-01-01T12:00, tags=[hello, world])
+     ----> Comment: Row(id=2, personId=1, comment=Hello World #2, createdAt=2021-01-01T12:00, tags=[hello, world])
+     ----> Comment: Row(id=1, personId=1, comment=Hello World #1, createdAt=2021-01-01T12:00, tags=[hello, world])
+     ----> Comment: Row(id=2, personId=1, comment=Hello World #2, createdAt=2021-01-01T12:00, tags=[hello, world])
+ ----> Person: Emma Johnson - <+1-555-234-5678> <1990-07-22>
+     ----> Address: Row(id=2, personId=2, addressType=HOME, street=456 Oak Ave, city=Los Angeles, state=CA, postalCode=90001, country=USA, isPrimary=true, createdAt=2025-07-12T21:34:08)
+     ----> Comment: Row(id=3, personId=2, comment=This is a comment., createdAt=2021-01-02T12:00, tags=[comment])
+ */

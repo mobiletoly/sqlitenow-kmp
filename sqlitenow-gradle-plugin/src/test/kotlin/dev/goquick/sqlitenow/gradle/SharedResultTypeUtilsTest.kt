@@ -15,7 +15,7 @@ class SharedResultTypeUtilsTest {
             namespace = "person",
             sharedResultName = "All"
         )
-        
+
         assertEquals("com.example.db.PersonQuery.SharedResult.All", typeName.toString())
     }
 
@@ -30,8 +30,8 @@ class SharedResultTypeUtilsTest {
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
-            offsetNamedParam = null,
-            limitNamedParam = null,
+                offsetNamedParam = null,
+                limitNamedParam = null,
                 fields = emptyList()
             ),
             annotations = StatementAnnotationOverrides(
@@ -39,17 +39,18 @@ class SharedResultTypeUtilsTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = "All",
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = emptyList()
         )
-        
+
         val typeName = SharedResultTypeUtils.createResultTypeName(
             packageName = "com.example.db",
             namespace = "person",
             statement = statement
         )
-        
+
         assertEquals("com.example.db.PersonQuery.SharedResult.All", typeName.toString())
     }
 
@@ -64,8 +65,8 @@ class SharedResultTypeUtilsTest {
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
-            offsetNamedParam = null,
-            limitNamedParam = null,
+                offsetNamedParam = null,
+                limitNamedParam = null,
                 fields = emptyList()
             ),
             annotations = StatementAnnotationOverrides(
@@ -73,17 +74,18 @@ class SharedResultTypeUtilsTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = emptyList()
         )
-        
+
         val typeName = SharedResultTypeUtils.createResultTypeName(
             packageName = "com.example.db",
             namespace = "person",
             statement = statement
         )
-        
+
         assertEquals("com.example.db.PersonQuery.SelectWeird.Result", typeName.toString())
     }
 
@@ -98,8 +100,8 @@ class SharedResultTypeUtilsTest {
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
-            offsetNamedParam = null,
-            limitNamedParam = null,
+                offsetNamedParam = null,
+                limitNamedParam = null,
                 fields = emptyList()
             ),
             annotations = StatementAnnotationOverrides(
@@ -107,14 +109,15 @@ class SharedResultTypeUtilsTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = "All",
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = emptyList()
         )
-        
+
         val sharedResultString = SharedResultTypeUtils.createResultTypeString("person", sharedStatement)
         assertEquals("PersonQuery.SharedResult.All", sharedResultString)
-        
+
         val regularStatement = AnnotatedSelectStatement(
             name = "SelectWeird",
             src = SelectStatement(
@@ -123,8 +126,8 @@ class SharedResultTypeUtilsTest {
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
-            offsetNamedParam = null,
-            limitNamedParam = null,
+                offsetNamedParam = null,
+                limitNamedParam = null,
                 fields = emptyList()
             ),
             annotations = StatementAnnotationOverrides(
@@ -132,11 +135,12 @@ class SharedResultTypeUtilsTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = emptyList()
         )
-        
+
         val regularResultString = SharedResultTypeUtils.createResultTypeString("person", regularStatement)
         assertEquals("PersonQuery.SelectWeird.Result", regularResultString)
     }
@@ -145,14 +149,14 @@ class SharedResultTypeUtilsTest {
     @DisplayName("Test that SHARED_RESULT_OBJECT_NAME constant is used consistently")
     fun testSharedResultObjectNameConstant() {
         assertEquals("SharedResult", SharedResultTypeUtils.SHARED_RESULT_OBJECT_NAME)
-        
+
         // Verify that changing the constant would affect all generated type names
         val typeName = SharedResultTypeUtils.createSharedResultTypeName(
             packageName = "com.example.db",
             namespace = "person",
             sharedResultName = "All"
         )
-        
+
         assertTrue(typeName.toString().contains(SharedResultTypeUtils.SHARED_RESULT_OBJECT_NAME))
     }
 }

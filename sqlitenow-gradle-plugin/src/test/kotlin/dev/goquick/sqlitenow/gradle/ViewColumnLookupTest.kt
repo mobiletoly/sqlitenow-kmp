@@ -42,8 +42,9 @@ class ViewColumnLookupTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    implements = null,
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -101,8 +102,9 @@ class ViewColumnLookupTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    implements = null,
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -154,7 +156,8 @@ class ViewColumnLookupTest {
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
                     implements = null,
-                    excludeOverrideFields = null
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 fields = emptyList()
             )
@@ -184,7 +187,8 @@ class ViewColumnLookupTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = emptyList()
         )
@@ -199,8 +203,10 @@ class ViewColumnLookupTest {
         assertNotNull(myBirthDateColumn, "Should find column for myBirthDate parameter")
         assertEquals("birth_date", myBirthDateColumn.src.name, "myBirthDate should map to birth_date column")
         assertEquals("TEXT", myBirthDateColumn.src.dataType, "birth_date column should be TEXT")
-        assertEquals("kotlinx.datetime.LocalDate", myBirthDateColumn.annotations[AnnotationConstants.PROPERTY_TYPE],
-            "birth_date column should have LocalDate propertyType annotation")
+        assertEquals(
+            "kotlinx.datetime.LocalDate", myBirthDateColumn.annotations[AnnotationConstants.PROPERTY_TYPE],
+            "birth_date column should have LocalDate propertyType annotation"
+        )
     }
 
     @Test
@@ -220,7 +226,8 @@ class ViewColumnLookupTest {
 
         // Parse the VIEW statement with annotations
         val topComments = listOf("-- @@{name=PersonWithAddressEntity}")
-        val innerComments = listOf("-- @@{field=birth_date, propertyName=myBirthDateAAA, propertyType=kotlinx.datetime.LocalDateTime, adapter=custom}")
+        val innerComments =
+            listOf("-- @@{field=birth_date, propertyName=myBirthDateAAA, propertyType=kotlinx.datetime.LocalDateTime, adapter=custom}")
 
         val createViewStatement = CreateViewStatement(
             sql = viewSql,
@@ -270,7 +277,11 @@ class ViewColumnLookupTest {
         assertNotNull(birthDateField, "Should find birth_date field")
 
         assertEquals("myBirthDateAAA", birthDateField!!.annotations.propertyName, "Should have custom property name")
-        assertEquals("kotlinx.datetime.LocalDateTime", birthDateField.annotations.propertyType, "Should have custom property type")
+        assertEquals(
+            "kotlinx.datetime.LocalDateTime",
+            birthDateField.annotations.propertyType,
+            "Should have custom property type"
+        )
         assertTrue(birthDateField.annotations.adapter == true, "Should have adapter annotation")
     }
 
@@ -299,7 +310,8 @@ class ViewColumnLookupTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             columns = listOf(
                 AnnotatedCreateTableStatement.Column(
@@ -345,7 +357,8 @@ class ViewColumnLookupTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = listOf(
                 AnnotatedCreateViewStatement.Field(
@@ -383,7 +396,8 @@ class ViewColumnLookupTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = emptyList()
         )
@@ -397,9 +411,21 @@ class ViewColumnLookupTest {
 
         // Verify that only original table annotations are present (no VIEW annotations merged)
         assertEquals("tableValue", column!!.annotations["tableAnnotation"], "Should have original table annotation")
-        assertEquals(null, column.annotations[AnnotationConstants.PROPERTY_NAME], "Should NOT have VIEW's custom property name")
-        assertEquals(null, column.annotations[AnnotationConstants.PROPERTY_TYPE], "Should NOT have VIEW's custom property type")
-        assertEquals(false, column.annotations.containsKey(AnnotationConstants.ADAPTER), "Should NOT have VIEW's adapter annotation")
+        assertEquals(
+            null,
+            column.annotations[AnnotationConstants.PROPERTY_NAME],
+            "Should NOT have VIEW's custom property name"
+        )
+        assertEquals(
+            null,
+            column.annotations[AnnotationConstants.PROPERTY_TYPE],
+            "Should NOT have VIEW's custom property type"
+        )
+        assertEquals(
+            false,
+            column.annotations.containsKey(AnnotationConstants.ADAPTER),
+            "Should NOT have VIEW's adapter annotation"
+        )
 
         // Verify that the underlying column info is preserved
         assertEquals("birth_date", column.src.name, "Should preserve original column name")
@@ -438,7 +464,8 @@ class ViewColumnLookupTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = listOf(
                 AnnotatedCreateViewStatement.Field(
@@ -512,8 +539,16 @@ class ViewColumnLookupTest {
         assertNotNull(birthDateField, "Should find birth_date field")
 
         // Verify that VIEW annotations are merged
-        assertEquals("myCustomBirthDate", birthDateField!!.annotations.propertyName, "Should have VIEW's custom property name")
-        assertEquals("kotlinx.datetime.LocalDateTime", birthDateField.annotations.propertyType, "Should have VIEW's custom property type")
+        assertEquals(
+            "myCustomBirthDate",
+            birthDateField!!.annotations.propertyName,
+            "Should have VIEW's custom property name"
+        )
+        assertEquals(
+            "kotlinx.datetime.LocalDateTime",
+            birthDateField.annotations.propertyType,
+            "Should have VIEW's custom property type"
+        )
         assertTrue(birthDateField.annotations.adapter == true, "Should have VIEW's adapter annotation")
     }
 
@@ -546,7 +581,11 @@ class ViewColumnLookupTest {
         assertEquals("myCustomBirthDate", property.name, "Should use custom property name from VIEW annotations")
 
         // Verify that the property type is determined by the custom propertyType annotation
-        assertEquals("kotlinx.datetime.LocalDateTime?", property.type.toString(), "Should use custom property type from VIEW annotations")
+        assertEquals(
+            "kotlinx.datetime.LocalDateTime?",
+            property.type.toString(),
+            "Should use custom property type from VIEW annotations"
+        )
     }
 
     @Test
@@ -581,7 +620,8 @@ class ViewColumnLookupTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 sharedResult = null,
                 implements = null,
-                excludeOverrideFields = null
+                excludeOverrideFields = null,
+                collectionKey = null
             ),
             fields = listOf(
                 AnnotatedCreateViewStatement.Field(
@@ -624,7 +664,8 @@ class ViewColumnLookupTest {
         val annotationResolver = FieldAnnotationResolver(emptyList(), listOf(viewWithAnnotations))
 
         // Build fields with merged annotations manually for the test
-        val innerComments = listOf("-- @@{field=birth_date, propertyName=selectPropertyName, propertyType=kotlinx.datetime.LocalDateTime}")
+        val innerComments =
+            listOf("-- @@{field=birth_date, propertyName=selectPropertyName, propertyType=kotlinx.datetime.LocalDateTime}")
         val fieldAnnotations = extractFieldAssociatedAnnotations(innerComments)
         val fields = selectStatement.fields.map { column ->
             val mergedAnnotations = mutableMapOf<String, Any?>()
@@ -660,8 +701,19 @@ class ViewColumnLookupTest {
         assertNotNull(birthDateField, "Should find birth_date field")
 
         // SELECT statement annotations should override VIEW annotations
-        assertEquals("selectPropertyName", birthDateField!!.annotations.propertyName, "SELECT statement propertyName should override VIEW propertyName")
-        assertEquals("kotlinx.datetime.LocalDateTime", birthDateField.annotations.propertyType, "SELECT statement propertyType should override VIEW propertyType")
-        assertTrue(birthDateField.annotations.adapter == true, "Should inherit adapter annotation from VIEW (not overridden)")
+        assertEquals(
+            "selectPropertyName",
+            birthDateField!!.annotations.propertyName,
+            "SELECT statement propertyName should override VIEW propertyName"
+        )
+        assertEquals(
+            "kotlinx.datetime.LocalDateTime",
+            birthDateField.annotations.propertyType,
+            "SELECT statement propertyType should override VIEW propertyType"
+        )
+        assertTrue(
+            birthDateField.annotations.adapter == true,
+            "Should inherit adapter annotation from VIEW (not overridden)"
+        )
     }
 }

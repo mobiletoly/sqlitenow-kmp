@@ -35,32 +35,38 @@ class DatabaseCodeGeneratorTest {
         personDir.mkdirs()
 
         // Create SQL files with field-specific adapter annotations
-        File(personDir, "selectWithAdapters.sql").writeText("""
+        File(personDir, "selectWithAdapters.sql").writeText(
+            """
             -- @@{name=SelectWithAdapters}
             -- @@{field=birth_date, adapter=custom}
             SELECT id, name, birth_date
             FROM users
             WHERE birth_date >= :myBirthDateStart;
-        """.trimIndent())
+        """.trimIndent()
+        )
 
-        File(personDir, "insertWithAdapters.sql").writeText("""
+        File(personDir, "insertWithAdapters.sql").writeText(
+            """
             -- @@{name=InsertWithAdapters}
             INSERT INTO users (name, birth_date, notes)
             VALUES (:name, :birthDate, :notes);
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Create an in-memory SQLite database for testing
         val realConnection = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
 
         // Create the tables
-        realConnection.createStatement().execute("""
+        realConnection.createStatement().execute(
+            """
             CREATE TABLE users (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL,
                 birth_date TEXT,
                 notes BLOB
             )
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Create CREATE TABLE statements with adapter annotations
         val testCreateTableStatements = listOf(
@@ -108,8 +114,9 @@ class DatabaseCodeGeneratorTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    implements = null,
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -192,7 +199,7 @@ class DatabaseCodeGeneratorTest {
         // Verify basic structure
         assertTrue(fileContent.contains("class TestDatabase"), "Should contain TestDatabase class")
         assertTrue(fileContent.contains(": SqliteNowDatabase"), "Should extend SqliteNowDatabase")
-        
+
         // Verify constructor parameters for adapter wrappers
         assertTrue(fileContent.contains("personAdapters: PersonAdapters"), "Should contain personAdapters parameter")
 
@@ -201,13 +208,28 @@ class DatabaseCodeGeneratorTest {
         assertTrue(fileContent.contains("val person: PersonRouter"), "Should contain person router property")
 
         // Verify router methods - now using SelectRunners pattern
-        assertTrue(fileContent.contains("val selectWithAdapters"), "Should contain selectWithAdapters SelectRunners property")
+        assertTrue(
+            fileContent.contains("val selectWithAdapters"),
+            "Should contain selectWithAdapters SelectRunners property"
+        )
         assertTrue(fileContent.contains("SelectRunners<"), "Should contain SelectRunners interface usage")
-        assertTrue(fileContent.contains("override suspend fun asList()"), "Should contain asList() method in SelectRunners")
-        assertTrue(fileContent.contains("override suspend fun asOne()"), "Should contain asOne() method in SelectRunners")
-        assertTrue(fileContent.contains("override suspend fun asOneOrNull()"), "Should contain asOneOrNull() method in SelectRunners")
+        assertTrue(
+            fileContent.contains("override suspend fun asList()"),
+            "Should contain asList() method in SelectRunners"
+        )
+        assertTrue(
+            fileContent.contains("override suspend fun asOne()"),
+            "Should contain asOne() method in SelectRunners"
+        )
+        assertTrue(
+            fileContent.contains("override suspend fun asOneOrNull()"),
+            "Should contain asOneOrNull() method in SelectRunners"
+        )
         assertTrue(fileContent.contains("override fun asFlow()"), "Should contain asFlow() method in SelectRunners")
-        assertTrue(fileContent.contains("val insertWithAdapters"), "Should contain insertWithAdapters ExecuteRunners property")
+        assertTrue(
+            fileContent.contains("val insertWithAdapters"),
+            "Should contain insertWithAdapters ExecuteRunners property"
+        )
 
         // Verify adapter wrapper classes
         assertTrue(fileContent.contains("data class PersonAdapters"), "Should contain PersonAdapters data class")
@@ -226,22 +248,27 @@ class DatabaseCodeGeneratorTest {
         utilsDir.mkdirs()
 
         // Person namespace without adapters (to test the fix)
-        File(personDir, "selectWithoutAdapters.sql").writeText("""
+        File(personDir, "selectWithoutAdapters.sql").writeText(
+            """
             -- @@{name=SelectWithoutAdapters}
             SELECT id, name FROM users WHERE id = :userId;
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Utils namespace without adapters
-        File(utilsDir, "simpleQuery.sql").writeText("""
+        File(utilsDir, "simpleQuery.sql").writeText(
+            """
             -- @@{name=SimpleQuery}
             SELECT id, name FROM users WHERE id = :userId;
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Create minimal setup
         val realConnection = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
         realConnection.createStatement().execute("CREATE TABLE users (id INTEGER, name TEXT, birth_date TEXT)")
 
-        val stmtProcessingHelper = StatementProcessingHelper(realConnection, FieldAnnotationResolver(emptyList(), emptyList()))
+        val stmtProcessingHelper =
+            StatementProcessingHelper(realConnection, FieldAnnotationResolver(emptyList(), emptyList()))
         val nsWithStatements = stmtProcessingHelper.processQueriesDirectory(queriesDir)
 
         val databaseGenerator = DatabaseCodeGenerator(
@@ -260,30 +287,46 @@ class DatabaseCodeGeneratorTest {
 
         val fileContent = databaseFile.readText()
         // Should NOT have PersonAdapters data class (no adapters in our test SQL)
-        assertFalse(fileContent.contains("public data class PersonAdapters("),
-                   "Should NOT generate PersonAdapters data class when no adapters are used")
+        assertFalse(
+            fileContent.contains("public data class PersonAdapters("),
+            "Should NOT generate PersonAdapters data class when no adapters are used"
+        )
 
         // Should NOT have UtilsAdapters data class (no adapters)
-        assertFalse(fileContent.contains("public data class UtilsAdapters("),
-                   "Should NOT generate UtilsAdapters data class for namespace without adapters")
+        assertFalse(
+            fileContent.contains("public data class UtilsAdapters("),
+            "Should NOT generate UtilsAdapters data class for namespace without adapters"
+        )
 
         // Should NOT have constructor parameter for PersonAdapters or UtilsAdapters
-        assertFalse(fileContent.contains("private val personAdapters: PersonAdapters"),
-                   "Should NOT have constructor parameter for PersonAdapters when no adapters")
-        assertFalse(fileContent.contains("private val utilsAdapters: UtilsAdapters"),
-                   "Should NOT have constructor parameter for UtilsAdapters")
+        assertFalse(
+            fileContent.contains("private val personAdapters: PersonAdapters"),
+            "Should NOT have constructor parameter for PersonAdapters when no adapters"
+        )
+        assertFalse(
+            fileContent.contains("private val utilsAdapters: UtilsAdapters"),
+            "Should NOT have constructor parameter for UtilsAdapters"
+        )
 
         // Should have both router properties
-        assertTrue(fileContent.contains("public val person: PersonRouter"),
-                  "Should have person router property")
-        assertTrue(fileContent.contains("public val utils: UtilsRouter"),
-                  "Should have utils router property")
+        assertTrue(
+            fileContent.contains("public val person: PersonRouter"),
+            "Should have person router property"
+        )
+        assertTrue(
+            fileContent.contains("public val utils: UtilsRouter"),
+            "Should have utils router property"
+        )
 
         // Router methods should not reference adapters
-        assertFalse(fileContent.contains("ref.personAdapters."),
-                   "Person router methods should not reference adapters when none exist")
-        assertFalse(fileContent.contains("ref.utilsAdapters."),
-                   "Utils router methods should not reference adapters")
+        assertFalse(
+            fileContent.contains("ref.personAdapters."),
+            "Person router methods should not reference adapters when none exist"
+        )
+        assertFalse(
+            fileContent.contains("ref.utilsAdapters."),
+            "Utils router methods should not reference adapters"
+        )
         realConnection.close()
     }
 
@@ -295,22 +338,27 @@ class DatabaseCodeGeneratorTest {
         personDir.mkdirs()
 
         // SELECT statement without parameters
-        File(personDir, "selectAll.sql").writeText("""
+        File(personDir, "selectAll.sql").writeText(
+            """
             -- @@{name=SelectAll}
             SELECT id, name FROM users;
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // SELECT statement with parameters
-        File(personDir, "selectById.sql").writeText("""
+        File(personDir, "selectById.sql").writeText(
+            """
             -- @@{name=SelectById}
             SELECT id, name FROM users WHERE id = :userId;
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Create minimal setup
         val realConnection = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
         realConnection.createStatement().execute("CREATE TABLE users (id INTEGER, name TEXT)")
 
-        val stmtProcessingHelper = StatementProcessingHelper(realConnection, FieldAnnotationResolver(emptyList(), emptyList()))
+        val stmtProcessingHelper =
+            StatementProcessingHelper(realConnection, FieldAnnotationResolver(emptyList(), emptyList()))
         val nsWithStatements = stmtProcessingHelper.processQueriesDirectory(queriesDir)
 
         val databaseGenerator = DatabaseCodeGenerator(
@@ -330,36 +378,60 @@ class DatabaseCodeGeneratorTest {
         val fileContent = databaseFile.readText()
 
         // Should NOT have individual methods like selectAllAsList, selectAllAsOne, etc.
-        assertFalse(fileContent.contains("suspend fun selectAllAsList"),
-                   "Should NOT generate individual selectAllAsList method")
-        assertFalse(fileContent.contains("suspend fun selectAllAsOne"),
-                   "Should NOT generate individual selectAllAsOne method")
-        assertFalse(fileContent.contains("suspend fun selectAllAsOneOrNull"),
-                   "Should NOT generate individual selectAllAsOneOrNull method")
-        assertFalse(fileContent.contains("fun selectAllFlow"),
-                   "Should NOT generate individual selectAllFlow method")
+        assertFalse(
+            fileContent.contains("suspend fun selectAllAsList"),
+            "Should NOT generate individual selectAllAsList method"
+        )
+        assertFalse(
+            fileContent.contains("suspend fun selectAllAsOne"),
+            "Should NOT generate individual selectAllAsOne method"
+        )
+        assertFalse(
+            fileContent.contains("suspend fun selectAllAsOneOrNull"),
+            "Should NOT generate individual selectAllAsOneOrNull method"
+        )
+        assertFalse(
+            fileContent.contains("fun selectAllFlow"),
+            "Should NOT generate individual selectAllFlow method"
+        )
 
         // Should have SelectRunners properties
-        assertTrue(fileContent.contains("val selectAll"),
-                  "Should have selectAll property")
-        assertTrue(fileContent.contains("val selectById"),
-                  "Should have selectById property")
+        assertTrue(
+            fileContent.contains("val selectAll"),
+            "Should have selectAll property"
+        )
+        assertTrue(
+            fileContent.contains("val selectById"),
+            "Should have selectById property"
+        )
 
         // Should have SelectRunners object expressions
-        assertTrue(fileContent.contains("object : SelectRunners<"),
-                  "Should contain SelectRunners object expressions")
-        assertTrue(fileContent.contains("override suspend fun asList()"),
-                  "Should contain asList() method implementation")
-        assertTrue(fileContent.contains("override suspend fun asOne()"),
-                  "Should contain asOne() method implementation")
-        assertTrue(fileContent.contains("override suspend fun asOneOrNull()"),
-                  "Should contain asOneOrNull() method implementation")
-        assertTrue(fileContent.contains("override fun asFlow()"),
-                  "Should contain asFlow() method implementation")
+        assertTrue(
+            fileContent.contains("object : SelectRunners<"),
+            "Should contain SelectRunners object expressions"
+        )
+        assertTrue(
+            fileContent.contains("override suspend fun asList()"),
+            "Should contain asList() method implementation"
+        )
+        assertTrue(
+            fileContent.contains("override suspend fun asOne()"),
+            "Should contain asOne() method implementation"
+        )
+        assertTrue(
+            fileContent.contains("override suspend fun asOneOrNull()"),
+            "Should contain asOneOrNull() method implementation"
+        )
+        assertTrue(
+            fileContent.contains("override fun asFlow()"),
+            "Should contain asFlow() method implementation"
+        )
 
         // Should have function type for parameterized queries
-        assertTrue(fileContent.contains("{ params ->") && fileContent.contains("object : SelectRunners<"),
-                  "Should have lambda function for parameterized queries")
+        assertTrue(
+            fileContent.contains("{ params ->") && fileContent.contains("object : SelectRunners<"),
+            "Should have lambda function for parameterized queries"
+        )
         realConnection.close()
     }
 
@@ -371,28 +443,35 @@ class DatabaseCodeGeneratorTest {
         personDir.mkdirs()
 
         // INSERT statement without parameters
-        File(personDir, "addSimple.sql").writeText("""
+        File(personDir, "addSimple.sql").writeText(
+            """
             -- @@{name=AddSimple}
             INSERT INTO users (name) VALUES ('test');
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // INSERT statement with parameters
-        File(personDir, "addWithParams.sql").writeText("""
+        File(personDir, "addWithParams.sql").writeText(
+            """
             -- @@{name=AddWithParams}
             INSERT INTO users (name, email) VALUES (:name, :email);
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // UPDATE statement with parameters
-        File(personDir, "updateById.sql").writeText("""
+        File(personDir, "updateById.sql").writeText(
+            """
             -- @@{name=UpdateById}
             UPDATE users SET name = :name WHERE id = :id;
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Create minimal setup
         val realConnection = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
         realConnection.createStatement().execute("CREATE TABLE users (id INTEGER, name TEXT, email TEXT)")
 
-        val stmtProcessingHelper = StatementProcessingHelper(realConnection, FieldAnnotationResolver(emptyList(), emptyList()))
+        val stmtProcessingHelper =
+            StatementProcessingHelper(realConnection, FieldAnnotationResolver(emptyList(), emptyList()))
         val nsWithStatements = stmtProcessingHelper.processQueriesDirectory(queriesDir)
 
         val databaseGenerator = DatabaseCodeGenerator(
@@ -412,34 +491,54 @@ class DatabaseCodeGeneratorTest {
         val fileContent = databaseFile.readText()
 
         // Should NOT have individual execute methods like addSimpleExecute, addWithParamsExecute, etc.
-        assertFalse(fileContent.contains("suspend fun addSimple("),
-                   "Should NOT generate individual addSimple method")
-        assertFalse(fileContent.contains("suspend fun addWithParams("),
-                   "Should NOT generate individual addWithParams method")
-        assertFalse(fileContent.contains("suspend fun updateById("),
-                   "Should NOT generate individual updateById method")
+        assertFalse(
+            fileContent.contains("suspend fun addSimple("),
+            "Should NOT generate individual addSimple method"
+        )
+        assertFalse(
+            fileContent.contains("suspend fun addWithParams("),
+            "Should NOT generate individual addWithParams method"
+        )
+        assertFalse(
+            fileContent.contains("suspend fun updateById("),
+            "Should NOT generate individual updateById method"
+        )
 
         // Should have ExecuteRunners properties
-        assertTrue(fileContent.contains("val addSimple"),
-                  "Should have addSimple property")
-        assertTrue(fileContent.contains("val addWithParams"),
-                  "Should have addWithParams property")
-        assertTrue(fileContent.contains("val updateById"),
-                  "Should have updateById property")
+        assertTrue(
+            fileContent.contains("val addSimple"),
+            "Should have addSimple property"
+        )
+        assertTrue(
+            fileContent.contains("val addWithParams"),
+            "Should have addWithParams property"
+        )
+        assertTrue(
+            fileContent.contains("val updateById"),
+            "Should have updateById property"
+        )
 
         // Should have ExecuteRunners object expressions
-        assertTrue(fileContent.contains("object : ExecuteRunners"),
-                  "Should contain ExecuteRunners object expressions")
-        assertTrue(fileContent.contains("override suspend fun execute()"),
-                  "Should contain execute() method implementation")
+        assertTrue(
+            fileContent.contains("object : ExecuteRunners"),
+            "Should contain ExecuteRunners object expressions"
+        )
+        assertTrue(
+            fileContent.contains("override suspend fun execute()"),
+            "Should contain execute() method implementation"
+        )
 
         // Should have function type for parameterized queries
-        assertTrue(fileContent.contains("{ params ->") && fileContent.contains("object : ExecuteRunners"),
-                  "Should have lambda function for parameterized execute queries")
+        assertTrue(
+            fileContent.contains("{ params ->") && fileContent.contains("object : ExecuteRunners"),
+            "Should have lambda function for parameterized execute queries"
+        )
 
         // Should have table change notifications
-        assertTrue(fileContent.contains("ref.notifyTablesChanged"),
-                  "Should contain table change notifications")
+        assertTrue(
+            fileContent.contains("ref.notifyTablesChanged"),
+            "Should contain table change notifications"
+        )
 
         realConnection.close()
     }
@@ -451,17 +550,21 @@ class DatabaseCodeGeneratorTest {
         val personDir = File(queriesDir, "person")
         personDir.mkdirs()
 
-        File(personDir, "query1.sql").writeText("""
+        File(personDir, "query1.sql").writeText(
+            """
             -- @@{name=Query1}
             -- @@{field=created_at, adapter=custom}
             SELECT id, created_at FROM users WHERE id = :userId;
-        """.trimIndent())
+        """.trimIndent()
+        )
 
-        File(personDir, "query2.sql").writeText("""
+        File(personDir, "query2.sql").writeText(
+            """
             -- @@{name=Query2}
             -- @@{field=created_at, adapter=custom}
             SELECT name, created_at FROM users WHERE name = :userName;
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Create minimal setup
         val realConnection = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
@@ -493,8 +596,9 @@ class DatabaseCodeGeneratorTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    implements = null,
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -554,8 +658,10 @@ class DatabaseCodeGeneratorTest {
             .substringBefore(")")
 
         val sqlColumnToCreatedAtCount = personAdaptersContent.split("sqlValueToCreatedAt").size - 1
-        assertEquals(1, sqlColumnToCreatedAtCount,
-            "sqlValueToCreatedAt should appear exactly once in PersonAdapters data class, but found $sqlColumnToCreatedAtCount occurrences")
+        assertEquals(
+            1, sqlColumnToCreatedAtCount,
+            "sqlValueToCreatedAt should appear exactly once in PersonAdapters data class, but found $sqlColumnToCreatedAtCount occurrences"
+        )
 
         // Verify the adapter is present
         assertTrue(fileContent.contains("sqlValueToCreatedAt"), "Should contain sqlValueToCreatedAt adapter")
@@ -569,17 +675,21 @@ class DatabaseCodeGeneratorTest {
         personDir.mkdirs()
 
         // Create multiple SQL files that reference the same column with adapter
-        File(personDir, "selectWithCreatedAt1.sql").writeText("""
+        File(personDir, "selectWithCreatedAt1.sql").writeText(
+            """
             -- @@{name=SelectWithCreatedAt1}
             -- @@{field=created_at, adapter=custom}
             SELECT id, name, created_at FROM users WHERE id = :userId;
-        """.trimIndent())
+        """.trimIndent()
+        )
 
-        File(personDir, "selectWithCreatedAt2.sql").writeText("""
+        File(personDir, "selectWithCreatedAt2.sql").writeText(
+            """
             -- @@{name=SelectWithCreatedAt2}
             -- @@{field=created_at, adapter=custom}
             SELECT name, created_at FROM users WHERE name = :userName;
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Create minimal setup
         val realConnection = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
@@ -611,8 +721,9 @@ class DatabaseCodeGeneratorTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
-                implements = null,
-                excludeOverrideFields = null
+                    implements = null,
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -673,8 +784,10 @@ class DatabaseCodeGeneratorTest {
             .substringBefore(")")
 
         val sqlValueToCreatedAtCount = adapterDataClassContent.split("sqlValueToCreatedAt").size - 1
-        assertEquals(1, sqlValueToCreatedAtCount,
-            "sqlValueToCreatedAt should appear exactly once in adapter data class, but found $sqlValueToCreatedAtCount occurrences")
+        assertEquals(
+            1, sqlValueToCreatedAtCount,
+            "sqlValueToCreatedAt should appear exactly once in adapter data class, but found $sqlValueToCreatedAtCount occurrences"
+        )
     }
 
     @Test
@@ -685,29 +798,35 @@ class DatabaseCodeGeneratorTest {
         personDir.mkdirs()
 
         // INSERT statement that uses both built-in type with adapter and custom type with adapter
-        File(personDir, "insertPerson.sql").writeText("""
+        File(personDir, "insertPerson.sql").writeText(
+            """
             -- @@{name=InsertPerson}
             INSERT INTO users (name, phone, birth_date) VALUES (:name, :phone, :birthDate);
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // SELECT statement that also uses the same columns - this creates both input and output adapters
-        File(personDir, "selectPerson.sql").writeText("""
+        File(personDir, "selectPerson.sql").writeText(
+            """
             -- @@{name=SelectPerson}
             -- @@{field=phone, adapter=custom}
             -- @@{field=birth_date, adapter=custom}
             SELECT id, name, phone, birth_date FROM users WHERE id = :userId;
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Create an in-memory SQLite database for testing
         val realConnection = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
-        realConnection.createStatement().execute("""
+        realConnection.createStatement().execute(
+            """
             CREATE TABLE users (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL,
                 phone TEXT,
                 birth_date TEXT
             )
-        """.trimIndent())
+        """.trimIndent()
+        )
 
         // Create test CREATE TABLE statements with different adapter configurations
         val testCreateTableStatements = listOf(
@@ -756,7 +875,8 @@ class DatabaseCodeGeneratorTest {
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     sharedResult = null,
                     implements = null,
-                    excludeOverrideFields = null
+                    excludeOverrideFields = null,
+                    collectionKey = null
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
@@ -847,15 +967,21 @@ class DatabaseCodeGeneratorTest {
             .substringBefore("}")
 
         // For built-in type (phone with String type), should use phoneToSqlValue (not sqlValueToPhone)
-        assertTrue(insertPersonContent.contains("phoneToSqlValue = ref.personAdapters.phoneToSqlValue"),
-            "Built-in type adapter should use phoneToSqlValue, not sqlValueToPhone. Content: $insertPersonContent")
+        assertTrue(
+            insertPersonContent.contains("phoneToSqlValue = ref.personAdapters.phoneToSqlValue"),
+            "Built-in type adapter should use phoneToSqlValue, not sqlValueToPhone. Content: $insertPersonContent"
+        )
 
         // For custom type (birth_date with LocalDate type), should also use birthDateToSqlValue
-        assertTrue(insertPersonContent.contains("birthDateToSqlValue = ref.personAdapters.birthDateToSqlValue"),
-            "Custom type adapter should use birthDateToSqlValue. Content: $insertPersonContent")
+        assertTrue(
+            insertPersonContent.contains("birthDateToSqlValue = ref.personAdapters.birthDateToSqlValue"),
+            "Custom type adapter should use birthDateToSqlValue. Content: $insertPersonContent"
+        )
 
         // Verify that the wrong assignment is NOT present
-        assertFalse(insertPersonContent.contains("phoneToSqlValue = ref.personAdapters.sqlValueToPhone"),
-            "Should NOT have reversed adapter assignment for built-in type")
+        assertFalse(
+            insertPersonContent.contains("phoneToSqlValue = ref.personAdapters.sqlValueToPhone"),
+            "Should NOT have reversed adapter assignment for built-in type"
+        )
     }
 }

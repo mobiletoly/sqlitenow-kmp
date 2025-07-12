@@ -89,6 +89,9 @@ class FieldAnnotationResolver(
                annotations.adapter == true ||
                annotations.notNull != null ||
                annotations.isDynamicField ||
-               annotations.defaultValue != null
+               annotations.defaultValue != null ||
+               annotations.removeAliasPrefix != null ||
+               annotations.mappingType != null ||
+               annotations.sourceTable != null
     }
 }
