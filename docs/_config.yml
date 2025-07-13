@@ -40,8 +40,7 @@ plugins:
 
 # Navigation
 header_pages:
-  - overview.md
-  - how-it-works.md
+  - index.markdown
   - getting-started.md
   - documentation.md
 
