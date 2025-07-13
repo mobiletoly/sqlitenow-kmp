@@ -2,7 +2,7 @@
     sharedResult=PersonWithAddressRow,
     collectionKey=person_id } */
 SELECT p.id         AS person_id,
-       p.first_name AS hello_first_name,
+       p.first_name,
        p.last_name,
        p.email,
        p.phone,

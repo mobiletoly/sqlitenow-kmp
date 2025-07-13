@@ -9,8 +9,10 @@ parent: Documentation
 
 Useful recipes and patterns for using SQLiteNow in your projects.
 
+<br>
 
----
+-----
+
 ## Serialize/deserialize list
 
 It is up to you what strategy to pick to serialize/deserialize list of items to SQLite.
@@ -21,7 +23,7 @@ Here is an example of annotation:
 ```sql
 CREATE TABLE Comment
 (
-    id INTEGER PRIMARY KEY NOT NULL,
+    id   INTEGER PRIMARY KEY NOT NULL,
 
     -- @@{ field=tags, adapter=custom, propertyType=List<String> }
     tags TEXT
@@ -45,7 +47,10 @@ val db = SampleDatabase(
 )
 ```
 
+<br>
+
 ---
+
 ## Serialize/deserialize timestamps
 
 SQLiteNow provides helpers for converting between `LocalDateTime` and SQLite timestamp string.
@@ -54,10 +59,10 @@ You can use them in your adapters as shown in the example below:
 ```sql
 CREATE TABLE Comment
 (
-    id INTEGER PRIMARY KEY NOT NULL,
+    id         INTEGER PRIMARY KEY NOT NULL,
 
     -- @@{ field=created_at, adapter=custom, propertyType=kotlinx.datetime.LocalDateTime }
-    created_at TEXT NOT NULL DEFAULT current_timestamp
+    created_at TEXT                NOT NULL DEFAULT current_timestamp
 )
 ```
 
@@ -78,7 +83,10 @@ val db = SampleDatabase(
 )
 ```
 
+<br>
+
 ---
+
 ## Serialize/deserialize enums
 
 There are different strategies to serialize/deserialize enums to database. It could be a
@@ -121,12 +129,16 @@ val db = SampleDatabase(
 )
 ```
 
+<br>
+
 ---
+
 ## Create database schema file
 
 In order to generate SQLiteNow schemas - we use in-memory created SQLite database.
 This database is created from all SQL files in `schema/` directory.
-If you want to inspect the generated schema - you can create a file-based database from the same SQL files.
+If you want to inspect the generated schema - you can create a file-based database from the same SQL
+files.
 
 For this you can use `schemaDatabaseFile` property in sqliteNow plugin:
 

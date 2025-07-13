@@ -29,6 +29,11 @@ Understand how to INSERT, UPDATE, and DELETE data in your database.
 
 [Manage Data →]({{ site.baseurl }}/documentation/manage-data/)
 
+### Collections and relationships
+Understand how to deal with 1:1, 1:many, and many:many collections in your queries.
+
+[Collections →]({{ site.baseurl }}/documentation/collection/)
+
 ### Initializing Data
 Learn how to populate your database with initial data during creation.
 
@@ -60,6 +65,11 @@ Useful recipes and patterns for common use cases.
   <a href="{{ site.baseurl }}/documentation/manage-data/" class="doc-nav-card">
     <h3>✏️ Manage Data</h3>
     <p>INSERT, UPDATE, and DELETE operations to modify your database</p>
+  </a>
+
+  <a href="{{ site.baseurl }}/documentation/collection/" class="doc-nav-card">
+    <h3>📚 Collections</h3>
+    <p>Map JOIN query results to nested data structures</p>
   </a>
 
   <a href="{{ site.baseurl }}/documentation/initialize-data/" class="doc-nav-card">
