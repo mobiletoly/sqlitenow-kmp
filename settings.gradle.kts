@@ -13,9 +13,6 @@ pluginManagement {
         gradlePluginPortal()
     }
     includeBuild("sqlitenow-gradle-plugin")
-    plugins {
-        kotlin("jvm") version "2.2.0"
-    }
 }
 
 dependencyResolutionManagement {

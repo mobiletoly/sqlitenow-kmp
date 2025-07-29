@@ -37,8 +37,7 @@ class StatementProcessingHelper(
                 try {
                     processQueryFile(file)
                 } catch (e: Exception) {
-                    System.err.println("*** Failed to process query file: ${file.absolutePath}")
-                    e.printStackTrace()
+                    logger.error("*** Failed to process query file: ${file.absolutePath}")
                     throw e
                 }
             }
@@ -64,20 +63,23 @@ class StatementProcessingHelper(
                 is PlainSelect -> {
                     createAnnotatedSelectStatement(stmtName, parsedStatement, sqlStatement)
                 }
+
                 is Insert, is Delete, is Update -> {
                     createAnnotatedExecuteStatement(stmtName, parsedStatement, sqlStatement)
                 }
+
                 else -> {
                     throw RuntimeException("Unsupported statement type in ${file.name}")
                 }
             }
         } catch (e: Exception) {
-            System.err.println("""
-Failed to process statement:
-
-${sqlStatement.topComments.joinToString("\n")}
-${sqlStatement.sql}
-""")
+            logger.error(
+                """|
+                |Failed to process statement:
+                |${sqlStatement.topComments.joinToString("\n")}
+                |${sqlStatement.sql}
+                |""".trimMargin()
+            )
             throw e
         }
     }
@@ -149,10 +151,12 @@ ${sqlStatement.sql}
                 stmt,
                 annotationResolver
             )
-            fields.add(AnnotatedSelectStatement.Field(
-                src = column,
-                annotations = annotations
-            ))
+            fields.add(
+                AnnotatedSelectStatement.Field(
+                    src = column,
+                    annotations = annotations
+                )
+            )
         }
 
         // Add dynamic fields from annotations
@@ -201,12 +205,15 @@ ${sqlStatement.sql}
             is Insert -> {
                 InsertStatement.parse(parsedStatement, conn)
             }
+
             is Delete -> {
                 DeleteStatement.parse(parsedStatement, conn)
             }
+
             is Update -> {
                 UpdateStatement.parse(parsedStatement, conn)
             }
+
             else -> {
                 throw UnsupportedOperationException("Unsupported statement type")
             }

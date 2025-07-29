@@ -1,7 +1,6 @@
 package dev.goquick.sqlitenow.gradle
 
 import com.squareup.kotlinpoet.TypeName
-import org.gradle.internal.extensions.stdlib.capitalized
 
 /**
  * Service responsible for collecting and configuring adapter parameters for SQL statements.

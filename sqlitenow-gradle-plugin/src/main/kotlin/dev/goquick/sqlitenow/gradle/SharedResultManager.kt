@@ -2,7 +2,6 @@ package dev.goquick.sqlitenow.gradle
 
 import com.squareup.kotlinpoet.*
 import dev.goquick.sqlitenow.gradle.AnnotationConstants.PROPERTY_NAME_GENERATOR
-import org.gradle.internal.extensions.stdlib.capitalized
 
 /**
  * Utility object for shared result type name generation.

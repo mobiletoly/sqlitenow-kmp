@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -21,6 +23,7 @@ open class SqliteNowDatabase {
 
     // Table change notification system
     private val tableChangeFlows = mutableMapOf<String, MutableSharedFlow<Unit>>()
+    private val tableChangesFlowMutex = Mutex()
 
     /**
      * Constructor for the database.
@@ -171,19 +174,19 @@ open class SqliteNowDatabase {
      * @param affectedTables Set of table names to listen for changes
      * @return Flow that emits Unit when any of the tables change
      */
-    protected fun createTableChangeFlow(affectedTables: Set<String>): Flow<Unit> {
+    protected suspend fun createTableChangeFlow(affectedTables: Set<String>): Flow<Unit> {
         if (affectedTables.isEmpty()) {
             return flow { } // Empty flow for queries with no affected tables
         }
 
         // Get or create SharedFlows for each table
-        val flows = affectedTables.map { tableName ->
-            tableChangeFlows.getOrPut(tableName) {
-                MutableSharedFlow(replay = 0, extraBufferCapacity = 1)
-            }.asSharedFlow()
+        val flows = tableChangesFlowMutex.withLock {
+            affectedTables.map { tableName ->
+                tableChangeFlows.getOrPut(tableName) {
+                    MutableSharedFlow(replay = 0, extraBufferCapacity = 1)
+                }.asSharedFlow()
+            }
         }
-
-        // Merge all table change flows into one
         return merge(*flows.toTypedArray())
     }
 

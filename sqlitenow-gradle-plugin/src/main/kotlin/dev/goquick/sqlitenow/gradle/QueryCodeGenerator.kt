@@ -10,7 +10,6 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.TypeName
 import dev.goquick.sqlitenow.gradle.StatementUtils.getNamedParameters
 import dev.goquick.sqlitenow.gradle.inspect.SelectStatement
-import org.gradle.internal.extensions.stdlib.capitalized
 import java.io.File
 
 /**

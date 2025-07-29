@@ -1,6 +1,5 @@
 package dev.goquick.sqlitenow.gradle
 
-import com.typesafe.config.ConfigFactory
 import java.io.File
 import java.io.FileNotFoundException
 import java.sql.Connection
@@ -75,14 +74,17 @@ abstract class GenerateDatabaseFilesTask @Inject constructor(
 
         val sqlDir = dbDir.get().asFile
         val packageName = packageName.get()
-        generateDatabaseFiles(
-            dbName = dbName.get(),
-            sqlDir = sqlDir,
-            packageName = packageName,
-            outDir = outDir,
-            schemaDatabaseFile = dbFile,
-            debug = debug.get(),
-        )
+
+        with (project.logger) {
+            generateDatabaseFiles(
+                dbName = dbName.get(),
+                sqlDir = sqlDir,
+                packageName = packageName,
+                outDir = outDir,
+                schemaDatabaseFile = dbFile,
+                debug = debug.get(),
+            )
+        }
     }
 }
 

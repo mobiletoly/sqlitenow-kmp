@@ -3,7 +3,6 @@ package dev.goquick.sqlitenow.gradle
 import com.typesafe.config.ConfigFactory
 import com.typesafe.config.ConfigParseOptions
 import dev.goquick.sqlitenow.gradle.SqliteTypeToKotlinCodeConverter.Companion.KOTLIN_STDLIB_TYPES
-import org.gradle.internal.extensions.stdlib.capitalized
 
 fun extractAnnotations(comments: List<String>): Map<String, Any?> {
     val combinedComment = cleanedUpComments(comments)
@@ -75,13 +74,13 @@ private fun parseHoconAnnotations(content: String): Map<String, Any?> {
 
         annotations
     } catch (e: Exception) {
-        System.err.println(
-            """
-            Failed to parse HOCON annotations
-            ---------------------------------
-            $content
-            ---------------------------------
-        """.trimIndent()
+        logger.error(
+            """|
+            |Failed to parse HOCON annotations
+            |---------------------------------
+            |$content
+            |---------------------------------
+            """.trimMargin()
         )
         throw e
     }
@@ -113,6 +112,7 @@ fun extractFieldAssociatedAnnotations(comments: List<String>): Map<String, Map<S
             fieldName != null && fieldName.isNotBlank() && dynamicFieldName != null && dynamicFieldName.isNotBlank() -> {
                 throw IllegalArgumentException("Annotation block cannot contain both 'field' and 'dynamicField' annotations")
             }
+
             fieldName != null && fieldName.isNotBlank() -> fieldName
             dynamicFieldName != null && dynamicFieldName.isNotBlank() -> dynamicFieldName
             else -> throw IllegalArgumentException("Annotation block must contain either a 'field' or 'dynamicField' annotation with a non-empty value")
@@ -266,9 +266,15 @@ data class FieldAnnotationOverrides(
                 }
 
                 // Validate mappingType value
-                if (mappingType !in setOf(AnnotationConstants.MAPPING_TYPE_PER_ROW, AnnotationConstants.MAPPING_TYPE_COLLECTION)) {
-                    throw IllegalArgumentException("Invalid annotation '${AnnotationConstants.MAPPING_TYPE}' value: '$mappingType'. " +
-                            "Currently supported: '${AnnotationConstants.MAPPING_TYPE_PER_ROW}', '${AnnotationConstants.MAPPING_TYPE_COLLECTION}'")
+                if (mappingType !in setOf(
+                        AnnotationConstants.MAPPING_TYPE_PER_ROW,
+                        AnnotationConstants.MAPPING_TYPE_COLLECTION
+                    )
+                ) {
+                    throw IllegalArgumentException(
+                        "Invalid annotation '${AnnotationConstants.MAPPING_TYPE}' value: '$mappingType'. " +
+                                "Currently supported: '${AnnotationConstants.MAPPING_TYPE_PER_ROW}', '${AnnotationConstants.MAPPING_TYPE_COLLECTION}'"
+                    )
                 }
 
                 // When mappingType=collection, collectionKey is required

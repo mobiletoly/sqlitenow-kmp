@@ -7,14 +7,21 @@ plugins {
 }
 
 group = "dev.goquick.sqlitenow"
-version = "0.1.15"
+version = "0.1.16-SNAPSHOT"
 
 repositories {
     mavenCentral()
     google()
 }
 
-testing {
+kotlin {
+    jvmToolchain(21)
+
+    // Set language version to 2.2 to support break/continue in inline lambdas
+    compilerOptions {
+        languageVersion.set(KotlinVersion.KOTLIN_2_2)
+        freeCompilerArgs.addAll("-Xmulti-dollar-interpolation", "-Xcontext-parameters")
+    }
 }
 
 gradlePlugin {
@@ -34,6 +41,7 @@ dependencies {
     implementation("com.squareup:kotlinpoet:2.2.0")
     compileOnly("org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.0")
     implementation("com.typesafe:config:1.4.3")
+    implementation("org.slf4j:slf4j-simple:2.0.10")
     // SQLite JDBC for database access
     implementation("org.xerial:sqlite-jdbc:3.50.2.0")
     implementation("com.github.jsqlparser:jsqlparser:4.9")
@@ -46,23 +54,12 @@ dependencies {
     testImplementation("org.mockito:mockito-junit-jupiter:5.18.0")
 }
 
-repositories {
-    mavenCentral()
-}
 
-kotlin {
-    jvmToolchain(21)
-
-    // Set language version to 2.2 to support break/continue in inline lambdas
-    compilerOptions {
-        languageVersion.set(KotlinVersion.KOTLIN_2_2)
-    }
+testing {
 }
 
 tasks.test {
     useJUnitPlatform()
-}
-compileKotlin {
 }
 
 mavenPublishing {

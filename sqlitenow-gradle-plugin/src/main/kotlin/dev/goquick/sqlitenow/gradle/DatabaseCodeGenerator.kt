@@ -2,7 +2,6 @@ package dev.goquick.sqlitenow.gradle
 
 import com.squareup.kotlinpoet.*
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
-import org.gradle.internal.extensions.stdlib.capitalized
 import java.io.File
 
 /**

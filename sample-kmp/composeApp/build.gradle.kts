@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
+
 plugins {
     id(libs.plugins.kotlinMultiplatform.get().pluginId)
     id(libs.plugins.androidApplication.get().pluginId)
@@ -17,6 +19,7 @@ kotlin {
     }
 
     compilerOptions {
+        languageVersion.set(KotlinVersion.KOTLIN_2_2)
         freeCompilerArgs.set(listOf("-Xmulti-dollar-interpolation"))
     }
 

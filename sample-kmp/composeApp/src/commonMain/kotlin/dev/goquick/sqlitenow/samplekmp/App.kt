@@ -56,9 +56,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import org.jetbrains.compose.ui.tooling.preview.Preview
+import kotlin.native.concurrent.ThreadLocal
 import kotlin.random.Random
 
 typealias PersonEntity = PersonQuery.SharedResult.Row
@@ -125,16 +128,6 @@ fun App() {
     }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            // TODO .close() is here just for demo purposes. In your app you should close it in some other place
-            @OptIn(DelicateCoroutinesApi::class)
-            GlobalScope.launch {
-                db.close()
-            }
-        }
-    }
 
     LaunchedEffect(Unit) {
 
@@ -547,17 +540,19 @@ suspend fun randomizePerson(person: PersonEntity, onError: (String) -> Unit = {}
         val phone = person.phone
         val birthDate = person.birthDate
         val notes = person.notes
-        db.person.updateById(
-            PersonQuery.UpdateById.Params(
-                id = person.id,
-                firstName = firstName,
-                lastName = lastName,
-                email = email,
-                phone = phone,
-                birthDate = birthDate,
-                notes = notes
-            )
-        ).execute()
+        db.transaction {
+            db.person.updateById(
+                PersonQuery.UpdateById.Params(
+                    id = person.id,
+                    firstName = firstName,
+                    lastName = lastName,
+                    email = email,
+                    phone = phone,
+                    birthDate = birthDate,
+                    notes = notes
+                )
+            ).execute()
+        }
     } catch (e: SQLiteException) {
         e.printStackTrace()
         onError("Failed to update person: ${e.message}")

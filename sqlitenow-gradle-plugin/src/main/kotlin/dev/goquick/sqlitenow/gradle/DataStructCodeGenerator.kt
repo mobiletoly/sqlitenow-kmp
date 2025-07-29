@@ -15,7 +15,6 @@ import dev.goquick.sqlitenow.gradle.inspect.InsertStatement
 import dev.goquick.sqlitenow.gradle.inspect.UpdateStatement
 import java.io.File
 import java.sql.Connection
-import org.gradle.internal.extensions.stdlib.capitalized
 
 open class DataStructCodeGenerator(
     conn: Connection,
@@ -31,8 +30,8 @@ open class DataStructCodeGenerator(
             try {
                 it.execute(conn) as AnnotatedCreateTableStatement
             } catch (e: Exception) {
-                System.err.println(
-                    """
+                logger.error(
+                    """|
                     |Failed to execute CREATE TABLE statement:
                     |${it.reportContext()}
                     """.trimMargin()
@@ -46,7 +45,7 @@ open class DataStructCodeGenerator(
             try {
                 it.execute(conn) as AnnotatedCreateViewStatement
             } catch (e: Exception) {
-                System.err.println(
+                logger.error(
                     """
                     |Failed to execute CREATE VIEW statement:
                     |${it.reportContext()}
