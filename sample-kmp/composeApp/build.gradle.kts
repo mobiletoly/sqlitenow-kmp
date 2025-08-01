@@ -20,7 +20,7 @@ kotlin {
 
     compilerOptions {
         languageVersion.set(KotlinVersion.KOTLIN_2_2)
-        freeCompilerArgs.set(listOf("-Xmulti-dollar-interpolation"))
+        freeCompilerArgs.addAll("-Xmulti-dollar-interpolation")
     }
 
     listOf(
