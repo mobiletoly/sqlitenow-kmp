@@ -57,12 +57,21 @@ open class SqliteNowDatabase {
 
         val dbFileExists = validateFileExists(dbName)
 
-        val realConn = BundledSQLiteDriver().open(
+        // Create driver with session extension
+        val driver = BundledSQLiteDriver().apply {
+            addExtension("libnowsession_ext")
+        }
+
+        val realConn = driver.open(
             fileName = dbName,
             flags = SQLITE_OPEN_CREATE or SQLITE_OPEN_READWRITE
         )
+        println("-------------- step 0005")
         conn = SafeSQLiteConnection(realConn)
         conn.ref.execSQL("""PRAGMA foreign_keys = ON;""")
+
+        // Load session extension
+        loadSessionExtension()
 
         transaction {
             val currentVersion = if (!dbFileExists) {
@@ -152,6 +161,127 @@ open class SqliteNowDatabase {
             withContext(conn.dispatcher) {
                 conn.ref.close()
             }
+        }
+    }
+
+    /**
+     * Loads the SQLite session extension using the official addExtension method.
+     * This uses the new addExtension API from androidx.sqlite bundled 2.6.0-beta01.
+     * On iOS, session extension loading may not be available due to platform restrictions.
+     */
+    private suspend fun loadSessionExtension() {
+        try {
+            withContext(conn.dispatcher) {
+                inspectSessionFunctions()
+
+                println("🔄 Testing session extension with sqlite3_create_function...")
+
+                // First, try to call the test function to see if it was registered successfully
+                try {
+                    val testStatement = conn.ref.prepare("SELECT nowsession_ping(1234)")
+                    try {
+                        testStatement.step()
+                        val result = testStatement.getInt(0)
+                        if (result == 1234) {
+                            println("✅ sqlite3_create_function worked! Test function returned: $result")
+                        } else {
+                            println("⚠️ Test function returned unexpected result: $result")
+                        }
+                    } finally {
+                        testStatement.close()
+                    }
+                } catch (e: Exception) {
+                    println("❌ Test function call failed: ${e.message}")
+                    println("   This means sqlite3_create_function likely crashed during extension init")
+                }
+
+                println("✅ Session extension testing completed!")
+            }
+        } catch (e: Exception) {
+            println("⚠️ Session extension not available: ${e.message}")
+            println("   Database will work normally but session functionality will not be available")
+        }
+    }
+
+    /**
+     * Inspects the database for session-related functions and tables.
+     */
+    private fun inspectSessionFunctions() {
+        try {
+            println("🧪 Testing direct session function calls...")
+
+            try {
+                val sessionFunctionsStatement = conn.ref.prepare("""
+                    SELECT name, builtin, type, enc, narg, flags
+                    FROM pragma_function_list()
+                    WHERE name LIKE '%session%'
+                    ORDER BY name
+                """)
+
+                var sessionFunctionCount = 0
+                try {
+                    while (sessionFunctionsStatement.step()) {
+                        val name = sessionFunctionsStatement.getText(0)
+                        val builtin = sessionFunctionsStatement.getLong(1)
+                        val type = sessionFunctionsStatement.getText(2)
+                        val enc = sessionFunctionsStatement.getText(3)
+                        val narg = sessionFunctionsStatement.getLong(4)
+                        val flags = sessionFunctionsStatement.getLong(5)
+
+                        sessionFunctionCount++
+                        println("✅ Session function found: '$name'")
+                        println("   - builtin: $builtin, type: $type, enc: $enc, narg: $narg, flags: $flags")
+                    }
+                } finally {
+                    sessionFunctionsStatement.close()
+                }
+
+                if (sessionFunctionCount == 0) {
+                    println("❌ No functions containing 'session' found in pragma_function_list")
+                } else {
+                    println("📊 Total session-related functions found: $sessionFunctionCount")
+                }
+
+            } catch (e: Exception) {
+                println("❌ Error querying pragma_function_list for session functions: ${e.message}")
+            }
+
+            // Create a test table
+            conn.ref.execSQL("""
+                CREATE TEMP TABLE IF NOT EXISTS direct_session_test (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT,
+                    value INTEGER
+                )
+            """)
+
+            // Insert some data
+            conn.ref.execSQL("INSERT INTO direct_session_test (name, value) VALUES ('test1', 100)")
+            conn.ref.execSQL("INSERT INTO direct_session_test (name, value) VALUES ('test2', 200)")
+
+            // Update data
+            conn.ref.execSQL("UPDATE direct_session_test SET value = 150 WHERE name = 'test1'")
+
+            // Delete data
+            conn.ref.execSQL("DELETE FROM direct_session_test WHERE name = 'test2'")
+
+            // Check final state
+            val countStatement = conn.ref.prepare("SELECT COUNT(*) FROM direct_session_test")
+            try {
+                countStatement.step()
+                val count = countStatement.getLong(0)
+                println("✅ Direct session test operations completed. Final row count: $count")
+            } finally {
+                countStatement.close()
+            }
+
+            // Clean up
+            conn.ref.execSQL("DROP TABLE direct_session_test")
+
+            println("✅ Direct session function testing completed!")
+
+        } catch (e: Exception) {
+            println("⚠️ Direct session function testing failed: ${e.message}")
         }
     }
 

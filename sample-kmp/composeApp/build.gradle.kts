@@ -110,7 +110,10 @@ sqliteNow {
     databases {
         create("NowSampleDatabase") {
             packageName = "dev.goquick.sqlitenow.samplekmp.db"
-            debug = true
+
+            // Very slow on iOS because of Throwable().stackTraceToString() issue:
+            // https://youtrack.jetbrains.com/projects/CMP/issues/CMP-8223/Kotlin-2.1.21.-After-the-app-is-launched-for-the-first-time-calling-Throwable.stackTraceToString-causes-the-CPU-to-spike-to-100
+//            debug = true
         }
     }
 }
