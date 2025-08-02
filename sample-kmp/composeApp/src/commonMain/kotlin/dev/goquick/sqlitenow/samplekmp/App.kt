@@ -21,7 +21,6 @@ import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,20 +47,14 @@ import dev.goquick.sqlitenow.samplekmp.db.PersonAddressQuery
 import dev.goquick.sqlitenow.samplekmp.db.PersonQuery
 import dev.goquick.sqlitenow.samplekmp.db.VersionBasedDatabaseMigrations
 import dev.goquick.sqlitenow.samplekmp.model.PersonNote
-import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.IO
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import org.jetbrains.compose.ui.tooling.preview.Preview
-import kotlin.native.concurrent.ThreadLocal
 import kotlin.random.Random
 
 typealias PersonEntity = PersonQuery.SharedResult.Row
@@ -135,25 +128,50 @@ fun App() {
         db.open()
 
         // Listen for real-time changes from Person/SelectAll query
-        db.person
-            .selectAll(
-                PersonQuery.SelectAll.Params(
-                    limit = -1,
-                    offset = 0
+        coroutineScope.launch {
+            db.person
+                .selectAll(
+                    PersonQuery.SelectAll.Params(
+                        limit = -1,
+                        offset = 0
+                    )
                 )
-            )
-            .asFlow()
-            .map { personList ->
-                personList.map { person ->
-                    person.copy(myLastName = person.myLastName.uppercase())
+                .asFlow()
+                .map { personList ->
+                    personList.map { person ->
+                        person.copy(myLastName = person.myLastName.uppercase())
+                    }
                 }
-            }
-            .flowOn(Dispatchers.IO)     // DB and mapper code above runs on Dispatchers.IO
-            .collect {
-                // This code runs on Dispatchers.Main (UI)
-                persons = it
-                isLoading = false
-            }
+                .flowOn(Dispatchers.IO)     // DB and mapper code above runs on Dispatchers.IO
+                .collect {
+                    // This code runs on Dispatchers.Main (UI)
+                    persons = it
+                    isLoading = false
+                }
+        }
+
+        coroutineScope.launch {
+            db.person
+                .selectAllWithAddresses(
+                    PersonQuery.SelectAllWithAddresses.Params(
+                        limit = 20,
+                        offset = 0
+                    )
+                )
+                .asFlow()
+                .flowOn(Dispatchers.IO) // DB runs on Dispatchers.IO
+                .collect { personWithAddressList: List<PersonQuery.SharedResult.PersonWithAddressRow> ->
+                    for (person in personWithAddressList) {
+                        println("----> Person: ${person.myFirstName} ${person.myLastName} - <${person.phone}> <${person.birthDate}>")
+                        for (address in person.addresses) {
+                            println("    ----> Address: $address")
+                        }
+                        for (comment in person.comments) {
+                            println("    ----> Comment: $comment")
+                        }
+                    }
+                }
+        }
     }
 
 //    LaunchedEffect(Unit) {
@@ -194,30 +212,6 @@ fun App() {
 //                }
 //            }
 //    }
-
-    LaunchedEffect(Unit) {
-        delay(1000)
-        db.person
-            .selectAllWithAddresses(
-                PersonQuery.SelectAllWithAddresses.Params(
-                    limit = 20,
-                    offset = 0
-                )
-            )
-            .asFlow()
-            .flowOn(Dispatchers.IO) // DB runs on Dispatchers.IO
-            .collect { personWithAddressList: List<PersonQuery.SharedResult.PersonWithAddressRow> ->
-                for (person in personWithAddressList) {
-                    println("----> Person: ${person.myFirstName} ${person.myLastName} - <${person.phone}> <${person.birthDate}>")
-                    for (address in person.addresses) {
-                        println("    ----> Address: $address")
-                    }
-                    for (comment in person.comments) {
-                        println("    ----> Comment: $comment")
-                    }
-                }
-            }
-    }
 
     MaterialTheme {
         Column(
@@ -561,18 +555,3 @@ suspend fun randomizePerson(person: PersonEntity, onError: (String) -> Unit = {}
         onError("Unexpected error: ${e.message}")
     }
 }
-
-/*
- ----> Person: John Smith - <+1-555-123-4567> <1985-03-15>
-     ----> Address: Row(id=1, personId=1, addressType=HOME, street=123 Main St, city=New York, state=NY, postalCode=10001, country=USA, isPrimary=true, createdAt=2025-07-12T21:34:08)
-     ----> Address: Row(id=1, personId=1, addressType=HOME, street=123 Main St, city=New York, state=NY, postalCode=10001, country=USA, isPrimary=true, createdAt=2025-07-12T21:34:08)
-     ----> Address: Row(id=19, personId=1, addressType=WORK, street=100 Business Plaza, city=New York, state=NY, postalCode=10002, country=USA, isPrimary=false, createdAt=2025-07-12T21:34:08)
-     ----> Address: Row(id=19, personId=1, addressType=WORK, street=100 Business Plaza, city=New York, state=NY, postalCode=10002, country=USA, isPrimary=false, createdAt=2025-07-12T21:34:08)
-     ----> Comment: Row(id=1, personId=1, comment=Hello World #1, createdAt=2021-01-01T12:00, tags=[hello, world])
-     ----> Comment: Row(id=2, personId=1, comment=Hello World #2, createdAt=2021-01-01T12:00, tags=[hello, world])
-     ----> Comment: Row(id=1, personId=1, comment=Hello World #1, createdAt=2021-01-01T12:00, tags=[hello, world])
-     ----> Comment: Row(id=2, personId=1, comment=Hello World #2, createdAt=2021-01-01T12:00, tags=[hello, world])
- ----> Person: Emma Johnson - <+1-555-234-5678> <1990-07-22>
-     ----> Address: Row(id=2, personId=2, addressType=HOME, street=456 Oak Ave, city=Los Angeles, state=CA, postalCode=90001, country=USA, isPrimary=true, createdAt=2025-07-12T21:34:08)
-     ----> Comment: Row(id=3, personId=2, comment=This is a comment., createdAt=2021-01-02T12:00, tags=[comment])
- */

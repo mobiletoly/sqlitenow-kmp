@@ -1,4 +1,5 @@
 # CLion IDE files
+.idea/
 cmake-build-*/
 .cmake/
 .clion.source.upload.marker

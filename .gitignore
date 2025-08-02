@@ -14,6 +14,35 @@ xcuserdata
 
 /tmp
 
+# Native build artifacts
+native-src/build-android/
+native-src/ios/build/
+native-src/session/build-*/
+
+# SQLite downloads and generated files (use setup-sqlite-session.sh to regenerate)
+native-src/session/downloads/
+native-src/session/sqlite3*.c
+native-src/session/sqlite3*.h
+native-src/session/sqliteInt.h
+native-src/session/vdbeInt.h
+native-src/session/*.h
+
+# Generated native libraries (these are built by Gradle tasks)
+library/src/androidMain/jniLibs/
+library/src/iosMain/resources/SessionExtension.xcframework/
+sample-kmp/iosApp/iosApp/Frameworks/SessionExtension.framework/
+
+# CMake build artifacts
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Xcode build artifacts
+*.xcframework
+DerivedData/
+*.dSYM/
+
 # Libraries
 *.a
 *.la
