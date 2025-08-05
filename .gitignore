@@ -13,3 +13,13 @@ xcuserdata
 *.gpg
 
 /tmp
+
+# Libraries
+*.a
+*.la
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+SessionExtension.framework
