@@ -1,0 +1,117 @@
+# CLion IDE files
+cmake-build-*/
+.cmake/
+.clion.source.upload.marker
+
+# CMake build files
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps
+
+# Build directories
+build/
+out/
+debug/
+release/
+
+# Generated executables and test files
+sqlite_ext_dev
+test_nowsession
+test_nowsession.db
+*.exe
+*.out
+*.app
+
+# Object files
+*.o
+*.obj
+*.lo
+*.slo
+*.ko
+
+# Libraries
+*.a
+*.la
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Temporary files
+*.tmp
+*.temp
+*~
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Coverage files
+*.gcov
+*.gcda
+*.gcno
+
+# Profiling
+gmon.out
+
+# Core dumps
+core
+core.*
+
+# Backup files
+*.bak
+*.backup
+*.swp
+*.swo
+
+# Package files
+*.tar.gz
+*.zip
+*.7z
+*.rar
+
+# OS specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Visual Studio Code
+.vscode/
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+
+# Make
+Makefile
+build.ninja
+.ninja_deps
+.ninja_log
+
+# Autotools
+autom4te.cache/
+config.log
+config.status
+configure
+Makefile.in
+aclocal.m4
+
+# Project specific - keep SQLite source but ignore build artifacts
+session/downloads/
