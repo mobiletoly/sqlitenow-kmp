@@ -34,8 +34,7 @@ internal class SyncDownloader(
         until: Long = 0L,
         isPostUploadLookback: Boolean = false
     ): DownloadResult {
-        println("📥 DOWNLOAD START: limit=$limit, includeSelf=$includeSelf, until=$until, isPostUploadLookback=$isPostUploadLookback")
-        logger.d { "downloadOnce: start limit=$limit includeSelf=$includeSelf until=$until" }
+        logger.d { "downloadOnce: start limit=$limit includeSelf=$includeSelf until=$until isPostUploadLookback=$isPostUploadLookback" }
 
         // 1. Get client info
         val clientInfo = getClientInfo(db)
@@ -43,10 +42,6 @@ internal class SyncDownloader(
         // 2. Fetch changes from server
         val response =
             fetchChanges(clientInfo.sourceId, clientInfo.lastServerSeq, limit, includeSelf, until)
-        println("📥 SERVER RESPONSE: ${response.changes.size} changes, nextAfter=${response.nextAfter}")
-        response.changes.forEachIndexed { index, ch ->
-            println("  [$index] ${ch.op} ${ch.tableName}:${ch.pk.take(8)} v${ch.serverVersion} from ${ch.sourceId}")
-        }
         logger.d { "downloadOnce: changes=${response.changes.size} nextAfter=${response.nextAfter} windowUntil=${response.windowUntil}" }
 
         // 3. Handle empty response
@@ -159,17 +154,10 @@ internal class SyncDownloader(
     ): DownloadResponse {
         val token = tokenProvider()
         val url = buildDownloadUrl(baseUrl, lastServerSeq, limit, includeSelf, until, config.schema)
-        println("📥 DOWNLOAD REQUEST: sourceId=$sourceId, after=$lastServerSeq, limit=$limit, includeSelf=$includeSelf, until=$until")
-        println("   Full URL: $url")
-        println("   HTTP Method: GET")
-        println("   Headers: Authorization=Bearer ${token.take(10)}...")
+        logger.d { "Download request: after=$lastServerSeq, limit=$limit, includeSelf=$includeSelf, until=$until" }
 
         val response = http.get(url) { header("Authorization", "Bearer $token") }.body<DownloadResponse>()
-
-        println("📥 RAW SERVER RESPONSE:")
-        println("   Changes count: ${response.changes.size}")
-        println("   NextAfter: ${response.nextAfter}")
-        println("   WindowUntil: ${response.windowUntil}")
+        logger.d { "Download response: ${response.changes.size} changes, nextAfter=${response.nextAfter}" }
 
         return response
     }
@@ -200,8 +188,7 @@ internal class SyncDownloader(
                 logger.d { "applyDownloadPage: skipping self change ${ch.op} ${ch.tableName}:${ch.pk} from sourceId=$sourceId" }
                 return@forEach
             }
-            println("🔽 DOWNLOADING: ${ch.op} ${ch.tableName}:${ch.pk.take(8)} v${ch.serverVersion} from ${ch.sourceId}")
-            logger.d { "applyDownloadPage: applying ${ch.op} ${ch.tableName}:${ch.pk} from sourceId=${ch.sourceId} payload=${ch.payload}" }
+            logger.d { "applyDownloadPage: applying ${ch.op} ${ch.tableName}:${ch.pk} from sourceId=${ch.sourceId}" }
 
             when (ch.op) {
                 "DELETE" -> {
@@ -226,29 +213,14 @@ internal class SyncDownloader(
     }
 
     private suspend fun applyDeleteChange(db: SafeSQLiteConnection, ch: ChangeDownloadResponse) {
-        println("🗑️ DOWNLOAD APPLYING DELETE: ${ch.tableName}:${ch.pk.take(8)} v${ch.serverVersion}")
-
-        // Check if record exists before deletion
-        val existsBefore = db.prepare("SELECT COUNT(*) FROM ${ch.tableName.lowercase()} WHERE id=?").use { st ->
-            st.bindText(1, ch.pk)
-            if (st.step()) st.getLong(0) > 0 else false
-        }
-        println("🗑️ DOWNLOAD DELETE: Record exists before deletion: $existsBefore")
+        logger.d { "Applying DELETE: ${ch.tableName}:${ch.pk.take(8)} v${ch.serverVersion}" }
 
         db.prepare("DELETE FROM ${ch.tableName.lowercase()} WHERE id=?").use { del ->
             del.bindText(1, ch.pk)
             del.step()
         }
 
-        // Check if record was actually deleted
-        val existsAfter = db.prepare("SELECT COUNT(*) FROM ${ch.tableName.lowercase()} WHERE id=?").use { st ->
-            st.bindText(1, ch.pk)
-            if (st.step()) st.getLong(0) > 0 else false
-        }
-        println("🗑️ DOWNLOAD DELETE: Record exists after deletion: $existsAfter")
-
         updateRowMeta(db, ch.tableName, ch.pk, ch.serverVersion, true)
-        println("🗑️ DOWNLOAD DELETE APPLIED: set deleted=true in _sync_row_meta")
     }
 
     private suspend fun applyInsertUpdateChange(
@@ -514,7 +486,7 @@ internal class SyncDownloader(
 
                         if (hasLaterInsertOrUpdate) {
                             // Skip DELETE if there's a later INSERT/UPDATE with higher server version for the same record
-                            println("🚫 SKIPPING DELETE during lookback: ${change.tableName}:${change.pk.take(8)} v${change.serverVersion} (superseded by later INSERT/UPDATE)")
+                            logger.d { "Skipping DELETE during lookback: ${change.tableName}:${change.pk.take(8)} v${change.serverVersion} (superseded by later INSERT/UPDATE)" }
                         } else {
                             optimizedChanges.add(change)
                         }

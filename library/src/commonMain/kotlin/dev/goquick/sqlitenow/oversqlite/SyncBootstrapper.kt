@@ -119,19 +119,6 @@ internal class SyncBootstrapper(
     }
 
     private suspend fun createTriggersForTables(db: SafeSQLiteConnection) {
-        // Create debug logging table for trigger execution tracking
-        db.execSQL("""
-            CREATE TABLE IF NOT EXISTS _debug_trigger_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-                trigger_name TEXT,
-                table_name TEXT,
-                pk_uuid TEXT,
-                operation TEXT,
-                details TEXT
-            )
-        """.trimIndent())
-
         // Normalize table names to lowercase and create triggers
         config.tables.map { it.lowercase() }.forEach { table ->
             logger.d { "bootstrap: creating triggers for table=$table" }
@@ -202,9 +189,6 @@ internal class SyncBootstrapper(
 
               UPDATE _sync_row_meta SET deleted=0, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
               WHERE table_name='${tableLc}' AND pk_uuid=NEW.id;
-
-              INSERT INTO _debug_trigger_log(trigger_name, table_name, pk_uuid, operation, details)
-              VALUES ('trg_${tableLc}_au', '${tableLc}', NEW.id, 'UPDATE', 'set deleted=0');
 
               INSERT INTO _sync_pending(table_name, pk_uuid, op, base_version, payload, change_id)
               SELECT '${tableLc}', NEW.id, 'UPDATE',

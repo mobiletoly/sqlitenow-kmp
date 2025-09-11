@@ -605,19 +605,8 @@ class HeavyConcurrentSyncTest {
     private suspend fun dumpDeleteDebugInfo(db: SafeSQLiteConnection, deviceId: String) {
         println("\n=== DELETE DEBUG INFO for $deviceId ===")
 
-        // Check trigger log
-        db.prepare("SELECT * FROM _debug_trigger_log WHERE operation='DELETE' ORDER BY timestamp DESC LIMIT 10")
-            .use { st ->
-                println("Recent DELETE trigger logs:")
-                while (st.step()) {
-                    val timestamp = st.getText(1)
-                    val triggerName = st.getText(2)
-                    val tableName = st.getText(3)
-                    val pkUuid = st.getText(4)
-                    val details = st.getText(6)
-                    println("  $timestamp: $triggerName $tableName:${pkUuid.take(8)} - $details")
-                }
-            }
+        // Debug trigger logging removed for production readiness
+        println("Recent DELETE trigger logs: (disabled for production)")
 
         // Check pending DELETE operations
         db.prepare("SELECT table_name, pk_uuid, op, base_version FROM _sync_pending WHERE op='DELETE'")

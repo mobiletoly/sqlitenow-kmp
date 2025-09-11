@@ -287,29 +287,13 @@ class SimpleUpdateSyncDebuggingTest {
             }
             println("Client info: $clientInfo")
 
-            // Print recent trigger logs
-            println("🔥 Recent trigger executions:")
-            db.prepare("SELECT timestamp, trigger_name, table_name, pk_uuid, operation, details FROM _debug_trigger_log ORDER BY id DESC LIMIT 10").use { st ->
-                var count = 0
-                while (st.step()) {
-                    count++
-                    val timestamp = st.getText(0)
-                    val triggerName = st.getText(1)
-                    val tableName = st.getText(2)
-                    val pkUuid = st.getText(3)
-                    val operation = st.getText(4)
-                    val details = st.getText(5)
-                    println("  [$count] $timestamp: $triggerName ($tableName:${pkUuid.take(8)}) $operation - $details")
-                }
-                if (count == 0) {
-                    println("  (no trigger executions)")
-                }
-            }
+            // Debug trigger logging removed for production readiness
+            println("🔥 Trigger logging disabled (removed for production)")
             println()
         }
 
         suspend fun clearTriggerLogs() {
-            db.prepare("DELETE FROM _debug_trigger_log").use { it.step() }
+            // Debug trigger logging removed for production readiness
         }
 
         suspend fun uploadWithLogging(label: String): Boolean {

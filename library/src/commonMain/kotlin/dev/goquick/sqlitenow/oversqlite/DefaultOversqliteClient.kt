@@ -189,15 +189,7 @@ class DefaultOversqliteClient(
         db: SafeSQLiteConnection, table: String, pk: String, serverVersion: Long, deleted: Boolean
     ) {
         val del = if (deleted) 1 else 0
-        println("🔧 updateRowMeta: ${table}:${pk} -> server_v${serverVersion} (deleted=${deleted})")
-
-        // Check BEFORE
-        val before = db.prepare("SELECT server_version, deleted FROM _sync_row_meta WHERE table_name=? AND pk_uuid=?").use { st ->
-            st.bindText(1, table.lowercase())
-            st.bindText(2, pk)
-            if (st.step()) "server_v${st.getLong(0)} (deleted=${st.getLong(1) == 1L})" else "not found"
-        }
-        println("   📊 BEFORE updateRowMeta: $before")
+        logger.d { "updateRowMeta: ${table}:${pk} -> server_v${serverVersion} (deleted=${deleted})" }
 
         db.prepare(
             "INSERT OR REPLACE INTO _sync_row_meta(table_name, pk_uuid, server_version, deleted, updated_at) " +
@@ -210,13 +202,7 @@ class DefaultOversqliteClient(
             st.step()
         }
 
-        // Check AFTER
-        val after = db.prepare("SELECT server_version, deleted FROM _sync_row_meta WHERE table_name=? AND pk_uuid=?").use { st ->
-            st.bindText(1, table.lowercase())
-            st.bindText(2, pk)
-            if (st.step()) "server_v${st.getLong(0)} (deleted=${st.getLong(1) == 1L})" else "not found"
-        }
-        println("   📊 AFTER updateRowMeta: $after")
+        // Remove debug logging
     }
 
     private suspend fun upsertBusinessFromPayload(
@@ -225,8 +211,7 @@ class DefaultOversqliteClient(
         if (payload == null || payload !is JsonObject) return
         val tableLc = table.lowercase()
         val tableCols = getTableColumns(db, tableLc).toSet()
-        println("🔧 upsertBusinessFromPayload: ${tableLc}:${pk} payload=$payload")
-        logger.d { "upsertBusinessFromPayload: table=$tableLc pk=$pk payload=$payload" }
+        logger.d { "upsertBusinessFromPayload: table=$tableLc pk=$pk" }
 
         // Normalize payload keys to lowercase for case-insensitive matching
         val normalized: Map<String, JsonElement> =
@@ -252,8 +237,7 @@ class DefaultOversqliteClient(
         // UPDATE first
         val setClause = cols.joinToString(", ") { "$it=?" }
         val updateSql = "UPDATE $tableLc SET $setClause WHERE id=?"
-        println("   🔄 Attempting UPDATE: $updateSql")
-        logger.d { "upsertBusinessFromPayload: executing UPDATE: $updateSql with pk=$pk" }
+        logger.d { "upsertBusinessFromPayload: executing UPDATE with pk=$pk" }
         var updateRowsAffected = 0
         db.prepare(updateSql).use { st ->
             cols.forEachIndexed { idx, key ->
@@ -285,15 +269,13 @@ class DefaultOversqliteClient(
         // If UPDATE affected 0 rows, INSERT id + provided columns
         val changed =
             db.prepare("SELECT changes()").use { st -> if (st.step()) st.getLong(0) else 0L }
-        println("   📊 UPDATE changes()=$changed, will INSERT=${changed == 0L}")
         logger.d { "upsertBusinessFromPayload: changes()=$changed, will INSERT=${changed == 0L}" }
         if (changed == 0L) {
             val insertCols = listOf("id") + cols
             val placeholders = insertCols.indices.joinToString(", ") { "?" }
             val insertSql =
                 "INSERT INTO $tableLc (${insertCols.joinToString(", ")}) VALUES ($placeholders)"
-            println("   ➕ Executing INSERT: $insertSql")
-            logger.d { "upsertBusinessFromPayload: executing INSERT: $insertSql with pk=$pk" }
+            logger.d { "upsertBusinessFromPayload: executing INSERT with pk=$pk" }
             db.prepare(insertSql).use { st ->
                 st.bindText(1, pk)
 
@@ -331,34 +313,29 @@ class DefaultOversqliteClient(
             }
         val lb = maxOf(1000L, config.downloadLimit.toLong() * 2)
         val windowStart = (target - lb).coerceAtLeast(0L)
-        println("🔄 DRAIN LOOKBACK: target=$target, lookback=$lb, windowStart=$windowStart")
-        logger.d { "uploadOnce: post-lookback from=$windowStart to=$target" }
+        logger.d { "drainLookbackUntil: from=$windowStart to=$target" }
         db.prepare("UPDATE _sync_client_info SET last_server_seq_seen=?").use { st ->
             st.bindLong(1, windowStart)
             st.step()
         }
-        println("🔄 DRAIN LOOKBACK: Reset last_server_seq_seen from $target to $windowStart")
         var nextAfter = windowStart
         var passes = 0
         val maxPasses = 50
         while (true) {
             val prev = nextAfter
-            println("🔄 DRAIN LOOKBACK: Pass $passes - downloading from seq=$prev (isPostUploadLookback=true)")
-            logger.d { "uploadOnce: post-lookback downloading from seq=$prev" }
+            logger.d { "drainLookbackUntil: pass $passes downloading from seq=$prev" }
             val (applied, na) = downloadOnce(
                 limit = config.downloadLimit,
                 includeSelf = true,  // Include self during lookback to update local metadata
                 isPostUploadLookback = true
             ).getOrElse { 0 to prev }
-            println("🔄 DRAIN LOOKBACK: Pass $passes - downloaded $applied changes, nextAfter=$na")
-            logger.d { "uploadOnce: post-lookback downloaded $applied changes, nextAfter=$na" }
+            logger.d { "drainLookbackUntil: pass $passes downloaded $applied changes, nextAfter=$na" }
             nextAfter = na
             passes++
             val caughtUp = nextAfter >= target
             val stagnated = nextAfter == prev
             if (applied == 0 || caughtUp || stagnated || passes >= maxPasses) break
         }
-        println("🔄 DRAIN LOOKBACK: Completed after $passes passes, final nextAfter=$nextAfter")
         // Restore to target to avoid leaving cursor behind
         val current: Long = db.prepare("SELECT last_server_seq_seen FROM _sync_client_info LIMIT 1")
             .use { st -> if (st.step()) st.getLong(0) else 0L }

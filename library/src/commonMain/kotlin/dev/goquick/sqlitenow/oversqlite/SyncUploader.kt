@@ -52,14 +52,7 @@ internal class SyncUploader(
             return UploadResult(UploadSummary(0, 0, 0, 0, 0), emptySet())
         }
 
-        // Log DELETE operations specifically for debugging
-        val deleteChanges = pending.filter { it.op == "DELETE" }
-        if (deleteChanges.isNotEmpty()) {
-            logger.d { "🗑️ UPLOAD: Found ${deleteChanges.size} DELETE operations to upload:" }
-            deleteChanges.forEach { change ->
-                logger.d { "🗑️ UPLOAD: DELETE ${change.table}:${change.pk.take(8)} (base_version=${change.baseVersion})" }
-            }
-        }
+        // Remove excessive debug logging
 
         // 2. Assign change IDs where missing
         assignChangeIds(db, pending, nextChangeId)
@@ -148,28 +141,26 @@ internal class SyncUploader(
             setBody(req)
         }.body()
 
-        println("📤 SERVER UPLOAD RESPONSE: ${response.statuses.size} statuses, highestSeq=${response.highestServerSeq}")
-        response.statuses.forEachIndexed { index, status ->
+        logger.d { "Upload response: ${response.statuses.size} statuses" }
+
+        response.statuses.forEach { status ->
             val matchingChange = changes.find { it.sourceChangeId == status.sourceChangeId }
-            val changeInfo = matchingChange?.let { "${it.op} ${it.table}:${it.pk.take(8)} base_v${it.serverVersion}" } ?: "unknown"
+            val changeInfo = matchingChange?.let { "${it.op} ${it.table}:${it.pk.take(8)}" } ?: "unknown"
 
-            val statusEmoji = when (status.status.uppercase()) {
-                "APPLIED" -> "✅"
-                "CONFLICT" -> "⚠️"
-                "INVALID" -> "❌"
-                "MATERIALIZE_ERROR" -> "🔥"
-                else -> "❓"
-            }
-
-            println("  [$index] $statusEmoji ${status.status}: $changeInfo -> server_v${status.newServerVersion} (changeId=${status.sourceChangeId})")
-
-            if (status.status.uppercase() == "CONFLICT") {
-                println("       🔍 CONFLICT DETAILS:")
-                println("         Server row: ${status.serverRow}")
-                println("         Message: ${status.message}")
-                println("         New server version: ${status.newServerVersion}")
-                println("         Local operation: ${matchingChange?.op}")
-                println("         Local payload: ${matchingChange?.payload?.toString()?.take(100)}")
+            when (status.status.uppercase()) {
+                "APPLIED" -> {
+                    logger.d { "Applied: $changeInfo -> server_v${status.newServerVersion}" }
+                }
+                "CONFLICT" -> {
+                    logger.w { "Sync conflict: $changeInfo - ${status.message}" }
+                    logger.d { "Conflict details: serverRow=${status.serverRow}, localOp=${matchingChange?.op}" }
+                }
+                "INVALID", "MATERIALIZE_ERROR" -> {
+                    logger.e { "Upload failed: $changeInfo - ${status.status}: ${status.message}" }
+                }
+                else -> {
+                    logger.d { "Upload status: ${status.status} for $changeInfo" }
+                }
             }
         }
         logger.d { "uploadOnce: sent=${changes.size} statuses=${response.statuses.size} highestSeq=${response.highestServerSeq}" }
@@ -247,18 +238,11 @@ internal class SyncUploader(
         status: ChangeUploadStatus,
         updatedTables: MutableSet<String>
     ): Int {
-        // Log DELETE operations specifically for debugging
-        if (change.op == "DELETE") {
-            logger.d { "🗑️ UPLOAD APPLIED: DELETE ${change.table}:${change.pk.take(8)} accepted by server with version ${status.newServerVersion}" }
-        }
-
         // For INSERT/UPDATE operations, ensure local changes are preserved in business table
         if ((change.op == "INSERT" || change.op == "UPDATE") && change.payload != null) {
-            logger.d { "Applying local payload for ${change.op} ${change.table}:${change.pk} - ${change.payload}" }
+            logger.d { "Applying local payload for ${change.op} ${change.table}:${change.pk}" }
             upsertBusinessFromPayload(db, change.table, change.pk, change.payload)
             updatedTables += change.table
-        } else {
-            logger.d { "Skipping payload application for ${change.op} ${change.table}:${change.pk} - payload=${change.payload}" }
         }
 
         db.prepare("DELETE FROM _sync_pending WHERE table_name=? AND pk_uuid=?").use { st ->
@@ -279,14 +263,6 @@ internal class SyncUploader(
         status: ChangeUploadStatus,
         updatedTables: MutableSet<String>
     ): Int {
-        // DEBUG: Log detailed conflict information
-        println("🔥 CONFLICT DETECTED for ${change.table}:${change.pk}")
-        println("   Local operation: ${change.op} with base_version=${change.serverVersion}")
-        println("   Local payload: ${change.payload}")
-        println("   Server response status: ${status.status}")
-        println("   Server row: ${status.serverRow}")
-        println("   Server message: ${status.message}")
-
         val decision = resolveConflictWithFallbacks(
             table = change.table,
             pk = change.pk,
@@ -294,8 +270,6 @@ internal class SyncUploader(
             serverRow = status.serverRow,
             localPayload = change.payload
         )
-
-        println("   Conflict resolution decision: $decision")
 
         when (decision) {
             is MergeResult.AcceptServer -> {
@@ -323,8 +297,6 @@ internal class SyncUploader(
     ): MergeResult {
         // CRITICAL FIX: Handle DELETE operations specially to prevent record resurrection
         if (localOp == "DELETE") {
-            logger.d { "DELETE conflict for $table:$pk - local DELETE wins to prevent resurrection" }
-            println("   🔧 DELETE-CONFLICT-FIX: Local DELETE wins -> KeepLocal(null)")
             // For DELETE operations, we create a special KeepLocal result with null payload
             // This will be handled by processKeepLocalDecision to maintain the DELETE
             return MergeResult.KeepLocal(localPayload ?: kotlinx.serialization.json.JsonNull)
@@ -333,13 +305,11 @@ internal class SyncUploader(
         // Handle infrastructure edge cases automatically for non-DELETE operations
         if (localPayload == null) {
             logger.w { "Local payload is null for $table:$pk, accepting server version" }
-            println("   🔧 AUTO-FALLBACK: Local payload null -> AcceptServer")
             return MergeResult.AcceptServer
         }
 
         if (serverRow == null) {
             logger.w { "Server row is null for $table:$pk, keeping local version" }
-            println("   🔧 AUTO-FALLBACK: Server row null -> KeepLocal")
             return MergeResult.KeepLocal(localPayload)
         }
 
@@ -389,33 +359,20 @@ internal class SyncUploader(
             ?: Json.parseToJsonElement(status.serverRow.toString()) as JsonObject
         val sv = serverObj["server_version"]!!.jsonPrimitive.content.toLong()
 
-        println("🔧 PROCESSING KeepLocal decision for ${change.table}:${change.pk}")
-        println("   Local operation: ${change.op}")
-        println("   Server version: $sv")
-        println("   Merged payload: ${decision.mergedPayload}")
-
-        // Check _sync_row_meta BEFORE operations
-        val beforeMeta = db.prepare("SELECT server_version, deleted FROM _sync_row_meta WHERE table_name=? AND pk_uuid=?").use { st ->
-            st.bindText(1, change.table.lowercase())
-            st.bindText(2, change.pk)
-            if (st.step()) "server_v${st.getLong(0)} (deleted=${st.getLong(1) == 1L})" else "not found"
-        }
-        println("   📊 _sync_row_meta BEFORE: $beforeMeta")
+        logger.d { "Processing KeepLocal decision for ${change.table}:${change.pk}, op=${change.op}, server_v=$sv" }
 
         // CRITICAL FIX: Handle DELETE operations specially
         if (change.op == "DELETE") {
-            println("   🗑️ DELETE-CONFLICT-FIX: Maintaining local DELETE, not applying server payload")
+            logger.d { "DELETE conflict: maintaining local DELETE, updating server version to $sv" }
 
             // Ensure the record is deleted from business table
             db.prepare("DELETE FROM ${change.table.lowercase()} WHERE id=?").use { del ->
                 del.bindText(1, change.pk)
                 del.step()
             }
-            println("   🗑️ Ensured record is deleted from business table")
 
             // Update metadata to track server version but keep deleted=true
             updateRowMeta(db, change.table, change.pk, sv, true)
-            println("   ✅ Updated _sync_row_meta: server_v$sv (deleted=true)")
 
             // CRITICAL FIX: Re-enqueue DELETE with updated server version to propagate to server
             // This ensures other devices will receive the DELETE
@@ -428,16 +385,14 @@ internal class SyncUploader(
                 st.bindText(3, change.pk)
                 st.step()
             }
-            println("   ✅ Re-enqueued DELETE with base_version=$sv to propagate to server")
 
         } else {
             // Handle INSERT/UPDATE operations normally
             upsertBusinessFromPayload(db, change.table, change.pk, decision.mergedPayload)
-            println("   ✅ Applied merged payload to business table")
+            logger.d { "Applied merged payload for ${change.table}:${change.pk}" }
 
             // Update _sync_row_meta to reflect current server version
             updateRowMeta(db, change.table, change.pk, sv, false)
-            println("   ✅ Updated _sync_row_meta: server_v$sv (deleted=false)")
 
             // Update the pending change to retry with new base version
             db.prepare(
@@ -450,19 +405,9 @@ internal class SyncUploader(
                 st.bindText(4, change.pk)
                 st.step()
             }
-            println("   ✅ Updated _sync_pending: base_version=$sv")
         }
 
         updatedTables += change.table
-
-        // Check final _sync_row_meta state
-        val finalMeta = db.prepare("SELECT server_version, deleted FROM _sync_row_meta WHERE table_name=? AND pk_uuid=?").use { st ->
-            st.bindText(1, change.table.lowercase())
-            st.bindText(2, change.pk)
-            if (st.step()) "server_v${st.getLong(0)} (deleted=${st.getLong(1) == 1L})" else "not found"
-        }
-        println("   📊 _sync_row_meta FINAL: $finalMeta")
-        println("🔧 KeepLocal processing COMPLETE")
     }
 
     private suspend fun processInvalidStatus(

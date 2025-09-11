@@ -284,13 +284,13 @@ fun App() {
 
     // Periodic nudge (e.g., every 60s) only when signed in
     LaunchedEffect(signedIn, bootstrapDone) {
-//        if (signedIn && bootstrapDone) {
-//            appLog.i { "Scheduling periodic sync every 3s" }
-//            while (signedIn) {
-//                delay(3_000)
-//                syncTrigger.tryEmit(Unit)
-//            }
-//        }
+        if (signedIn && bootstrapDone) {
+            appLog.i { "Scheduling periodic sync every 3s" }
+            while (signedIn) {
+                delay(3_000)
+                syncTrigger.tryEmit(Unit)
+            }
+        }
     }
 
     MaterialTheme {

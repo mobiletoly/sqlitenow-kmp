@@ -24,7 +24,7 @@ internal class SqliteNowLogger(scope: String) : Logger(
             CustomLogFormatter(scope, platform() != PlatformType.ANDROID)
         )
     ).apply {
-        setMinSeverity(Severity.Debug)
+        setMinSeverity(Severity.Info)
     },
     scope
 )
