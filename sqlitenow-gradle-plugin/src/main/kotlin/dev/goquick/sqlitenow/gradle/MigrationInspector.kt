@@ -10,8 +10,8 @@ import java.sql.Connection
  * This class uses composition with SQLBatchInspector to collect SQL statements and additionally
  * parses version numbers from SQL filenames to determine the latest migration version.
  *
- * Expected filename format: NNNN.sql (e.g., 0001.sql, 0005.sql, 0010.sql)
- * where NNNN is a zero-padded version number.
+ * Expected filename format: NNNN[_description].sql (e.g., 0001.sql, 0005_create_users.sql, 0010_add_indexes.sql)
+ * where NNNN is a 4-digit zero-padded version number, optionally followed by underscore and description.
  */
 internal class MigrationInspector(
     sqlDirectory: File
@@ -38,7 +38,7 @@ internal class MigrationInspector(
 
         for (file in sqlFiles.sortedBy { it.name }) {
             val version = parseVersionFromFilename(file.name)
-                ?: throw IllegalArgumentException("Migration files must have numeric names (e.g., 0001.sql). Invalid file: ${file.name}")
+                ?: throw IllegalArgumentException("Migration files must have format NNNN[_description].sql (e.g., 0001.sql, 0001_create_users.sql). Invalid file: ${file.name}")
 
             // Check for duplicate version numbers
             if (statementsMap.containsKey(version)) {
@@ -62,20 +62,27 @@ internal class MigrationInspector(
 
     /**
      * Parses a version number from a SQL filename.
-     * Expected format: NNNN.sql where NNNN is a numeric version.
+     * Expected format: NNNN[_description].sql where NNNN is a 4-digit numeric version.
      *
-     * @param filename The filename to parse (e.g., "0005.sql")
+     * @param filename The filename to parse (e.g., "0005.sql", "0001_create_users.sql")
      * @return The parsed version number, or null if the filename doesn't match the expected format
      */
     private fun parseVersionFromFilename(filename: String): Int? {
         // Remove the .sql extension
         val nameWithoutExtension = filename.substringBeforeLast(".sql")
 
-        // Check if the remaining part is a valid integer
+        // Extract the first part (version number) before any underscore
+        val versionPart = nameWithoutExtension.substringBefore("_")
+
+        // Check if the version part is exactly 4 digits
         return try {
-            nameWithoutExtension.toInt()
+            if (versionPart.length == 4 && versionPart.all { it.isDigit() }) {
+                versionPart.toInt()
+            } else {
+                throw NumberFormatException()
+            }
         } catch (e: NumberFormatException) {
-            println("File name does not match the expected format (ignored): $filename")
+            println("File name does not match the expected format NNNN[_description].sql (ignored): $filename")
             null
         }
     }

@@ -8,7 +8,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.fail
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import java.io.File
 import kotlinx.coroutines.runBlocking
 
@@ -58,7 +57,6 @@ class SqliteNowDatabaseTest {
         }
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun testUserVersionOperations() = runTest {
         // Open the database
@@ -74,7 +72,6 @@ class SqliteNowDatabaseTest {
         assertEquals(5, database.getUserVersion())
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun testMigrationReceivesCorrectVersion() = runTest {
         // Open the database
@@ -95,7 +92,6 @@ class SqliteNowDatabaseTest {
         assertEquals(3, testMigrations.lastAppliedVersion)
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun testTransactionCommit() = runTest {
         // Open the database
@@ -134,7 +130,6 @@ class SqliteNowDatabaseTest {
         }
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun testTransactionRollback() = runTest {
         // Open the database
@@ -178,7 +173,6 @@ class SqliteNowDatabaseTest {
         }
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun testDatabaseFileCleanupOnException() = runTest {
         // Open the database

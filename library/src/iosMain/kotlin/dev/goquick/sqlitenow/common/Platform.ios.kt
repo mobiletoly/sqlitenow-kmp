@@ -1,4 +1,4 @@
-package dev.goquick.sqlitenow.core
+package dev.goquick.sqlitenow.common
 
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.Foundation.NSDocumentDirectory
@@ -18,6 +18,10 @@ actual fun resolveDatabasePath(dbName: String): String {
     return url!!.path!!
 }
 
-actual fun validateFileExists(path: String): Boolean {
+internal actual fun validateFileExists(path: String): Boolean {
     return NSFileManager.defaultManager.fileExistsAtPath(path)
+}
+
+internal actual fun platform(): PlatformType {
+    return PlatformType.IOS
 }

@@ -1,6 +1,8 @@
 package dev.goquick.sqlitenow.core
 
 import androidx.sqlite.SQLiteConnection
+import androidx.sqlite.SQLiteStatement
+import androidx.sqlite.execSQL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
@@ -8,7 +10,7 @@ import kotlinx.coroutines.withContext
 /**
  * A thread-safe wrapper around SQLiteConnection that ensures that only one coroutine
  * can access the connection at a time.
- * 
+ *
  * This is necessary because SQLite connections are not thread-safe in
  * bundled androidx.sqlite driver and can cause issues when used concurrently
  * from multiple coroutines.
@@ -18,10 +20,14 @@ class SafeSQLiteConnection(
 ) {
     val dispatcher = Dispatchers.IO.limitedParallelism(1)
 
+    init {
+        println("SafeSQLiteConnection created")
+    }
+
     suspend fun <T> withContextAndTrace(block: suspend () -> T): T {
         val creationTrace = Throwable().stackTraceToString().replace("\n\n", "\n")
         return try {
-            withContext<T>(dispatcher) {
+            withContext(dispatcher) {
                 block()
             }
         } catch (e: Exception) {
@@ -34,6 +40,29 @@ class SafeSQLiteConnection(
             }
             // Rethrow so your test harness prints full detail
             throw SqliteNowException(combinedMessage, e)
+        }
+    }
+    suspend fun execSQL(sql: String) {
+        withContext(dispatcher) {
+            ref.execSQL(sql)
+        }
+    }
+
+    suspend fun prepare(sql: String): SQLiteStatement {
+        return withContext(dispatcher) {
+            ref.prepare(sql)
+        }
+    }
+
+    suspend fun close() {
+        withContext(dispatcher) {
+            ref.close()
+        }
+    }
+
+    suspend fun inTransaction(): Boolean {
+        return withContext(dispatcher) {
+            ref.inTransaction()
         }
     }
 }

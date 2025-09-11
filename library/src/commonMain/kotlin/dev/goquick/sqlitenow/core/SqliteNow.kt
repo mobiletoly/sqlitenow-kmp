@@ -4,6 +4,7 @@ import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.sqlite.driver.bundled.SQLITE_OPEN_CREATE
 import androidx.sqlite.driver.bundled.SQLITE_OPEN_READWRITE
 import androidx.sqlite.execSQL
+import dev.goquick.sqlitenow.common.validateFileExists
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -62,7 +63,7 @@ open class SqliteNowDatabase {
             flags = SQLITE_OPEN_CREATE or SQLITE_OPEN_READWRITE
         )
         conn = SafeSQLiteConnection(realConn)
-        conn.ref.execSQL("""PRAGMA foreign_keys = ON;""")
+        conn.execSQL("""PRAGMA foreign_keys = ON;""")
 
         transaction {
             val currentVersion = if (!dbFileExists) {
@@ -70,6 +71,11 @@ open class SqliteNowDatabase {
                 -1
             } else {
                 getUserVersion()
+            }
+
+            // Create sync system tables if needed (before applying migrations)
+            if (migration.hasSyncEnabledTables()) {
+                createSyncSystemTables()
             }
 
             // Apply migrations starting from the current version
@@ -145,6 +151,21 @@ open class SqliteNowDatabase {
     }
 
     /**
+     * Creates sync system tables required for synchronization functionality.
+     * These tables are only created when there are tables with changeLogs=true annotation.
+     */
+    private fun createSyncSystemTables() {
+        // Create change log table
+        conn.ref.execSQL(SyncSystemTables.CREATE_CHANGE_LOG_TABLE_SQL.trimIndent())
+
+        // Create sync control table (with single row constraint)
+        conn.ref.execSQL(SyncSystemTables.CREATE_SYNC_CONTROL_TABLE_SQL.trimIndent())
+
+        // Initialize sync control table (only one record allowed)
+        conn.ref.execSQL(SyncSystemTables.INITIALIZE_SYNC_CONTROL_SQL.trimIndent())
+    }
+
+    /**
      * Closes the database connection.
      */
     suspend fun close() {
@@ -162,7 +183,7 @@ open class SqliteNowDatabase {
      * @param affectedTables Set of table names that were modified
      */
     protected fun notifyTablesChanged(affectedTables: Set<String>) {
-        affectedTables.forEach { tableName ->
+        affectedTables.map { it.lowercase() }.forEach { tableName ->
             tableChangeFlows[tableName]?.tryEmit(Unit)
         }
     }
@@ -182,7 +203,7 @@ open class SqliteNowDatabase {
         // Get or create SharedFlows for each table
         val flows = tableChangesFlowMutex.withLock {
             affectedTables.map { tableName ->
-                tableChangeFlows.getOrPut(tableName) {
+                tableChangeFlows.getOrPut(tableName.lowercase()) {
                     MutableSharedFlow(replay = 0, extraBufferCapacity = 1)
                 }.asSharedFlow()
             }
@@ -221,4 +242,52 @@ interface DatabaseMigrations {
      * @return The new version of the database
      */
     suspend fun applyMigration(conn: SafeSQLiteConnection, currentVersion: Int): Int
+
+    /**
+     * Checks if synchronization features are needed (i.e., if any tables have changeLogs=true).
+     * This is used to determine whether to create sync system tables.
+     *
+     * @return true if sync system tables should be created, false otherwise
+     */
+    fun hasSyncEnabledTables(): Boolean = false
+}
+
+/**
+ * SQL constants for sync system tables.
+ * These are used by the core library to create sync tables when needed.
+ */
+object SyncSystemTables {
+    /**
+     * SQL to create the change log table.
+     */
+    const val CREATE_CHANGE_LOG_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS _sqlitenow_change_log (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            table_name    TEXT    NOT NULL,
+            operation     TEXT    NOT NULL CHECK(operation IN('INSERT','UPDATE','DELETE')),
+            pk            BLOB    NOT NULL,
+            payload       TEXT,
+            schema_version INTEGER NOT NULL,
+            ts            INTEGER NOT NULL DEFAULT(strftime('%s','now'))
+        )
+    """
+
+    /**
+     * SQL to create the sync control table.
+     */
+    const val CREATE_SYNC_CONTROL_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS _sqlitenow_sync_control (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            paused INTEGER NOT NULL DEFAULT 0,
+            last_sync_time INTEGER,
+            client_last_id INTEGER
+        )
+    """
+
+    /**
+     * SQL to initialize the sync control table.
+     */
+    const val INITIALIZE_SYNC_CONTROL_SQL = """
+        INSERT OR IGNORE INTO _sqlitenow_sync_control (id, paused) VALUES (1, 0)
+    """
 }

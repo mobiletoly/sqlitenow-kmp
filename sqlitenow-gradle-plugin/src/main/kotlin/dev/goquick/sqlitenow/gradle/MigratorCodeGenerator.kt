@@ -10,6 +10,8 @@ import com.squareup.kotlinpoet.TypeSpec
 import dev.goquick.sqlitenow.gradle.sqlite.SqlSingleStatement
 import dev.goquick.sqlitenow.gradle.sqlite.translateSqliteStatementToKotlin
 import java.io.File
+import net.sf.jsqlparser.parser.CCJSqlParserUtil
+import net.sf.jsqlparser.statement.create.table.CreateTable
 import org.gradle.api.logging.Logger
 import org.gradle.api.logging.Logging
 
@@ -28,6 +30,8 @@ internal class MigratorCodeGenerator(
 ) {
     // Logger for this class
     private val logger: Logger = Logging.getLogger(MigratorCodeGenerator::class.java)
+
+    // Sync triggers deprecated: generation removed in favor of runtime oversqlite package
 
     /**
      * Generates the applyMigration function that implements the DatabaseMigrations interface.
@@ -54,8 +58,16 @@ internal class MigratorCodeGenerator(
         }
 
         // Handle initial setup when currentVersion is -1
+        codeBlockBuilder.add("    if (currentVersion != ${migrationInspector.latestVersion}) {\n")
+        codeBlockBuilder.add("        conn.ref.execSQL(\"PRAGMA user_version = ${migrationInspector.latestVersion};\")\n")
+        codeBlockBuilder.add("    }\n")
+        codeBlockBuilder.add("\n")
         codeBlockBuilder.add("    if (currentVersion == -1) {\n")
         codeBlockBuilder.add("        executeAllSql(conn)\n")
+        // Only add executeInitSql call if there are init statements
+        if (sqlBatchInspector.sqlStatements.isNotEmpty()) {
+            codeBlockBuilder.add("        executeInitSql(conn)\n")
+        }
         if (debug) {
             codeBlockBuilder.add("        return@withContextAndTrace ${migrationInspector.latestVersion}\n")
         } else {
@@ -95,6 +107,8 @@ internal class MigratorCodeGenerator(
         // Add each SQL statement
         addSqlStatementsToCodeBlock(codeBlockBuilder, statements)
 
+        // Sync triggers deprecated: no trigger generation (handled by client library if needed)
+
         // Add the code block to the function
         functionBuilder.addCode(codeBlockBuilder.build())
 
@@ -128,18 +142,62 @@ internal class MigratorCodeGenerator(
 
         // Add the function body
         val codeBlockBuilder = CodeBlock.builder()
-            .addStatement("// Execute all SQL statements from the schema and batch inspector")
+            .addStatement("// Execute schema statements first (CREATE TABLE, CREATE VIEW)")
 
-        // Combine statements from both schema inspector and batch inspector
-        val allStatements = schemaInspector.sqlStatements + sqlBatchInspector.sqlStatements
+        // Execute schema statements first
+        addSqlStatementsToCodeBlock(codeBlockBuilder, schemaInspector.sqlStatements)
 
-        // Add each SQL statement
-        addSqlStatementsToCodeBlock(codeBlockBuilder, allStatements)
+        // Sync triggers deprecated: no trigger generation (handled by client library if needed)
 
         // Add the code block to the function
         functionBuilder.addCode(codeBlockBuilder.build())
 
         return functionBuilder.build()
+    }
+
+    /** Generates a function that executes init SQL statements (only for initial database creation). */
+    private fun generateExecuteInitSqlFunction(): FunSpec? {
+        // Only generate this function if there are init statements
+        if (sqlBatchInspector.sqlStatements.isEmpty()) {
+            return null
+        }
+
+        // Create the function builder
+        val functionBuilder = FunSpec.builder("executeInitSql")
+            .addModifiers(KModifier.PRIVATE)
+            .addParameter("conn", ClassName("dev.goquick.sqlitenow.core", "SafeSQLiteConnection"))
+
+        // Add the function body
+        val codeBlockBuilder = CodeBlock.builder()
+            .addStatement("// Execute init statements (INSERT, UPDATE, etc.) - only for initial database creation")
+
+        // Add init statements
+        addSqlStatementsToCodeBlock(codeBlockBuilder, sqlBatchInspector.sqlStatements)
+
+        // Add the code block to the function
+        functionBuilder.addCode(codeBlockBuilder.build())
+
+        return functionBuilder.build()
+    }
+
+    // Sync triggers deprecated: no-op (kept for compatibility)
+    private fun addSyncTriggersToCodeBlock(codeBlockBuilder: CodeBlock.Builder) { /* no-op */ }
+
+    /** Checks if any tables have enableSync=true annotation */
+    fun hasSyncEnabledTables(): Boolean = false
+
+    /** Adds sync triggers for CREATE TABLE statements with enableSync=true in migration files */
+    private fun addSyncTriggersForMigrationToCodeBlock(codeBlockBuilder: CodeBlock.Builder, statements: List<SqlSingleStatement>) { /* no-op */ }
+
+    /** Generates the hasSyncEnabledTables function that checks if sync features are needed. */
+    private fun generateHasSyncEnabledTablesFunction(): FunSpec {
+        val hasSyncTables = hasSyncEnabledTables()
+
+        return FunSpec.builder("hasSyncEnabledTables")
+            .addModifiers(KModifier.OVERRIDE)
+            .returns(Boolean::class)
+            .addStatement("return %L", hasSyncTables)
+            .build()
     }
 
     fun generateCode(className: String = "VersionBasedDatabaseMigrations"): FileSpec {
@@ -161,6 +219,10 @@ internal class MigratorCodeGenerator(
         val applyMigrationFunction = generateApplyMigrationFunction()
         classBuilder.addFunction(applyMigrationFunction)
 
+        // Add the hasSyncEnabledTables function
+        val hasSyncEnabledTablesFunction = generateHasSyncEnabledTablesFunction()
+        classBuilder.addFunction(hasSyncEnabledTablesFunction)
+
         // Add individual migration functions for each version
         migrationInspector.sqlStatements.forEach { (version, statements) ->
             val versionFunction = generateMigrateToVersionFunction(version, statements)
@@ -170,6 +232,12 @@ internal class MigratorCodeGenerator(
         // Add the function to execute all SQL statements
         val executeSqlFunction = generateExecuteSqlFunction()
         classBuilder.addFunction(executeSqlFunction)
+
+        // Add the function to execute init SQL statements (only if there are init statements)
+        val executeInitSqlFunction = generateExecuteInitSqlFunction()
+        if (executeInitSqlFunction != null) {
+            classBuilder.addFunction(executeInitSqlFunction)
+        }
 
         // Build the file spec
         val fileSpecBuilder = FileSpec.builder(packageName, className)

@@ -156,7 +156,7 @@ class MigratorCodeGeneratorTest {
         assertTrue(fileContent.contains("CREATE INDEX idx_users_email"), "Should contain batch index statement")
         assertTrue(fileContent.contains("CREATE TABLE migration_test"), "Should contain migration statement")
         assertTrue(fileContent.contains("migrateToVersion1"), "Should contain migration function for version 1")
-        assertTrue(fileContent.contains("schema and batch inspector"), "Should mention both inspectors in comments")
+        assertTrue(fileContent.contains("Execute schema statements first") && fileContent.contains("Execute init statements"), "Should mention both schema and init statements in comments")
 
         // Verify incremental migration logic in applyMigration function
         assertTrue(fileContent.contains("if (currentVersion == -1)"), "Should contain initial setup logic")

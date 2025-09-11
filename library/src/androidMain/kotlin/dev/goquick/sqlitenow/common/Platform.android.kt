@@ -1,4 +1,4 @@
-package dev.goquick.sqlitenow.core
+package dev.goquick.sqlitenow.common
 
 import android.content.Context
 import java.io.File
@@ -18,6 +18,10 @@ actual fun resolveDatabasePath(dbName: String): String {
     return path
 }
 
-actual fun validateFileExists(path: String): Boolean {
+internal actual fun validateFileExists(path: String): Boolean {
     return File(path).exists()
+}
+
+internal actual fun platform(): PlatformType {
+    return PlatformType.ANDROID
 }

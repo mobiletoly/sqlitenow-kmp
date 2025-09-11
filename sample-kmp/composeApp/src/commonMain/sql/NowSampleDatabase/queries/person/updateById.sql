@@ -1,4 +1,4 @@
-UPDATE Person
+UPDATE person
 SET first_name = :firstName,
     last_name  = :lastName,
     email      = :email,

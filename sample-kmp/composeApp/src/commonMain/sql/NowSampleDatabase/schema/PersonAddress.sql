@@ -1,4 +1,4 @@
-CREATE TABLE PersonAddress
+CREATE TABLE person_address
 (
     id           INTEGER PRIMARY KEY NOT NULL,
     person_id    INTEGER             NOT NULL,
@@ -20,9 +20,9 @@ CREATE TABLE PersonAddress
     -- @@{ field=created_at, propertyType=kotlinx.datetime.LocalDateTime }
     created_at   TEXT                NOT NULL DEFAULT current_timestamp,
 
-    FOREIGN KEY (person_id) REFERENCES Person (id) ON DELETE CASCADE
+    FOREIGN KEY (person_id) REFERENCES person (id) ON DELETE CASCADE
 );
 
 -- Create indexes for better performance
-CREATE INDEX idx_address_person_id ON PersonAddress (person_id);
-CREATE INDEX idx_address_primary ON PersonAddress (person_id, is_primary);
+CREATE INDEX idx_person_address_person_id ON person_address (person_id);
+CREATE INDEX idx_person_address_primary ON person_address (person_id, is_primary);

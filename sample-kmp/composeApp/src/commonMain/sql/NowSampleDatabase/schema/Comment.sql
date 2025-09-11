@@ -1,4 +1,4 @@
-CREATE TABLE Comment
+CREATE TABLE comment
 (
     id         INTEGER PRIMARY KEY NOT NULL,
     person_id  INTEGER NOT NULL,
@@ -10,5 +10,5 @@ CREATE TABLE Comment
     -- @@{ field=tags, propertyType=List<String> }
     tags       TEXT,
 
-    FOREIGN KEY (person_id) REFERENCES Person (id) ON DELETE CASCADE
+    FOREIGN KEY (person_id) REFERENCES person (id) ON DELETE CASCADE
 );

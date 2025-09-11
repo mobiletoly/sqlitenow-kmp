@@ -1,5 +1,6 @@
 package dev.goquick.sqlitenow.core
 
+import dev.goquick.sqlitenow.common.resolveDatabasePath
 import kotlin.test.Test
 import kotlin.test.assertTrue
 import java.io.File

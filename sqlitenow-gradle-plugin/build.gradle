@@ -1,8 +1,8 @@
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 plugins {
-    id("org.jetbrains.kotlin.jvm") version "2.2.0"
-    id("com.vanniktech.maven.publish") version "0.33.0"
+    id("org.jetbrains.kotlin.jvm") version "2.2.20"
+    id("com.vanniktech.maven.publish") version "0.34.0"
     id("java-gradle-plugin")
 }
 
@@ -43,17 +43,16 @@ dependencies {
     implementation("com.typesafe:config:1.4.3")
     implementation("org.slf4j:slf4j-simple:2.0.10")
     // SQLite JDBC for database access
-    implementation("org.xerial:sqlite-jdbc:3.50.2.0")
+    implementation("org.xerial:sqlite-jdbc:3.50.3.0")
     implementation("com.github.jsqlparser:jsqlparser:4.9")
 
     // -- Testing dependencies --
-    testImplementation("org.junit.jupiter:junit-jupiter-api:5.13.2")
-    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.13.2")
-    testImplementation("org.jetbrains.kotlin:kotlin-test:2.2.0")
-    testImplementation("org.mockito:mockito-core:5.18.0")
-    testImplementation("org.mockito:mockito-junit-jupiter:5.18.0")
+    testImplementation("org.junit.jupiter:junit-jupiter-api:5.13.4")
+    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.13.4")
+    testImplementation("org.jetbrains.kotlin:kotlin-test:2.2.20")
+    testImplementation("org.mockito:mockito-core:5.19.0")
+    testImplementation("org.mockito:mockito-junit-jupiter:5.19.0")
 }
-
 
 testing {
 }

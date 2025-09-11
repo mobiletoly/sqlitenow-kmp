@@ -214,6 +214,65 @@ class DatabaseCodeGenerator(
             classBuilder.addType(routerClass)
         }
 
+        // Oversqlite integration helpers: derive sync tables from enableSync annotations
+        val syncTables = createTableStatements
+            .filter { it.annotations.enableSync }
+            .map { it.name }
+            .distinct()
+        if (syncTables.isNotEmpty()) {
+            val listInitializer = syncTables.joinToString(", ") { "\"$it\"" }
+            val companion = TypeSpec.companionObjectBuilder()
+                .addProperty(
+                    PropertySpec.builder(
+                        "syncTables",
+                        ClassName("kotlin.collections", "List").parameterizedBy(ClassName("kotlin", "String"))
+                    ).initializer("listOf($listInitializer)")
+                        .addKdoc("Tables annotated with enableSync in schema; used to configure oversqlite.")
+                        .build()
+                )
+                .build()
+            classBuilder.addType(companion)
+
+            // fun buildOversqliteConfig(schema: String, uploadLimit: Int = 200, downloadLimit: Int = 1000): OversqliteConfig
+            classBuilder.addFunction(
+                FunSpec.builder("buildOversqliteConfig")
+                    .addKdoc("Builds oversqlite config using enableSync tables.")
+                    .addParameter("schema", String::class)
+                    .addParameter(ParameterSpec.builder("uploadLimit", Int::class).defaultValue("200").build())
+                    .addParameter(ParameterSpec.builder("downloadLimit", Int::class).defaultValue("1000").build())
+                    .returns(ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteConfig"))
+                    .addStatement(
+                        "return %T(schema, syncTables, uploadLimit, downloadLimit)",
+                        ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteConfig")
+                    )
+                    .build()
+            )
+
+            // fun newOversqliteClientWithToken(schema: String, baseUrl: String, token: String, resolver: Resolver = ServerWinsResolver,...)
+            classBuilder.addFunction(
+                FunSpec.builder("newOversqliteClientWithToken")
+                    .addKdoc("Creates a DefaultOversqliteClient bound to this DB using a fixed token.")
+                    .addParameter("schema", String::class)
+                    .addParameter("baseUrl", String::class)
+                    .addParameter("token", String::class)
+                    .addParameter(
+                        ParameterSpec.builder(
+                            "resolver",
+                            ClassName("dev.goquick.sqlitenow.oversqlite", "Resolver")
+                        ).defaultValue("%T", ClassName("dev.goquick.sqlitenow.oversqlite", "ServerWinsResolver")).build()
+                    )
+                    .addParameter(ParameterSpec.builder("uploadLimit", Int::class).defaultValue("200").build())
+                    .addParameter(ParameterSpec.builder("downloadLimit", Int::class).defaultValue("1000").build())
+                    .returns(ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteClient"))
+                    .addStatement("val cfg = buildOversqliteConfig(schema, uploadLimit, downloadLimit)")
+                    .addStatement(
+                        "return %T(db = this.connection(), baseUrl = baseUrl, config = cfg, tokenProvider = { token }, resolver = resolver, tablesUpdateListener = { notifyTablesChanged(it) })",
+                        ClassName("dev.goquick.sqlitenow.oversqlite", "DefaultOversqliteClient")
+                    )
+                    .build()
+            )
+        }
+
         return classBuilder.build()
     }
 

@@ -1,8 +1,6 @@
-package dev.goquick.sqlitenow.core
+package dev.goquick.sqlitenow.common
 
 import java.io.File
-import java.nio.file.Files
-import java.nio.file.Paths
 
 /**
  * Returns the path where the database should be stored on JVM platforms.
@@ -24,6 +22,10 @@ actual fun resolveDatabasePath(dbName: String): String {
     return File(appDir, dbName).absolutePath
 }
 
-actual fun validateFileExists(path: String): Boolean {
+internal actual fun validateFileExists(path: String): Boolean {
     return File(path).exists()
+}
+
+internal actual fun platform(): PlatformType {
+    return PlatformType.JVM
 }

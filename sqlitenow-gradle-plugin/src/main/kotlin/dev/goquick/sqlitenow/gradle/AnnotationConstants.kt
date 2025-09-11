@@ -20,6 +20,7 @@ object AnnotationConstants {
     const val SHARED_RESULT = "sharedResult"
     const val IMPLEMENTS = "implements"
     const val EXCLUDE_OVERRIDE_FIELDS = "excludeOverrideFields"
+    const val ENABLE_SYNC = "enableSync"
 
     // Common field- and statement-level annotations
     const val COLLECTION_KEY = "collectionKey"

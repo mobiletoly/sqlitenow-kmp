@@ -1,4 +1,4 @@
-CREATE TABLE Person
+CREATE TABLE person
 (
     id         INTEGER PRIMARY KEY NOT NULL,
     -- @@{  field=first_name, propertyName=myFirstName }
@@ -17,5 +17,5 @@ CREATE TABLE Person
     notes      BLOB
 );
 
-CREATE INDEX idx_person_name ON Person (last_name, first_name);
-CREATE INDEX idx_person_email ON Person (email);
+CREATE INDEX idx_person_name ON person (last_name, first_name);
+CREATE INDEX idx_person_email ON person (email);

@@ -142,15 +142,15 @@ class MigrationInspectorTest {
     @Test
     @DisplayName("Test MigrationInspector with version numbers without zero-padding")
     fun testInspectWithNonPaddedVersions() {
-        // Create files with version numbers without zero-padding
+        // Create files with version numbers without zero-padding (should fail with new 4-digit requirement)
         File(migrationDir, "1.sql").writeText("CREATE TABLE users (id INTEGER);")
         File(migrationDir, "5.sql").writeText("CREATE TABLE posts (id INTEGER);")
         File(migrationDir, "15.sql").writeText("CREATE TABLE comments (id INTEGER);")
 
-        val inspector = MigrationInspector(migrationDir)
-
-        assertEquals(3, inspector.sqlStatements.size, "Should have 3 versions")
-        assertEquals(15, inspector.latestVersion, "Latest version should be 15")
+        // Should throw exception due to non-4-digit version numbers
+        assertFailsWith<IllegalArgumentException> {
+            MigrationInspector(migrationDir)
+        }
     }
 
     @Test
@@ -164,9 +164,9 @@ class MigrationInspectorTest {
     }
 
     @Test
-    @DisplayName("Test MigrationInspector with valid numeric filenames only")
-    fun testValidNumericFilenamesOnly() {
-        // Test various valid numeric filename formats
+    @DisplayName("Test MigrationInspector with valid 4-digit numeric filenames only")
+    fun testValid4DigitNumericFilenamesOnly() {
+        // Test various valid 4-digit numeric filename formats
         File(migrationDir, "0001.sql").writeText("CREATE TABLE test1 (id INTEGER);")
         File(migrationDir, "0002.sql").writeText("CREATE TABLE test2 (id INTEGER);")
         File(migrationDir, "0010.sql").writeText("CREATE TABLE test3 (id INTEGER);")
@@ -208,5 +208,112 @@ class MigrationInspectorTest {
         assertFailsWith<IllegalArgumentException> {
             MigrationInspector(migrationDir)
         }
+    }
+
+    @Test
+    @DisplayName("Test MigrationInspector with descriptive filenames")
+    fun testInspectWithDescriptiveFilenames() {
+        // Create migration files with descriptive names
+        val migration1 = """
+            CREATE TABLE users (
+                id INTEGER PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL
+            );
+        """.trimIndent()
+
+        val migration2 = """
+            ALTER TABLE users ADD COLUMN email TEXT;
+        """.trimIndent()
+
+        val migration3 = """
+            CREATE INDEX idx_users_email ON users(email);
+        """.trimIndent()
+
+        // Create files with descriptive names
+        File(migrationDir, "0001_create_users.sql").writeText(migration1)
+        File(migrationDir, "0002_add_email_column.sql").writeText(migration2)
+        File(migrationDir, "0005_create_email_index.sql").writeText(migration3)
+
+        // Create MigrationInspector
+        val inspector = MigrationInspector(migrationDir)
+
+        // Verify that statements are partitioned by version (ignoring descriptions)
+        assertEquals(3, inspector.sqlStatements.size, "Should have 3 versions")
+        assertTrue(inspector.sqlStatements.containsKey(1), "Should contain version 1")
+        assertTrue(inspector.sqlStatements.containsKey(2), "Should contain version 2")
+        assertTrue(inspector.sqlStatements.containsKey(5), "Should contain version 5")
+
+        // Verify that the latest version is correctly identified
+        assertEquals(5, inspector.latestVersion, "Latest version should be 5")
+
+        // Verify statement content
+        assertTrue(inspector.sqlStatements[1]?.get(0)?.sql?.contains("CREATE TABLE users") == true, "Version 1 should contain users table creation")
+        assertTrue(inspector.sqlStatements[2]?.get(0)?.sql?.contains("ALTER TABLE users") == true, "Version 2 should contain alter table statement")
+        assertTrue(inspector.sqlStatements[5]?.get(0)?.sql?.contains("CREATE INDEX") == true, "Version 5 should contain index creation")
+    }
+
+    @Test
+    @DisplayName("Test MigrationInspector with mixed filename formats")
+    fun testInspectWithMixedFilenameFormats() {
+        // Mix of descriptive and non-descriptive filenames
+        File(migrationDir, "0001.sql").writeText("CREATE TABLE users (id INTEGER);")
+        File(migrationDir, "0002_add_posts.sql").writeText("CREATE TABLE posts (id INTEGER);")
+        File(migrationDir, "0003.sql").writeText("CREATE TABLE comments (id INTEGER);")
+        File(migrationDir, "0010_create_indexes.sql").writeText("CREATE INDEX idx_posts ON posts(id);")
+
+        val inspector = MigrationInspector(migrationDir)
+
+        assertEquals(4, inspector.sqlStatements.size, "Should have 4 versions")
+        assertEquals(10, inspector.latestVersion, "Latest version should be 10")
+
+        // All versions should be parsed correctly
+        assertTrue(inspector.sqlStatements.containsKey(1), "Should contain version 1")
+        assertTrue(inspector.sqlStatements.containsKey(2), "Should contain version 2")
+        assertTrue(inspector.sqlStatements.containsKey(3), "Should contain version 3")
+        assertTrue(inspector.sqlStatements.containsKey(10), "Should contain version 10")
+    }
+
+    @Test
+    @DisplayName("Test MigrationInspector with invalid descriptive filenames")
+    fun testInspectWithInvalidDescriptiveFilenames() {
+        // Create valid files
+        File(migrationDir, "0001_create_users.sql").writeText("CREATE TABLE users (id INTEGER);")
+
+        // Create invalid files (wrong number of digits)
+        File(migrationDir, "001_invalid.sql").writeText("CREATE TABLE ignored (id INTEGER);")
+
+        // Should throw exception due to invalid filename (not 4 digits)
+        assertFailsWith<IllegalArgumentException> {
+            MigrationInspector(migrationDir)
+        }
+    }
+
+    @Test
+    @DisplayName("Test MigrationInspector with non-4-digit version numbers")
+    fun testInspectWithNon4DigitVersions() {
+        // Create files with non-4-digit version numbers (should fail with new format)
+        File(migrationDir, "1.sql").writeText("CREATE TABLE users (id INTEGER);")
+        File(migrationDir, "12.sql").writeText("CREATE TABLE posts (id INTEGER);")
+        File(migrationDir, "123.sql").writeText("CREATE TABLE comments (id INTEGER);")
+
+        // Should throw exception due to non-4-digit version numbers
+        assertFailsWith<IllegalArgumentException> {
+            MigrationInspector(migrationDir)
+        }
+    }
+
+    @Test
+    @DisplayName("Test MigrationInspector with valid 4-digit versions only")
+    fun testInspectWith4DigitVersionsOnly() {
+        // Create files with exactly 4-digit version numbers
+        File(migrationDir, "0001.sql").writeText("CREATE TABLE users (id INTEGER);")
+        File(migrationDir, "0010.sql").writeText("CREATE TABLE posts (id INTEGER);")
+        File(migrationDir, "0100.sql").writeText("CREATE TABLE comments (id INTEGER);")
+        File(migrationDir, "1000.sql").writeText("CREATE TABLE tags (id INTEGER);")
+
+        val inspector = MigrationInspector(migrationDir)
+
+        assertEquals(4, inspector.sqlStatements.size, "Should have 4 versions")
+        assertEquals(1000, inspector.latestVersion, "Latest version should be 1000")
     }
 }

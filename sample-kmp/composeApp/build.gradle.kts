@@ -47,7 +47,7 @@ kotlin {
             implementation(libs.sqlite.bundled)
             implementation(libs.kotlinx.datetime)
             implementation(libs.kotlinx.serialization.json)
-            implementation("org.jetbrains.kotlinx:kotlinx-serialization-cbor:1.8.1")
+            implementation(libs.kotlinx.serialization.cbor)
             implementation(libs.sqlite.bundled)
 
             implementation(project(":library"))
@@ -110,7 +110,7 @@ sqliteNow {
     databases {
         create("NowSampleDatabase") {
             packageName = "dev.goquick.sqlitenow.samplekmp.db"
-            debug = true
+//            debug = true
         }
     }
 }
