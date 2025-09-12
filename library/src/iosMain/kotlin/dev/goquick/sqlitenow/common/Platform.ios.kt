@@ -22,6 +22,6 @@ internal actual fun validateFileExists(path: String): Boolean {
     return NSFileManager.defaultManager.fileExistsAtPath(path)
 }
 
-internal actual fun platform(): PlatformType {
+actual fun platform(): PlatformType {
     return PlatformType.IOS
 }

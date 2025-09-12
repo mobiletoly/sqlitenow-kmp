@@ -174,7 +174,6 @@ internal class SyncDownloader(
     ): Pair<Int, Long> = inApplyTx(db) {
         var applied = 0
 
-        // CRITICAL FIX: During post-upload lookback, optimize the change sequence to avoid
         // DELETE operations that are superseded by later INSERT/UPDATE operations in the same batch
         val changesToApply = if (isPostUploadLookback) {
             optimizeChangeSequenceForLookback(resp.changes)
@@ -291,7 +290,7 @@ internal class SyncDownloader(
                 st.bindText(1, ch.tableName.lowercase())
                 st.bindText(2, ch.pk)
                 if (st.step()) {
-                    st.getText(0) to st.getText(1)
+                    st.getText(0) to (if (st.isNull(1)) "" else st.getText(1))  // Defensive: handle potential NULL payload
                 } else null
             }
     }
@@ -452,8 +451,6 @@ internal class SyncDownloader(
             throw t
         }
     }
-
-
 
     /**
      * Optimize change sequence during post-upload lookback to prevent DELETE operations

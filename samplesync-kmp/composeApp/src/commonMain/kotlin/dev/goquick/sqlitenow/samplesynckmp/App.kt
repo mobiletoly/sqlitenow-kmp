@@ -35,6 +35,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.sqlite.SQLiteException
+import dev.goquick.sqlitenow.common.PlatformType
+import dev.goquick.sqlitenow.common.platform
 import dev.goquick.sqlitenow.common.resolveDatabasePath
 import dev.goquick.sqlitenow.core.util.fromSqliteDate
 import dev.goquick.sqlitenow.core.util.fromSqliteTimestamp
@@ -152,6 +154,12 @@ fun App() {
     val syncTrigger = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
     val commentsRefreshTrigger = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
 
+    val baseUrl = if (platform() == PlatformType.ANDROID) {
+        "http://10.0.2.2:8080"
+    } else {
+        "http://127.0.0.1:8080"
+    }
+
     LaunchedEffect(Unit) {
 
         // TODO .open() is here just for demo purposes. In your app you should open it in some other place
@@ -190,7 +198,6 @@ fun App() {
         val savedUser = AuthPrefs.get(AuthKeys.Username)
         if (!savedToken.isNullOrBlank()) {
             try {
-                val baseUrl = "http://10.0.2.2:8080"
                 syncClient = db.newOversqliteClientWithToken(
                     schema = "business",
                     baseUrl = baseUrl,
@@ -466,7 +473,6 @@ fun App() {
                     signingIn = true
                     coroutineScope.launch {
                         try {
-                            val baseUrl = "http://10.0.2.2:8080"
                             val displayUser = username.ifBlank { "user-sample" }
                             appLog.i { "Signing in user='${displayUser}' device=${deviceId}" }
                             val token = fetchJwt(

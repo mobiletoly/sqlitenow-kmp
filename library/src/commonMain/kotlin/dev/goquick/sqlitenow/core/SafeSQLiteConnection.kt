@@ -3,6 +3,7 @@ package dev.goquick.sqlitenow.core
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteStatement
 import androidx.sqlite.execSQL
+import dev.goquick.sqlitenow.common.logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
@@ -43,14 +44,21 @@ class SafeSQLiteConnection(
         }
     }
     suspend fun execSQL(sql: String) {
+        logger.d { "TRACK/ execSQL begin 1 >>> $sql" }
         withContext(dispatcher) {
+            logger.d { "TRACK/ execSQL begin 2 >>> $sql" }
             ref.execSQL(sql)
+            logger.d { "TRACK/execSQL end <<< $sql" }
         }
     }
 
     suspend fun prepare(sql: String): SQLiteStatement {
+        logger.d { "TRACK/ prepare begin 1 >>> $sql" }
         return withContext(dispatcher) {
-            ref.prepare(sql)
+            logger.d { "TRACK/ prepare begin 2 >>> $sql" }
+            val result = ref.prepare(sql)
+            logger.d { "TRACK/ prepare end <<< $sql" }
+            result
         }
     }
 

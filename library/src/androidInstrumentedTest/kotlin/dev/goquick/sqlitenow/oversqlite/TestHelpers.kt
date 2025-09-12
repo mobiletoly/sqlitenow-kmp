@@ -81,6 +81,9 @@ internal suspend fun retrySuspend(times: Int, block: suspend () -> Boolean): Boo
 
 // Shared business schema creation for tests
 internal suspend fun createBusinessTables(db: SafeSQLiteConnection) {
+    // Enable foreign key constraints for testing
+    db.execSQL("PRAGMA foreign_keys = ON")
+
     db.execSQL(
         """
         CREATE TABLE users (

@@ -22,6 +22,6 @@ internal actual fun validateFileExists(path: String): Boolean {
     return File(path).exists()
 }
 
-internal actual fun platform(): PlatformType {
+actual fun platform(): PlatformType {
     return PlatformType.ANDROID
 }

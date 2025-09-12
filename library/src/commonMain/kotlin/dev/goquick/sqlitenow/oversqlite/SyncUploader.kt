@@ -68,21 +68,28 @@ internal class SyncUploader(
     }
 
     private suspend fun loadPendingChanges(db: SafeSQLiteConnection): MutableList<PendingChange> {
+        logger.d { "loadPendingChanges: start" }
         return db.prepare("SELECT table_name, pk_uuid, op, base_version, payload, change_id FROM _sync_pending ORDER BY queued_at ASC")
             .use { st ->
                 val out = mutableListOf<PendingChange>()
                 while (st.step()) {
+                    logger.d { "loadPendingChanges--> start" }
                     val cid = st.getLong(5)
+                    logger.d { "loadPendingChanges--> $cid" }
+                    logger.d { "loadPendingChanges--> 0=${st.isNull(0)} 1=${st.isNull(1)} 2=${st.isNull(2)} 3=${st.isNull(3)} 4=${st.isNull(4)} 5=${st.isNull(5)}" }
                     out += PendingChange(
                         table = st.getText(0),
                         pk = st.getText(1),
                         op = st.getText(2),
                         baseVersion = st.getLong(3),
-                        payload = st.getText(4),
+                        payload = if (st.isNull(4)) null else st.getText(4),  // FIX: Handle NULL payload for DELETE operations
                         changeId = if (cid < 0) null else cid
                     )
                 }
                 out
+            }
+            .also {
+                logger.d { "loadPendingChanges: done, loaded=${it.size} changes" }
             }
     }
 

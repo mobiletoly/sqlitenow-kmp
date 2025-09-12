@@ -10,8 +10,8 @@ expect fun resolveDatabasePath(dbName: String): String
  */
 internal expect fun validateFileExists(path: String): Boolean
 
-internal enum class PlatformType {
+enum class PlatformType {
     JVM, ANDROID, IOS
 }
 
-internal expect fun platform(): PlatformType
+expect fun platform(): PlatformType

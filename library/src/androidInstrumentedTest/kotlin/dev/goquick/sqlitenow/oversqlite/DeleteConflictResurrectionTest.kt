@@ -56,48 +56,48 @@ class DeleteConflictResurrectionTest {
      */
     data class TestClient(val db: SafeSQLiteConnection, val client: DefaultOversqliteClient, val userId: String, val deviceId: String) {
         suspend fun bootstrap() {
-            println("🔧 Device $deviceId: Starting bootstrap...")
+            println("Device $deviceId: Starting bootstrap...")
             val bootstrapResult = client.bootstrap(userId, deviceId)
-            println("🔧 Device $deviceId: Bootstrap result: $bootstrapResult")
+            println("Device $deviceId: Bootstrap result: $bootstrapResult")
             assert(bootstrapResult.isSuccess) { "Bootstrap failed: ${bootstrapResult.exceptionOrNull()}" }
 
             val hydrateResult = client.hydrate(includeSelf = false, limit = 1000, windowed = true)
-            println("🔧 Device $deviceId: Hydrate result: $hydrateResult")
+            println("Device $deviceId: Hydrate result: $hydrateResult")
             assert(hydrateResult.isSuccess) { "Hydrate failed: ${hydrateResult.exceptionOrNull()}" }
-            println("🔧 Device $deviceId: Bootstrap complete")
+            println("Device $deviceId: Bootstrap complete")
         }
 
         suspend fun insertUser(id: String, name: String, email: String) {
-            println("📝 Device $deviceId: Inserting user $name...")
+            println("Device $deviceId: Inserting user $name...")
             db.prepare("INSERT INTO users (id, name, email) VALUES (?, ?, ?)").use { st ->
                 st.bindText(1, id)
                 st.bindText(2, name)
                 st.bindText(3, email)
                 st.step()
             }
-            println("📝 Device $deviceId: User inserted successfully")
+            println("Device $deviceId: User inserted successfully")
             printSyncState("after INSERT")
         }
 
         suspend fun updateUser(id: String, name: String, email: String) {
-            println("✏️ Device $deviceId: Updating user $name...")
+            println("Device $deviceId: Updating user $name...")
             db.prepare("UPDATE users SET name = ?, email = ? WHERE id = ?").use { st ->
                 st.bindText(1, name)
                 st.bindText(2, email)
                 st.bindText(3, id)
                 st.step()
             }
-            println("✏️ Device $deviceId: User updated successfully")
+            println("Device $deviceId: User updated successfully")
             printSyncState("after UPDATE")
         }
 
         suspend fun deleteUser(id: String) {
-            println("🗑️ Device $deviceId: Deleting user $id...")
+            println("Device $deviceId: Deleting user $id...")
             db.prepare("DELETE FROM users WHERE id = ?").use { st ->
                 st.bindText(1, id)
                 st.step()
             }
-            println("🗑️ Device $deviceId: User deleted successfully")
+            println("Device $deviceId: User deleted successfully")
             printSyncState("after DELETE")
         }
 
@@ -120,7 +120,7 @@ class DeleteConflictResurrectionTest {
         }
 
         suspend fun printSyncState(context: String) {
-            println("📊 Device $deviceId sync state $context:")
+            println("Device $deviceId sync state $context:")
 
             // Print pending changes
             db.prepare("SELECT table_name, pk_uuid, op, base_version, payload FROM _sync_pending ORDER BY change_id").use { st ->
@@ -131,7 +131,7 @@ class DeleteConflictResurrectionTest {
                     val pk = st.getText(1).take(8)
                     val op = st.getText(2)
                     val baseVersion = st.getLong(3)
-                    val payload = st.getText(4)?.take(50) ?: "null"
+                    val payload = st.getText(4).take(50)
                     println("  Pending[$pendingCount]: $table:$pk $op v$baseVersion payload=$payload")
                 }
                 if (pendingCount == 0) println("  No pending changes")

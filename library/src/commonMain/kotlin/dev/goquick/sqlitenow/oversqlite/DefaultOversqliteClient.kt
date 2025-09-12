@@ -108,20 +108,19 @@ class DefaultOversqliteClient(
                 val (_, nextChangeId, _) = info ?: error("_sync_client_info missing")
 
                 // Delegate to the uploader
-                uploader.uploadPendingChanges(db, nextChangeId)
+                val uploadResult = uploader.uploadPendingChanges(db, nextChangeId)
+                if (uploadResult.summary.total > 0) {
+                    drainLookbackUntilInternal()
+                }
+                uploadResult
             }
-        }
-        result.onFailure {
+        }.onFailure {
             logger.e(it) { "uploadOnce: failed ${it.message}" }
         }
 
-        // Post-upload lookback drain: ensure we didn't skip peer changes by jumping watermark
-        if (result.isSuccess) {
-            runCatching {
-                drainLookbackUntil()
-            }.onFailure { e -> logger.e(e) { "uploadOnce: post-lookback failed" } }
-            val uploadResult = result.getOrNull()
-            if (uploadResult != null && uploadResult.updatedTables.isNotEmpty()) {
+        // Launch table update listener outside the lock
+        result.getOrNull()?.let { uploadResult ->
+            if (uploadResult.updatedTables.isNotEmpty()) {
                 launch {
                     tablesUpdateListener(uploadResult.updatedTables)
                 }
@@ -144,6 +143,8 @@ class DefaultOversqliteClient(
             writeMutex.withLock {
                 downloader.downloadOnce(db, limit, includeSelf, until, isPostUploadLookback)
             }
+        }.onFailure {
+            logger.e(it) { "downloadOnce: failed ${it.message}" }
         }
 
         if (result.isSuccess) {
@@ -158,6 +159,20 @@ class DefaultOversqliteClient(
         result.map { it.applied to it.nextAfter }
     }
 
+    private suspend fun downloadOnceInternal(
+        limit: Int, includeSelf: Boolean, until: Long = 0L, isPostUploadLookback: Boolean = false
+    ): Result<Pair<Int, Long>> = withContext(db.dispatcher) {
+        if (downloadsPaused) return@withContext Result.success(0 to 0L)
+
+        val result = runCatching {
+            downloader.downloadOnce(db, limit, includeSelf, until, isPostUploadLookback)
+        }.onFailure {
+            logger.e(it) { "downloadOnceInternal: failed ${it.message}" }
+        }
+
+        result.map { it.applied to it.nextAfter }
+    }
+
     override fun close() { /* host manages SQLiteConnection lifecycle */
     }
 
@@ -167,6 +182,9 @@ class DefaultOversqliteClient(
         val result = writeMutex.withLock {
             runCatching {
                 downloader.hydrate(db, includeSelf, limit, windowed)
+            }.onFailure {
+                logger.e(it) { "hydrate: failed" }
+                return@withContext Result.failure(it)
             }
         }
 
@@ -330,6 +348,47 @@ class DefaultOversqliteClient(
                 isPostUploadLookback = true
             ).getOrElse { 0 to prev }
             logger.d { "drainLookbackUntil: pass $passes downloaded $applied changes, nextAfter=$na" }
+            nextAfter = na
+            passes++
+            val caughtUp = nextAfter >= target
+            val stagnated = nextAfter == prev
+            if (applied == 0 || caughtUp || stagnated || passes >= maxPasses) break
+        }
+        // Restore to target to avoid leaving cursor behind
+        val current: Long = db.prepare("SELECT last_server_seq_seen FROM _sync_client_info LIMIT 1")
+            .use { st -> if (st.step()) st.getLong(0) else 0L }
+        if (current < target) {
+            db.prepare("UPDATE _sync_client_info SET last_server_seq_seen=?").use { st ->
+                st.bindLong(1, target)
+                st.step()
+            }
+        }
+    }
+
+    private suspend fun drainLookbackUntilInternal() {
+        val target: Long =
+            db.prepare("SELECT last_server_seq_seen FROM _sync_client_info LIMIT 1").use { st ->
+                if (st.step()) st.getLong(0) else 0L
+            }
+        val lb = maxOf(1000L, config.downloadLimit.toLong() * 2)
+        val windowStart = (target - lb).coerceAtLeast(0L)
+        logger.d { "drainLookbackUntilInternal: from=$windowStart to=$target" }
+        db.prepare("UPDATE _sync_client_info SET last_server_seq_seen=?").use { st ->
+            st.bindLong(1, windowStart)
+            st.step()
+        }
+        var nextAfter = windowStart
+        var passes = 0
+        val maxPasses = 50
+        while (true) {
+            val prev = nextAfter
+            logger.d { "drainLookbackUntilInternal: pass $passes downloading from seq=$prev" }
+            val (applied, na) = downloadOnceInternal(
+                limit = config.downloadLimit,
+                includeSelf = true,  // Include self during lookback to update local metadata
+                isPostUploadLookback = true
+            ).getOrElse { 0 to prev }
+            logger.d { "drainLookbackUntilInternal: pass $passes downloaded $applied changes, nextAfter=$na" }
             nextAfter = na
             passes++
             val caughtUp = nextAfter >= target

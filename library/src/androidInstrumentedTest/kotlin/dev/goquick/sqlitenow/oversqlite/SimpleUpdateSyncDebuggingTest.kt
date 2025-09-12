@@ -184,7 +184,7 @@ class SimpleUpdateSyncDebuggingTest {
             println("=== SYNC TABLES STATE: $label ($deviceId) ===")
 
             // Print _sync_pending table
-            println("📋 _sync_pending:")
+            println("_sync_pending:")
             db.prepare("SELECT table_name, pk_uuid, op, base_version, payload, queued_at FROM _sync_pending ORDER BY queued_at").use { st ->
                 var count = 0
                 while (st.step()) {
@@ -202,7 +202,7 @@ class SimpleUpdateSyncDebuggingTest {
             }
 
             // Print _sync_row_meta table
-            println("📊 _sync_row_meta:")
+            println("_sync_row_meta:")
             db.prepare("SELECT table_name, pk_uuid, server_version, deleted FROM _sync_row_meta ORDER BY table_name, pk_uuid").use { st ->
                 var count = 0
                 while (st.step()) {
@@ -217,7 +217,7 @@ class SimpleUpdateSyncDebuggingTest {
             }
 
             // Print _sync_client_info table
-            println("ℹ️ _sync_client_info:")
+            println("_sync_client_info:")
             db.prepare("SELECT user_id, source_id, next_change_id, last_server_seq_seen, apply_mode, current_window_until FROM _sync_client_info").use { st ->
                 if (st.step()) {
                     val userId = st.getText(0)
@@ -235,7 +235,7 @@ class SimpleUpdateSyncDebuggingTest {
             }
 
             // Print actual business data
-            println("👥 users table:")
+            println("users table:")
             db.prepare("SELECT id, name, email FROM users ORDER BY name").use { st ->
                 var count = 0
                 while (st.step()) {
@@ -286,14 +286,6 @@ class SimpleUpdateSyncDebuggingTest {
                 }
             }
             println("Client info: $clientInfo")
-
-            // Debug trigger logging removed for production readiness
-            println("🔥 Trigger logging disabled (removed for production)")
-            println()
-        }
-
-        suspend fun clearTriggerLogs() {
-            // Debug trigger logging removed for production readiness
         }
 
         suspend fun uploadWithLogging(label: String): Boolean {

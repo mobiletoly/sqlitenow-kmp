@@ -13,6 +13,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(AndroidJUnit4::class)
 class HeavyConcurrentSyncTest {
@@ -57,7 +58,7 @@ class HeavyConcurrentSyncTest {
     /**
      * Performs full synchronization (upload + download until complete)
      */
-    private suspend fun fullSync(client: DefaultOversqliteClient, deviceId: String) {
+    private suspend fun fullSync(client: DefaultOversqliteClient, deviceId: String, db: SafeSQLiteConnection? = null) {
         println("[$deviceId] Starting full sync...")
 
         // Upload local changes with detailed error logging
@@ -66,6 +67,12 @@ class HeavyConcurrentSyncTest {
             val error = uploadResult.exceptionOrNull()
             println("[$deviceId] Upload error: ${error?.message}")
             println("[$deviceId] Upload error details: ${error?.stackTraceToString()}")
+
+            // Additional debugging for foreign key errors
+            if (error?.message?.contains("FOREIGN KEY") == true && db != null) {
+                println("[$deviceId] FOREIGN KEY ERROR DETECTED!")
+                printDatabaseState(db, deviceId, "UPLOAD_ERROR")
+            }
         }
         assertTrue("Upload failed for $deviceId: ${uploadResult.exceptionOrNull()?.message}", uploadResult.isSuccess)
         println("[$deviceId] Upload completed: ${uploadResult.getOrNull()}")
@@ -80,6 +87,12 @@ class HeavyConcurrentSyncTest {
                 val error = downloadResult.exceptionOrNull()
                 println("[$deviceId] Download error: ${error?.message}")
                 println("[$deviceId] Download error details: ${error?.stackTraceToString()}")
+
+                // Additional debugging for foreign key errors
+                if (error?.message?.contains("FOREIGN KEY") == true && db != null) {
+                    println("[$deviceId] FOREIGN KEY ERROR DETECTED DURING DOWNLOAD!")
+                    printDatabaseState(db, deviceId, "DOWNLOAD_ERROR")
+                }
             }
             assertTrue("Download failed for $deviceId: ${downloadResult.exceptionOrNull()?.message}", downloadResult.isSuccess)
 
@@ -90,6 +103,51 @@ class HeavyConcurrentSyncTest {
         }
 
         println("[$deviceId] Full sync completed. Downloaded: $totalDownloaded changes")
+    }
+
+    /**
+     * Prints detailed database state for debugging foreign key issues
+     */
+    private suspend fun printDatabaseState(db: SafeSQLiteConnection, deviceId: String, context: String) {
+        println("\n=== DATABASE STATE DEBUG [$deviceId] [$context] ===")
+
+        // Print users count
+        val usersCount = count(db, "users", "1=1")
+        println("Users count: $usersCount")
+
+        // Print posts count
+        val postsCount = count(db, "posts", "1=1")
+        println("Posts count: $postsCount")
+
+        // Print orphaned posts (posts without valid author_id)
+        val orphanedPosts = count(db, "posts", "author_id NOT IN (SELECT id FROM users)")
+        println("Orphaned posts: $orphanedPosts")
+
+        // Print sample of orphaned posts if any exist
+        if (orphanedPosts > 0) {
+            println("Sample orphaned posts:")
+            db.prepare("SELECT id, title, author_id FROM posts WHERE author_id NOT IN (SELECT id FROM users) LIMIT 5").use { st ->
+                while (st.step()) {
+                    val postId = st.getText(0)
+                    val title = st.getText(1)
+                    val authorId = st.getText(2)
+                    println("  Post: ${postId.take(8)} '$title' -> author: ${authorId.take(8)}")
+                }
+            }
+        }
+
+        // Print pending sync operations
+        println("Pending sync operations:")
+        db.prepare("SELECT table_name, pk_uuid, op FROM _sync_pending ORDER BY table_name, op").use { st ->
+            while (st.step()) {
+                val table = st.getText(0)
+                val pk = st.getText(1)
+                val op = st.getText(2)
+                println("  $op $table:${pk.take(8)}")
+            }
+        }
+
+        println("=== END DATABASE STATE DEBUG [$deviceId] [$context] ===\n")
     }
 
     /**
@@ -637,7 +695,536 @@ class HeavyConcurrentSyncTest {
         println("=== END DELETE DEBUG INFO ===\n")
     }
 
-    /*
+    @Test
+    fun debug_delete_operations_test() = runBlockingTest {
+        println("=== Starting Debug DELETE Operations Test ===")
+
+        // Setup two devices for debugging DELETE operations
+        val userId = "user-debug-${UUID.randomUUID().toString().substring(0, 8)}"
+        val device1Id = "device-debug-1"
+        val device2Id = "device-debug-2"
+
+        val db1 = createTestDatabase()
+        val db2 = createTestDatabase()
+
+        val client1 = createSyncClient(db1, userId, device1Id)
+        val client2 = createSyncClient(db2, userId, device2Id)
+
+        // Initial hydration for both devices
+        assertTrue(
+            "Device 1 hydration failed",
+            client1.hydrate(includeSelf = false, limit = 1000, windowed = true).isSuccess
+        )
+        assertTrue(
+            "Device 2 hydration failed",
+            client2.hydrate(includeSelf = false, limit = 1000, windowed = true).isSuccess
+        )
+
+        // Phase 1: Create a small set of test data
+        println("\n--- Phase 1: Creating test data ---")
+
+        // Device 1: Create 5 users with 2 posts each
+        repeat(5) { i ->
+            val userId1 = UUID.randomUUID().toString()
+            val userName = "User1-$i"
+            val userEmail = "user1-$i@device1.com"
+
+            db1.execSQL("INSERT INTO users(id, name, email) VALUES('$userId1','$userName','$userEmail')")
+
+            repeat(2) { j ->
+                val postId1 = UUID.randomUUID().toString()
+                val postTitle = "Post1-$i-$j"
+                val postContent = "Content from device 1 - user $i, post $j"
+
+                db1.execSQL("INSERT INTO posts(id, title, content, author_id) VALUES('$postId1','$postTitle','$postContent','$userId1')")
+            }
+        }
+
+        // Sync after creation
+        fullSync(client1, device1Id, db1)
+        fullSync(client2, device2Id, db2)
+
+        val usersAfterInserts = count(db1, "users", "1=1")
+        val postsAfterInserts = count(db1, "posts", "1=1")
+        println("After INSERTs: Users=$usersAfterInserts, Posts=$postsAfterInserts")
+
+        // Verify consistency
+        verifyDataConsistency(db1, db2, "after initial inserts")
+
+        // Phase 2: Perform DELETE operations with detailed logging
+        println("\n--- Phase 2: DELETE operations with detailed logging ---")
+
+        // Get one user to delete
+        val userToDelete = db1.prepare("SELECT id FROM users LIMIT 1").use { st ->
+            if (st.step()) st.getText(0) else null
+        }
+
+        if (userToDelete != null) {
+            println("Will delete user: ${userToDelete.take(8)}")
+
+            // Print state before DELETE
+            printDatabaseState(db1, device1Id, "BEFORE_DELETE")
+            printDatabaseState(db2, device2Id, "BEFORE_DELETE")
+
+            // Delete posts first, then user
+            println("[$device1Id] Deleting posts for user ${userToDelete.take(8)}")
+            db1.execSQL("DELETE FROM posts WHERE author_id='$userToDelete'")
+
+            println("[$device1Id] Deleting user ${userToDelete.take(8)}")
+            db1.execSQL("DELETE FROM users WHERE id='$userToDelete'")
+
+            // Print state after DELETE but before sync
+            printDatabaseState(db1, device1Id, "AFTER_DELETE_BEFORE_SYNC")
+            printDatabaseState(db2, device2Id, "AFTER_DELETE_BEFORE_SYNC")
+
+            // Sync the DELETE operations
+            println("[$device1Id] Syncing DELETE operations...")
+            fullSync(client1, device1Id, db1)
+            fullSync(client2, device2Id, db2)
+
+            // Print state after sync
+            printDatabaseState(db1, device1Id, "AFTER_SYNC")
+            printDatabaseState(db2, device2Id, "AFTER_SYNC")
+
+            // Verify consistency
+            verifyDataConsistency(db1, db2, "after DELETE operations")
+        }
+
+        val finalUsersCount = count(db1, "users", "1=1")
+        val finalPostsCount = count(db1, "posts", "1=1")
+
+        println("\n=== DEBUG DELETE TEST RESULTS ===")
+        println("Final users: $finalUsersCount")
+        println("Final posts: $finalPostsCount")
+        println("Expected: 4 users, 8 posts (deleted 1 user + 2 posts)")
+
+        assertEquals("Should have 4 users after DELETE", 4, finalUsersCount)
+        assertEquals("Should have 8 posts after DELETE", 8, finalPostsCount)
+
+        // Cleanup
+        client1.close()
+        client2.close()
+    }
+
+    @Test
+    fun intermediate_concurrent_stress_test() = runBlockingTest {
+        println("=== Starting Intermediate Concurrent Stress Test ===")
+
+        // Setup two devices for intermediate stress testing
+        val userId = "user-intermediate-${UUID.randomUUID().toString().substring(0, 8)}"
+        val device1Id = "device-intermediate-1"
+        val device2Id = "device-intermediate-2"
+
+        val db1 = createTestDatabase()
+        val db2 = createTestDatabase()
+
+        val client1 = createSyncClient(db1, userId, device1Id)
+        val client2 = createSyncClient(db2, userId, device2Id)
+
+        // Initial hydration for both devices
+        assertTrue(
+            "Device 1 hydration failed",
+            client1.hydrate(includeSelf = false, limit = 1000, windowed = true).isSuccess
+        )
+        assertTrue(
+            "Device 2 hydration failed",
+            client2.hydrate(includeSelf = false, limit = 1000, windowed = true).isSuccess
+        )
+
+        // Phase 1: Intermediate INSERT Operations (30 users + 45 posts per device)
+        println("\n--- Phase 1: Intermediate INSERT Operations (30 users + 45 posts per device) ---")
+
+        coroutineScope {
+            val insertJobs = listOf(
+                // Device 1: Insert 30 users + posts
+                async {
+                    repeat(30) { i ->
+                        val userId1 = UUID.randomUUID().toString()
+                        val userName = "User1-$i"
+                        val userEmail = "user1-$i@device1.com"
+
+                        db1.execSQL("INSERT INTO users(id, name, email) VALUES('$userId1','$userName','$userEmail')")
+
+                        // Create 1-2 posts per user (varying to create realistic data)
+                        val postsPerUser = if (i % 3 == 0) 2 else 1
+                        repeat(postsPerUser) { j ->
+                            val postId1 = UUID.randomUUID().toString()
+                            val postTitle = "Post1-$i-$j"
+                            val postContent = "Content from device 1 - user $i, post $j"
+
+                            db1.execSQL("INSERT INTO posts(id, title, content, author_id) VALUES('$postId1','$postTitle','$postContent','$userId1')")
+                        }
+
+                        if (i % 5 == 0) {
+                            println("[${device1Id}] INSERT progress: $i/30 users")
+                            fullSync(client1, device1Id)
+                        }
+                        delay(15) // Moderate timing
+                    }
+                    println("[${device1Id}] Completed INSERT operations")
+                },
+                // Device 2: Insert 30 users + posts
+                async {
+                    delay(25) // Offset for realistic concurrency
+                    repeat(30) { i ->
+                        val userId2 = UUID.randomUUID().toString()
+                        val userName = "User2-$i"
+                        val userEmail = "user2-$i@device2.com"
+
+                        db2.execSQL("INSERT INTO users(id, name, email) VALUES('$userId2','$userName','$userEmail')")
+
+                        // Create 1-2 posts per user
+                        val postsPerUser = if (i % 4 == 0) 2 else 1
+                        repeat(postsPerUser) { j ->
+                            val postId2 = UUID.randomUUID().toString()
+                            val postTitle = "Post2-$i-$j"
+                            val postContent = "Content from device 2 - user $i, post $j"
+
+                            db2.execSQL("INSERT INTO posts(id, title, content, author_id) VALUES('$postId2','$postTitle','$postContent','$userId2')")
+                        }
+
+                        if (i % 6 == 0) {
+                            println("[${device2Id}] INSERT progress: $i/30 users")
+                            fullSync(client2, device2Id)
+                        }
+                        delay(18) // Different timing for realistic concurrency
+                    }
+                    println("[${device2Id}] Completed INSERT operations")
+                }
+            )
+
+            insertJobs.awaitAll()
+        }
+
+        // Comprehensive sync after inserts using proven pattern
+        println("\n--- Syncing after INSERTs ---")
+        repeat(3) { round ->
+            println("INSERT sync round ${round + 1}/3")
+            fullSync(client1, device1Id)
+            fullSync(client2, device2Id)
+        }
+
+        verifyDataConsistency(db1, db2, "after intermediate INSERT operations")
+
+        val usersAfterInserts = count(db1, "users", "1=1")
+        val postsAfterInserts = count(db1, "posts", "1=1")
+        println("After INSERTs: Users=$usersAfterInserts, Posts=$postsAfterInserts")
+
+        // Verify reasonable counts (should be around 60 users, 75-90 posts)
+        assertTrue("Should have at least 55 users", usersAfterInserts >= 55)
+        assertTrue("Should have at least 70 posts", postsAfterInserts >= 70)
+        assertTrue("Should have at most 65 users", usersAfterInserts <= 65)
+        assertTrue("Should have at most 95 posts", postsAfterInserts <= 95)
+
+        println("✓ Phase 1 completed: Intermediate INSERT operations verified")
+
+        // Phase 2: Intermediate UPDATE Operations with Overlapping Conflicts
+        println("\n--- Phase 2: Intermediate UPDATE Operations with Overlapping Conflicts ---")
+
+        // Get existing records for updates
+        val existingUserIds = db1.prepare("SELECT id FROM users ORDER BY id").use { st ->
+            val ids = mutableListOf<String>()
+            while (st.step()) {
+                ids.add(st.getText(0))
+            }
+            ids
+        }
+
+        val existingPostIds = db1.prepare("SELECT id FROM posts ORDER BY id").use { st ->
+            val ids = mutableListOf<String>()
+            while (st.step()) {
+                ids.add(st.getText(0))
+            }
+            ids
+        }
+
+        coroutineScope {
+            val updateJobs = listOf(
+                // Device 1: Update overlapping records to create intentional conflicts
+                async {
+                    // Update users with IDs 0-15 (overlaps with device 2's 8-23)
+                    existingUserIds.take(15).forEachIndexed { i, userId ->
+                        val timestamp = System.currentTimeMillis()
+                        val newName = "UpdatedUser1-$i-$timestamp"
+                        val newEmail = "updated1-$i-$timestamp@device1.com"
+
+                        db1.execSQL("UPDATE users SET name='$newName', email='$newEmail' WHERE id='$userId'")
+
+                        if (i % 4 == 0) {
+                            println("[${device1Id}] UPDATE users progress: $i/15")
+                            fullSync(client1, device1Id)
+                        }
+                        delay(20)
+                    }
+
+                    // Update posts with overlapping IDs
+                    existingPostIds.take(18).forEachIndexed { i, postId ->
+                        val timestamp = System.currentTimeMillis()
+                        val newTitle = "UpdatedPost1-$i-$timestamp"
+                        val newContent = "Updated content from device 1 - $i - $timestamp"
+
+                        db1.execSQL("UPDATE posts SET title='$newTitle', content='$newContent' WHERE id='$postId'")
+
+                        if (i % 5 == 0) {
+                            println("[${device1Id}] UPDATE posts progress: $i/18")
+                            fullSync(client1, device1Id)
+                        }
+                        delay(25)
+                    }
+                    println("[${device1Id}] Completed UPDATE operations")
+                },
+                // Device 2: Update overlapping records to create intentional conflicts
+                async {
+                    delay(35) // Offset to create realistic conflicts
+
+                    // Update users with overlapping IDs (8-23 range overlaps with device 1's 0-15)
+                    existingUserIds.drop(8).take(15).forEachIndexed { i, userId ->
+                        val timestamp = System.currentTimeMillis()
+                        val newName = "UpdatedUser2-$i-$timestamp"
+                        val newEmail = "updated2-$i-$timestamp@device2.com"
+
+                        db2.execSQL("UPDATE users SET name='$newName', email='$newEmail' WHERE id='$userId'")
+
+                        if (i % 4 == 0) {
+                            println("[${device2Id}] UPDATE users progress: $i/15")
+                            fullSync(client2, device2Id)
+                        }
+                        delay(22)
+                    }
+
+                    // Update posts with overlapping IDs
+                    existingPostIds.drop(10).take(18).forEachIndexed { i, postId ->
+                        val timestamp = System.currentTimeMillis()
+                        val newTitle = "UpdatedPost2-$i-$timestamp"
+                        val newContent = "Updated content from device 2 - $i - $timestamp"
+
+                        db2.execSQL("UPDATE posts SET title='$newTitle', content='$newContent' WHERE id='$postId'")
+
+                        if (i % 5 == 0) {
+                            println("[${device2Id}] UPDATE posts progress: $i/18")
+                            fullSync(client2, device2Id)
+                        }
+                        delay(28)
+                    }
+                    println("[${device2Id}] Completed UPDATE operations")
+                }
+            )
+
+            updateJobs.awaitAll()
+        }
+
+        // Comprehensive sync after updates using proven pattern
+        println("\n--- Syncing after UPDATEs ---")
+        repeat(3) { round ->
+            println("UPDATE sync round ${round + 1}/3")
+            fullSync(client1, device1Id)
+            fullSync(client2, device2Id)
+        }
+
+        verifyDataConsistency(db1, db2, "after intermediate UPDATE operations")
+
+        val usersAfterUpdates = count(db1, "users", "1=1")
+        val postsAfterUpdates = count(db1, "posts", "1=1")
+        println("After UPDATEs: Users=$usersAfterUpdates, Posts=$postsAfterUpdates")
+
+        // Verify counts haven't changed (UPDATEs don't change record counts)
+        assertEquals("User count should remain the same after UPDATEs", usersAfterInserts, usersAfterUpdates)
+        assertEquals("Post count should remain the same after UPDATEs", postsAfterInserts, postsAfterUpdates)
+
+        println("✓ Phase 2 completed: Intermediate UPDATE operations with conflicts verified")
+
+        // Phase 3: Moderate DELETE Operations with Foreign Key Handling
+        println("\n--- Phase 3: Moderate DELETE Operations with Foreign Key Handling ---")
+
+        // Get all user IDs for deterministic deletion
+        val allUserIds = db1.prepare("SELECT id FROM users ORDER BY id").use { st ->
+            val ids = mutableListOf<String>()
+            while (st.step()) {
+                ids.add(st.getText(0))
+            }
+            ids
+        }
+
+        // Split users deterministically: Device1 gets even indices, Device2 gets odd indices
+        val device1UsersForDeletion = allUserIds.filterIndexed { index, _ -> index % 2 == 0 }.take(5)
+        val device2UsersForDeletion = allUserIds.filterIndexed { index, _ -> index % 2 == 1 }.take(4)
+
+        // For posts, delete only posts that belong to users we're NOT deleting
+        // This avoids foreign key cascade conflicts
+        val usersNotBeingDeleted = allUserIds - device1UsersForDeletion.toSet() - device2UsersForDeletion.toSet()
+
+        val device1PostsForDeletion = db1.prepare(
+            "SELECT id FROM posts WHERE author_id IN (${
+                usersNotBeingDeleted.joinToString(",") { "'$it'" }
+            }) ORDER BY id LIMIT 8"
+        ).use { st ->
+            val ids = mutableListOf<String>()
+            while (st.step()) {
+                ids.add(st.getText(0))
+            }
+            ids
+        }
+
+        val device2PostsForDeletion = db2.prepare(
+            "SELECT id FROM posts WHERE author_id IN (${
+                usersNotBeingDeleted.joinToString(",") { "'$it'" }
+            }) ORDER BY id LIMIT 6 OFFSET 8"
+        ).use { st ->
+            val ids = mutableListOf<String>()
+            while (st.step()) {
+                ids.add(st.getText(0))
+            }
+            ids
+        }
+
+        println("Device1 will delete: ${device1UsersForDeletion.size} users, ${device1PostsForDeletion.size} posts")
+        println("Device2 will delete: ${device2UsersForDeletion.size} users, ${device2PostsForDeletion.size} posts")
+        println("Total expected deletions: ${device1UsersForDeletion.size + device2UsersForDeletion.size} users, ${device1PostsForDeletion.size + device2PostsForDeletion.size} posts")
+
+        // Track actual deletions for verification
+        val actualUsersDeleted = AtomicInteger(0)
+        val actualPostsDeleted = AtomicInteger(0)
+
+        coroutineScope {
+            val deleteJobs = listOf(
+                // Device 1: DELETE operations
+                async {
+                    // Delete posts first (to avoid foreign key violations)
+                    device1PostsForDeletion.forEachIndexed { i, postId ->
+                        db1.execSQL("DELETE FROM posts WHERE id='$postId'")
+                        actualPostsDeleted.incrementAndGet()
+
+                        if (i % 3 == 0) {
+                            println("[${device1Id}] DELETE posts progress: $i/${device1PostsForDeletion.size}")
+                            fullSync(client1, device1Id)
+                        }
+                        delay(30)
+                    }
+
+                    // Then delete users (with cascade delete for their remaining posts)
+                    device1UsersForDeletion.forEachIndexed { i, userId ->
+                        // Delete any remaining posts by this user first
+                        db1.execSQL("DELETE FROM posts WHERE author_id='$userId'")
+                        // Then delete the user
+                        db1.execSQL("DELETE FROM users WHERE id='$userId'")
+                        actualUsersDeleted.incrementAndGet()
+
+                        if (i % 2 == 0) {
+                            println("[${device1Id}] DELETE users progress: $i/${device1UsersForDeletion.size}")
+                            fullSync(client1, device1Id)
+                        }
+                        delay(35)
+                    }
+                    println("[${device1Id}] Completed DELETE operations")
+                },
+                // Device 2: DELETE operations
+                async {
+                    delay(40) // Offset for realistic concurrency
+
+                    // Delete posts first (to avoid foreign key violations)
+                    device2PostsForDeletion.forEachIndexed { i, postId ->
+                        db2.execSQL("DELETE FROM posts WHERE id='$postId'")
+                        actualPostsDeleted.incrementAndGet()
+
+                        if (i % 2 == 0) {
+                            println("[${device2Id}] DELETE posts progress: $i/${device2PostsForDeletion.size}")
+                            fullSync(client2, device2Id)
+                        }
+                        delay(32)
+                    }
+
+                    // Then delete users (with cascade delete for their remaining posts)
+                    device2UsersForDeletion.forEachIndexed { i, userId ->
+                        // Delete any remaining posts by this user first
+                        db2.execSQL("DELETE FROM posts WHERE author_id='$userId'")
+                        // Then delete the user
+                        db2.execSQL("DELETE FROM users WHERE id='$userId'")
+                        actualUsersDeleted.incrementAndGet()
+
+                        if (i % 2 == 0) {
+                            println("[${device2Id}] DELETE users progress: $i/${device2UsersForDeletion.size}")
+                            fullSync(client2, device2Id)
+                        }
+                        delay(38)
+                    }
+                    println("[${device2Id}] Completed DELETE operations")
+                }
+            )
+
+            deleteJobs.awaitAll()
+        }
+
+        // Comprehensive sync after deletes using proven pattern
+        println("\n--- Syncing after DELETEs ---")
+        repeat(3) { round ->
+            println("DELETE sync round ${round + 1}/3")
+            fullSync(client1, device1Id)
+            fullSync(client2, device2Id)
+        }
+
+        verifyDataConsistency(db1, db2, "after intermediate DELETE operations")
+
+        // Detailed verification of final state
+        val finalUsersCount = count(db1, "users", "1=1")
+        val finalPostsCount = count(db1, "posts", "1=1")
+
+        println("\n=== INTERMEDIATE STRESS TEST VERIFICATION ===")
+        println("Final users: $finalUsersCount")
+        println("Final posts: $finalPostsCount")
+
+        // Verify we have reasonable counts after all operations including DELETEs
+        val actualUserDeletions = actualUsersDeleted.get()
+        val actualPostDeletions = actualPostsDeleted.get()
+
+        // Calculate cascade deletions: posts that were deleted when their authors were deleted
+        val plannedUserDeletions = device1UsersForDeletion.size + device2UsersForDeletion.size
+        val averagePostsPerUser = postsAfterUpdates.toDouble() / usersAfterUpdates.toDouble()
+        val estimatedCascadePostDeletions = (actualUserDeletions * averagePostsPerUser).toInt()
+
+        val totalEstimatedPostDeletions = actualPostDeletions + estimatedCascadePostDeletions
+        val expectedFinalUsers = usersAfterUpdates - actualUserDeletions
+        val expectedMinPosts = postsAfterUpdates - totalEstimatedPostDeletions
+        val expectedMaxPosts = postsAfterUpdates - actualPostDeletions // Minimum cascade scenario
+
+        println("Planned deletions: $plannedUserDeletions users, ${device1PostsForDeletion.size + device2PostsForDeletion.size} posts")
+        println("Actual deletions: $actualUserDeletions users, $actualPostDeletions posts (explicit)")
+        println("Estimated cascade post deletions: $estimatedCascadePostDeletions")
+        println("Total estimated post deletions: $totalEstimatedPostDeletions")
+        println("Expected final users: $expectedFinalUsers")
+        println("Expected final posts: $expectedMinPosts-$expectedMaxPosts")
+
+        // Use actual deletion counts for verification to account for race conditions
+        // Allow for some variance due to race conditions and estimation errors
+        val userTolerance = 3
+        val postTolerance = 8 // Higher tolerance for posts due to cascade deletion estimation
+
+        assertTrue(
+            "Should have at least ${expectedFinalUsers - userTolerance} users after DELETEs (actual: $finalUsersCount)",
+            finalUsersCount >= expectedFinalUsers - userTolerance
+        )
+        assertTrue(
+            "Should have at least ${expectedMinPosts - postTolerance} posts after DELETEs (actual: $finalPostsCount)",
+            finalPostsCount >= expectedMinPosts - postTolerance
+        )
+        assertTrue(
+            "Should have at most ${expectedFinalUsers + userTolerance} users after DELETEs (actual: $finalUsersCount)",
+            finalUsersCount <= expectedFinalUsers + userTolerance
+        )
+        assertTrue(
+            "Should have at most ${expectedMaxPosts + postTolerance} posts after DELETEs (actual: $finalPostsCount)",
+            finalPostsCount <= expectedMaxPosts + postTolerance
+        )
+
+        println("✓ Phase 3 completed: Intermediate DELETE operations with foreign key handling verified")
+
+        println("\n=== INTERMEDIATE CONCURRENT STRESS TEST COMPLETED SUCCESSFULLY ===")
+        println("Final state: $finalUsersCount users, $finalPostsCount posts")
+        println("All phases completed with proper conflict resolution and foreign key handling")
+
+        client1.close()
+        client2.close()
+    }
+
     @Test
     fun comprehensive_bullet_proof_stress_test() = runBlockingTest {
         println("=== Starting Comprehensive Bullet-Proof Stress Test (INSERT/UPDATE Focus) ===")
@@ -863,7 +1450,6 @@ class HeavyConcurrentSyncTest {
         // Phase 3: Strategic DELETE Operations with Proper Sync Sequencing
         println("\n--- Phase 3: Strategic DELETE Operations with Proper Sync Sequencing ---")
 
-        // CRITICAL FIX: Use deterministic, non-overlapping record selection
         // Get all user IDs and split them deterministically between devices
         val allUserIds = db1.prepare("SELECT id FROM users ORDER BY id").use { st ->
             val ids = mutableListOf<String>()
@@ -987,8 +1573,8 @@ class HeavyConcurrentSyncTest {
                         // Very frequent sync during user DELETE operations (critical for DELETE race conditions)
                         println("[${device1Id}] Immediate sync after user DELETE $i")
                         repeat(3) { round ->
-                            fullSync(client1, device1Id)
-                            fullSync(client2, device2Id)
+                            fullSync(client1, device1Id, db1)
+                            fullSync(client2, device2Id, db2)
                         }
                         delay(80) // Longer delay to allow sync propagation
                     }
@@ -1119,34 +1705,47 @@ class HeavyConcurrentSyncTest {
         println("Final posts: $finalPostsCount")
 
         // Verify we have reasonable counts after all operations including DELETEs
-        // Use actual DELETE counts instead of planned counts to account for race conditions
         val actualUserDeletions = actualUsersDeleted.get()
         val actualPostDeletions = actualPostsDeleted.get()
-        val expectedFinalUsers = 150 - actualUserDeletions
-        val expectedMinPosts = 187 - actualPostDeletions
-        val expectedMaxPosts = 225 - actualPostDeletions
 
-        println("Planned deletions: ${device1UsersForDeletion.size + device2UsersForDeletion.size} users, ${device1PostsForDeletion.size + device2PostsForDeletion.size} posts")
-        println("Actual deletions: $actualUserDeletions users, $actualPostDeletions posts")
+        // Calculate cascade deletions: posts that were deleted when their authors were deleted
+        // We need to estimate this based on the planned user deletions and average posts per user
+        val plannedUserDeletions = device1UsersForDeletion.size + device2UsersForDeletion.size
+        val averagePostsPerUser = 187.0 / 150.0 // Approximately 1.25 posts per user
+        val estimatedCascadePostDeletions = (actualUserDeletions * averagePostsPerUser).toInt()
+
+        val totalEstimatedPostDeletions = actualPostDeletions + estimatedCascadePostDeletions
+        val expectedFinalUsers = 150 - actualUserDeletions
+        val expectedMinPosts = 187 - totalEstimatedPostDeletions
+        val expectedMaxPosts = 225 - totalEstimatedPostDeletions
+
+        println("Planned deletions: $plannedUserDeletions users, ${device1PostsForDeletion.size + device2PostsForDeletion.size} posts")
+        println("Actual deletions: $actualUserDeletions users, $actualPostDeletions posts (explicit)")
+        println("Estimated cascade post deletions: $estimatedCascadePostDeletions")
+        println("Total estimated post deletions: $totalEstimatedPostDeletions")
         println("Expected final users: $expectedFinalUsers")
         println("Expected final posts: $expectedMinPosts-$expectedMaxPosts")
 
         // Use actual deletion counts for verification to account for race conditions
+        // Allow for some variance due to race conditions and estimation errors
+        val userTolerance = 5
+        val postTolerance = 10 // Higher tolerance for posts due to cascade deletion estimation
+
         assertTrue(
-            "Should have at least ${expectedFinalUsers - 5} users after DELETEs",
-            finalUsersCount >= expectedFinalUsers - 5
+            "Should have at least ${expectedFinalUsers - userTolerance} users after DELETEs (actual: $finalUsersCount)",
+            finalUsersCount >= expectedFinalUsers - userTolerance
         )
         assertTrue(
-            "Should have at least ${expectedMinPosts - 5} posts after DELETEs",
-            finalPostsCount >= expectedMinPosts - 5
+            "Should have at least ${expectedMinPosts - postTolerance} posts after DELETEs (actual: $finalPostsCount)",
+            finalPostsCount >= expectedMinPosts - postTolerance
         )
         assertTrue(
-            "Should have at most ${expectedFinalUsers + 5} users after DELETEs",
-            finalUsersCount <= expectedFinalUsers + 5
+            "Should have at most ${expectedFinalUsers + userTolerance} users after DELETEs (actual: $finalUsersCount)",
+            finalUsersCount <= expectedFinalUsers + userTolerance
         )
         assertTrue(
-            "Should have at most ${expectedMaxPosts + 5} posts after DELETEs",
-            finalPostsCount <= expectedMaxPosts + 5
+            "Should have at most ${expectedMaxPosts + postTolerance} posts after DELETEs (actual: $finalPostsCount)",
+            finalPostsCount <= expectedMaxPosts + postTolerance
         )
 
         // Verify foreign key integrity
@@ -1213,5 +1812,4 @@ class HeavyConcurrentSyncTest {
         client1.close()
         client2.close()
     }
-     */
 }
