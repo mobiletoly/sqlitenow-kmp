@@ -43,6 +43,7 @@ header_pages:
   - index.markdown
   - getting-started.md
   - documentation.md
+  - sync.md
 
 # Exclude from processing.
 # The following items will not be processed, by default.

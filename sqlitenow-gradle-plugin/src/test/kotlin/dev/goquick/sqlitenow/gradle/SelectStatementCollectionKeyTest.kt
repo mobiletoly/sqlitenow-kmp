@@ -14,7 +14,7 @@ class SelectStatementCollectionKeyTest {
             name = "SelectWithCollectionKey",
             src = SelectStatement(
                 sql = "SELECT p.id AS person_id, p.name FROM Person p",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
@@ -55,7 +55,7 @@ class SelectStatementCollectionKeyTest {
             name = "SelectWithAliasCollectionKey",
             src = SelectStatement(
                 sql = "SELECT p.id AS person_id, p.name FROM Person p",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
@@ -96,7 +96,7 @@ class SelectStatementCollectionKeyTest {
             name = "SelectWithCollectionField",
             src = SelectStatement(
                 sql = "SELECT p.id, p.name, a.id AS address_id FROM Person p LEFT JOIN Address a ON p.id = a.person_id",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = listOf("Address"),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
@@ -151,7 +151,7 @@ class SelectStatementCollectionKeyTest {
             name = "SelectWithAliasCollectionField",
             src = SelectStatement(
                 sql = "SELECT p.id, p.name, a.id AS address_id FROM Person p LEFT JOIN Address a ON p.id = a.person_id",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = listOf("Address"),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
@@ -205,7 +205,7 @@ class SelectStatementCollectionKeyTest {
             name = "SelectWithPrefixRemoval",
             src = SelectStatement(
                 sql = "SELECT p.id, p.name, a.id AS address_id FROM Person p LEFT JOIN Address a ON p.id = a.person_id",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = listOf("Address"),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),

@@ -59,8 +59,8 @@ class ImplementsAnnotationTest {
         val mockStatement = AnnotatedSelectStatement(
             name = "SelectAll",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
-                sql = "SELECT * FROM Person",
-                fromTable = "Person",
+                sql = "SELECT * FROM person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
@@ -89,7 +89,7 @@ class ImplementsAnnotationTest {
             name = "SelectAll",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
                 sql = "SELECT * FROM Person",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
@@ -113,7 +113,7 @@ class ImplementsAnnotationTest {
             name = "SelectAllFiltered",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
                 sql = "SELECT * FROM Person WHERE active = 1",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
@@ -369,7 +369,7 @@ class ImplementsAnnotationTest {
             name = "SelectAll",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
                 sql = "SELECT * FROM Person",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
@@ -393,7 +393,7 @@ class ImplementsAnnotationTest {
             name = "SelectFiltered",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
                 sql = "SELECT * FROM Person WHERE age > 18",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
@@ -447,7 +447,7 @@ class ImplementsAnnotationTest {
             name = "SelectAll",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
                 sql = "SELECT * FROM Person",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
@@ -471,7 +471,7 @@ class ImplementsAnnotationTest {
             name = "SelectFiltered",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
                 sql = "SELECT * FROM Person WHERE age > 18",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
@@ -524,7 +524,7 @@ class ImplementsAnnotationTest {
             AnnotatedSelectStatement.Field(
                 src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement.FieldSource(
                     fieldName = "total_person_count",
-                    tableName = "Person",
+                    tableName = "person",
                     originalColumnName = "total_person_count",
                     dataType = "INTEGER" // First query reports INTEGER
                 ),
@@ -541,7 +541,7 @@ class ImplementsAnnotationTest {
             AnnotatedSelectStatement.Field(
                 src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement.FieldSource(
                     fieldName = "total_person_count",
-                    tableName = "Person",
+                    tableName = "person",
                     originalColumnName = "total_person_count",
                     dataType = "NUMERIC" // Second query reports NUMERIC
                 ),
@@ -559,7 +559,7 @@ class ImplementsAnnotationTest {
             name = "SelectWithLimit",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
                 sql = "SELECT *, COUNT(*) AS total_person_count FROM Person LIMIT :limit OFFSET :offset",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 fields = firstQueryFields.map { it.src },
                 namedParameters = listOf("limit", "offset"),
@@ -583,7 +583,7 @@ class ImplementsAnnotationTest {
             name = "SelectWithFilter",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
                 sql = "SELECT *, COUNT(*) AS total_person_count FROM Person WHERE first_name IN (:firstNames)",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 fields = secondQueryFields.map { it.src },
                 namedParameters = listOf("firstNames"),
@@ -632,7 +632,7 @@ class ImplementsAnnotationTest {
             AnnotatedSelectStatement.Field(
                 src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement.FieldSource(
                     fieldName = "id",
-                    tableName = "Person",
+                    tableName = "person",
                     originalColumnName = "id",
                     dataType = "INTEGER"
                 ),
@@ -646,7 +646,7 @@ class ImplementsAnnotationTest {
             AnnotatedSelectStatement.Field(
                 src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement.FieldSource(
                     fieldName = "total_person_count",
-                    tableName = "Person", // This might be different between queries!
+                    tableName = "person", // This might be different between queries!
                     originalColumnName = "total_person_count",
                     dataType = "INTEGER"
                 ),
@@ -663,7 +663,7 @@ class ImplementsAnnotationTest {
             AnnotatedSelectStatement.Field(
                 src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement.FieldSource(
                     fieldName = "id",
-                    tableName = "Person",
+                    tableName = "person",
                     originalColumnName = "id",
                     dataType = "INTEGER"
                 ),
@@ -677,7 +677,7 @@ class ImplementsAnnotationTest {
             AnnotatedSelectStatement.Field(
                 src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement.FieldSource(
                     fieldName = "total_person_count",
-                    tableName = "Person",
+                    tableName = "person",
                     originalColumnName = "total_person_count",
                     dataType = "INTEGER"
                 ),
@@ -695,7 +695,7 @@ class ImplementsAnnotationTest {
             name = "SelectWithLimit",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
                 sql = "SELECT *, COUNT(*) AS total_person_count FROM Person LIMIT :limit OFFSET :offset",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 fields = firstQueryFields.map { it.src },
                 namedParameters = listOf("limit", "offset"),
@@ -719,7 +719,7 @@ class ImplementsAnnotationTest {
             name = "SelectWithFilter",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
                 sql = "SELECT *, COUNT(*) AS total_person_count FROM Person WHERE first_name IN (:firstNames)",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 fields = secondQueryFields.map { it.src },
                 namedParameters = listOf("firstNames"),
@@ -763,7 +763,7 @@ class ImplementsAnnotationTest {
             AnnotatedSelectStatement.Field(
                 src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement.FieldSource(
                     fieldName = "id",
-                    tableName = "Person",
+                    tableName = "person",
                     originalColumnName = "id",
                     dataType = "INTEGER"
                 ),
@@ -777,7 +777,7 @@ class ImplementsAnnotationTest {
             AnnotatedSelectStatement.Field(
                 src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement.FieldSource(
                     fieldName = "total_person_count",
-                    tableName = "Person",
+                    tableName = "person",
                     originalColumnName = "total_person_count",
                     dataType = "INTEGER"
                 ),
@@ -795,7 +795,7 @@ class ImplementsAnnotationTest {
             name = "SelectWithLimit",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
                 sql = "SELECT *, COUNT(*) AS total_person_count FROM Person LIMIT :limit OFFSET :offset",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 fields = commonFields.map { it.src },
                 namedParameters = listOf("limit", "offset"),
@@ -819,7 +819,7 @@ class ImplementsAnnotationTest {
             name = "SelectWithFilter",
             src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
                 sql = "SELECT *, COUNT(*) AS total_person_count FROM Person WHERE first_name IN (:firstNames)",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 fields = commonFields.map { it.src },
                 namedParameters = listOf("firstNames"),

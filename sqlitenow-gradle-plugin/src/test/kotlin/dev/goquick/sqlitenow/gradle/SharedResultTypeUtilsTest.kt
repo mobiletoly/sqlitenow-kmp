@@ -26,7 +26,7 @@ class SharedResultTypeUtilsTest {
             name = "SelectAll",
             src = SelectStatement(
                 sql = "SELECT * FROM Person",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
@@ -61,7 +61,7 @@ class SharedResultTypeUtilsTest {
             name = "SelectWeird",
             src = SelectStatement(
                 sql = "SELECT * FROM Person WHERE weird = 1",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
@@ -96,7 +96,7 @@ class SharedResultTypeUtilsTest {
             name = "SelectAll",
             src = SelectStatement(
                 sql = "SELECT * FROM Person",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
@@ -122,7 +122,7 @@ class SharedResultTypeUtilsTest {
             name = "SelectWeird",
             src = SelectStatement(
                 sql = "SELECT * FROM Person WHERE weird = 1",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),

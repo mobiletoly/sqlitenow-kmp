@@ -331,7 +331,7 @@ class SelectFieldCodeGeneratorTest {
 
         // Create a mock CreateTableStatement for PersonAddress
         val mockPersonAddressTable = mock(CreateTableStatement::class.java)
-        `when`(mockPersonAddressTable.tableName).thenReturn("PersonAddress")
+        `when`(mockPersonAddressTable.tableName).thenReturn("person_address")
         `when`(mockPersonAddressTable.columns).thenReturn(listOf(mockIdColumn))
 
         // Create a mock AnnotatedCreateTableStatement

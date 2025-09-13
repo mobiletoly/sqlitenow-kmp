@@ -17,7 +17,7 @@ class SharedResultTest {
             name = "SelectAllPaginated",
             src = SelectStatement(
                 sql = "SELECT * FROM Person LIMIT :limit OFFSET :offset",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 namedParameters = listOf("limit", "offset"),
                 namedParametersToColumns = emptyMap(),
@@ -26,13 +26,13 @@ class SharedResultTest {
                 fields = listOf(
                     SelectStatement.FieldSource(
                         fieldName = "id",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "id",
                         dataType = "INTEGER"
                     ),
                     SelectStatement.FieldSource(
                         fieldName = "name",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "name",
                         dataType = "TEXT"
                     )
@@ -50,7 +50,7 @@ class SharedResultTest {
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource(
                         fieldName = "id",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "id",
                         dataType = "INTEGER"
                     ),
@@ -59,7 +59,7 @@ class SharedResultTest {
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource(
                         fieldName = "name",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "name",
                         dataType = "TEXT"
                     ),
@@ -96,15 +96,15 @@ class SharedResultTest {
             name = "SelectAllPaginated",
             src = SelectStatement(
                 sql = "SELECT id, name FROM Person LIMIT :limit",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 namedParameters = listOf("limit"),
                 namedParametersToColumns = emptyMap(),
                 offsetNamedParam = null,
                 limitNamedParam = "limit",
                 fields = listOf(
-                    SelectStatement.FieldSource("id", "Person", "id", "INTEGER"),
-                    SelectStatement.FieldSource("name", "Person", "name", "TEXT")
+                    SelectStatement.FieldSource("id", "person", "id", "INTEGER"),
+                    SelectStatement.FieldSource("name", "person", "name", "TEXT")
                 )
             ),
             annotations = StatementAnnotationOverrides(
@@ -117,11 +117,11 @@ class SharedResultTest {
             ),
             fields = listOf(
                 AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("id", "Person", "id", "INTEGER"),
+                    src = SelectStatement.FieldSource("id", "person", "id", "INTEGER"),
                     annotations = FieldAnnotationOverrides.parse(emptyMap())
                 ),
                 AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("name", "Person", "name", "TEXT"),
+                    src = SelectStatement.FieldSource("name", "person", "name", "TEXT"),
                     annotations = FieldAnnotationOverrides.parse(emptyMap())
                 )
             )
@@ -132,15 +132,15 @@ class SharedResultTest {
             name = "SelectAllFiltered",
             src = SelectStatement(
                 sql = "SELECT id, email FROM Person WHERE active = 1",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
                 offsetNamedParam = null,
                 limitNamedParam = null,
                 fields = listOf(
-                    SelectStatement.FieldSource("id", "Person", "id", "INTEGER"),
-                    SelectStatement.FieldSource("email", "Person", "email", "TEXT") // Different field!
+                    SelectStatement.FieldSource("id", "person", "id", "INTEGER"),
+                    SelectStatement.FieldSource("email", "person", "email", "TEXT") // Different field!
                 )
             ),
             annotations = StatementAnnotationOverrides(
@@ -153,11 +153,11 @@ class SharedResultTest {
             ),
             fields = listOf(
                 AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("id", "Person", "id", "INTEGER"),
+                    src = SelectStatement.FieldSource("id", "person", "id", "INTEGER"),
                     annotations = FieldAnnotationOverrides.parse(emptyMap())
                 ),
                 AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("email", "Person", "email", "TEXT"),
+                    src = SelectStatement.FieldSource("email", "person", "email", "TEXT"),
                     annotations = FieldAnnotationOverrides.parse(emptyMap())
                 )
             )
@@ -183,7 +183,7 @@ class SharedResultTest {
             name = "SelectAll",
             src = SelectStatement(
                 sql = "SELECT * FROM Person",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
@@ -249,15 +249,15 @@ class SharedResultTest {
             name = "SelectWithDynamicField",
             src = SelectStatement(
                 sql = "SELECT id, name FROM Person",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
                 offsetNamedParam = null,
                 limitNamedParam = null,
                 fields = listOf(
-                    SelectStatement.FieldSource("id", "Person", "id", "INTEGER"),
-                    SelectStatement.FieldSource("name", "Person", "name", "TEXT")
+                    SelectStatement.FieldSource("id", "person", "id", "INTEGER"),
+                    SelectStatement.FieldSource("name", "person", "name", "TEXT")
                 )
             ),
             annotations = StatementAnnotationOverrides(
@@ -276,7 +276,7 @@ class SharedResultTest {
                 ),
                 // Regular database field
                 AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("name", "Person", "name", "TEXT"),
+                    src = SelectStatement.FieldSource("name", "person", "name", "TEXT"),
                     annotations = FieldAnnotationOverrides.parse(emptyMap())
                 ),
                 // Dynamic field

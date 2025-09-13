@@ -12,12 +12,12 @@ import kotlinx.serialization.json.*
 /**
  * Handles the upload process for sync operations.
  * Separated from DefaultOversqliteClient to improve maintainability.
+ *
+ * The HttpClient should be pre-configured with authentication headers and base URL.
  */
 internal class SyncUploader(
     private val http: HttpClient,
-    private val baseUrl: String,
     private val config: OversqliteConfig,
-    private val tokenProvider: suspend () -> String,
     private val resolver: Resolver,
     private val upsertBusinessFromPayload: suspend (SafeSQLiteConnection, String, String, JsonElement?) -> Unit,
     private val updateRowMeta: suspend (SafeSQLiteConnection, String, String, Long, Boolean) -> Unit
@@ -140,10 +140,8 @@ internal class SyncUploader(
             .use { st -> if (st.step()) st.getLong(0) else 0L }
 
         val req = UploadRequest(lastServerSeqSeen = lastServerSeq, changes = changes)
-        val token = tokenProvider()
 
-        val response: UploadResponse = http.post("${baseUrl.trimEnd('/')}/sync/upload") {
-            header("Authorization", "Bearer $token")
+        val response: UploadResponse = http.post("/sync/upload") {
             contentType(ContentType.Application.Json)
             setBody(req)
         }.body()

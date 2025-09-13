@@ -21,7 +21,7 @@ One of the popular options is to use JSON and we already added helpers for that 
 Here is an example of annotation:
 
 ```sql
-CREATE TABLE Comment
+CREATE TABLE comment
 (
     id   INTEGER PRIMARY KEY NOT NULL,
 
@@ -57,7 +57,7 @@ SQLiteNow provides helpers for converting between `LocalDateTime` and SQLite tim
 You can use them in your adapters as shown in the example below:
 
 ```sql
-CREATE TABLE Comment
+CREATE TABLE comment
 (
     id         INTEGER PRIMARY KEY NOT NULL,
 
@@ -98,7 +98,7 @@ have created a helper class `EnumByValueLookup` that you can use to create a loo
 enum constant and its unique value. Here is an example:
 
 ```sql
-CREATE TABLE PersonAddress
+CREATE TABLE person_address
 (
     id           INTEGER PRIMARY KEY NOT NULL,
 

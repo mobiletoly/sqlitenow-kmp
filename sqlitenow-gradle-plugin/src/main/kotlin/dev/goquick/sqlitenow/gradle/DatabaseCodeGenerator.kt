@@ -248,13 +248,12 @@ class DatabaseCodeGenerator(
                     .build()
             )
 
-            // fun newOversqliteClientWithToken(schema: String, baseUrl: String, token: String, resolver: Resolver = ServerWinsResolver,...)
+            // fun newOversqliteClient(schema: String, httpClient: HttpClient, resolver: Resolver = ServerWinsResolver,...)
             classBuilder.addFunction(
-                FunSpec.builder("newOversqliteClientWithToken")
-                    .addKdoc("Creates a DefaultOversqliteClient bound to this DB using a fixed token.")
+                FunSpec.builder("newOversqliteClient")
+                    .addKdoc("Creates a DefaultOversqliteClient bound to this DB using a pre-configured HttpClient with authentication and base URL.")
                     .addParameter("schema", String::class)
-                    .addParameter("baseUrl", String::class)
-                    .addParameter("token", String::class)
+                    .addParameter("httpClient", ClassName("io.ktor.client", "HttpClient"))
                     .addParameter(
                         ParameterSpec.builder(
                             "resolver",
@@ -266,7 +265,7 @@ class DatabaseCodeGenerator(
                     .returns(ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteClient"))
                     .addStatement("val cfg = buildOversqliteConfig(schema, uploadLimit, downloadLimit)")
                     .addStatement(
-                        "return %T(db = this.connection(), baseUrl = baseUrl, config = cfg, tokenProvider = { token }, resolver = resolver, tablesUpdateListener = { notifyTablesChanged(it) })",
+                        "return %T(db = this.connection(), config = cfg, http = httpClient, resolver = resolver, tablesUpdateListener = { notifyTablesChanged(it) })",
                         ClassName("dev.goquick.sqlitenow.oversqlite", "DefaultOversqliteClient")
                     )
                     .build()

@@ -6,6 +6,9 @@ import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import io.ktor.client.plugins.auth.providers.bearer
+import io.ktor.client.plugins.defaultRequest
+import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Before
@@ -111,21 +114,53 @@ class AndroidOversqliteStressTest {
                 generateJwt(user, device, secret)
             }
 
+        // Helper to create HTTP client with flaky token provider
+        fun createFlakyHttpClient(tokenProvider: suspend () -> String): io.ktor.client.HttpClient {
+            return io.ktor.client.HttpClient {
+                install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) {
+                    json(kotlinx.serialization.json.Json { ignoreUnknownKeys = true })
+                }
+                install(io.ktor.client.plugins.auth.Auth) {
+                    bearer {
+                        loadTokens {
+                            io.ktor.client.plugins.auth.providers.BearerTokens(
+                                accessToken = tokenProvider(),
+                                refreshToken = null
+                            )
+                        }
+                        refreshTokens {
+                            // Simulate token refresh
+                            io.ktor.client.plugins.auth.providers.BearerTokens(
+                                accessToken = tokenProvider(),
+                                refreshToken = null
+                            )
+                        }
+                    }
+                }
+                defaultRequest {
+                    url("http://10.0.2.2:8080")
+                }
+            }
+        }
+
         val cfg = OversqliteConfig(schema = "business", tables = listOf("users", "posts"))
         val secret = "your-secret-key-change-in-production"
         val userSub = "user-stress-" + java.util.UUID.randomUUID().toString().substring(0, 8)
+
+        // Create flaky HTTP clients that simulate token refresh
+        val httpClientA = createFlakyHttpClient(flakyTokenProvider(userSub, "device-A", secret))
+        val httpClientB = createFlakyHttpClient(flakyTokenProvider(userSub, "device-B", secret))
+
         var clientA = DefaultOversqliteClient(
             db = dbA,
-            baseUrl = "http://10.0.2.2:8080",
             config = cfg,
-            tokenProvider = flakyTokenProvider(userSub, "device-A", secret),
+            http = httpClientA,
             resolver = ClientWinsResolver,
             tablesUpdateListener = { println("Tables updated: $it") })
         var clientB = DefaultOversqliteClient(
             db = dbB,
-            baseUrl = "http://10.0.2.2:8080",
             config = cfg,
-            tokenProvider = flakyTokenProvider(userSub, "device-B", secret),
+            http = httpClientB,
             resolver = ClientWinsResolver,
             tablesUpdateListener = { println("Tables updated: $it") })
 
@@ -196,16 +231,14 @@ class AndroidOversqliteStressTest {
                 clientA.close(); clientB.close()
                 clientA = DefaultOversqliteClient(
                     dbA,
-                    "http://10.0.2.2:8080",
                     cfg,
-                    flakyTokenProvider(userSub, "device-A", secret),
+                    createFlakyHttpClient(flakyTokenProvider(userSub, "device-A", secret)),
                     ClientWinsResolver,
                     tablesUpdateListener = { println("Tables updated: $it") })
                 clientB = DefaultOversqliteClient(
                     dbB,
-                    "http://10.0.2.2:8080",
                     cfg,
-                    flakyTokenProvider(userSub, "device-B", secret),
+                    createFlakyHttpClient(flakyTokenProvider(userSub, "device-B", secret)),
                     ClientWinsResolver,
                     tablesUpdateListener = { println("Tables updated: $it") })
                 // Continue downloads after restart

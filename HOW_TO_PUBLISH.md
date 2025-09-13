@@ -177,8 +177,8 @@ The output will look like the example below, containing a username and a passwor
 ```xml
 <server>
     <id>${server}</id>
-    <username>l3nfaPmz</username>
-    <password>gh9jT9XfnGtUngWTZwTu/8241keYdmQpipqLPRKeDLTh</password>
+    <username>...</username>
+    <password>...</password>
 </server>
 ```
 

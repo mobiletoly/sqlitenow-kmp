@@ -321,7 +321,7 @@ class DataStructCodeGeneratorTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "created_at",  // snake_case column name
@@ -387,8 +387,8 @@ class DataStructCodeGeneratorTest {
 
         // Create a mock INSERT statement that matches the add.sql pattern
         val mockInsertStatement = InsertStatement(
-            sql = "INSERT INTO Person (first_name, created_at) VALUES (:firstName, :createdAt)",
-            table = "Person",
+            sql = "INSERT INTO person (first_name, created_at) VALUES (:firstName, :createdAt)",
+            table = "person",
             namedParameters = listOf("firstName", "createdAt"),  // camelCase parameters
             withSelectStatements = emptyList(),
             columnNamesAssociatedWithNamedParameters = mapOf(
@@ -446,7 +446,7 @@ class DataStructCodeGeneratorTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "created_at",
@@ -496,8 +496,8 @@ class DataStructCodeGeneratorTest {
 
         // Create a mock INSERT statement
         val mockInsertStatement = InsertStatement(
-            sql = "INSERT INTO Person (created_at) VALUES (?)",
-            table = "Person",
+            sql = "INSERT INTO person (created_at) VALUES (?)",
+            table = "person",
             namedParameters = listOf("createdAt"),
             withSelectStatements = emptyList(),
             columnNamesAssociatedWithNamedParameters = mapOf(
@@ -555,7 +555,7 @@ class DataStructCodeGeneratorTest {
         // Create the Person table
         conn.createStatement().execute(
             """
-            CREATE TABLE Person (
+            CREATE TABLE person (
                 created_at INTEGER NOT NULL
             )
         """.trimIndent()
@@ -567,7 +567,7 @@ class DataStructCodeGeneratorTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "created_at",
@@ -618,7 +618,7 @@ class DataStructCodeGeneratorTest {
         // Create a mock INSERT statement
         val mockInsertStatement = InsertStatement(
             sql = "INSERT INTO Person (created_at) VALUES (?)",
-            table = "Person",
+            table = "person",
             namedParameters = listOf("createdAt"),
             withSelectStatements = emptyList(),
             columnNamesAssociatedWithNamedParameters = mapOf(
@@ -681,7 +681,7 @@ class DataStructCodeGeneratorTest {
         // Create the Person table
         conn.createStatement().execute(
             """
-            CREATE TABLE Person (
+            CREATE TABLE person (
                 last_name TEXT NOT NULL
             )
         """.trimIndent()
@@ -693,7 +693,7 @@ class DataStructCodeGeneratorTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "last_name",
@@ -744,8 +744,8 @@ class DataStructCodeGeneratorTest {
 
         // Create a mock INSERT statement
         val mockInsertStatement = InsertStatement(
-            sql = "INSERT INTO Person (last_name) VALUES (?)",
-            table = "Person",
+            sql = "INSERT INTO person (last_name) VALUES (?)",
+            table = "person",
             namedParameters = listOf("lastName"),
             withSelectStatements = emptyList(),
             columnNamesAssociatedWithNamedParameters = mapOf(
@@ -796,7 +796,7 @@ class DataStructCodeGeneratorTest {
         // Create the Person table
         conn.createStatement().execute(
             """
-            CREATE TABLE Person (
+            CREATE TABLE person (
                 last_name TEXT NOT NULL
             )
         """.trimIndent()
@@ -808,7 +808,7 @@ class DataStructCodeGeneratorTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "last_name",
@@ -859,8 +859,8 @@ class DataStructCodeGeneratorTest {
 
         // Create a mock INSERT statement
         val mockInsertStatement = InsertStatement(
-            sql = "INSERT INTO Person (last_name) VALUES (?)",
-            table = "Person",
+            sql = "INSERT INTO person (last_name) VALUES (?)",
+            table = "person",
             namedParameters = listOf("lastName"),
             withSelectStatements = emptyList(),
             columnNamesAssociatedWithNamedParameters = mapOf(
@@ -922,7 +922,7 @@ class DataStructCodeGeneratorTest {
         // Create the Person table
         conn.createStatement().execute(
             """
-            CREATE TABLE Person (
+            CREATE TABLE person (
                 created_at INTEGER NOT NULL
             )
         """.trimIndent()
@@ -934,7 +934,7 @@ class DataStructCodeGeneratorTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "created_at",
@@ -984,8 +984,8 @@ class DataStructCodeGeneratorTest {
 
         // Test INSERT statement parameter naming: {propertyName}ToSqlColumn
         val mockInsertStatement = InsertStatement(
-            sql = "INSERT INTO Person (created_at) VALUES (?)",
-            table = "Person",
+            sql = "INSERT INTO person (created_at) VALUES (?)",
+            table = "person",
             namedParameters = listOf("createdAt"),
             withSelectStatements = emptyList(),
             columnNamesAssociatedWithNamedParameters = mapOf(
@@ -1011,12 +1011,12 @@ class DataStructCodeGeneratorTest {
             name = "selectAll",
             src = SelectStatement(
                 sql = "SELECT created_at FROM Person",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 fields = listOf(
                     SelectStatement.FieldSource(
                         fieldName = "created_at",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "created_at",
                         dataType = "INTEGER"
                     )
@@ -1038,7 +1038,7 @@ class DataStructCodeGeneratorTest {
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource(
                         fieldName = "created_at",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "created_at",
                         dataType = "INTEGER"
                     ),
@@ -1099,7 +1099,7 @@ class DataStructCodeGeneratorTest {
         // Create the Person table
         conn.createStatement().execute(
             """
-            CREATE TABLE Person (
+            CREATE TABLE person (
                 birth_date TEXT,
                 age INTEGER
             )
@@ -1112,7 +1112,7 @@ class DataStructCodeGeneratorTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "birth_date",
@@ -1174,12 +1174,12 @@ class DataStructCodeGeneratorTest {
             name = "selectOlderThan",
             src = SelectStatement(
                 sql = "SELECT * FROM Person WHERE birth_date < ? AND birth_date < ? AND age < ?",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 fields = listOf(
                     SelectStatement.FieldSource(
                         fieldName = "birth_date",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "birth_date",
                         dataType = "TEXT"
                     )
@@ -1204,7 +1204,7 @@ class DataStructCodeGeneratorTest {
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource(
                         fieldName = "birth_date",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "birth_date",
                         dataType = "TEXT"
                     ),
@@ -1250,7 +1250,7 @@ class DataStructCodeGeneratorTest {
         // Create the Person table with proper schema
         conn.createStatement().execute(
             """
-            CREATE TABLE Person (
+            CREATE TABLE person (
                 id INTEGER PRIMARY KEY,
                 age INTEGER NOT NULL,
                 score INTEGER NOT NULL,
@@ -1265,7 +1265,7 @@ class DataStructCodeGeneratorTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "id",
@@ -1351,12 +1351,12 @@ class DataStructCodeGeneratorTest {
         // Create a mock WITH clause SELECT statement
         val withSelectStatement = SelectStatement(
             sql = "SELECT id FROM Person WHERE age = :myAge",
-            fromTable = "Person",
+            fromTable = "person",
             joinTables = emptyList(),
             fields = listOf(
                 SelectStatement.FieldSource(
                     fieldName = "id",
-                    tableName = "Person",
+                    tableName = "person",
                     originalColumnName = "id",
                     dataType = "INTEGER"
                 )
@@ -1374,7 +1374,7 @@ class DataStructCodeGeneratorTest {
             name = "deleteOlderThan",
             src = DeleteStatement(
                 sql = "WITH IDsToDelete AS (SELECT id FROM Person WHERE age = :myAge) DELETE FROM Person WHERE id IN (SELECT id FROM IDsToDelete) AND score = :myScore",
-                table = "Person",
+                table = "person",
                 namedParameters = listOf("myScore"),
                 namedParametersToColumns = mapOf(
                     "myScore" to AssociatedColumn.Default("score")
@@ -1453,7 +1453,7 @@ class DataStructCodeGeneratorTest {
         // Create the Person table with nullable age column
         conn.createStatement().execute(
             """
-            CREATE TABLE Person (
+            CREATE TABLE person (
                 id INTEGER PRIMARY KEY,
                 age INTEGER  -- Note: nullable (no NOT NULL constraint)
             )
@@ -1466,7 +1466,7 @@ class DataStructCodeGeneratorTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "id",
@@ -1533,12 +1533,12 @@ class DataStructCodeGeneratorTest {
         // Create a mock WITH clause SELECT statement
         val withSelectStatement = SelectStatement(
             sql = "SELECT id FROM Person WHERE age = :myAge",
-            fromTable = "Person",
+            fromTable = "person",
             joinTables = emptyList(),
             fields = listOf(
                 SelectStatement.FieldSource(
                     fieldName = "id",
-                    tableName = "Person",
+                    tableName = "person",
                     originalColumnName = "id",
                     dataType = "INTEGER"
                 )
@@ -1556,7 +1556,7 @@ class DataStructCodeGeneratorTest {
             name = "deleteByAge",
             src = DeleteStatement(
                 sql = "WITH IDsToDelete AS (SELECT id FROM Person WHERE age = :myAge) DELETE FROM Person WHERE id IN (SELECT id FROM IDsToDelete)",
-                table = "Person",
+                table = "person",
                 namedParameters = emptyList(), // No direct DELETE parameters
                 namedParametersToColumns = emptyMap(),
                 withSelectStatements = listOf(withSelectStatement)
@@ -1605,7 +1605,7 @@ class DataStructCodeGeneratorTest {
         // Create the Person table
         conn.createStatement().execute(
             """
-            CREATE TABLE Person (
+            CREATE TABLE person (
                 birth_date TEXT,
                 age INTEGER
             )
@@ -1618,7 +1618,7 @@ class DataStructCodeGeneratorTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "birth_date",
@@ -1679,12 +1679,12 @@ class DataStructCodeGeneratorTest {
             name = "selectOlderThan",
             src = SelectStatement(
                 sql = "SELECT * FROM Person WHERE birth_date < ? AND birth_date < ? AND age < ?",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 fields = listOf(
                     SelectStatement.FieldSource(
                         fieldName = "birth_date",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "birth_date",
                         dataType = "TEXT"
                     )
@@ -1709,7 +1709,7 @@ class DataStructCodeGeneratorTest {
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource(
                         fieldName = "birth_date",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "birth_date",
                         dataType = "TEXT"
                     ),
@@ -1755,7 +1755,7 @@ class DataStructCodeGeneratorTest {
         // Create the Person table with mixed nullable/non-nullable columns
         conn.createStatement().execute(
             """
-            CREATE TABLE Person (
+            CREATE TABLE person (
                 email TEXT NOT NULL,
                 phone TEXT,
                 birth_date TEXT
@@ -1769,7 +1769,7 @@ class DataStructCodeGeneratorTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "email",
@@ -1857,7 +1857,7 @@ class DataStructCodeGeneratorTest {
         // Create a mock INSERT statement
         val mockInsertStatement = InsertStatement(
             sql = "INSERT INTO Person (email, phone, birth_date) VALUES (?, ?, ?)",
-            table = "Person",
+            table = "person",
             namedParameters = listOf("email", "phone", "birthDate"),
             withSelectStatements = emptyList(),
             columnNamesAssociatedWithNamedParameters = mapOf(
@@ -1943,7 +1943,7 @@ class DataStructCodeGeneratorTest {
         // Create the Person table
         conn.createStatement().execute(
             """
-            CREATE TABLE Person (
+            CREATE TABLE person (
                 birth_date TEXT
             )
         """.trimIndent()
@@ -1955,7 +1955,7 @@ class DataStructCodeGeneratorTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "birth_date",
@@ -2008,12 +2008,12 @@ class DataStructCodeGeneratorTest {
             name = "selectByDateRange",
             src = SelectStatement(
                 sql = "SELECT * FROM Person WHERE birth_date >= ? AND birth_date <= ?",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 fields = listOf(
                     SelectStatement.FieldSource(
                         fieldName = "birth_date",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "birth_date",
                         dataType = "TEXT"
                     )
@@ -2038,7 +2038,7 @@ class DataStructCodeGeneratorTest {
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource(
                         fieldName = "birth_date",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "birth_date",
                         dataType = "TEXT"
                     ),
@@ -2090,7 +2090,7 @@ class DataStructCodeGeneratorTest {
         // Create the Person table
         conn.createStatement().execute(
             """
-            CREATE TABLE Person (
+            CREATE TABLE person (
                 last_name TEXT NOT NULL,
                 age INTEGER
             )
@@ -2103,7 +2103,7 @@ class DataStructCodeGeneratorTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "last_name",
@@ -2172,18 +2172,18 @@ class DataStructCodeGeneratorTest {
             name = "selectByInClause",
             src = SelectStatement(
                 sql = "SELECT * FROM Person WHERE last_name IN (?) AND age IN (?)",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 fields = listOf(
                     SelectStatement.FieldSource(
                         fieldName = "last_name",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "last_name",
                         dataType = "TEXT"
                     ),
                     SelectStatement.FieldSource(
                         fieldName = "age",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "age",
                         dataType = "INTEGER"
                     )
@@ -2208,7 +2208,7 @@ class DataStructCodeGeneratorTest {
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource(
                         fieldName = "last_name",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "last_name",
                         dataType = "TEXT"
                     ),
@@ -2222,7 +2222,7 @@ class DataStructCodeGeneratorTest {
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource(
                         fieldName = "age",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "age",
                         dataType = "INTEGER"
                     ),
@@ -2274,7 +2274,7 @@ class DataStructCodeGeneratorTest {
         // Create the Person table
         conn.createStatement().execute(
             """
-            CREATE TABLE Person (
+            CREATE TABLE person (
                 birth_date TEXT
             )
         """.trimIndent()
@@ -2286,7 +2286,7 @@ class DataStructCodeGeneratorTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "birth_date",
@@ -2338,12 +2338,12 @@ class DataStructCodeGeneratorTest {
             name = "selectByDateRange",
             src = SelectStatement(
                 sql = "SELECT * FROM Person WHERE birth_date IN (?)",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 fields = listOf(
                     SelectStatement.FieldSource(
                         fieldName = "birth_date",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "birth_date",
                         dataType = "TEXT"
                     )
@@ -2367,7 +2367,7 @@ class DataStructCodeGeneratorTest {
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource(
                         fieldName = "birth_date",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "birth_date",
                         dataType = "TEXT"
                     ),
@@ -2401,7 +2401,7 @@ class DataStructCodeGeneratorTest {
         // Create the Person table with various column types and constraints
         conn.createStatement().execute(
             """
-            CREATE TABLE Person (
+            CREATE TABLE person (
                 email TEXT NOT NULL,
                 first_name TEXT NOT NULL,
                 last_name TEXT NOT NULL,
@@ -2420,7 +2420,7 @@ class DataStructCodeGeneratorTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "email",
@@ -2612,7 +2612,7 @@ class DataStructCodeGeneratorTest {
             name = "addPersonWithDefaults",
             src = InsertStatement(
                 sql = "INSERT INTO Person (email, first_name, last_name, age, phone, birth_date, created_at, notes) VALUES (?, ?, ?, 1234, ?, ?, ?, ?)",
-                table = "Person",
+                table = "person",
                 namedParameters = listOf(
                     "email",
                     "firstName",
@@ -2707,7 +2707,7 @@ class DataStructCodeGeneratorTest {
         // Create the Person table
         conn.createStatement().execute(
             """
-            CREATE TABLE Person (
+            CREATE TABLE person (
                 first_name TEXT NOT NULL,
                 last_name TEXT NOT NULL,
                 age INTEGER,
@@ -2722,7 +2722,7 @@ class DataStructCodeGeneratorTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "first_name",
@@ -2834,18 +2834,18 @@ class DataStructCodeGeneratorTest {
         // Create a mock WITH clause SELECT statement
         val withSelectStatement = SelectStatement(
             sql = "SELECT first_name, last_name FROM Person WHERE age > 18",
-            fromTable = "Person",
+            fromTable = "person",
             joinTables = emptyList(),
             fields = listOf(
                 SelectStatement.FieldSource(
                     fieldName = "first_name",
-                    tableName = "Person",
+                    tableName = "person",
                     originalColumnName = "first_name",
                     dataType = "TEXT"
                 ),
                 SelectStatement.FieldSource(
                     fieldName = "last_name",
-                    tableName = "Person",
+                    tableName = "person",
                     originalColumnName = "last_name",
                     dataType = "TEXT"
                 )
@@ -2861,7 +2861,7 @@ class DataStructCodeGeneratorTest {
             name = "addPersonWithDefaults",
             src = InsertStatement(
                 sql = "WITH adults AS (SELECT first_name, last_name FROM Person WHERE age > 18) INSERT INTO Person (first_name, last_name, created_at) VALUES (:firstName, :lastName, :createdAt)",
-                table = "Person",
+                table = "person",
                 namedParameters = listOf("firstName", "lastName", "createdAt"),
                 withSelectStatements = listOf(withSelectStatement),
                 columnNamesAssociatedWithNamedParameters = mapOf(
@@ -2910,7 +2910,7 @@ class DataStructCodeGeneratorTest {
         // Create the Person table
         conn.createStatement().execute(
             """
-            CREATE TABLE Person (
+            CREATE TABLE person (
                 id INTEGER PRIMARY KEY,
                 age INTEGER NOT NULL,
                 first_name TEXT NOT NULL,
@@ -2926,7 +2926,7 @@ class DataStructCodeGeneratorTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "id",
@@ -3057,12 +3057,12 @@ class DataStructCodeGeneratorTest {
         // Create a mock WITH clause SELECT statement with named parameters and column mapping
         val withSelectStatement = SelectStatement(
             sql = "SELECT id FROM Person WHERE age = :mySelectAge LIMIT 1",
-            fromTable = "Person",
+            fromTable = "person",
             joinTables = emptyList(),
             fields = listOf(
                 SelectStatement.FieldSource(
                     fieldName = "id",
-                    tableName = "Person",
+                    tableName = "person",
                     originalColumnName = "id",
                     dataType = "INTEGER"
                 )
@@ -3080,7 +3080,7 @@ class DataStructCodeGeneratorTest {
             name = "addPersonWithDefaults",
             src = InsertStatement(
                 sql = "WITH tmp AS (SELECT id FROM Person WHERE age = :mySelectAge LIMIT 1) INSERT INTO Person (first_name, last_name, created_at) VALUES (:firstName, :lastName, :createdAt)",
-                table = "Person",
+                table = "person",
                 namedParameters = listOf("firstName", "lastName", "createdAt"),
                 withSelectStatements = listOf(withSelectStatement),
                 columnNamesAssociatedWithNamedParameters = mapOf(
@@ -3144,7 +3144,7 @@ class DataStructCodeGeneratorTest {
         // Create the Person table matching your schema
         conn.createStatement().execute(
             """
-            CREATE TABLE Person (
+            CREATE TABLE person (
                 email TEXT NOT NULL,
                 first_name TEXT NOT NULL,
                 last_name TEXT,
@@ -3163,7 +3163,7 @@ class DataStructCodeGeneratorTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "email",
@@ -3343,7 +3343,7 @@ class DataStructCodeGeneratorTest {
             name = "aaaAdd",
             src = InsertStatement(
                 sql = "INSERT INTO Person (email, first_name, last_name, age, phone, birth_date, created_at, notes) VALUES (?, ?, ?, 1234, '000-555-777', ?, ?, ?)",
-                table = "Person",
+                table = "person",
                 namedParameters = listOf(
                     "mySelectAge",
                     "email",
@@ -3426,7 +3426,7 @@ class DataStructCodeGeneratorTest {
         // Create the Person table
         conn.createStatement().execute(
             """
-            CREATE TABLE Person (
+            CREATE TABLE person (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL,
                 age INTEGER
@@ -3440,7 +3440,7 @@ class DataStructCodeGeneratorTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "id",
@@ -3528,7 +3528,7 @@ class DataStructCodeGeneratorTest {
             name = "updatePerson",
             src = UpdateStatement(
                 sql = "UPDATE Person SET name = ?, age = ? WHERE id = ?",
-                table = "Person",
+                table = "person",
                 namedParameters = listOf("newName", "newAge", "personId"),
                 namedParametersToColumns = mapOf(
                     "newName" to AssociatedColumn.Default("name"),
@@ -3688,15 +3688,15 @@ class DataStructCodeGeneratorTest {
             name = "SelectWithDynamicField",
             src = SelectStatement(
                 sql = "SELECT id, name FROM Person",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
                 offsetNamedParam = null,
                 limitNamedParam = null,
                 fields = listOf(
-                    SelectStatement.FieldSource("id", "Person", "id", "INTEGER"),
-                    SelectStatement.FieldSource("name", "Person", "name", "TEXT")
+                    SelectStatement.FieldSource("id", "person", "id", "INTEGER"),
+                    SelectStatement.FieldSource("name", "person", "name", "TEXT")
                 )
             ),
             annotations = StatementAnnotationOverrides(
@@ -3710,11 +3710,11 @@ class DataStructCodeGeneratorTest {
             fields = listOf(
                 // Regular database fields
                 AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("id", "Person", "id", "INTEGER"),
+                    src = SelectStatement.FieldSource("id", "person", "id", "INTEGER"),
                     annotations = FieldAnnotationOverrides.parse(emptyMap())
                 ),
                 AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("name", "Person", "name", "TEXT"),
+                    src = SelectStatement.FieldSource("name", "person", "name", "TEXT"),
                     annotations = FieldAnnotationOverrides.parse(emptyMap())
                 ),
                 // Dynamic field
@@ -3742,7 +3742,7 @@ class DataStructCodeGeneratorTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column("id", "INTEGER", true, true, false, false),
                         CreateTableStatement.Column("name", "TEXT", true, false, false, false)
@@ -3766,7 +3766,7 @@ class DataStructCodeGeneratorTest {
         // Create the Person table
         conn.createStatement().execute(
             """
-            CREATE TABLE Person (
+            CREATE TABLE person (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL
             )

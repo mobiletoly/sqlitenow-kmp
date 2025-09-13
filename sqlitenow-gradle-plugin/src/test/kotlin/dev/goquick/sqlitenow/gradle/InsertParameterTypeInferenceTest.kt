@@ -18,7 +18,7 @@ class InsertParameterTypeInferenceTest {
         // Create the Person table with annotations
         conn.createStatement().execute(
             """
-            CREATE TABLE Person (
+            CREATE TABLE person (
                 id INTEGER PRIMARY KEY NOT NULL,
                 first_name TEXT NOT NULL,
                 last_name TEXT NOT NULL,
@@ -36,8 +36,8 @@ class InsertParameterTypeInferenceTest {
             AnnotatedCreateTableStatement(
                 name = "Person",
                 src = CreateTableStatement(
-                    sql = "CREATE TABLE Person (...)",
-                    tableName = "Person",
+                    sql = "CREATE TABLE person (...)",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "birth_date",

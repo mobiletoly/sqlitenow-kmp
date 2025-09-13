@@ -52,9 +52,8 @@ kotlin {
             implementation(libs.sqlite.bundled)
 
             implementation(project(":library"))
-            // Multiplatform cryptography for JWT (HMAC-SHA256)
-            // Ktor client for dummy-signin token fetch
             implementation(libs.ktor.client.core)
+            implementation(libs.ktor.client.auth)
             implementation(libs.ktor.client.content.negotiation)
             implementation(libs.ktor.serialization.kotlinx.json)
             // Multiplatform Settings

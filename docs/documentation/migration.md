@@ -58,12 +58,12 @@ CREATE INDEX idx_person_middle_name ON Person (middle_name);
 
 ```sql
 -- Migration from version 1 to version 2
-CREATE TABLE UserPreferences
+CREATE TABLE user_preferences
 (
     id      INTEGER PRIMARY KEY NOT NULL,
     user_id INTEGER             NOT NULL,
     theme   TEXT                NOT NULL DEFAULT 'light',
-    FOREIGN KEY (user_id) REFERENCES Person (id)
+    FOREIGN KEY (user_id) REFERENCES person (id)
 );
 ```
 

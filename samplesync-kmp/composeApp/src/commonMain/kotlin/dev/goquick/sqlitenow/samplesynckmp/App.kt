@@ -53,6 +53,13 @@ import dev.goquick.sqlitenow.samplesynckmp.db.PersonAddressQuery
 import dev.goquick.sqlitenow.samplesynckmp.db.PersonQuery
 import dev.goquick.sqlitenow.samplesynckmp.db.VersionBasedDatabaseMigrations
 import dev.goquick.sqlitenow.samplesynckmp.model.PersonNote
+import io.ktor.client.HttpClient
+import io.ktor.client.plugins.auth.Auth
+import io.ktor.client.plugins.auth.providers.BearerTokens
+import io.ktor.client.plugins.auth.providers.bearer
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.defaultRequest
+import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.IO
@@ -67,6 +74,7 @@ import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import kotlinx.serialization.json.Json
 import org.jetbrains.compose.ui.tooling.preview.Preview
 import kotlin.random.Random
 import kotlin.time.Clock
@@ -80,13 +88,53 @@ typealias PersonAddressEntity = PersonAddressQuery.SharedResult.Row
 typealias PersonWithAddressesEntity = PersonQuery.SharedResult.PersonWithAddressRow
 
 private val firstNames = listOf(
-    "John", "Jane", "Alice", "Bob", "Charlie", "Diana", "Eve",
-    "Frank", "Grace", "Henry"
+    // Traditional English names
+    "John", "Jane", "Alice", "Bob", "Charlie", "Diana", "Eve", "Frank", "Grace", "Henry",
+    "William", "Mary", "James", "Patricia", "Robert", "Jennifer", "Michael", "Linda", "David", "Elizabeth",
+    "Richard", "Barbara", "Joseph", "Susan", "Thomas", "Jessica", "Christopher", "Sarah", "Daniel", "Karen",
+    "Paul", "Nancy", "Mark", "Lisa", "Donald", "Betty", "George", "Helen", "Kenneth", "Sandra",
+    "Steven", "Donna", "Edward", "Carol", "Brian", "Ruth", "Ronald", "Sharon", "Anthony", "Michelle",
+    "Kevin", "Laura", "Jason", "Sarah", "Matthew", "Kimberly", "Gary", "Deborah", "Timothy", "Dorothy",
+    "Jose", "Amy", "Larry", "Angela", "Jeffrey", "Ashley", "Frank", "Brenda", "Scott", "Emma",
+    "Eric", "Olivia", "Stephen", "Cynthia", "Andrew", "Marie", "Raymond", "Janet", "Gregory", "Catherine",
+    "Joshua", "Frances", "Jerry", "Christine", "Dennis", "Samantha", "Walter", "Debra", "Patrick", "Rachel",
+    "Peter", "Carolyn", "Harold", "Janet", "Douglas", "Virginia", "Henry", "Maria", "Carl", "Heather",
+    "Alexander", "Sophia", "Benjamin", "Isabella", "Lucas", "Charlotte", "Mason", "Amelia", "Ethan", "Mia",
+    "Noah", "Harper", "Logan", "Evelyn", "Jacob", "Abigail", "Jackson", "Emily", "Aiden", "Elizabeth",
+    "Sebastian", "Sofia", "Gabriel", "Avery", "Carter", "Ella", "Jayden", "Madison", "Luke", "Scarlett",
+    "Anthony", "Victoria", "Isaac", "Aria", "Dylan", "Grace", "Wyatt", "Chloe", "Owen", "Camila",
+    "Caleb", "Penelope", "Nathan", "Riley", "Ryan", "Layla", "Hunter", "Lillian", "Christian", "Nora",
+    "Landon", "Zoey", "Adrian", "Mila", "Jonathan", "Aubrey", "Nolan", "Hannah", "Cameron", "Lily",
+    "Connor", "Addison", "Santiago", "Eleanor", "Jeremiah", "Natalie", "Ezekiel", "Luna", "Angel", "Savannah",
+    "Robert", "Brooklyn", "Axel", "Leah", "Colton", "Zoe", "Jordan", "Stella", "Dominic", "Hazel",
+    "Austin", "Ellie", "Ian", "Paisley", "Adam", "Violet", "Eli", "Claire", "Jose", "Bella",
+    "Jaxon", "Aurora", "Rowan", "Lucy", "Felix", "Anna", "Silas", "Samantha", "Miles", "Caroline"
 )
+
 private val lastNames = listOf(
-    "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia",
-    "Miller", "Davis", "Rodriguez", "Martinez"
+    // Common American surnames
+    "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez",
+    "Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin",
+    "Lee", "Perez", "Thompson", "White", "Harris", "Sanchez", "Clark", "Ramirez", "Lewis", "Robinson",
+    "Walker", "Young", "Allen", "King", "Wright", "Scott", "Torres", "Nguyen", "Hill", "Flores",
+    "Green", "Adams", "Nelson", "Baker", "Hall", "Rivera", "Campbell", "Mitchell", "Carter", "Roberts",
+    "Gomez", "Phillips", "Evans", "Turner", "Diaz", "Parker", "Cruz", "Edwards", "Collins", "Reyes",
+    "Stewart", "Morris", "Morales", "Murphy", "Cook", "Rogers", "Gutierrez", "Ortiz", "Morgan", "Cooper",
+    "Peterson", "Bailey", "Reed", "Kelly", "Howard", "Ramos", "Kim", "Cox", "Ward", "Richardson",
+    "Watson", "Brooks", "Chavez", "Wood", "James", "Bennett", "Gray", "Mendoza", "Ruiz", "Hughes",
+    "Price", "Alvarez", "Castillo", "Sanders", "Patel", "Myers", "Long", "Ross", "Foster", "Jimenez",
+    "O'Connor", "MacDonald", "O'Brien", "Sullivan", "Kennedy", "Murphy", "O'Sullivan", "Walsh", "Ryan", "Byrne",
+    "Schmidt", "Mueller", "Schneider", "Fischer", "Weber", "Meyer", "Wagner", "Becker", "Schulz", "Hoffmann",
+    "Rossi", "Russo", "Ferrari", "Esposito", "Bianchi", "Romano", "Colombo", "Ricci", "Marino", "Greco",
+    "Singh", "Kumar", "Sharma", "Gupta", "Khan", "Ahmed", "Ali", "Hassan", "Hussein", "Rahman",
+    "Chen", "Wang", "Li", "Zhang", "Liu", "Yang", "Huang", "Zhao", "Wu", "Zhou",
+    "Tanaka", "Suzuki", "Takahashi", "Watanabe", "Ito", "Yamamoto", "Nakamura", "Kobayashi", "Kato", "Yoshida",
+    "Johansson", "Andersson", "Karlsson", "Nilsson", "Eriksson", "Larsson", "Olsson", "Persson", "Svensson", "Gustafsson",
+    "Petrov", "Ivanov", "Sidorov", "Smirnov", "Kuznetsov", "Popov", "Volkov", "Sokolov", "Mikhailov", "Fedorov",
+    "Silva", "Santos", "Oliveira", "Souza", "Rodrigues", "Ferreira", "Alves", "Pereira", "Lima", "Gomes",
+    "Dubois", "Martin", "Bernard", "Moreau", "Laurent", "Simon", "Michel", "Lefebvre", "Leroy", "Roux"
 )
+
 private val domains = listOf("gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "example.com")
 typealias CommentEntity = CommentQuery.SharedResult.Row
 
@@ -130,6 +178,63 @@ val db = NowSampleSyncDatabase(
     ),
     migration = VersionBasedDatabaseMigrations()
 )
+
+/**
+ * Common function to set up sync client for both session restore and new sign-in
+ */
+private suspend fun setupSyncClient(
+    baseUrl: String,
+    user: String,
+    deviceId: String,
+    password: String,
+    isSessionRestore: Boolean,
+    onSuccess: (OversqliteClient) -> Unit,
+    onError: (Exception) -> Unit
+) {
+    try {
+        val httpClient = createAuthenticatedHttpClient(
+            baseUrl = baseUrl,
+            username = user,
+            deviceId = deviceId,
+            password = password
+        )
+
+        val client = db.newOversqliteClient(
+            schema = "business",
+            httpClient = httpClient,
+            resolver = ServerWinsResolver
+        )
+
+        // Bootstrap is always required
+        client.bootstrap(userId = user, sourceId = deviceId)
+
+        if (isSessionRestore) {
+            // For session restore, do incremental sync to catch up
+            val limit = 500
+            var more = true
+            while (more) {
+                val res = client.downloadOnce(limit = limit)
+                val applied = res.getOrNull()?.first ?: 0
+                if (applied > 0) appLog.d { "restore: applied=$applied" }
+                more = applied == limit
+                if (applied == 0) break
+            }
+        } else {
+            // For new sign-in, do full hydration
+            appLog.i { "Sign-in success for user=$user; starting hydrate" }
+            val hydrateRes = client.hydrate(limit = 1000, windowed = true)
+            if (hydrateRes.isFailure) {
+                appLog.e(hydrateRes.exceptionOrNull()) { "Hydrate failed" }
+            } else {
+                appLog.i { "Hydrate complete" }
+            }
+        }
+
+        onSuccess(client)
+    } catch (e: Exception) {
+        onError(e)
+    }
+}
 
 @OptIn(FlowPreview::class)
 @Composable
@@ -196,34 +301,32 @@ fun App() {
 
         val savedToken = AuthPrefs.get(AuthKeys.Token)
         val savedUser = AuthPrefs.get(AuthKeys.Username)
-        if (!savedToken.isNullOrBlank()) {
+        if (!savedToken.isNullOrBlank() && !savedUser.isNullOrBlank()) {
             try {
-                syncClient = db.newOversqliteClientWithToken(
-                    schema = "business",
+                setupSyncClient(
                     baseUrl = baseUrl,
-                    token = savedToken,
-                    resolver = ServerWinsResolver
+                    user = savedUser,
+                    deviceId = did,
+                    password = "demo",
+                    isSessionRestore = true,
+                    onSuccess = { client ->
+                        syncClient = client
+                        bootstrapDone = true
+                        signedIn = true
+                        skippedSignin = false
+                        showSigninDialog = false
+                        username = savedUser
+                        appLog.i { "Restored session for user=$savedUser device=$did" }
+                        // Nudge sync worker to run soon
+                        syncTrigger.tryEmit(Unit)
+                    },
+                    onError = { error ->
+                        appLog.e(error) { "Failed to restore session; showing sign-in" }
+                        signedIn = false
+                        bootstrapDone = false
+                        showSigninDialog = true
+                    }
                 )
-                val userForBootstrap = savedUser ?: "user-sample"
-                syncClient?.bootstrap(userId = userForBootstrap, sourceId = did)
-                bootstrapDone = true
-                signedIn = true
-                skippedSignin = false
-                showSigninDialog = false
-                username = userForBootstrap
-                appLog.i { "Restored session for user=$userForBootstrap device=$did" }
-                // One quick incremental sync to catch up
-                val limit = 500
-                var more = true
-                while (more) {
-                    val res = syncClient?.downloadOnce(limit = limit)
-                    val applied = res?.getOrNull()?.first ?: 0
-                    if (applied > 0) appLog.d { "restore: applied=$applied" }
-                    more = applied == limit
-                    if (applied == 0) break
-                }
-                // Nudge sync worker to run soon
-                syncTrigger.tryEmit(Unit)
             } catch (e: Exception) {
                 // Fallback to signed-out state if token invalid
                 appLog.e(e) { "Failed to restore session; showing sign-in" }
@@ -294,7 +397,7 @@ fun App() {
         if (signedIn && bootstrapDone) {
             appLog.i { "Scheduling periodic sync every 3s" }
             while (signedIn) {
-                delay(3_000)
+                delay(7_000)
                 syncTrigger.tryEmit(Unit)
             }
         }
@@ -480,28 +583,31 @@ fun App() {
                                 user = displayUser,
                                 device = deviceId,
                                 password = password.ifBlank { "demo" })
-                            syncClient = db.newOversqliteClientWithToken(
-                                schema = "business",
-                                baseUrl = baseUrl,
-                                token = token,
-                                resolver = ServerWinsResolver
-                            )
-                            val finalUser = username.ifBlank { "user-sample" }
-                            syncClient?.bootstrap(userId = finalUser, sourceId = deviceId)
-                            bootstrapDone = true
-                            signedIn = true
-                            skippedSignin = false
-                            showSigninDialog = false
-                            AuthPrefs.set(AuthKeys.Username, finalUser)
+
+                            // Save token first so the HttpClient can use it
                             AuthPrefs.set(AuthKeys.Token, token)
-                            AuthPrefs.set(AuthKeys.DeviceId, deviceId)
-                            appLog.i { "Sign-in success for user=$finalUser; starting hydrate" }
-                            val hydrateRes = syncClient?.hydrate(limit = 1000, windowed = true)
-                            if (hydrateRes?.isFailure == true) {
-                                appLog.e(hydrateRes.exceptionOrNull()) { "Hydrate failed" }
-                            } else {
-                                appLog.i { "Hydrate complete" }
-                            }
+
+                            val finalUser = username.ifBlank { "user-sample" }
+                            setupSyncClient(
+                                baseUrl = baseUrl,
+                                user = finalUser,
+                                deviceId = deviceId,
+                                password = password.ifBlank { "demo" },
+                                isSessionRestore = false,
+                                onSuccess = { client ->
+                                    syncClient = client
+                                    bootstrapDone = true
+                                    signedIn = true
+                                    skippedSignin = false
+                                    showSigninDialog = false
+                                    AuthPrefs.set(AuthKeys.Username, finalUser)
+                                    AuthPrefs.set(AuthKeys.DeviceId, deviceId)
+                                },
+                                onError = { error ->
+                                    appLog.e(error) { "Sign-in failed" }
+                                    errorMessage = "Sign-in failed: ${error.message}"
+                                }
+                            )
                         } catch (e: Exception) {
                             appLog.e(e) { "Sign-in failed" }
                             errorMessage = "Sign-in failed: ${e.message}"
@@ -694,6 +800,57 @@ fun PersonCard(
 //                    )
 //                }
             }
+        }
+    }
+}
+
+/**
+ * Creates an authenticated HttpClient with JWT token management.
+ * This handles token refresh automatically when the server returns 401.
+ */
+private fun createAuthenticatedHttpClient(
+    baseUrl: String,
+    username: String,
+    deviceId: String,
+    password: String
+): HttpClient {
+    return HttpClient {
+        install(ContentNegotiation) {
+            json(Json { ignoreUnknownKeys = true })
+        }
+        install(Auth) {
+            bearer {
+                loadTokens {
+                    // Load initial token
+                    val savedToken = AuthPrefs.get(AuthKeys.Token)
+                    if (!savedToken.isNullOrBlank()) {
+                        BearerTokens(accessToken = savedToken, refreshToken = null)
+                    } else {
+                        null
+                    }
+                }
+                refreshTokens {
+                    // Refresh token when needed (401 response)
+                    try {
+                        appLog.i { "Refreshing JWT token for user=$username" }
+                        val newToken = fetchJwt(
+                            baseUrl = baseUrl,
+                            user = username,
+                            device = deviceId,
+                            password = password
+                        )
+                        // Save the new token
+                        AuthPrefs.set(AuthKeys.Token, newToken)
+                        BearerTokens(accessToken = newToken, refreshToken = null)
+                    } catch (e: Exception) {
+                        appLog.e(e) { "Failed to refresh token" }
+                        null // This will cause auth to fail and user needs to sign in again
+                    }
+                }
+            }
+        }
+        defaultRequest {
+            url(baseUrl)
         }
     }
 }

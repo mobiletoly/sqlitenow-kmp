@@ -18,7 +18,7 @@ class ViewColumnLookupTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "id",
@@ -78,7 +78,7 @@ class ViewColumnLookupTest {
                 name = "PersonAddress",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "PersonAddress",
+                    tableName = "person_address",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "id",
@@ -141,9 +141,9 @@ class ViewColumnLookupTest {
                     sql = "CREATE VIEW PersonWithAddressView AS SELECT p.id AS person_id, p.birth_date FROM Person p JOIN PersonAddress a ON p.id = a.person_id",
                     viewName = "PersonWithAddressView",
                     selectStatement = SelectStatement(
-                        sql = "SELECT p.id AS person_id, p.birth_date FROM Person p JOIN PersonAddress a ON p.id = a.person_id",
-                        fromTable = "Person",
-                        joinTables = listOf("PersonAddress"),
+                        sql = "SELECT p.id AS person_id, p.birth_date FROM Person p JOIN person_address a ON p.id = a.person_id",
+                        fromTable = "person",
+                        joinTables = listOf("person_address"),
                         namedParameters = emptyList(),
                         namedParametersToColumns = emptyMap(),
                         offsetNamedParam = null,
@@ -234,7 +234,7 @@ class ViewColumnLookupTest {
             viewName = "PersonWithAddressView",
             selectStatement = SelectStatement(
                 sql = "SELECT p.id AS person_id, p.birth_date, p.first_name FROM Person p",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
@@ -243,19 +243,19 @@ class ViewColumnLookupTest {
                 fields = listOf(
                     SelectStatement.FieldSource(
                         fieldName = "person_id",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "id",
                         dataType = "INTEGER"
                     ),
                     SelectStatement.FieldSource(
                         fieldName = "birth_date",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "birth_date",
                         dataType = "TEXT"
                     ),
                     SelectStatement.FieldSource(
                         fieldName = "first_name",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "first_name",
                         dataType = "TEXT"
                     )
@@ -292,8 +292,8 @@ class ViewColumnLookupTest {
         val personTable = AnnotatedCreateTableStatement(
             name = "Person",
             src = CreateTableStatement(
-                sql = "CREATE TABLE Person (id INTEGER, birth_date TEXT)",
-                tableName = "Person",
+                sql = "CREATE TABLE person (id INTEGER, birth_date TEXT)",
+                tableName = "person",
                 columns = listOf(
                     CreateTableStatement.Column(
                         name = "birth_date",
@@ -336,7 +336,7 @@ class ViewColumnLookupTest {
                 viewName = "PersonWithAddressView",
                 selectStatement = SelectStatement(
                     sql = "SELECT p.birth_date FROM Person p",
-                    fromTable = "Person",
+                    fromTable = "person",
                     joinTables = emptyList(),
                     namedParameters = emptyList(),
                     namedParametersToColumns = emptyMap(),
@@ -345,7 +345,7 @@ class ViewColumnLookupTest {
                     fields = listOf(
                         SelectStatement.FieldSource(
                             fieldName = "birth_date",
-                            tableName = "Person",
+                            tableName = "person",
                             originalColumnName = "birth_date",
                             dataType = "TEXT"
                         )
@@ -364,7 +364,7 @@ class ViewColumnLookupTest {
                 AnnotatedCreateViewStatement.Field(
                     src = SelectStatement.FieldSource(
                         fieldName = "birth_date",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "birth_date",
                         dataType = "TEXT"
                     ),
@@ -443,7 +443,7 @@ class ViewColumnLookupTest {
                 viewName = "PersonWithAddressView",
                 selectStatement = SelectStatement(
                     sql = "SELECT p.birth_date FROM Person p",
-                    fromTable = "Person",
+                    fromTable = "person",
                     joinTables = emptyList(),
                     namedParameters = emptyList(),
                     namedParametersToColumns = emptyMap(),
@@ -452,7 +452,7 @@ class ViewColumnLookupTest {
                     fields = listOf(
                         SelectStatement.FieldSource(
                             fieldName = "birth_date",
-                            tableName = "Person",
+                            tableName = "person",
                             originalColumnName = "birth_date",
                             dataType = "TEXT"
                         )
@@ -471,7 +471,7 @@ class ViewColumnLookupTest {
                 AnnotatedCreateViewStatement.Field(
                     src = SelectStatement.FieldSource(
                         fieldName = "birth_date",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "birth_date",
                         dataType = "TEXT"
                     ),
@@ -599,7 +599,7 @@ class ViewColumnLookupTest {
                 viewName = "PersonWithAddressView",
                 selectStatement = SelectStatement(
                     sql = "SELECT p.birth_date FROM Person p",
-                    fromTable = "Person",
+                    fromTable = "person",
                     joinTables = emptyList(),
                     namedParameters = emptyList(),
                     namedParametersToColumns = emptyMap(),
@@ -608,7 +608,7 @@ class ViewColumnLookupTest {
                     fields = listOf(
                         SelectStatement.FieldSource(
                             fieldName = "birth_date",
-                            tableName = "Person",
+                            tableName = "person",
                             originalColumnName = "birth_date",
                             dataType = "TEXT"
                         )
@@ -627,7 +627,7 @@ class ViewColumnLookupTest {
                 AnnotatedCreateViewStatement.Field(
                     src = SelectStatement.FieldSource(
                         fieldName = "birth_date",
-                        tableName = "Person",
+                        tableName = "person",
                         originalColumnName = "birth_date",
                         dataType = "TEXT"
                     ),

@@ -125,7 +125,7 @@ class CastExpressionTest {
         try {
             val realConnection = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
             realConnection.createStatement().execute("""
-                CREATE TABLE PersonWithAddressView (
+                CREATE TABLE person_with_address_view (
                     person_id INTEGER NOT NULL,
                     phone TEXT
                 )

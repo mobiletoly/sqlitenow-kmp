@@ -13,7 +13,7 @@ class SelectStatementJoinTest {
             name = "SelectWithLeftJoin",
             src = SelectStatement(
                 sql = "SELECT p.id, p.name, a.street FROM Person p LEFT JOIN Address a ON p.id = a.person_id",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = listOf("Address"),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
@@ -68,7 +68,7 @@ class SelectStatementJoinTest {
             name = "SelectWithInnerJoin",
             src = SelectStatement(
                 sql = "SELECT p.id, p.name, a.street FROM Person p INNER JOIN Address a ON p.id = a.person_id",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = listOf("Address"),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
@@ -117,9 +117,9 @@ class SelectStatementJoinTest {
         val statement = AnnotatedSelectStatement(
             name = "SelectWithMultipleJoins",
             src = SelectStatement(
-                sql = "SELECT p.id, p.name, a.street, c.comment FROM Person p LEFT JOIN Address a ON p.id = a.person_id LEFT JOIN Comment c ON p.id = c.person_id",
-                fromTable = "Person",
-                joinTables = listOf("Address", "Comment"),
+                sql = "SELECT p.id, p.name, a.street, c.comment FROM person p LEFT JOIN address a ON p.id = a.person_id LEFT JOIN comment c ON p.id = c.person_id",
+                fromTable = "person",
+                joinTables = listOf("address", "comment"),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
                 offsetNamedParam = null,
@@ -177,9 +177,9 @@ class SelectStatementJoinTest {
         val statement = AnnotatedSelectStatement(
             name = "SelectWithJoinedFields",
             src = SelectStatement(
-                sql = "SELECT p.id, p.name, a.street, a.city, c.comment FROM Person p LEFT JOIN Address a ON p.id = a.person_id LEFT JOIN Comment c ON p.id = c.person_id",
-                fromTable = "Person",
-                joinTables = listOf("Address", "Comment"),
+                sql = "SELECT p.id, p.name, a.street, a.city, c.comment FROM person p LEFT JOIN address a ON p.id = a.person_id LEFT JOIN comment c ON p.id = c.person_id",
+                fromTable = "person",
+                joinTables = listOf("address", "comment"),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
                 offsetNamedParam = null,
@@ -242,7 +242,7 @@ class SelectStatementJoinTest {
             name = "SelectWithNullableLeftJoin",
             src = SelectStatement(
                 sql = "SELECT p.id, p.name, a.street FROM Person p LEFT JOIN Address a ON p.id = a.person_id",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = listOf("Address"),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
@@ -301,7 +301,7 @@ class SelectStatementJoinTest {
             name = "SelectWithNotNullLeftJoin",
             src = SelectStatement(
                 sql = "SELECT p.id, p.name, a.street FROM Person p LEFT JOIN Address a ON p.id = a.person_id",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = listOf("Address"),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),

@@ -1,6 +1,10 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import io.ktor.client.plugins.auth.providers.bearer
+import io.ktor.client.plugins.defaultRequest
+import io.ktor.client.request.url
+import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 
@@ -106,6 +110,35 @@ internal suspend fun createBusinessTables(db: SafeSQLiteConnection) {
     )
 }
 
+// Helper to create authenticated HttpClient for tests
+internal fun createAuthenticatedHttpClient(userSub: String, deviceId: String): io.ktor.client.HttpClient {
+    return io.ktor.client.HttpClient {
+        install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) {
+            json(kotlinx.serialization.json.Json { ignoreUnknownKeys = true })
+        }
+        install(io.ktor.client.plugins.auth.Auth) {
+            bearer {
+                loadTokens {
+                    io.ktor.client.plugins.auth.providers.BearerTokens(
+                        accessToken = generateJwt(userSub, deviceId, "your-secret-key-change-in-production"),
+                        refreshToken = null
+                    )
+                }
+                refreshTokens {
+                    // For tests, just generate a new token
+                    io.ktor.client.plugins.auth.providers.BearerTokens(
+                        accessToken = generateJwt(userSub, deviceId, "your-secret-key-change-in-production"),
+                        refreshToken = null
+                    )
+                }
+            }
+        }
+        defaultRequest {
+            url("http://10.0.2.2:8080")
+        }
+    }
+}
+
 // Shared client creation for tests
 internal fun createSyncTestClient(
     db: SafeSQLiteConnection,
@@ -114,11 +147,11 @@ internal fun createSyncTestClient(
     tables: List<String>
 ): DefaultOversqliteClient {
     val cfg = OversqliteConfig(schema = "business", tables = tables)
+    val httpClient = createAuthenticatedHttpClient(userSub, deviceId)
     return DefaultOversqliteClient(
         db = db,
-        baseUrl = "http://10.0.2.2:8080",
         config = cfg,
-        tokenProvider = { generateJwt(userSub, deviceId, "your-secret-key-change-in-production") },
+        http = httpClient,
         resolver = ClientWinsResolver,
         tablesUpdateListener = { }
     )

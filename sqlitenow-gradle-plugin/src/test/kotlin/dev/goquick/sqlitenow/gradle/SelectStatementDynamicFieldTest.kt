@@ -15,7 +15,7 @@ class SelectStatementDynamicFieldTest {
             name = "SelectWithPerRowMapping",
             src = SelectStatement(
                 sql = "SELECT p.id, p.name, a.id AS address_id FROM Person p LEFT JOIN Address a ON p.id = a.person_id",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = listOf("Address"),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
@@ -71,7 +71,7 @@ class SelectStatementDynamicFieldTest {
             name = "SelectWithCollectionMapping",
             src = SelectStatement(
                 sql = "SELECT p.id AS person_id, p.name, a.id AS address_id FROM Person p LEFT JOIN Address a ON p.id = a.person_id",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = listOf("Address"),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
@@ -173,7 +173,7 @@ class SelectStatementDynamicFieldTest {
             name = "SelectWithAliasPrefix",
             src = SelectStatement(
                 sql = "SELECT p.id, p.name, a.id AS address_id, a.street AS address_street FROM Person p LEFT JOIN Address a ON p.id = a.person_id",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = listOf("Address"),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
@@ -233,9 +233,9 @@ class SelectStatementDynamicFieldTest {
         val statement = AnnotatedSelectStatement(
             name = "SelectWithMultipleDynamicFields",
             src = SelectStatement(
-                sql = "SELECT p.id AS person_id, p.name, a.id AS address_id, c.id AS comment_id FROM Person p LEFT JOIN Address a ON p.id = a.person_id LEFT JOIN Comment c ON p.id = c.person_id",
-                fromTable = "Person",
-                joinTables = listOf("Address", "Comment"),
+                sql = "SELECT p.id AS person_id, p.name, a.id AS address_id, c.id AS comment_id FROM person p LEFT JOIN address a ON p.id = a.person_id LEFT JOIN comment c ON p.id = c.person_id",
+                fromTable = "person",
+                joinTables = listOf("address", "comment"),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
                 offsetNamedParam = null,
@@ -307,7 +307,7 @@ class SelectStatementDynamicFieldTest {
             name = "SelectWithNotNullDynamicField",
             src = SelectStatement(
                 sql = "SELECT p.id, p.name, a.id AS address_id FROM Person p INNER JOIN Address a ON p.id = a.person_id",
-                fromTable = "Person",
+                fromTable = "person",
                 joinTables = listOf("Address"),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),

@@ -3,13 +3,10 @@ package dev.goquick.sqlitenow.oversqlite
 import dev.goquick.sqlitenow.common.logger
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import io.ktor.client.HttpClient
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -19,19 +16,30 @@ import kotlin.concurrent.Volatile
 /**
  * A multiplatform SQLite-backed implementation of OversqliteClient.
  * Relies on androidx.sqlite for the database and Ktor client for networking.
+ *
+ * The HttpClient should be configured with proper authentication (e.g., Bearer token),
+ * token refresh logic, and base URL. This gives users full control over HTTP configuration.
+ *
+ * Example HttpClient configuration:
+ * ```kotlin
+ * HttpClient {
+ *     install(Auth) {
+ *         bearer {
+ *             loadTokens { BearerTokens(savedToken, null) }
+ *             refreshTokens { BearerTokens(fetchNewToken(), null) }
+ *         }
+ *     }
+ *     defaultRequest {
+ *         url("https://api.myapp.com")
+ *     }
+ * }
+ * ```
  */
 class DefaultOversqliteClient(
     private val db: SafeSQLiteConnection,
-    private val baseUrl: String,
     private val config: OversqliteConfig,
-    private val tokenProvider: suspend () -> String,
+    private val http: HttpClient,
     private val resolver: Resolver = ServerWinsResolver,
-    private val http: HttpClient = HttpClient {
-        install(ContentNegotiation) {
-            json(Json { ignoreUnknownKeys = true })
-        }
-    },
-    private val networkDispatchers2: PlatformDispatchers = PlatformDispatchers(),
     private val tablesUpdateListener: (table: Set<String>) -> Unit,
 ) : OversqliteClient {
 
@@ -44,9 +52,7 @@ class DefaultOversqliteClient(
 
     private val uploader = SyncUploader(
         http = http,
-        baseUrl = baseUrl,
         config = config,
-        tokenProvider = tokenProvider,
         resolver = resolver,
         upsertBusinessFromPayload = ::upsertBusinessFromPayload,
         updateRowMeta = ::updateRowMeta
@@ -54,9 +60,7 @@ class DefaultOversqliteClient(
 
     private val downloader = SyncDownloader(
         http = http,
-        baseUrl = baseUrl,
         config = config,
-        tokenProvider = tokenProvider,
         resolver = resolver,
         upsertBusinessFromPayload = ::upsertBusinessFromPayload,
         updateRowMeta = ::updateRowMeta

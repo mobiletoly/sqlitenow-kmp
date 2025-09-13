@@ -30,7 +30,7 @@ names to camelCase properties. You can customize property names using annotation
 **File: `schema/Person.sql`**
 
 ```sql
-CREATE TABLE Person
+CREATE TABLE person
 (
     id         INTEGER PRIMARY KEY NOT NULL,
     first_name TEXT                NOT NULL,
@@ -70,7 +70,7 @@ For complex types that don't map directly to SQLite types, use the combination o
 and `adapter` annotations:
 
 ```sql
-CREATE TABLE Person
+CREATE TABLE person
 (
     id         INTEGER PRIMARY KEY NOT NULL,
     first_name TEXT                NOT NULL,
@@ -110,7 +110,7 @@ may want to override this behavior for specific properties. You can use `notNull
 do so:
 
 ```sql
-CREATE TABLE Person
+CREATE TABLE person
 (
     id    INTEGER PRIMARY KEY NOT NULL,
 
@@ -181,7 +181,7 @@ For example, you can use `name` annotation to customize the generated class name
 Here's a more complete example:
 
 ```sql
-CREATE TABLE Person
+CREATE TABLE person
 (
     id         INTEGER PRIMARY KEY NOT NULL,
 

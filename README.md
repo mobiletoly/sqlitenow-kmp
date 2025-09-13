@@ -5,10 +5,13 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/mobiletoly/sqlitenow-kmp/gradle.yml?branch=main&logo=github&label=CI)](https://github.com/mobiletoly/sqlitenow-kmp/actions/workflows/gradle.yml)
 [![License](https://img.shields.io/github/license/mobiletoly/sqlitenow-kmp?logo=apache&label=License)](LICENSE)
 
-A Kotlin Multiplatform library for type-safe, SQLite database access,
+A Kotlin Multiplatform library for type-safe, SQLite database access **with built-in multi-device synchronization**,
 inspired by SQLDelight. Unlike other popular frameworks (such as Room) - it is full SQL-first
 framework. Write your queries in SQL files, get type-safe Kotlin code generated automatically.
 And no runtime annotations overhead, everything is generated at compile time.
+
+**🔄 Sync-Ready**: SQLiteNow includes a complete synchronization system for multi-device applications,
+allowing seamless data sync across devices with conflict resolution and offline-first capabilities.
 
 Full documentation is available in the https://mobiletoly.github.io/sqlitenow-kmp/ pages.
 
@@ -18,8 +21,22 @@ SQLiteNow generates Kotlin code from your SQL files, giving you full control ove
 maintaining type safety. Unlike SQLDelight, which supports multiple database engines, SQLiteNow is
 focused exclusively on SQLite, allowing for deeper integration and SQLite-specific optimizations.
 
+**Built for Multi-Device Apps**: SQLiteNow includes a complete synchronization system that handles
+data sync between multiple devices, with automatic conflict resolution, change tracking, and
+offline-first architecture. Perfect for mobile apps that need to work seamlessly across phones,
+tablets, and other devices.
+
 ## Key Features
 
+### 🔄 Multi-Device Synchronization
+- **Built-in Sync System** - Complete synchronization solution for multi-device applications
+- **Conflict Resolution** - Automatic conflict resolution with pluggable strategies (Server Wins, Client Wins, etc.)
+- **Change Tracking** - Automatic tracking of INSERT, UPDATE, DELETE operations
+- **Offline-First** - Works seamlessly offline, syncs when connection is available
+- **JWT Authentication** - Secure sync with customizable authentication via HttpClient
+- **Incremental Sync** - Efficient sync with pagination and change-based updates
+
+### 📝 Type-Safe SQL Generation
 - **Pure SQL Control** - Write your queries in SQL files, get type-safe Kotlin code
 - **Comment-based Annotations** - Control code generation using simple `-- @@{ annotations }`
   comments in your SQL.
@@ -100,14 +117,71 @@ such as converting from TEXT to Kotlin's date/time etc.
 
 ## How it works
 
+### Code Generation
 1. Write your SQL queries in `.sql` files
 2. Add annotations using SQL comments to control code generation
 3. Run the Gradle plugin to generate type-safe Kotlin code
 4. Use the generated database classes in your application
 
-Full example is available in the [`/sample-kmp`](./sample-kmp) directory.
+Full examples is available in the [`/sample-kmp`](./sample-kmp) directory.
+
+## Multi-Device Synchronization (optional)
+
+SQLiteNow includes a complete synchronization system for building multi-device applications.
+Simply annotate your tables with `changeLogs=true` and the sync system handles the rest:
+
+```sql
+-- Enable sync for this table
+-- @@{ changeLogs=true }
+CREATE TABLE person (
+    id INTEGER PRIMARY KEY,
+    first_name TEXT NOT NULL,
+    last_name TEXT NOT NULL,
+    email TEXT UNIQUE,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+```
+
+Then use the generated sync client in your application:
+
+```kotlin
+// Create authenticated HTTP client with JWT token refresh and base URL
+val httpClient = HttpClient {
+    install(Auth) {
+        bearer {
+            loadTokens { /* load saved token */ }
+            refreshTokens { /* refresh when expired */ }
+        }
+    }
+    defaultRequest {
+        url("https://api.myapp.com")
+    }
+}
+
+// Create sync client
+val syncClient = db.newOversqliteClient(
+    schema = "myapp",
+    httpClient = httpClient,
+    resolver = ServerWinsResolver // or ClientWinsResolver
+)
+
+// Bootstrap new device
+syncClient.bootstrap(userId = "user123", sourceId = "device456")
+
+// Perform full sync (upload local changes, download remote changes)
+val uploadResult = syncClient.uploadOnce(limit = 1000)
+val downloadResult = syncClient.downloadOnce(limit = 1000)
+```
+
+The sync system automatically handles:
+- **Change tracking** for all sync-enabled tables
+- **Conflict resolution** when the same record is modified on multiple devices
+- **Incremental sync** to minimize bandwidth usage
+- **Error handling** and retry logic
+- **Authentication** via customizable HttpClient
+
+Full example is available in the [`/samplesync-kmp`](./samplesync-kmp) directory.
 
 ## Documentation
 
 Full documentation is available in the https://mobiletoly.github.io/sqlitenow-kmp/
-

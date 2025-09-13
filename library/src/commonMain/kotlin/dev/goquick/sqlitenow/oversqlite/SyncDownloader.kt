@@ -10,12 +10,12 @@ import kotlinx.serialization.json.*
 /**
  * Handles the download process for sync operations.
  * Separated from DefaultOversqliteClient to improve maintainability.
+ *
+ * The HttpClient should be pre-configured with authentication headers and base URL.
  */
 internal class SyncDownloader(
     private val http: HttpClient,
-    private val baseUrl: String,
     private val config: OversqliteConfig,
-    private val tokenProvider: suspend () -> String,
     private val resolver: Resolver,
     private val upsertBusinessFromPayload: suspend (SafeSQLiteConnection, String, String, JsonElement?) -> Unit,
     private val updateRowMeta: suspend (SafeSQLiteConnection, String, String, Long, Boolean) -> Unit
@@ -152,11 +152,10 @@ internal class SyncDownloader(
         includeSelf: Boolean,
         until: Long
     ): DownloadResponse {
-        val token = tokenProvider()
-        val url = buildDownloadUrl(baseUrl, lastServerSeq, limit, includeSelf, until, config.schema)
+        val url = buildDownloadUrl(lastServerSeq, limit, includeSelf, until, config.schema)
         logger.d { "Download request: after=$lastServerSeq, limit=$limit, includeSelf=$includeSelf, until=$until" }
 
-        val response = http.get(url) { header("Authorization", "Bearer $token") }.body<DownloadResponse>()
+        val response = http.get(url).body<DownloadResponse>()
         logger.d { "Download response: ${response.changes.size} changes, nextAfter=${response.nextAfter}" }
 
         return response
@@ -503,7 +502,6 @@ internal class SyncDownloader(
      * The server requires schema names to match ^[a-z0-9_]+$.
      */
     private fun buildDownloadUrl(
-        baseUrl: String,
         after: Long,
         limit: Int,
         includeSelf: Boolean,
@@ -511,8 +509,7 @@ internal class SyncDownloader(
         schema: String
     ): String {
         val sb = StringBuilder()
-        sb.append(baseUrl.trimEnd('/'))
-            .append("/sync/download?after=$after&limit=$limit&schema=$schema")
+        sb.append("/sync/download?after=$after&limit=$limit&schema=$schema")
         if (includeSelf) sb.append("&include_self=true")
         if (until > 0L) sb.append("&until=").append(until)
         return sb.toString()

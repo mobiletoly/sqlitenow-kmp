@@ -45,21 +45,21 @@ You can initialize data for multiple tables in the same file:
 
 ```sql
 -- Insert Person records
-INSERT INTO Person (id, first_name, last_name, email) 
+INSERT INTO person (id, first_name, last_name, email) 
 VALUES (1, 'John', 'Smith', 'john.smith@example.com');
 
-INSERT INTO Person (id, first_name, last_name, email) 
+INSERT INTO person (id, first_name, last_name, email) 
 VALUES (2, 'Emma', 'Johnson', 'emma.johnson@example.com');
 
--- Insert PersonAddress records
-INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
+-- Insert person_address records
+INSERT INTO person_address (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
 VALUES (1, 1, 'HOME', '123 Main St', 'New York', 'NY', '10001', 'USA', 1);
 
-INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
+INSERT INTO person_address (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
 VALUES (2, 2, 'HOME', '456 Oak Ave', 'Los Angeles', 'CA', '90001', 'USA', 1);
 
 -- Work addresses
-INSERT INTO PersonAddress (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
+INSERT INTO person_address (id, person_id, address_type, street, city, state, postal_code, country, is_primary)
 VALUES (3, 1, 'WORK', '100 Business Plaza', 'New York', 'NY', '10002', 'USA', 0);
 ```
 

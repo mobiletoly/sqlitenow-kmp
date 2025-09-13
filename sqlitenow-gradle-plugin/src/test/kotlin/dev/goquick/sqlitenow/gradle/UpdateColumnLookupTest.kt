@@ -19,7 +19,7 @@ class UpdateColumnLookupTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "id",
@@ -119,8 +119,8 @@ class UpdateColumnLookupTest {
         val mockUpdateStatement = AnnotatedExecuteStatement(
             name = "updateById",
             src = UpdateStatement(
-                sql = "UPDATE Person SET age = ?, score = ?, notes = ? WHERE id = ? AND birth_date <= ? AND birth_date >= ?",
-                table = "Person",
+                sql = "UPDATE person SET age = ?, score = ?, notes = ? WHERE id = ? AND birth_date <= ? AND birth_date >= ?",
+                table = "person",
                 namedParameters = listOf("myAge", "myScore", "myNotes", "id", "myBirthDate", "myBirthDate"),
                 namedParametersToColumns = mapOf(
                     // WHERE clause parameters
@@ -181,7 +181,7 @@ class UpdateColumnLookupTest {
                 name = "Person",
                 src = CreateTableStatement(
                     sql = "",
-                    tableName = "Person",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column(
                             name = "age",
@@ -243,8 +243,8 @@ class UpdateColumnLookupTest {
         val mockUpdateStatement = AnnotatedExecuteStatement(
             name = "updateAgeAndScore",
             src = UpdateStatement(
-                sql = "UPDATE Person SET age = ?, score = ?",
-                table = "Person",
+                sql = "UPDATE person SET age = ?, score = ?",
+                table = "person",
                 namedParameters = listOf("myAge", "myScore"),
                 namedParametersToColumns = emptyMap(),
                 namedParametersToColumnNames = mapOf(

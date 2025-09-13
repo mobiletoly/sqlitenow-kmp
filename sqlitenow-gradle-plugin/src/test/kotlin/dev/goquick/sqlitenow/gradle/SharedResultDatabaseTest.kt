@@ -41,7 +41,7 @@ class SharedResultDatabaseTest {
         val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
         conn.createStatement().execute(
             """
-            CREATE TABLE Person (
+            CREATE TABLE person (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL,
                 birth_date TEXT,
@@ -55,8 +55,8 @@ class SharedResultDatabaseTest {
             AnnotatedCreateTableStatement(
                 name = "Person",
                 src = CreateTableStatement(
-                    sql = "CREATE TABLE Person (id INTEGER, name TEXT, birth_date TEXT, active INTEGER)",
-                    tableName = "Person",
+                    sql = "CREATE TABLE person (id INTEGER, name TEXT, birth_date TEXT, active INTEGER)",
+                    tableName = "person",
                     columns = listOf(
                         CreateTableStatement.Column("id", "INTEGER", false, true, false, false),
                         CreateTableStatement.Column("name", "TEXT", true, false, false, false),

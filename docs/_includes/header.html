@@ -33,6 +33,19 @@
                     <a href="{{ site.baseurl }}/documentation/recipes/">Recipes</a>
                   </div>
                 </div>
+              {%- elsif my_page.title == "Sync" -%}
+                <div class="dropdown">
+                  <a class="page-link dropdown-toggle" href="{{ my_page.url | relative_url }}">{{ my_page.title | escape }}</a>
+                  <div class="dropdown-content">
+                    <a href="{{ site.baseurl }}/sync/core-concepts/">Core Concepts</a>
+                    <a href="{{ site.baseurl }}/sync/getting-started/">Getting Started</a>
+                    <a href="{{ site.baseurl }}/sync/bootstrap-hydration/">Bootstrap & Hydration</a>
+                    <a href="{{ site.baseurl }}/sync/sync-operations/">Sync Operations</a>
+                    <a href="{{ site.baseurl }}/sync/authentication/">Authentication</a>
+                    <a href="{{ site.baseurl }}/sync/server-setup/">Server Setup</a>
+                    <a href="{{ site.baseurl }}/sync/troubleshooting/">Troubleshooting</a>
+                  </div>
+                </div>
               {%- else -%}
                 <a class="page-link" href="{{ my_page.url | relative_url }}">{{ my_page.title | escape }}</a>
               {%- endif -%}
@@ -54,7 +67,7 @@
   display: none;
   position: absolute;
   background-color: #f9f9f9;
-  min-width: 160px;
+  min-width: 220px;
   box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
   z-index: 1;
   border-radius: 4px;

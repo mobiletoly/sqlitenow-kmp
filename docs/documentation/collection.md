@@ -52,7 +52,7 @@ SELECT p.id,
    } */
 
 FROM Person p
-         LEFT JOIN PersonAddress a ON p.id = a.person_id
+         LEFT JOIN person_address a ON p.id = a.person_id
 ```
 
 This generates:
@@ -105,7 +105,7 @@ Check [Collection Recipes]({{ site.baseurl }}/documentation/collection-recipes/)
 - **`propertyType`**: Type of the nested object (`my.app.Address`)
 
 
-- **`sourceTable`**: Table alias for the joined table (`a` for `PersonAddress` table)
+- **`sourceTable`**: Table alias for the joined table (`a` for `person_address` table)
 
 
 - **`removeAliasPrefix`**: Prefix to remove from column names (optional). In the example above,
@@ -148,7 +148,7 @@ SELECT p.id AS person_id,
        notNull=true } */
 
 FROM Person p
-         LEFT JOIN PersonAddress a ON p.id = a.person_id
+         LEFT JOIN person_address a ON p.id = a.person_id
 ```
 
 This generates:

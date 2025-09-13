@@ -25,7 +25,7 @@ class UpdateStatementTest {
 
         // Create the Person table
         conn.createStatement().execute("""
-            CREATE TABLE Person (
+            CREATE TABLE person (
                 id INTEGER PRIMARY KEY,
                 age INTEGER
             )

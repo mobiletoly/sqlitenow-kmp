@@ -12,11 +12,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         setupAndroidAppContext(this.applicationContext)
-
-//        val path = databasePath("test04.db")
-//        val result = File(path).delete()
-//        println("--------> DELETED: $result")
-
         setContent {
             App()
         }
