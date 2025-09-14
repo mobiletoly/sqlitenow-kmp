@@ -29,6 +29,83 @@ class AndroidOversqliteClientTest {
         db = BundledSQLiteDriver().open(":memory:")
     }
 
+    @Test
+    fun sync_once_helper_bi_directional_flow() = runBlockingTest {
+        // Two devices
+        val dbA = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
+        val dbB = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
+
+        createBusinessTables(dbA)
+        createBusinessTables(dbB)
+
+        val userSub = "user-sync-once-" + java.util.UUID.randomUUID().toString().substring(0, 8)
+        val devA = "device-A-sync"
+        val devB = "device-B-sync"
+
+        val clientA = createSyncTestClient(
+            db = dbA,
+            userSub = userSub,
+            deviceId = devA,
+            tables = listOf("users", "posts")
+        )
+        val clientB = createSyncTestClient(
+            db = dbB,
+            userSub = userSub,
+            deviceId = devB,
+            tables = listOf("users", "posts")
+        )
+
+        assert(clientA.bootstrap(userSub, devA).isSuccess)
+        assert(clientB.bootstrap(userSub, devB).isSuccess)
+        assert(clientA.hydrate(includeSelf = false, limit = 1000, windowed = true).isSuccess)
+        assert(clientB.hydrate(includeSelf = false, limit = 1000, windowed = true).isSuccess)
+
+        // Device A inserts 5 users
+        val aIds = mutableListOf<String>()
+        repeat(5) { i ->
+            val id = java.util.UUID.randomUUID().toString(); aIds += id
+            dbA.execSQL("INSERT INTO users(id, name, email) VALUES('$id','A$i','a$i@example.com')")
+        }
+        // Device B inserts 3 users and updates 1 later
+        val bIds = mutableListOf<String>()
+        repeat(3) { i ->
+            val id = java.util.UUID.randomUUID().toString(); bIds += id
+            dbB.execSQL("INSERT INTO users(id, name, email) VALUES('$id','B$i','b$i@example.com')")
+        }
+
+        // A and B run syncOnce alternately a couple of times
+        assert(clientA.syncOnce(limit = 500, includeSelf = false).isSuccess)
+        assert(clientB.syncOnce(limit = 500, includeSelf = false).isSuccess)
+
+        // Do some updates after first pass to simulate chatter
+        val updateAid = aIds.first()
+        dbA.execSQL("UPDATE users SET name='A0x' WHERE id='$updateAid'")
+        val updateBid = bIds.first()
+        dbB.execSQL("UPDATE users SET email='b0x@example.com' WHERE id='$updateBid'")
+
+        // Second pass
+        assert(clientA.syncOnce(limit = 500, includeSelf = false).isSuccess)
+        assert(clientB.syncOnce(limit = 500, includeSelf = false).isSuccess)
+
+        // Converge with a final download on each
+        assert(clientA.downloadOnce(limit = 1000, includeSelf = false).isSuccess)
+        assert(clientB.downloadOnce(limit = 1000, includeSelf = false).isSuccess)
+
+        // Validate counts align
+        val usersA = scalarLong(dbA, "SELECT COUNT(*) FROM users").toInt()
+        val usersB = scalarLong(dbB, "SELECT COUNT(*) FROM users").toInt()
+        assertEquals(usersA, usersB)
+        // Validate the updates are visible on both sides
+        val nameA = scalarText(dbA, "SELECT name FROM users WHERE id='$updateAid'")
+        val nameB = scalarText(dbB, "SELECT name FROM users WHERE id='$updateAid'")
+        assertEquals("A0x", nameA)
+        assertEquals(nameA, nameB)
+        val emailA = scalarText(dbA, "SELECT email FROM users WHERE id='$updateBid'")
+        val emailB = scalarText(dbB, "SELECT email FROM users WHERE id='$updateBid'")
+        assertEquals("b0x@example.com", emailA)
+        assertEquals(emailA, emailB)
+    }
+
     @After
     fun tearDown() {
         // no-op for bundled driver

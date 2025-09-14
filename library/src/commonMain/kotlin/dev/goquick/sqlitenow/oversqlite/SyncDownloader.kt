@@ -13,12 +13,16 @@ import kotlinx.serialization.json.*
  *
  * The HttpClient should be pre-configured with authentication headers and base URL.
  */
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.withContext
+
 internal class SyncDownloader(
     private val http: HttpClient,
     private val config: OversqliteConfig,
     private val resolver: Resolver,
     private val upsertBusinessFromPayload: suspend (SafeSQLiteConnection, String, String, JsonElement?) -> Unit,
-    private val updateRowMeta: suspend (SafeSQLiteConnection, String, String, Long, Boolean) -> Unit
+    private val updateRowMeta: suspend (SafeSQLiteConnection, String, String, Long, Boolean) -> Unit,
+    private val ioDispatcher: CoroutineDispatcher
 ) {
 
     data class DownloadResult(
@@ -128,7 +132,7 @@ internal class SyncDownloader(
         return allUpdatedTables
     }
 
-    private data class ClientInfo(
+    internal data class ClientInfo(
         val userId: String,
         val sourceId: String,
         val lastServerSeq: Long
@@ -145,6 +149,38 @@ internal class SyncDownloader(
             }
     }
 
+    // Split-phase API helpers
+    internal suspend fun getClientInfoNow(db: SafeSQLiteConnection): ClientInfo = getClientInfo(db)
+
+    internal suspend fun fetchChangesNow(
+        sourceId: String,
+        lastServerSeq: Long,
+        limit: Int,
+        includeSelf: Boolean,
+        until: Long
+    ): DownloadResponse = fetchChanges(sourceId, lastServerSeq, limit, includeSelf, until)
+
+    internal suspend fun applyDownloadedPage(
+        db: SafeSQLiteConnection,
+        response: DownloadResponse,
+        includeSelf: Boolean,
+        sourceId: String,
+        previousAfter: Long,
+        isPostUploadLookback: Boolean = false
+    ): DownloadResult {
+        val updatedTables = mutableSetOf<String>()
+        val (applied, nextAfter) = applyDownloadPage(
+            db = db,
+            resp = response,
+            includeSelf = includeSelf,
+            sourceId = sourceId,
+            previousAfter = previousAfter,
+            onTableTouched = { updatedTables += it },
+            isPostUploadLookback = isPostUploadLookback
+        )
+        return DownloadResult(applied, nextAfter, updatedTables)
+    }
+
     private suspend fun fetchChanges(
         sourceId: String,
         lastServerSeq: Long,
@@ -155,7 +191,8 @@ internal class SyncDownloader(
         val url = buildDownloadUrl(lastServerSeq, limit, includeSelf, until, config.schema)
         logger.d { "Download request: after=$lastServerSeq, limit=$limit, includeSelf=$includeSelf, until=$until" }
 
-        val response = http.get(url).body<DownloadResponse>()
+        // Perform network I/O on injected IO dispatcher to avoid blocking db.dispatcher
+        val response = withContext(ioDispatcher) { http.get(url).body<DownloadResponse>() }
         logger.d { "Download response: ${response.changes.size} changes, nextAfter=${response.nextAfter}" }
 
         return response
@@ -183,10 +220,8 @@ internal class SyncDownloader(
         changesToApply.forEach { ch ->
             onTableTouched(ch.tableName.lowercase())
             if (!includeSelf && ch.sourceId == sourceId) {
-                logger.d { "applyDownloadPage: skipping self change ${ch.op} ${ch.tableName}:${ch.pk} from sourceId=$sourceId" }
                 return@forEach
             }
-            logger.d { "applyDownloadPage: applying ${ch.op} ${ch.tableName}:${ch.pk} from sourceId=${ch.sourceId}" }
 
             when (ch.op) {
                 "DELETE" -> {
@@ -271,7 +306,7 @@ internal class SyncDownloader(
                 if (st.step()) {
                     val deleted = st.getLong(0) == 1L
                     val localServerVersion = st.getLong(1)
-                    // CRITICAL FIX: Only consider recently deleted if server version is not newer
+                    // Only consider recently deleted if server version is not newer
                     // If server version is newer, we should accept the server's reinsertion
                     deleted && ch.serverVersion <= localServerVersion
                 } else {
@@ -362,7 +397,7 @@ internal class SyncDownloader(
                     st.bindText(4, ch.pk)
                     st.step()
                 }
-                // CRITICAL FIX: Update row meta to reflect server version and that record exists
+                // Update row meta to reflect server version and that record exists
                 // This ensures _sync_row_meta is consistent with the server state
                 updateRowMeta(db, ch.tableName, ch.pk, ch.serverVersion, false)
             }

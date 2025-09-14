@@ -215,7 +215,7 @@ json_object('id', NEW.id, 'name', NEW.name, 'email', NEW.email)
     - `apply_mode = 0` (triggers enabled)
 3. Ensure metadata tables exist
 4. **Create triggers for all business tables** that need synchronization
-5. Create sync system tables for business tables with `changeLogs=true` annotation
+5. Create sync system tables for business tables with `enableSync=true` annotation
 
 ### 3.2 Hydrate (Initial/Full Recovery)
 

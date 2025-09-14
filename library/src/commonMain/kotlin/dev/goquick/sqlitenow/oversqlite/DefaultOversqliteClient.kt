@@ -3,9 +3,9 @@ package dev.goquick.sqlitenow.oversqlite
 import dev.goquick.sqlitenow.common.logger
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import io.ktor.client.HttpClient
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -42,20 +42,23 @@ class DefaultOversqliteClient(
     private val resolver: Resolver = ServerWinsResolver,
     private val tablesUpdateListener: (table: Set<String>) -> Unit,
 ) : OversqliteClient {
-
-    private val writeMutex = Mutex()
+    // Prevent concurrent uploadOnce/downloadOnce DB phases from overlapping
+    private val opGate = Semaphore(1)
 
     // Cache PRAGMA table_info lookups per table (lowercased key)
     private val tableColumnsCache = mutableMapOf<String, List<String>>()
 
     private val bootstrapper = SyncBootstrapper(config = config)
 
+    private val ioDispatcher: CoroutineDispatcher = PlatformDispatchers().io
+
     private val uploader = SyncUploader(
         http = http,
         config = config,
         resolver = resolver,
         upsertBusinessFromPayload = ::upsertBusinessFromPayload,
-        updateRowMeta = ::updateRowMeta
+        updateRowMeta = ::updateRowMeta,
+        ioDispatcher = ioDispatcher
     )
 
     private val downloader = SyncDownloader(
@@ -63,7 +66,8 @@ class DefaultOversqliteClient(
         config = config,
         resolver = resolver,
         upsertBusinessFromPayload = ::upsertBusinessFromPayload,
-        updateRowMeta = ::updateRowMeta
+        updateRowMeta = ::updateRowMeta,
+        ioDispatcher = ioDispatcher
     )
 
     @Volatile
@@ -90,47 +94,55 @@ class DefaultOversqliteClient(
 
     override suspend fun bootstrap(userId: String, sourceId: String): Result<Unit> =
         withContext(db.dispatcher) {
-            writeMutex.withLock {
-                bootstrapper.bootstrap(db, userId, sourceId)
-            }
+            bootstrapper.bootstrap(db, userId, sourceId)
         }
 
+    override suspend fun uploadOnce(): Result<UploadSummary> {
+        if (uploadsPaused) return Result.success(UploadSummary(0, 0, 0, 0, 0))
 
-    override suspend fun uploadOnce(): Result<UploadSummary> = withContext(db.dispatcher) {
-        if (uploadsPaused) return@withContext Result.success(UploadSummary(0, 0, 0, 0, 0))
+        return runCatching {
+            logger.d { "uploadOnce: start" }
 
-        val result = runCatching {
-            writeMutex.withLock {
-                logger.d { "uploadOnce: start" }
-                val info: Triple<String, Long, Long>? =
-                    db.prepare("SELECT source_id, next_change_id, last_server_seq_seen FROM _sync_client_info LIMIT 1")
-                        .use { st ->
-                            if (st.step()) Triple(
-                                st.getText(0), st.getLong(1), st.getLong(2)
-                            ) else null
-                        }
-                val (_, nextChangeId, _) = info ?: error("_sync_client_info missing")
-
-                // Delegate to the uploader
-                val uploadResult = uploader.uploadPendingChanges(db, nextChangeId)
-                if (uploadResult.summary.total > 0) {
-                    drainLookbackUntilInternal()
+            // Phase 1 (DB, gated): read nextChangeId and prepare changes
+            opGate.acquire()
+            val prepared = try {
+                val nextChangeId = withContext(db.dispatcher) {
+                    db.prepare("SELECT next_change_id FROM _sync_client_info LIMIT 1")
+                        .use { st -> if (st.step()) st.getLong(0) else null } ?: error("_sync_client_info missing")
                 }
-                uploadResult
+                withContext(db.dispatcher) { uploader.prepareUpload(db, nextChangeId) }
+            } finally {
+                opGate.release()
             }
+            if (prepared.changes.isEmpty()) {
+                return@runCatching UploadSummary(0, 0, 0, 0, 0)
+            }
+
+            // Phase 2 (Network): perform upload
+            val response = uploader.performUpload(prepared.request)
+
+            // Phase 3 (DB, gated): finalize
+            val updatedTables = mutableSetOf<String>()
+            val summary = try {
+                opGate.acquire()
+                withContext(db.dispatcher) {
+                    uploader.finalizeUpload(db, prepared.changes, response, updatedTables)
+                }
+            } finally {
+                opGate.release()
+            }
+
+            // Post-upload lookback drain (network + db), not holding DB context
+            if (summary.total > 0) {
+                drainLookbackUntilInternal()
+            }
+
+            if (updatedTables.isNotEmpty()) tablesUpdateListener(updatedTables)
+
+            summary
         }.onFailure {
             logger.e(it) { "uploadOnce: failed ${it.message}" }
         }
-
-        // Launch table update listener outside the lock
-        result.getOrNull()?.let { uploadResult ->
-            if (uploadResult.updatedTables.isNotEmpty()) {
-                launch {
-                    tablesUpdateListener(uploadResult.updatedTables)
-                }
-            }
-        }
-        result.map { it.summary }
     }
 
     override suspend fun downloadOnce(
@@ -140,41 +152,86 @@ class DefaultOversqliteClient(
 
     private suspend fun downloadOnce(
         limit: Int, includeSelf: Boolean, until: Long = 0L, isPostUploadLookback: Boolean = false
-    ): Result<Pair<Int, Long>> = withContext(db.dispatcher) {
-        if (downloadsPaused) return@withContext Result.success(0 to 0L)
+    ): Result<Pair<Int, Long>> {
+        if (downloadsPaused) return Result.success(0 to 0L)
 
         val result = runCatching {
-            writeMutex.withLock {
-                downloader.downloadOnce(db, limit, includeSelf, until, isPostUploadLookback)
+            // Phase 1 (DB, gated): read client info
+            opGate.acquire()
+            val clientInfo = try {
+                withContext(db.dispatcher) { downloader.getClientInfoNow(db) }
+            } finally {
+                opGate.release()
             }
+
+            // Phase 2 (Network): fetch changes
+            val response = downloader.fetchChangesNow(
+                clientInfo.sourceId, clientInfo.lastServerSeq, limit, includeSelf, until
+            )
+
+            // Phase 3 (DB, gated): apply
+            val downloadResult = try {
+                opGate.acquire()
+                withContext(db.dispatcher) {
+                    downloader.applyDownloadedPage(
+                        db = db,
+                        response = response,
+                        includeSelf = includeSelf,
+                        sourceId = clientInfo.sourceId,
+                        previousAfter = clientInfo.lastServerSeq,
+                        isPostUploadLookback = isPostUploadLookback
+                    )
+                }
+            } finally {
+                opGate.release()
+            }
+
+            if (downloadResult.updatedTables.isNotEmpty()) tablesUpdateListener(downloadResult.updatedTables)
+
+            downloadResult.applied to downloadResult.nextAfter
         }.onFailure {
             logger.e(it) { "downloadOnce: failed ${it.message}" }
         }
 
-        if (result.isSuccess) {
-            val downloadResult = result.getOrNull()
-            if (downloadResult != null && downloadResult.updatedTables.isNotEmpty()) {
-                launch {
-                    tablesUpdateListener(downloadResult.updatedTables)
-                }
-            }
-        }
-
-        result.map { it.applied to it.nextAfter }
+        return result
     }
 
     private suspend fun downloadOnceInternal(
         limit: Int, includeSelf: Boolean, until: Long = 0L, isPostUploadLookback: Boolean = false
-    ): Result<Pair<Int, Long>> = withContext(db.dispatcher) {
-        if (downloadsPaused) return@withContext Result.success(0 to 0L)
+    ): Result<Pair<Int, Long>> {
+        if (downloadsPaused) return Result.success(0 to 0L)
 
         val result = runCatching {
-            downloader.downloadOnce(db, limit, includeSelf, until, isPostUploadLookback)
+            opGate.acquire()
+            val clientInfo = try {
+                withContext(db.dispatcher) { downloader.getClientInfoNow(db) }
+            } finally {
+                opGate.release()
+            }
+            val response = downloader.fetchChangesNow(
+                clientInfo.sourceId, clientInfo.lastServerSeq, limit, includeSelf, until
+            )
+            val downloadResult = try {
+                opGate.acquire()
+                withContext(db.dispatcher) {
+                    downloader.applyDownloadedPage(
+                        db = db,
+                        response = response,
+                        includeSelf = includeSelf,
+                        sourceId = clientInfo.sourceId,
+                        previousAfter = clientInfo.lastServerSeq,
+                        isPostUploadLookback = isPostUploadLookback
+                    )
+                }
+            } finally {
+                opGate.release()
+            }
+            downloadResult.applied to downloadResult.nextAfter
         }.onFailure {
             logger.e(it) { "downloadOnceInternal: failed ${it.message}" }
         }
 
-        result.map { it.applied to it.nextAfter }
+        return result
     }
 
     override fun close() { /* host manages SQLiteConnection lifecycle */
@@ -182,26 +239,86 @@ class DefaultOversqliteClient(
 
     override suspend fun hydrate(
         includeSelf: Boolean, limit: Int, windowed: Boolean
-    ): Result<Unit> = withContext(db.dispatcher) {
-        val result = writeMutex.withLock {
-            runCatching {
-                downloader.hydrate(db, includeSelf, limit, windowed)
-            }.onFailure {
-                logger.e(it) { "hydrate: failed" }
-                return@withContext Result.failure(it)
+    ): Result<Unit> {
+        val result = runCatching {
+            // Phase 0 (DB, gated): get client info and initial cursor
+            opGate.acquire()
+            val clientInfo = try {
+                withContext(db.dispatcher) { downloader.getClientInfoNow(db) }
+            } finally {
+                opGate.release()
             }
-        }
 
-        if (result.isSuccess) {
-            val updatedTables = result.getOrNull()
-            if (updatedTables != null && updatedTables.isNotEmpty()) {
-                launch {
-                    tablesUpdateListener(updatedTables)
+            var after = clientInfo.lastServerSeq
+            var frozenUntil = 0L
+            var first = true
+            val allUpdatedTables = mutableSetOf<String>()
+
+            while (true) {
+                val untilParam = if (windowed) frozenUntil else 0L
+                val response = downloader.fetchChangesNow(
+                    clientInfo.sourceId, after, limit, includeSelf, untilParam
+                )
+
+                if (first) {
+                    frozenUntil = if (windowed) response.windowUntil else 0L
+                    if (frozenUntil > 0L) {
+                        opGate.acquire()
+                        try {
+                            withContext(db.dispatcher) {
+                                db.execSQL("UPDATE _sync_client_info SET current_window_until=$frozenUntil")
+                            }
+                        } finally { opGate.release() }
+                    }
+                    first = false
                 }
-            }
-        }
 
-        result.map { }
+                if (response.changes.isEmpty()) {
+                    if (response.nextAfter > after) {
+                        opGate.acquire()
+                        try {
+                            withContext(db.dispatcher) {
+                                db.prepare("UPDATE _sync_client_info SET last_server_seq_seen=?").use { st ->
+                                    st.bindLong(1, response.nextAfter)
+                                    st.step()
+                                }
+                            }
+                        } finally { opGate.release() }
+                        after = response.nextAfter
+                    }
+                } else {
+                    val updatedTables = try {
+                        opGate.acquire()
+                        withContext(db.dispatcher) {
+                            downloader.applyDownloadedPage(
+                                db = db,
+                                response = response,
+                                includeSelf = includeSelf,
+                                sourceId = clientInfo.sourceId,
+                                previousAfter = after
+                            )
+                        }
+                    } finally { opGate.release() }
+                    allUpdatedTables += updatedTables.updatedTables
+                    after = updatedTables.nextAfter
+                }
+
+                if (!response.hasMore) break
+            }
+
+            if (frozenUntil > 0L) {
+                opGate.acquire()
+                try {
+                    withContext(db.dispatcher) {
+                        db.execSQL("UPDATE _sync_client_info SET current_window_until=0")
+                    }
+                } finally { opGate.release() }
+            }
+
+            if (allUpdatedTables.isNotEmpty()) tablesUpdateListener(allUpdatedTables)
+        }.onFailure { logger.e(it) { "hydrate: failed" } }
+
+        return result.map { }
     }
 
     // --- Helpers ---
@@ -211,11 +328,10 @@ class DefaultOversqliteClient(
         db: SafeSQLiteConnection, table: String, pk: String, serverVersion: Long, deleted: Boolean
     ) {
         val del = if (deleted) 1 else 0
-        logger.d { "updateRowMeta: ${table}:${pk} -> server_v${serverVersion} (deleted=${deleted})" }
 
         db.prepare(
             "INSERT OR REPLACE INTO _sync_row_meta(table_name, pk_uuid, server_version, deleted, updated_at) " +
-            "VALUES(?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))"
+                    "VALUES(?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))"
         ).use { st ->
             st.bindText(1, table)
             st.bindText(2, pk)
@@ -233,7 +349,6 @@ class DefaultOversqliteClient(
         if (payload == null || payload !is JsonObject) return
         val tableLc = table.lowercase()
         val tableCols = getTableColumns(db, tableLc).toSet()
-        logger.d { "upsertBusinessFromPayload: table=$tableLc pk=$pk" }
 
         // Normalize payload keys to lowercase for case-insensitive matching
         val normalized: Map<String, JsonElement> =
@@ -259,7 +374,6 @@ class DefaultOversqliteClient(
         // UPDATE first
         val setClause = cols.joinToString(", ") { "$it=?" }
         val updateSql = "UPDATE $tableLc SET $setClause WHERE id=?"
-        logger.d { "upsertBusinessFromPayload: executing UPDATE with pk=$pk" }
         var updateRowsAffected = 0
         db.prepare(updateSql).use { st ->
             cols.forEachIndexed { idx, key ->
@@ -286,18 +400,14 @@ class DefaultOversqliteClient(
             st.step()
             // Note: SQLite changes() function not available in this API
         }
-        logger.d { "upsertBusinessFromPayload: UPDATE affected $updateRowsAffected rows" }
 
         // If UPDATE affected 0 rows, INSERT id + provided columns
         val changed =
             db.prepare("SELECT changes()").use { st -> if (st.step()) st.getLong(0) else 0L }
-        logger.d { "upsertBusinessFromPayload: changes()=$changed, will INSERT=${changed == 0L}" }
         if (changed == 0L) {
             val insertCols = listOf("id") + cols
             val placeholders = insertCols.indices.joinToString(", ") { "?" }
-            val insertSql =
-                "INSERT INTO $tableLc (${insertCols.joinToString(", ")}) VALUES ($placeholders)"
-            logger.d { "upsertBusinessFromPayload: executing INSERT with pk=$pk" }
+            val insertSql = "INSERT INTO $tableLc (${insertCols.joinToString(", ")}) VALUES ($placeholders)"
             db.prepare(insertSql).use { st ->
                 st.bindText(1, pk)
 
@@ -323,51 +433,10 @@ class DefaultOversqliteClient(
                 }
                 st.step()
             }
-            logger.d { "upsertBusinessFromPayload: INSERT completed for pk=$pk" }
         }
     }
 
     // Lookback drain helper used by uploadOnce to avoid resurrecting deletes
-    private suspend fun drainLookbackUntil() {
-        val target: Long =
-            db.prepare("SELECT last_server_seq_seen FROM _sync_client_info LIMIT 1").use { st ->
-                if (st.step()) st.getLong(0) else 0L
-            }
-        val lb = maxOf(1000L, config.downloadLimit.toLong() * 2)
-        val windowStart = (target - lb).coerceAtLeast(0L)
-        logger.d { "drainLookbackUntil: from=$windowStart to=$target" }
-        db.prepare("UPDATE _sync_client_info SET last_server_seq_seen=?").use { st ->
-            st.bindLong(1, windowStart)
-            st.step()
-        }
-        var nextAfter = windowStart
-        var passes = 0
-        val maxPasses = 50
-        while (true) {
-            val prev = nextAfter
-            logger.d { "drainLookbackUntil: pass $passes downloading from seq=$prev" }
-            val (applied, na) = downloadOnce(
-                limit = config.downloadLimit,
-                includeSelf = true,  // Include self during lookback to update local metadata
-                isPostUploadLookback = true
-            ).getOrElse { 0 to prev }
-            logger.d { "drainLookbackUntil: pass $passes downloaded $applied changes, nextAfter=$na" }
-            nextAfter = na
-            passes++
-            val caughtUp = nextAfter >= target
-            val stagnated = nextAfter == prev
-            if (applied == 0 || caughtUp || stagnated || passes >= maxPasses) break
-        }
-        // Restore to target to avoid leaving cursor behind
-        val current: Long = db.prepare("SELECT last_server_seq_seen FROM _sync_client_info LIMIT 1")
-            .use { st -> if (st.step()) st.getLong(0) else 0L }
-        if (current < target) {
-            db.prepare("UPDATE _sync_client_info SET last_server_seq_seen=?").use { st ->
-                st.bindLong(1, target)
-                st.step()
-            }
-        }
-    }
 
     private suspend fun drainLookbackUntilInternal() {
         val target: Long =

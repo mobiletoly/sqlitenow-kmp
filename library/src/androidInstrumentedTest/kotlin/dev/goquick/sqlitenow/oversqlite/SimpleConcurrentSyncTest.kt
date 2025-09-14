@@ -1,7 +1,6 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
-import androidx.sqlite.execSQL
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import kotlinx.coroutines.async

@@ -343,7 +343,8 @@ data class StatementAnnotationOverrides(
     val implements: String?,
     val excludeOverrideFields: Set<String>?,
     val collectionKey: String?,
-    val enableSync: Boolean = false
+    val enableSync: Boolean = false,
+    val syncKeyColumnName: String? = null
 ) {
     companion object {
         fun parse(annotations: Map<String, Any?>): StatementAnnotationOverrides {
@@ -354,6 +355,7 @@ data class StatementAnnotationOverrides(
             val excludeOverrideFields = annotations[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS]
             val collectionKey = annotations[AnnotationConstants.COLLECTION_KEY] as? String
             val enableSync = annotations[AnnotationConstants.ENABLE_SYNC] as? Boolean ?: false
+            val syncKeyColumnName = annotations[AnnotationConstants.SYNC_KEY_COLUMN_NAME] as? String
 
             if (annotations.containsKey(AnnotationConstants.NAME) && name?.isBlank() == true) {
                 throw IllegalArgumentException("Annotation '${AnnotationConstants.NAME}' cannot be blank")
@@ -375,7 +377,8 @@ data class StatementAnnotationOverrides(
                 implements = implements,
                 excludeOverrideFields = parseExcludeOverrideFieldsFromHocon(excludeOverrideFields),
                 collectionKey = collectionKey,
-                enableSync = enableSync
+                enableSync = enableSync,
+                syncKeyColumnName = syncKeyColumnName
             )
         }
 

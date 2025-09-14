@@ -143,7 +143,10 @@ class AndroidOversqliteStressTest {
             }
         }
 
-        val cfg = OversqliteConfig(schema = "business", tables = listOf("users", "posts"))
+        val cfg = OversqliteConfig(schema = "business", syncTables = listOf(
+            SyncTable(tableName = "users"),
+            SyncTable(tableName = "posts")
+        ))
         val secret = "your-secret-key-change-in-production"
         val userSub = "user-stress-" + java.util.UUID.randomUUID().toString().substring(0, 8)
 

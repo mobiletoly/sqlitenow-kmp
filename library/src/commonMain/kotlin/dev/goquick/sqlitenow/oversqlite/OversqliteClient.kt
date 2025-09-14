@@ -2,6 +2,7 @@ package dev.goquick.sqlitenow.oversqlite
 
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 
 /**
  * OversqliteClient exposes a minimal, durable API for the single‑user multi‑device sync flow.
@@ -222,5 +223,6 @@ interface OversqliteClient {
  * By default, IO‑like work uses Dispatchers.Default to avoid tying to Android Main.
  */
 open class PlatformDispatchers {
-    open val io: CoroutineDispatcher = Dispatchers.Default.limitedParallelism(1)
+    // Use a proper IO dispatcher for network and blocking I/O
+    open val io: CoroutineDispatcher = Dispatchers.IO
 }

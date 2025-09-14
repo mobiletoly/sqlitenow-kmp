@@ -114,9 +114,20 @@ data class ChangeDownloadResponse(
  */
 data class OversqliteConfig(
     val schema: String, // mandatory; no default to avoid business-specific assumptions
-    val tables: List<String>,
+    val syncTables: List<SyncTable>,
     val uploadLimit: Int = 200,
     val downloadLimit: Int = 1000,
     val syncWindowLookback: Long = 100L,
     val lookbackMaxPasses: Int = 20,
+)
+
+/**
+ * Represents a table to be synchronized with its primary key column.
+ *
+ * @param tableName The name of the table to synchronize
+ * @param syncKeyColumnName The primary key column name. "id" by default.
+ */
+data class SyncTable(
+    val tableName: String,
+    val syncKeyColumnName: String? = "id"
 )

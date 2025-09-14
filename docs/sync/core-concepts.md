@@ -112,7 +112,7 @@ SQLiteNow automatically tracks changes to your data when sync is enabled on a ta
 - **Efficient**: Only actual changes are tracked, not every database access
 
 ### Table Configuration Methods
-- **SQLiteNow Annotations**: Tables marked with `changeLogs=true` are automatically registered for sync
+- **SQLiteNow Annotations**: Tables marked with `enableSync=true` are automatically registered for sync
 - **Manual Configuration**: Tables can be manually specified during oversqlite client configuration
 - **Mixed Approach**: You can combine both annotation-based and manual table configuration
 

@@ -128,11 +128,11 @@ Full examples is available in the [`/sample-kmp`](./sample-kmp) directory.
 ## Multi-Device Synchronization (optional)
 
 SQLiteNow includes a complete synchronization system for building multi-device applications.
-Simply annotate your tables with `changeLogs=true` and the sync system handles the rest:
+Simply annotate your tables with `enableSync=true` and the sync system handles the rest:
 
 ```sql
 -- Enable sync for this table
--- @@{ changeLogs=true }
+-- @@{ enableSync=true }
 CREATE TABLE person (
     id INTEGER PRIMARY KEY,
     first_name TEXT NOT NULL,

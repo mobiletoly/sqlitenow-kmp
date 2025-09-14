@@ -152,7 +152,7 @@ open class SqliteNowDatabase {
 
     /**
      * Creates sync system tables required for synchronization functionality.
-     * These tables are only created when there are tables with changeLogs=true annotation.
+     * These tables are only created when there are tables with enableSync=true annotation.
      */
     private fun createSyncSystemTables() {
         // Create change log table
@@ -244,7 +244,7 @@ interface DatabaseMigrations {
     suspend fun applyMigration(conn: SafeSQLiteConnection, currentVersion: Int): Int
 
     /**
-     * Checks if synchronization features are needed (i.e., if any tables have changeLogs=true).
+     * Checks if synchronization features are needed (i.e., if any tables have enableSync=true).
      * This is used to determine whether to create sync system tables.
      *
      * @return true if sync system tables should be created, false otherwise

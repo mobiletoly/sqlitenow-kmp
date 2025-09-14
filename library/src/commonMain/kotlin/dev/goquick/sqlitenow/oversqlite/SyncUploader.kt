@@ -15,16 +15,22 @@ import kotlinx.serialization.json.*
  *
  * The HttpClient should be pre-configured with authentication headers and base URL.
  */
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.withContext
+
 internal class SyncUploader(
     private val http: HttpClient,
     private val config: OversqliteConfig,
     private val resolver: Resolver,
     private val upsertBusinessFromPayload: suspend (SafeSQLiteConnection, String, String, JsonElement?) -> Unit,
-    private val updateRowMeta: suspend (SafeSQLiteConnection, String, String, Long, Boolean) -> Unit
+    private val updateRowMeta: suspend (SafeSQLiteConnection, String, String, Long, Boolean) -> Unit,
+    private val ioDispatcher: CoroutineDispatcher
 ) {
-    /**
-     * Represents a pending change to be uploaded
-     */
+    data class PreparedUpload(
+        val request: UploadRequest,
+        val changes: List<ChangeUpload>
+    )
+    /** Represents a pending change to be uploaded */
     private data class PendingChange(
         val table: String,
         val pk: String,
@@ -34,49 +40,56 @@ internal class SyncUploader(
         var changeId: Long?
     )
 
-    data class UploadResult(
-        val summary: UploadSummary,
-        val updatedTables: Set<String>
-    )
-
-    suspend fun uploadPendingChanges(
+    // New split-phase API: prepare (DB), perform (network), finalize (DB)
+    suspend fun prepareUpload(
         db: SafeSQLiteConnection,
         nextChangeId: Long
-    ): UploadResult {
-        val updatedTables = mutableSetOf<String>()
-
-        // 1. Load pending changes
+    ): PreparedUpload {
         val pending = loadPendingChanges(db)
         if (pending.isEmpty()) {
-            logger.d { "uploadOnce: no pending" }
-            return UploadResult(UploadSummary(0, 0, 0, 0, 0), emptySet())
+            // Return an empty request; callers can check changes.isEmpty() to skip network
+            val lastServerSeq = db.prepare("SELECT last_server_seq_seen FROM _sync_client_info LIMIT 1")
+                .use { st -> if (st.step()) st.getLong(0) else 0L }
+            return PreparedUpload(
+                request = UploadRequest(lastServerSeqSeen = lastServerSeq, changes = emptyList()),
+                changes = emptyList()
+            )
         }
 
-        // Remove excessive debug logging
-
-        // 2. Assign change IDs where missing
         assignChangeIds(db, pending, nextChangeId)
-
-        // 3. Build and send upload request
         val changes = buildChangeUploads(pending)
-        val response = sendUploadRequest(changes, db)
+        val lastServerSeq = db.prepare("SELECT last_server_seq_seen FROM _sync_client_info LIMIT 1")
+            .use { st -> if (st.step()) st.getLong(0) else 0L }
+        return PreparedUpload(
+            request = UploadRequest(lastServerSeqSeen = lastServerSeq, changes = changes),
+            changes = changes
+        )
+    }
 
-        // 4. Process response
-        val summary = processUploadResponse(db, changes, response, updatedTables)
+    suspend fun performUpload(request: UploadRequest): UploadResponse {
+        return withContext(ioDispatcher) {
+            http.post("/sync/upload") {
+                contentType(ContentType.Application.Json)
+                setBody(request)
+            }.body()
+        }
+    }
 
-        return UploadResult(summary, updatedTables)
+    suspend fun finalizeUpload(
+        db: SafeSQLiteConnection,
+        changes: List<ChangeUpload>,
+        response: UploadResponse,
+        updatedTables: MutableSet<String>
+    ): UploadSummary {
+        return processUploadResponse(db, changes, response, updatedTables)
     }
 
     private suspend fun loadPendingChanges(db: SafeSQLiteConnection): MutableList<PendingChange> {
-        logger.d { "loadPendingChanges: start" }
         return db.prepare("SELECT table_name, pk_uuid, op, base_version, payload, change_id FROM _sync_pending ORDER BY queued_at ASC")
             .use { st ->
                 val out = mutableListOf<PendingChange>()
                 while (st.step()) {
-                    logger.d { "loadPendingChanges--> start" }
                     val cid = st.getLong(5)
-                    logger.d { "loadPendingChanges--> $cid" }
-                    logger.d { "loadPendingChanges--> 0=${st.isNull(0)} 1=${st.isNull(1)} 2=${st.isNull(2)} 3=${st.isNull(3)} 4=${st.isNull(4)} 5=${st.isNull(5)}" }
                     out += PendingChange(
                         table = st.getText(0),
                         pk = st.getText(1),
@@ -87,9 +100,6 @@ internal class SyncUploader(
                     )
                 }
                 out
-            }
-            .also {
-                logger.d { "loadPendingChanges: done, loaded=${it.size} changes" }
             }
     }
 
@@ -132,45 +142,7 @@ internal class SyncUploader(
         }
     }
 
-    private suspend fun sendUploadRequest(
-        changes: List<ChangeUpload>,
-        db: SafeSQLiteConnection
-    ): UploadResponse {
-        val lastServerSeq = db.prepare("SELECT last_server_seq_seen FROM _sync_client_info LIMIT 1")
-            .use { st -> if (st.step()) st.getLong(0) else 0L }
-
-        val req = UploadRequest(lastServerSeqSeen = lastServerSeq, changes = changes)
-
-        val response: UploadResponse = http.post("/sync/upload") {
-            contentType(ContentType.Application.Json)
-            setBody(req)
-        }.body()
-
-        logger.d { "Upload response: ${response.statuses.size} statuses" }
-
-        response.statuses.forEach { status ->
-            val matchingChange = changes.find { it.sourceChangeId == status.sourceChangeId }
-            val changeInfo = matchingChange?.let { "${it.op} ${it.table}:${it.pk.take(8)}" } ?: "unknown"
-
-            when (status.status.uppercase()) {
-                "APPLIED" -> {
-                    logger.d { "Applied: $changeInfo -> server_v${status.newServerVersion}" }
-                }
-                "CONFLICT" -> {
-                    logger.w { "Sync conflict: $changeInfo - ${status.message}" }
-                    logger.d { "Conflict details: serverRow=${status.serverRow}, localOp=${matchingChange?.op}" }
-                }
-                "INVALID", "MATERIALIZE_ERROR" -> {
-                    logger.e { "Upload failed: $changeInfo - ${status.status}: ${status.message}" }
-                }
-                else -> {
-                    logger.d { "Upload status: ${status.status} for $changeInfo" }
-                }
-            }
-        }
-        logger.d { "uploadOnce: sent=${changes.size} statuses=${response.statuses.size} highestSeq=${response.highestServerSeq}" }
-        return response
-    }
+    
 
     private suspend fun processUploadResponse(
         db: SafeSQLiteConnection,
@@ -300,11 +272,11 @@ internal class SyncUploader(
         serverRow: JsonElement?,
         localPayload: JsonElement?
     ): MergeResult {
-        // CRITICAL FIX: Handle DELETE operations specially to prevent record resurrection
+        // Handle DELETE operations specially to prevent record resurrection
         if (localOp == "DELETE") {
             // For DELETE operations, we create a special KeepLocal result with null payload
             // This will be handled by processKeepLocalDecision to maintain the DELETE
-            return MergeResult.KeepLocal(localPayload ?: kotlinx.serialization.json.JsonNull)
+            return MergeResult.KeepLocal(localPayload ?: JsonNull)
         }
 
         // Handle infrastructure edge cases automatically for non-DELETE operations
@@ -366,7 +338,7 @@ internal class SyncUploader(
 
         logger.d { "Processing KeepLocal decision for ${change.table}:${change.pk}, op=${change.op}, server_v=$sv" }
 
-        // CRITICAL FIX: Handle DELETE operations specially
+        // Handle DELETE operations specially
         if (change.op == "DELETE") {
             logger.d { "DELETE conflict: maintaining local DELETE, updating server version to $sv" }
 
@@ -379,7 +351,7 @@ internal class SyncUploader(
             // Update metadata to track server version but keep deleted=true
             updateRowMeta(db, change.table, change.pk, sv, true)
 
-            // CRITICAL FIX: Re-enqueue DELETE with updated server version to propagate to server
+            // Re-enqueue DELETE with updated server version to propagate to server
             // This ensures other devices will receive the DELETE
             db.prepare(
                 "UPDATE _sync_pending SET base_version=?, queued_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') " +
@@ -446,7 +418,6 @@ internal class SyncUploader(
         }
     }
 
-    // Utility methods delegated to the client
     private suspend fun upsertBusinessFromPayload(
         db: SafeSQLiteConnection, table: String, pk: String, payload: JsonElement?
     ) = upsertBusinessFromPayload.invoke(db, table, pk, payload)
@@ -454,6 +425,4 @@ internal class SyncUploader(
     private suspend fun updateRowMeta(
         db: SafeSQLiteConnection, table: String, pk: String, serverVersion: Long, deleted: Boolean
     ) = updateRowMeta.invoke(db, table, pk, serverVersion, deleted)
-
-
 }

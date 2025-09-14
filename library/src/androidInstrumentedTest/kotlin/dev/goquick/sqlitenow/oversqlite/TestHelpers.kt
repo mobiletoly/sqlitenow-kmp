@@ -94,7 +94,7 @@ internal suspend fun createBusinessTables(db: SafeSQLiteConnection) {
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
           email TEXT NOT NULL
-        )
+        ) WITHOUT ROWID
         """.trimIndent()
     )
 
@@ -105,7 +105,7 @@ internal suspend fun createBusinessTables(db: SafeSQLiteConnection) {
           title TEXT NOT NULL,
           content TEXT,
           author_id TEXT NOT NULL REFERENCES users(id)
-        )
+        ) WITHOUT ROWID
         """.trimIndent()
     )
 }
@@ -146,7 +146,26 @@ internal fun createSyncTestClient(
     deviceId: String,
     tables: List<String>
 ): DefaultOversqliteClient {
-    val cfg = OversqliteConfig(schema = "business", tables = tables)
+    val syncTables = tables.map { SyncTable(tableName = it) }
+    val cfg = OversqliteConfig(schema = "business", syncTables = syncTables)
+    val httpClient = createAuthenticatedHttpClient(userSub, deviceId)
+    return DefaultOversqliteClient(
+        db = db,
+        config = cfg,
+        http = httpClient,
+        resolver = ClientWinsResolver,
+        tablesUpdateListener = { }
+    )
+}
+
+// Shared client creation for tests with custom primary keys
+internal fun createSyncTestClientWithCustomPK(
+    db: SafeSQLiteConnection,
+    userSub: String,
+    deviceId: String,
+    syncTables: List<SyncTable>
+): DefaultOversqliteClient {
+    val cfg = OversqliteConfig(schema = "business", syncTables = syncTables)
     val httpClient = createAuthenticatedHttpClient(userSub, deviceId)
     return DefaultOversqliteClient(
         db = db,

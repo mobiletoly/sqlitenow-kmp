@@ -17,37 +17,8 @@ Before you begin, make sure you have:
 - A basic understanding of SQLiteNow's code generation
 - Access to a sync server (or willingness to set one up)
 
-## Step 1: Enable Sync on Tables
 
-First, decide which tables should be synchronized across devices. Add the `changeLogs=true` annotation to enable sync tracking:
-
-```sql
--- Enable sync for this table
--- @@{ changeLogs=true }
-CREATE TABLE person (
-    id INTEGER PRIMARY KEY,
-    first_name TEXT NOT NULL,
-    last_name TEXT NOT NULL,
-    email TEXT UNIQUE,
-    created_at INTEGER NOT NULL DEFAULT (unixepoch())
-);
-
--- @@{ changeLogs=true }
-CREATE TABLE note (
-    id INTEGER PRIMARY KEY,
-    title TEXT NOT NULL,
-    content TEXT,
-    person_id INTEGER REFERENCES person(id),
-    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-);
-```
-
-**Important Notes:**
-- Only tables with `changeLogs=true` will be synchronized
-- Tables without this annotation remain local-only
-- You can mix sync-enabled and local-only tables in the same database
-
-## Step 2: Add Ktor Dependencies
+## Step 1: Add Ktor Dependencies
 
 Add the required Ktor dependencies to your `build.gradle.kts`:
 
@@ -71,6 +42,119 @@ iosMain.dependencies {
     implementation("io.ktor:ktor-client-darwin:3.3.0")
 }
 ```
+
+
+## Step 2: Enable Sync on Tables
+
+First, decide which tables should be synchronized across devices. Add the `enableSync=true` annotation to enable sync tracking:
+
+```sql
+-- Enable sync for this table
+-- @@{ enableSync=true }
+CREATE TABLE person (
+    id TEXT PRIMARY KEY NOT NULL,  -- MUST be uuid
+    first_name TEXT NOT NULL,
+    last_name TEXT NOT NULL,
+    email TEXT UNIQUE,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+-- @@{ enableSync=true }
+CREATE TABLE note (
+    id TEXT PRIMARY KEY NOT NULL,  -- MUST be uuid
+    title TEXT NOT NULL,
+    content TEXT,
+    person_id TEXT REFERENCES person(id),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+```
+
+### Critical Primary Key Requirements
+
+**MANDATORY: Primary keys MUST be TEXT type containing UUIDs**
+
+```sql
+CREATE TABLE users (
+    id TEXT PRIMARY KEY NOT NULL,  -- Will contain UUID values
+    name TEXT NOT NULL
+);
+```
+
+**Why UUIDs are required:**
+- **Global uniqueness**: UUIDs prevent conflicts when merging data from multiple devices
+- **Offline creation**: Devices can create records offline without server coordination
+- **Conflict resolution**: The sync system relies on globally unique identifiers
+- **Cross-device consistency**: Same record has same ID across all devices
+
+
+### Custom Primary Key Column Names
+
+If your table uses a different column name for the primary key, specify it with `syncKeyColumnName`:
+
+```sql
+-- Custom primary key column name
+-- @@{ enableSync=true, syncKeyColumnName=user_uuid }
+CREATE TABLE users (
+    user_uuid TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL,
+    email TEXT UNIQUE
+);
+
+-- Traditional 'id' column (no annotation needed)
+-- @@{ enableSync=true }
+CREATE TABLE orders (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_uuid TEXT NOT NULL,
+    product_code TEXT NOT NULL
+);
+```
+
+**Important Notes:**
+- Only tables with `enableSync=true` will be synchronized
+- Tables without this annotation remain local-only
+- You can mix sync-enabled and local-only tables in the same database
+- **Primary keys must always be TEXT type containing UUID values**
+- Use `syncKeyColumnName` annotation for custom primary key column names
+- The system can auto-detect primary key columns if not explicitly specified
+
+### UUID Generation in Your App
+
+When inserting records, you must generate UUID values for primary keys:
+
+```kotlin
+import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
+
+@OptIn(ExperimentalUuidApi::class)
+suspend fun createPerson(name: String, email: String) {
+    val personId = Uuid.random().toString()  // Generate UUID
+
+    database.personQueries.insert(
+        id = personId,  // TEXT primary key with UUID value
+        first_name = name.split(" ").first(),
+        last_name = name.split(" ").last(),
+        email = email,
+        created_at = System.currentTimeMillis()
+    )
+}
+
+// For custom primary key column names
+@OptIn(ExperimentalUuidApi::class)
+suspend fun createUser(name: String, email: String) {
+    val userUuid = Uuid.random().toString()  // Generate UUID
+
+    database.userQueries.insert(
+        user_uuid = userUuid,  // Custom primary key column
+        name = name,
+        email = email
+    )
+}
+```
+
+**Alternative UUID libraries:**
+- **Kotlin Multiplatform**: `kotlin.uuid.Uuid` (recommended)
+- **Java/Android**: `java.util.UUID.randomUUID().toString()`
+- **Third-party**: `com.benasher44:uuid` for KMP projects
 
 ## Step 3: Configure Authentication
 
@@ -321,14 +405,26 @@ Congratulations! You now have basic sync functionality working. Here's what to e
 - Check that your JWT token is valid
 - Verify the user ID and device ID are properly formatted
 
-### "No changes to upload" 
-- Make sure you've enabled `changeLogs=true` on your tables
+### "Primary key constraint failed" or Sync Errors
+- **Check primary key types**: Ensure all sync table primary keys are `TEXT`, not `INTEGER`
+- **Verify UUID generation**: Make sure you're generating proper UUID strings for primary keys
+- **Foreign key consistency**: Foreign keys referencing sync tables must also be `TEXT` type
+- **Custom primary keys**: Use `syncKeyColumnName` annotation if your primary key isn't named "id"
+
+### "No changes to upload"
+- Make sure you've enabled `enableSync=true` on your tables
 - Verify that you're making changes to sync-enabled tables
 - Check that the sync client was created after the database schema was set up
+- Ensure primary keys are TEXT type with UUID values
 
 ### Sync seems slow
 - Adjust the `limit` parameter in upload/download operations
 - Consider implementing windowed hydration for large datasets
 - Monitor network conditions and adjust sync frequency accordingly
+
+### "Column not found" Errors in Triggers
+- This usually means you're using INTEGER primary keys instead of TEXT
+- Check that your `syncKeyColumnName` annotation matches your actual column name
+- Verify that the primary key column exists and is properly defined
 
 For more detailed troubleshooting, see our [Troubleshooting Guide]({{ site.baseurl }}/sync/troubleshooting/).

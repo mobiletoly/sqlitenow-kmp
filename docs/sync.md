@@ -41,7 +41,7 @@ automatically.
 - **Offline-First** - Works seamlessly offline, syncs when connection is available
 - **Secure Authentication** - JWT-based authentication with automatic token refresh
 - **Incremental Sync** - Efficient sync with pagination and change-based updates
-- **Selective Sync** - Choose which tables to sync with `changeLogs=true` annotation
+- **Selective Sync** - Choose which tables to sync with `enableSync=true` annotation
 
 ## How It Works
 

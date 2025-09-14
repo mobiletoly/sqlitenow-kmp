@@ -21,6 +21,7 @@ object AnnotationConstants {
     const val IMPLEMENTS = "implements"
     const val EXCLUDE_OVERRIDE_FIELDS = "excludeOverrideFields"
     const val ENABLE_SYNC = "enableSync"
+    const val SYNC_KEY_COLUMN_NAME = "syncKeyColumnName"
 
     // Common field- and statement-level annotations
     const val COLLECTION_KEY = "collectionKey"

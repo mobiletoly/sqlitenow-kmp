@@ -217,16 +217,32 @@ class DatabaseCodeGenerator(
         // Oversqlite integration helpers: derive sync tables from enableSync annotations
         val syncTables = createTableStatements
             .filter { it.annotations.enableSync }
-            .map { it.name }
             .distinct()
         if (syncTables.isNotEmpty()) {
-            val listInitializer = syncTables.joinToString(", ") { "\"$it\"" }
+            // Generate SyncTable objects with primary key detection
+            val syncTableInitializers = syncTables.map { table ->
+                // Use explicit syncKeyColumnName annotation if provided, otherwise auto-detect
+                val explicitSyncKey = table.annotations.syncKeyColumnName
+                val primaryKeyColumn = explicitSyncKey ?: findPrimaryKeyColumn(table)
+
+                val syncKeyParam = if (primaryKeyColumn != null && primaryKeyColumn != "id") {
+                    ", syncKeyColumnName = \"$primaryKeyColumn\""
+                } else if (explicitSyncKey != null) {
+                    // Explicit annotation provided, even if it's "id"
+                    ", syncKeyColumnName = \"$explicitSyncKey\""
+                } else {
+                    "" // Use default "id"
+                }
+                "%T(tableName = \"${table.name}\"$syncKeyParam)"
+            }
+
+            val listInitializer = syncTableInitializers.joinToString(", ")
             val companion = TypeSpec.companionObjectBuilder()
                 .addProperty(
                     PropertySpec.builder(
                         "syncTables",
-                        ClassName("kotlin.collections", "List").parameterizedBy(ClassName("kotlin", "String"))
-                    ).initializer("listOf($listInitializer)")
+                        ClassName("kotlin.collections", "List").parameterizedBy(ClassName("dev.goquick.sqlitenow.oversqlite", "SyncTable"))
+                    ).initializer("listOf($listInitializer)", *Array(syncTables.size) { ClassName("dev.goquick.sqlitenow.oversqlite", "SyncTable") })
                         .addKdoc("Tables annotated with enableSync in schema; used to configure oversqlite.")
                         .build()
                 )
@@ -273,6 +289,19 @@ class DatabaseCodeGenerator(
         }
 
         return classBuilder.build()
+    }
+
+    /**
+     * Finds the primary key column for a table.
+     * Returns null if no primary key is found or if there are multiple primary keys.
+     */
+    private fun findPrimaryKeyColumn(table: AnnotatedCreateTableStatement): String? {
+        val primaryKeyColumns = table.columns.filter { it.src.primaryKey }
+        return if (primaryKeyColumns.size == 1) {
+            primaryKeyColumns.first().src.name
+        } else {
+            null // No primary key or composite primary key
+        }
     }
 
     /** Generates an adapter wrapper class for a specific namespace. */
@@ -537,6 +566,4 @@ class DatabaseCodeGenerator(
         val resultType = SharedResultTypeUtils.createResultTypeName(packageName, namespace, this)
         return resultType.toString()
     }
-
-
 }
