@@ -54,15 +54,16 @@ class SimpleConcurrentSyncTest {
         println("[$deviceId] Starting full sync...")
 
         val uploadResult = client.uploadOnce()
-        assertTrue("Upload failed for $deviceId", uploadResult.isSuccess)
-        println("[$deviceId] Upload completed: ${uploadResult.getOrNull()}")
+        assertUploadSuccessWithConflicts(uploadResult)
+        val uploadSummary = getUploadSummary(uploadResult)
+        println("[$deviceId] Upload completed: $uploadSummary")
 
         val limit = 500
         var totalDownloaded = 0
         var more = true
         while (more) {
             val downloadResult = client.downloadOnce(limit = limit, includeSelf = false)
-            assertTrue("Download failed for $deviceId", downloadResult.isSuccess)
+            assertDownloadSuccess(downloadResult)
 
             val (applied, _) = downloadResult.getOrNull() ?: (0 to 0L)
             totalDownloaded += applied

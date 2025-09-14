@@ -15,6 +15,11 @@ import kotlinx.serialization.json.*
  */
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.isSuccess
+import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
+
 
 internal class SyncDownloader(
     private val http: HttpClient,
@@ -22,7 +27,7 @@ internal class SyncDownloader(
     private val resolver: Resolver,
     private val upsertBusinessFromPayload: suspend (SafeSQLiteConnection, String, String, JsonElement?) -> Unit,
     private val updateRowMeta: suspend (SafeSQLiteConnection, String, String, Long, Boolean) -> Unit,
-    private val ioDispatcher: CoroutineDispatcher
+    private val ioDispatcher: CoroutineDispatcher,
 ) {
 
     data class DownloadResult(
@@ -38,15 +43,34 @@ internal class SyncDownloader(
         until: Long = 0L,
         isPostUploadLookback: Boolean = false
     ): DownloadResult {
-        logger.d { "downloadOnce: start limit=$limit includeSelf=$includeSelf until=$until isPostUploadLookback=$isPostUploadLookback" }
+        if (config.verboseLogs) {
+            logger.i { "[VERBOSE] SyncDownloader: starting download limit=$limit includeSelf=$includeSelf until=$until isPostUploadLookback=$isPostUploadLookback" }
+        } else {
+            logger.d { "downloadOnce: start limit=$limit includeSelf=$includeSelf until=$until isPostUploadLookback=$isPostUploadLookback" }
+        }
 
         // 1. Get client info
         val clientInfo = getClientInfo(db)
 
+        if (config.verboseLogs) {
+            logger.i { "[VERBOSE] SyncDownloader: client info sourceId=${clientInfo.sourceId} lastServerSeq=${clientInfo.lastServerSeq}" }
+        }
+
         // 2. Fetch changes from server
-        val response =
-            fetchChanges(clientInfo.sourceId, clientInfo.lastServerSeq, limit, includeSelf, until)
-        logger.d { "downloadOnce: changes=${response.changes.size} nextAfter=${response.nextAfter} windowUntil=${response.windowUntil}" }
+        val response = fetchChanges(clientInfo.sourceId, clientInfo.lastServerSeq, limit, includeSelf, until)
+            .getOrElse { throw it }
+
+        if (config.verboseLogs) {
+            logger.i { "[VERBOSE] SyncDownloader: received ${response.changes.size} changes, nextAfter=${response.nextAfter} windowUntil=${response.windowUntil}" }
+            response.changes.forEachIndexed { index, change ->
+                logger.i { "[VERBOSE] SyncDownloader: change[$index] serverId=${change.serverId} table=${change.tableName} op=${change.op} pk=${change.pk} serverVersion=${change.serverVersion} deleted=${change.deleted}" }
+                if (change.payload != null) {
+                    logger.d { "[VERBOSE] SyncDownloader: change[$index] payload=${change.payload}" }
+                }
+            }
+        } else {
+            logger.d { "downloadOnce: changes=${response.changes.size} nextAfter=${response.nextAfter} windowUntil=${response.windowUntil}" }
+        }
 
         // 3. Handle empty response
         if (response.changes.isEmpty()) {
@@ -92,6 +116,7 @@ internal class SyncDownloader(
         while (true) {
             val untilParam = if (windowed) frozenUntil else 0L
             val response = fetchChanges(clientInfo.sourceId, after, limit, includeSelf, untilParam)
+                .getOrElse { throw it }
 
             if (first) {
                 frozenUntil = if (windowed) response.windowUntil else 0L
@@ -158,7 +183,7 @@ internal class SyncDownloader(
         limit: Int,
         includeSelf: Boolean,
         until: Long
-    ): DownloadResponse = fetchChanges(sourceId, lastServerSeq, limit, includeSelf, until)
+    ): Result<DownloadResponse> = fetchChanges(sourceId, lastServerSeq, limit, includeSelf, until)
 
     internal suspend fun applyDownloadedPage(
         db: SafeSQLiteConnection,
@@ -187,15 +212,38 @@ internal class SyncDownloader(
         limit: Int,
         includeSelf: Boolean,
         until: Long
-    ): DownloadResponse {
+    ): Result<DownloadResponse> {
         val url = buildDownloadUrl(lastServerSeq, limit, includeSelf, until, config.schema)
-        logger.d { "Download request: after=$lastServerSeq, limit=$limit, includeSelf=$includeSelf, until=$until" }
+
+        if (config.verboseLogs) {
+            logger.i { "[VERBOSE] SyncDownloader: fetching changes from server" }
+            logger.i { "[VERBOSE] SyncDownloader: request URL: $url" }
+            logger.i { "[VERBOSE] SyncDownloader: parameters - after=$lastServerSeq, limit=$limit, includeSelf=$includeSelf, until=$until, schema=${config.schema}" }
+        } else {
+            logger.d { "Download request: after=$lastServerSeq, limit=$limit, includeSelf=$includeSelf, until=$until" }
+        }
 
         // Perform network I/O on injected IO dispatcher to avoid blocking db.dispatcher
-        val response = withContext(ioDispatcher) { http.get(url).body<DownloadResponse>() }
-        logger.d { "Download response: ${response.changes.size} changes, nextAfter=${response.nextAfter}" }
+        return withContext(ioDispatcher) {
+            val call = http.get(url)
+            if (!call.status.isSuccess()) {
+                val text = runCatching { call.bodyAsText() }.getOrElse { "" }
+                if (config.verboseLogs) {
+                    logger.e { "[VERBOSE] SyncDownloader: download failed with status=${call.status}" }
+                    logger.e { "[VERBOSE] SyncDownloader: error response body: $text" }
+                }
+                return@withContext Result.failure(DownloadHttpException(call.status, text))
+            }
 
-        return response
+            val response = runCatching { call.body<DownloadResponse>() }
+            if (config.verboseLogs && response.isSuccess) {
+                val downloadResponse = response.getOrNull()
+                logger.i { "[VERBOSE] SyncDownloader: download successful, received ${downloadResponse?.changes?.size} changes" }
+                logger.d { "[VERBOSE] SyncDownloader: full response: $downloadResponse" }
+            }
+
+            response
+        }
     }
 
     // Apply a single download page atomically and advance cursor
@@ -217,10 +265,25 @@ internal class SyncDownloader(
             resp.changes
         }
 
+        if (config.verboseLogs) {
+            logger.i { "[VERBOSE] SyncDownloader: applying ${changesToApply.size} changes (optimized from ${resp.changes.size})" }
+            logger.i { "[VERBOSE] SyncDownloader: includeSelf=$includeSelf, sourceId=$sourceId, isPostUploadLookback=$isPostUploadLookback" }
+        }
+
         changesToApply.forEach { ch ->
             onTableTouched(ch.tableName.lowercase())
             if (!includeSelf && ch.sourceId == sourceId) {
+                if (config.verboseLogs) {
+                    logger.d { "[VERBOSE] SyncDownloader: skipping self change serverId=${ch.serverId} table=${ch.tableName} op=${ch.op}" }
+                }
                 return@forEach
+            }
+
+            if (config.verboseLogs) {
+                logger.i { "[VERBOSE] SyncDownloader: applying change serverId=${ch.serverId} table=${ch.tableName} op=${ch.op} pk=${ch.pk} serverVersion=${ch.serverVersion}" }
+                if (ch.payload != null) {
+                    logger.d { "[VERBOSE] SyncDownloader: change payload=${ch.payload}" }
+                }
             }
 
             when (ch.op) {
@@ -246,14 +309,59 @@ internal class SyncDownloader(
     }
 
     private suspend fun applyDeleteChange(db: SafeSQLiteConnection, ch: ChangeDownloadResponse) {
-        logger.d { "Applying DELETE: ${ch.tableName}:${ch.pk.take(8)} v${ch.serverVersion}" }
-
-        db.prepare("DELETE FROM ${ch.tableName.lowercase()} WHERE id=?").use { del ->
-            del.bindText(1, ch.pk)
-            del.step()
+        val tableLc = ch.tableName.lowercase()
+        val (pkCol, pkDecl) = getPrimaryKeyInfo(db, tableLc)
+        val pkIsBlob = pkDecl.lowercase().contains("blob")
+        val pkUuidForMeta: String
+        if (pkIsBlob) {
+            // Server sends UUID string, convert to bytes for BLOB storage and hex for meta
+            val bytes = uuidStringToBytes(ch.pk)
+            pkUuidForMeta = bytesToHexLower(bytes)
+            db.prepare("DELETE FROM $tableLc WHERE $pkCol=?").use { del ->
+                del.bindBlob(1, bytes)
+                del.step()
+            }
+        } else {
+            pkUuidForMeta = ch.pk
+            db.prepare("DELETE FROM $tableLc WHERE $pkCol=?").use { del ->
+                del.bindText(1, ch.pk)
+                del.step()
+            }
         }
+        updateRowMeta(db, ch.tableName, pkUuidForMeta, ch.serverVersion, true)
+    }
 
-        updateRowMeta(db, ch.tableName, ch.pk, ch.serverVersion, true)
+    // Helpers for PK handling
+    private suspend fun getPrimaryKeyInfo(db: SafeSQLiteConnection, table: String): Pair<String, String> {
+        val ti = TableInfoProvider.get(db, table)
+        val pk = ti.primaryKey
+        return (pk?.name ?: "id") to (pk?.declaredType ?: "")
+    }
+
+    /**
+     * Convert UUID string from wire protocol to ByteArray for BLOB storage using kotlin.uuid.Uuid
+     * Server always sends UUID strings, we convert to bytes for BLOB columns
+     */
+    @OptIn(ExperimentalUuidApi::class)
+    private fun uuidStringToBytes(uuidString: String): ByteArray {
+        return Uuid.parse(uuidString).toByteArray()
+    }
+
+    /**
+     * Convert ByteArray to hex string for internal storage using kotlin.uuid.Uuid
+     */
+    @OptIn(ExperimentalUuidApi::class)
+    private fun bytesToHexLower(bytes: ByteArray): String {
+        require(bytes.size == 16) { "Expected 16-byte array for UUID, got ${bytes.size} bytes" }
+        return Uuid.fromByteArray(bytes).toHexString().lowercase()
+    }
+
+    /**
+     * Convert UUID string from wire to hex string for internal storage using kotlin.uuid.Uuid
+     */
+    @OptIn(ExperimentalUuidApi::class)
+    private fun uuidStringToHex(uuidString: String): String {
+        return Uuid.parse(uuidString).toHexString().lowercase()
     }
 
     private suspend fun applyInsertUpdateChange(
@@ -287,10 +395,14 @@ internal class SyncDownloader(
         db: SafeSQLiteConnection,
         ch: ChangeDownloadResponse
     ): Boolean {
+        val tableLc = ch.tableName.lowercase()
+        val (pkCol, pkDecl) = getPrimaryKeyInfo(db, tableLc)
+        val pkIsBlob = pkDecl.lowercase().contains("blob")
+        val pkUuid = if (pkIsBlob) uuidStringToHex(ch.pk) else ch.pk
         return db.prepare("SELECT EXISTS(SELECT 1 FROM _sync_pending WHERE table_name=? AND pk_uuid=? AND op='DELETE')")
             .use { st ->
-                st.bindText(1, ch.tableName.lowercase())
-                st.bindText(2, ch.pk)
+                st.bindText(1, tableLc)
+                st.bindText(2, pkUuid)
                 st.step() && st.getLong(0) == 1L
             }
     }
@@ -299,10 +411,14 @@ internal class SyncDownloader(
         db: SafeSQLiteConnection,
         ch: ChangeDownloadResponse
     ): Boolean {
+        val tableLc = ch.tableName.lowercase()
+        val (pkCol, pkDecl) = getPrimaryKeyInfo(db, tableLc)
+        val pkIsBlob = pkDecl.lowercase().contains("blob")
+        val pkUuid = if (pkIsBlob) uuidStringToHex(ch.pk) else ch.pk
         return db.prepare("SELECT deleted, server_version FROM _sync_row_meta WHERE table_name=? AND pk_uuid=?")
             .use { st ->
-                st.bindText(1, ch.tableName.lowercase())
-                st.bindText(2, ch.pk)
+                st.bindText(1, tableLc)
+                st.bindText(2, pkUuid)
                 if (st.step()) {
                     val deleted = st.getLong(0) == 1L
                     val localServerVersion = st.getLong(1)
@@ -319,10 +435,14 @@ internal class SyncDownloader(
         db: SafeSQLiteConnection,
         ch: ChangeDownloadResponse
     ): Pair<String, String>? {
+        val tableLc = ch.tableName.lowercase()
+        val (pkCol, pkDecl) = getPrimaryKeyInfo(db, tableLc)
+        val pkIsBlob = pkDecl.lowercase().contains("blob")
+        val pkUuid = if (pkIsBlob) uuidStringToHex(ch.pk) else ch.pk
         return db.prepare("SELECT op, payload FROM _sync_pending WHERE table_name=? AND pk_uuid=? AND op IN ('INSERT', 'UPDATE')")
             .use { st ->
-                st.bindText(1, ch.tableName.lowercase())
-                st.bindText(2, ch.pk)
+                st.bindText(1, tableLc)
+                st.bindText(2, pkUuid)
                 if (st.step()) {
                     st.getText(0) to (if (st.isNull(1)) "" else st.getText(1))  // Defensive: handle potential NULL payload
                 } else null
@@ -335,10 +455,13 @@ internal class SyncDownloader(
         hasLocalDelete: Boolean,
         recentlyDeleted: Boolean
     ) {
-        // Local DELETE wins - don't apply server INSERT/UPDATE
-        logger.d { "Skipping server ${ch.op} v${ch.serverVersion} for ${ch.tableName}:${ch.pk} - local DELETE wins (pending=$hasLocalDelete, recent=$recentlyDeleted)" }
         // Update meta to track that we've seen this server version but didn't apply it
-        updateRowMeta(db, ch.tableName, ch.pk, ch.serverVersion, true)
+        // Convert UUID string to hex format for BLOB primary keys when updating metadata
+        val tableLc = ch.tableName.lowercase()
+        val (_, pkDecl) = getPrimaryKeyInfo(db, tableLc)
+        val pkIsBlob = pkDecl.lowercase().contains("blob")
+        val pkForMeta = if (pkIsBlob) uuidStringToHex(ch.pk) else ch.pk
+        updateRowMeta(db, ch.tableName, pkForMeta, ch.serverVersion, true)
     }
 
     private suspend fun handleConflict(
@@ -370,15 +493,21 @@ internal class SyncDownloader(
             localPayload = localPayloadJson
         )
 
+        // Convert UUID string to hex format for BLOB primary keys when updating metadata
+        val tableLc = ch.tableName.lowercase()
+        val (_, pkDecl) = getPrimaryKeyInfo(db, tableLc)
+        val pkIsBlob = pkDecl.lowercase().contains("blob")
+        val pkForMeta = if (pkIsBlob) uuidStringToHex(ch.pk) else ch.pk
+
         when (decision) {
             is MergeResult.AcceptServer -> {
                 logger.d { "Conflict resolution: accepting server version for ${ch.tableName}:${ch.pk}" }
                 upsertBusinessFromPayload(db, ch.tableName, ch.pk, ch.payload)
-                updateRowMeta(db, ch.tableName, ch.pk, ch.serverVersion, false)
+                updateRowMeta(db, ch.tableName, pkForMeta, ch.serverVersion, false)
                 // Remove the local pending change since we're accepting server
                 db.prepare("DELETE FROM _sync_pending WHERE table_name=? AND pk_uuid=?").use { st ->
-                    st.bindText(1, ch.tableName.lowercase())
-                    st.bindText(2, ch.pk)
+                    st.bindText(1, tableLc)
+                    st.bindText(2, pkForMeta)
                     st.step()
                 }
             }
@@ -393,13 +522,13 @@ internal class SyncDownloader(
                 ).use { st ->
                     st.bindLong(1, ch.serverVersion)
                     st.bindText(2, decision.mergedPayload.toString())
-                    st.bindText(3, ch.tableName.lowercase())
-                    st.bindText(4, ch.pk)
+                    st.bindText(3, tableLc)
+                    st.bindText(4, pkForMeta)
                     st.step()
                 }
                 // Update row meta to reflect server version and that record exists
                 // This ensures _sync_row_meta is consistent with the server state
-                updateRowMeta(db, ch.tableName, ch.pk, ch.serverVersion, false)
+                updateRowMeta(db, ch.tableName, pkForMeta, ch.serverVersion, false)
             }
         }
     }
@@ -436,30 +565,41 @@ internal class SyncDownloader(
     ) {
         // Only apply version checking during post-upload lookback to prevent older changes from overwriting newer local changes
         if (isPostUploadLookback) {
+            // Convert UUID string to hex format for BLOB primary keys BEFORE checking version
+            val tableLc = ch.tableName.lowercase()
+            val (_, pkDecl) = getPrimaryKeyInfo(db, tableLc)
+            val pkIsBlob = pkDecl.lowercase().contains("blob")
+            val pkForMeta = if (pkIsBlob) uuidStringToHex(ch.pk) else ch.pk
+
             // Check if incoming server version is newer than current local version
+            // FIXED: Use correct primary key format for BLOB columns in version check
             val currentServerVersion =
                 db.prepare("SELECT server_version FROM _sync_row_meta WHERE table_name=? AND pk_uuid=?")
                     .use { st ->
                         st.bindText(1, ch.tableName)
-                        st.bindText(2, ch.pk)
+                        st.bindText(2, pkForMeta)  // FIXED: Use pkForMeta instead of ch.pk
                         if (st.step()) st.getLong(0) else 0L
                     }
 
             if (ch.serverVersion > currentServerVersion) {
                 logger.d { "Applying server ${ch.op} v${ch.serverVersion} for ${ch.tableName}:${ch.pk} (current v$currentServerVersion)" }
                 upsertBusinessFromPayload(db, ch.tableName, ch.pk, ch.payload)
-                updateRowMeta(db, ch.tableName, ch.pk, ch.serverVersion, false)
+                updateRowMeta(db, ch.tableName, pkForMeta, ch.serverVersion, false)
             } else {
-                logger.d { "Skipping server ${ch.op} v${ch.serverVersion} for ${ch.tableName}:${ch.pk} - not newer than current v$currentServerVersion" }
                 // Still update meta to track that we've seen this server version
                 if (ch.serverVersion > currentServerVersion) {
-                    updateRowMeta(db, ch.tableName, ch.pk, ch.serverVersion, false)
+                    updateRowMeta(db, ch.tableName, pkForMeta, ch.serverVersion, false)
                 }
             }
         } else {
             // Normal download - apply without version checking
             upsertBusinessFromPayload(db, ch.tableName, ch.pk, ch.payload)
-            updateRowMeta(db, ch.tableName, ch.pk, ch.serverVersion, false)
+            // Convert UUID string to hex format for BLOB primary keys when updating metadata
+            val tableLc = ch.tableName.lowercase()
+            val (_, pkDecl) = getPrimaryKeyInfo(db, tableLc)
+            val pkIsBlob = pkDecl.lowercase().contains("blob")
+            val pkForMeta = if (pkIsBlob) uuidStringToHex(ch.pk) else ch.pk
+            updateRowMeta(db, ch.tableName, pkForMeta, ch.serverVersion, false)
         }
     }
 
@@ -544,7 +684,7 @@ internal class SyncDownloader(
         schema: String
     ): String {
         val sb = StringBuilder()
-        sb.append("/sync/download?after=$after&limit=$limit&schema=$schema")
+        sb.append("${config.downloadPath}?after=$after&limit=$limit&schema=$schema")
         if (includeSelf) sb.append("&include_self=true")
         if (until > 0L) sb.append("&until=").append(until)
         return sb.toString()

@@ -115,7 +115,7 @@ class SlowNetworkDbConcurrencyTest {
         // Create a server-visible change via other client
         val uid2 = UUID.randomUUID().toString()
         otherDb.execSQL("INSERT INTO users(id,name,email) VALUES('$uid2','M','$uid2@example.com')")
-        assertTrue(otherClient.uploadOnce().isSuccess)
+        assertUploadSuccess(otherClient.uploadOnce(), expectedApplied = 1)
 
         val networkStarted2 = CompletableDeferred<Unit>()
         val http2 = delayedHttpClient(userId, deviceId, delayMs = 1200, started = networkStarted2)

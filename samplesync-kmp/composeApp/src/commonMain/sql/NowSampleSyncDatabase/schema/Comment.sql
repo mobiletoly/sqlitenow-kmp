@@ -1,8 +1,8 @@
 -- @@{ enableSync=true }
 CREATE TABLE comment
 (
-    id         TEXT PRIMARY KEY NOT NULL,
-    person_id  TEXT NOT NULL,
+    id         TEXT PRIMARY KEY NOT NULL,  -- MUST be uuid
+    person_id  BLOB NOT NULL,
     comment    TEXT    NOT NULL,
 
     -- @@{ field=created_at, propertyType=kotlinx.datetime.LocalDateTime }
@@ -12,4 +12,5 @@ CREATE TABLE comment
     tags       TEXT,
 
     FOREIGN KEY (person_id) REFERENCES person (id) ON DELETE CASCADE
-);
+)
+WITHOUT ROWID;

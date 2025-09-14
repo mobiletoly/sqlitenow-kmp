@@ -63,24 +63,24 @@ class AndroidOversqliteStressTest {
         // Add records for each user, upload, and sync
         val a1 = java.util.UUID.randomUUID().toString()
         dbA.execSQL("INSERT INTO users(id,name,email) VALUES('$a1','Alice','alice@example.com')")
-        assert(clientA.uploadOnce().isSuccess)
+        assertUploadSuccess(clientA.uploadOnce(), expectedApplied = 1)
         val b1 = java.util.UUID.randomUUID().toString()
         dbB.execSQL("INSERT INTO users(id,name,email) VALUES('$b1','Bob','bob@example.com')")
-        assert(clientB.uploadOnce().isSuccess)
-        clientA.downloadOnce(limit = 1000, includeSelf = false)
-        clientB.downloadOnce(limit = 1000, includeSelf = false)
+        assertUploadSuccess(clientB.uploadOnce(), expectedApplied = 1)
+        assertDownloadSuccess(clientA.downloadOnce(limit = 1000, includeSelf = false))
+        assertDownloadSuccess(clientB.downloadOnce(limit = 1000, includeSelf = false))
 
         // Delete A's record locally and upload + sync A
         dbA.execSQL("DELETE FROM users WHERE id='$a1'")
-        assert(clientA.uploadOnce().isSuccess)
-        clientA.downloadOnce(limit = 1000, includeSelf = false)
+        assertUploadSuccess(clientA.uploadOnce(), expectedApplied = 1)
+        assertDownloadSuccess(clientA.downloadOnce(limit = 1000, includeSelf = false))
 
         // Expect: A should not see its deleted record, and should not see B's data
         assert(scalarLong(dbA, "SELECT COUNT(*) FROM users WHERE id='$a1'") == 0L)
         assert(scalarLong(dbA, "SELECT COUNT(*) FROM users") == 0L)
 
         // Sanity: B still sees its row and not A's
-        clientB.downloadOnce(limit = 1000, includeSelf = false)
+        assertDownloadSuccess(clientB.downloadOnce(limit = 1000, includeSelf = false))
         assert(scalarLong(dbB, "SELECT COUNT(*) FROM users WHERE id='$b1'") == 1L)
         assert(scalarLong(dbB, "SELECT COUNT(*) FROM users WHERE id='$a1'") == 0L)
     }
@@ -175,7 +175,7 @@ class AndroidOversqliteStressTest {
             val uid = java.util.UUID.randomUUID().toString()
             dbA.execSQL("INSERT OR IGNORE INTO users(id,name,email) VALUES('$uid','User$it','u$it@example.com')")
         }
-        clientA.uploadOnce()
+        assertUploadSuccessWithConflicts(clientA.uploadOnce())
 
         // Stress loop: random ops and sync with flaky network
         repeat(40) { iter ->

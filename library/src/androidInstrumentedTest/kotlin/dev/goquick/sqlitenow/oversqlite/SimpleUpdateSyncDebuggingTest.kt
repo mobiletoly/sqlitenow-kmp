@@ -52,10 +52,12 @@ class SimpleUpdateSyncDebuggingTest {
      * Full sync function matching the working tests
      */
     private suspend fun fullSync(client: DefaultOversqliteClient, limit: Int = 500) {
-        client.uploadOnce()
+        assertUploadSuccessWithConflicts(client.uploadOnce())
         var more = true
         while (more) {
-            val (applied, _) = client.downloadOnce(limit = limit, includeSelf = false).getOrNull() ?: (0 to 0L)
+            val downloadResult = client.downloadOnce(limit = limit, includeSelf = false)
+            assertDownloadSuccess(downloadResult)
+            val (applied, _) = downloadResult.getOrNull() ?: (0 to 0L)
             more = applied == limit
             if (applied == 0) break
         }
@@ -471,11 +473,11 @@ class SimpleUpdateSyncDebuggingTest {
         device1.printDebugInfo("Device 1 after INSERT")
 
         // Device 1 uploads the INSERT
-        assert(device1.client.uploadOnce().isSuccess)
+        assertUploadSuccess(device1.client.uploadOnce(), expectedApplied = 1)
         device1.printDebugInfo("Device 1 after upload")
 
         // Device 2 downloads the INSERT
-        device2.client.downloadOnce(limit = 1000, includeSelf = false)
+        assertDownloadSuccess(device2.client.downloadOnce(limit = 1000, includeSelf = false))
         device2.printDebugInfo("Device 2 after download")
 
         // Verify both devices have the user
@@ -508,8 +510,8 @@ class SimpleUpdateSyncDebuggingTest {
         device1.insertUser(recordId, "Alice", "alice@example.com")
 
         // Upload and download to get the initial user on both devices
-        assert(device1.client.uploadOnce().isSuccess)
-        device2.client.downloadOnce(limit = 1000, includeSelf = false)
+        assertUploadSuccess(device1.client.uploadOnce(), expectedApplied = 1)
+        assertDownloadSuccess(device2.client.downloadOnce(limit = 1000, includeSelf = false))
 
         device1.printDebugInfo("Device 1 after initial sync")
         device2.printDebugInfo("Device 2 after initial sync")
@@ -523,11 +525,11 @@ class SimpleUpdateSyncDebuggingTest {
         device1.printDebugInfo("Device 1 after UPDATE")
 
         // Device 1 uploads the UPDATE
-        assert(device1.client.uploadOnce().isSuccess)
+        assertUploadSuccess(device1.client.uploadOnce(), expectedApplied = 1)
         device1.printDebugInfo("Device 1 after upload")
 
         // Device 2 downloads the UPDATE
-        device2.client.downloadOnce(limit = 1000, includeSelf = false)
+        assertDownloadSuccess(device2.client.downloadOnce(limit = 1000, includeSelf = false))
         device2.printDebugInfo("Device 2 after download")
 
         // Verify both devices have the updated user
@@ -560,18 +562,18 @@ class SimpleUpdateSyncDebuggingTest {
         device1.insertUser(recordId, "Alice", "alice@example.com")
 
         // Upload and download to get the initial user on both devices
-        assert(device1.client.uploadOnce().isSuccess)
-        device2.client.downloadOnce(limit = 1000, includeSelf = false)
+        assertUploadSuccess(device1.client.uploadOnce(), expectedApplied = 1)
+        assertDownloadSuccess(device2.client.downloadOnce(limit = 1000, includeSelf = false))
 
         // Device 1 performs multiple updates
         device1.updateUser(recordId, "Alice V2", "alice.v2@example.com")
-        assert(device1.client.uploadOnce().isSuccess)
+        assertUploadSuccess(device1.client.uploadOnce(), expectedApplied = 1)
 
         device1.updateUser(recordId, "Alice V3", "alice.v3@example.com")
-        assert(device1.client.uploadOnce().isSuccess)
+        assertUploadSuccess(device1.client.uploadOnce(), expectedApplied = 1)
 
         // Device 2 downloads all updates
-        device2.client.downloadOnce(limit = 1000, includeSelf = false)
+        assertDownloadSuccess(device2.client.downloadOnce(limit = 1000, includeSelf = false))
 
         // Verify both devices have the final updated user
         val user1 = device1.getUser(recordId)
@@ -600,8 +602,8 @@ class SimpleUpdateSyncDebuggingTest {
         device1.insertUser(recordId, "Alice", "alice@example.com")
 
         // Upload and download to get the initial user on both devices
-        assert(device1.client.uploadOnce().isSuccess)
-        device2.client.downloadOnce(limit = 1000, includeSelf = false)
+        assertUploadSuccess(device1.client.uploadOnce(), expectedApplied = 1)
+        assertDownloadSuccess(device2.client.downloadOnce(limit = 1000, includeSelf = false))
 
         device1.printDebugInfo("Device 1 after initial sync")
         device2.printDebugInfo("Device 2 after initial sync")
@@ -686,8 +688,8 @@ class SimpleUpdateSyncDebuggingTest {
         }
 
         // Upload and download to get all users on both devices
-        assert(device1.client.uploadOnce().isSuccess)
-        device2.client.downloadOnce(limit = 1000, includeSelf = false)
+        assertUploadSuccess(device1.client.uploadOnce())
+        assertDownloadSuccess(device2.client.downloadOnce(limit = 1000, includeSelf = false))
 
         device1.printDebugInfo("Device 1 after initial sync")
         device2.printDebugInfo("Device 2 after initial sync")
@@ -704,8 +706,8 @@ class SimpleUpdateSyncDebuggingTest {
         device1.printDebugInfo("Device 1 after updating all records")
 
         // Upload and download the updates
-        assert(device1.client.uploadOnce().isSuccess)
-        device2.client.downloadOnce(limit = 1000, includeSelf = false)
+        assertUploadSuccess(device1.client.uploadOnce())
+        assertDownloadSuccess(device2.client.downloadOnce(limit = 1000, includeSelf = false))
 
         device1.printDebugInfo("Device 1 after sync")
         device2.printDebugInfo("Device 2 after sync")

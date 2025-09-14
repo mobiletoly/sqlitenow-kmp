@@ -198,7 +198,7 @@ class DeleteConflictResurrectionTest {
         println("\n🔄 Device 1 uploading INSERT...")
         val uploadResult = device1.client.uploadOnce()
         println("📤 Upload result: $uploadResult")
-        assert(uploadResult.isSuccess) { "Upload failed: ${uploadResult.exceptionOrNull()}" }
+        assertUploadSuccess(uploadResult, expectedApplied = 1)
         device1.printSyncState("after upload")
 
         println("\n📋 STEP 2: Device 2 syncs (gets user A)")
@@ -207,7 +207,7 @@ class DeleteConflictResurrectionTest {
         println("\n🔄 Device 2 downloading changes...")
         val downloadResult = device2.client.downloadOnce(limit = 1000, includeSelf = false)
         println("📥 Download result: $downloadResult")
-        assert(downloadResult.isSuccess) { "Download failed: ${downloadResult.exceptionOrNull()}" }
+        assertDownloadSuccess(downloadResult)
         device2.printSyncState("after download")
 
         val userExistsOnDevice2 = device2.userExists(userAId)
@@ -236,7 +236,7 @@ class DeleteConflictResurrectionTest {
         println("\n🔄 Device 2 uploading UPDATE...")
         val updateUploadResult = device2.client.uploadOnce()
         println("📤 Update upload result: $updateUploadResult")
-        assert(updateUploadResult.isSuccess) { "Update upload failed: ${updateUploadResult.exceptionOrNull()}" }
+        assertUploadSuccess(updateUploadResult, expectedApplied = 1)
         device2.printSyncState("after update upload")
 
         println("\n📋 STEP 4: Device 1 deletes user A locally, then sync")
@@ -246,7 +246,8 @@ class DeleteConflictResurrectionTest {
         println("\n🔄 Device 1 uploading DELETE (will conflict with Device 2's UPDATE)...")
         val deleteUploadResult = device1.client.uploadOnce()
         println("📤 Delete upload result: $deleteUploadResult")
-        assert(deleteUploadResult.isSuccess) { "Delete upload failed: ${deleteUploadResult.exceptionOrNull()}" }
+        // This upload might have conflicts due to the DELETE vs UPDATE conflict, so use the lenient version
+        assertUploadSuccessWithConflicts(deleteUploadResult)
         device1.printSyncState("after delete upload")
 
         println("\n📋 STEP 5: Check for record resurrection bug on Device 1")
@@ -274,7 +275,7 @@ class DeleteConflictResurrectionTest {
         println("\n🔄 Device 1 uploading re-enqueued DELETE to propagate to server...")
         val secondDeleteUploadResult = device1.client.uploadOnce()
         println("📤 Second DELETE upload result: $secondDeleteUploadResult")
-        assert(secondDeleteUploadResult.isSuccess) { "Second DELETE upload failed: ${secondDeleteUploadResult.exceptionOrNull()}" }
+        assertUploadSuccess(secondDeleteUploadResult, expectedApplied = 1)
         device1.printSyncState("after second DELETE upload")
 
         println("\n📋 STEP 7: Check Device 2 synchronization - should Device 2 get the DELETE?")
@@ -291,7 +292,7 @@ class DeleteConflictResurrectionTest {
 
         val finalDownloadResult = device2.client.downloadOnce(limit = 1000, includeSelf = false)
         println("📥 Final download result: $finalDownloadResult")
-        assert(finalDownloadResult.isSuccess) { "Final download failed: ${finalDownloadResult.exceptionOrNull()}" }
+        assertDownloadSuccess(finalDownloadResult)
         device2.printSyncState("after final sync")
 
         println("\n📋 STEP 8: Verify both devices are synchronized")

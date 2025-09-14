@@ -55,7 +55,7 @@ internal class SchemaInspector(
 
     private fun inspect(sqlStatement: SqlSingleStatement) {
         try {
-            val parsedStatement = CCJSqlParserUtil.parse(sqlStatement.sql)
+            val parsedStatement = CCJSqlParserUtil.parse(normalizeForParser(sqlStatement.sql))
             when (parsedStatement) {
                 is CreateTable -> {
                     val executor = CreateTableStatementExecutor(
@@ -75,6 +75,17 @@ internal class SchemaInspector(
         } catch (e: Exception) {
             StandardErrorHandler.handleSqlParsingError(sqlStatement.sql, e, "SchemaInspector")
         }
+    }
+
+    /**
+     * JSqlParser doesn't understand some SQLite-specific tail modifiers like "WITHOUT ROWID".
+     * We strip such suffixes for parsing only, but we keep the original SQL for execution
+     * (CreateTableStatement stores the original sql passed in SchemaInspector).
+     */
+    private fun normalizeForParser(sql: String): String {
+        // Remove trailing WITHOUT ROWID (case-insensitive), optionally before semicolon
+        val regex = Regex("(?is)\\s+WITHOUT\\s+ROWID\\s*;?\\s*$")
+        return sql.replace(regex, ";")
     }
 }
 

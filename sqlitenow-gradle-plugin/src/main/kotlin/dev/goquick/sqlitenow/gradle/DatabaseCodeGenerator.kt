@@ -256,9 +256,10 @@ class DatabaseCodeGenerator(
                     .addParameter("schema", String::class)
                     .addParameter(ParameterSpec.builder("uploadLimit", Int::class).defaultValue("200").build())
                     .addParameter(ParameterSpec.builder("downloadLimit", Int::class).defaultValue("1000").build())
+                    .addParameter(ParameterSpec.builder("verboseLogs", Boolean::class).defaultValue("false").build())
                     .returns(ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteConfig"))
                     .addStatement(
-                        "return %T(schema, syncTables, uploadLimit, downloadLimit)",
+                        "return %T(schema, syncTables, uploadLimit, downloadLimit, verboseLogs = verboseLogs)",
                         ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteConfig")
                     )
                     .build()
@@ -278,8 +279,9 @@ class DatabaseCodeGenerator(
                     )
                     .addParameter(ParameterSpec.builder("uploadLimit", Int::class).defaultValue("200").build())
                     .addParameter(ParameterSpec.builder("downloadLimit", Int::class).defaultValue("1000").build())
+                    .addParameter(ParameterSpec.builder("verboseLogs", Boolean::class).defaultValue("false").build())
                     .returns(ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteClient"))
-                    .addStatement("val cfg = buildOversqliteConfig(schema, uploadLimit, downloadLimit)")
+                    .addStatement("val cfg = buildOversqliteConfig(schema, uploadLimit, downloadLimit, verboseLogs)")
                     .addStatement(
                         "return %T(db = this.connection(), config = cfg, http = httpClient, resolver = resolver, tablesUpdateListener = { notifyTablesChanged(it) })",
                         ClassName("dev.goquick.sqlitenow.oversqlite", "DefaultOversqliteClient")

@@ -88,8 +88,8 @@ class AndroidOversqliteClientTest {
         assert(clientB.syncOnce(limit = 500, includeSelf = false).isSuccess)
 
         // Converge with a final download on each
-        assert(clientA.downloadOnce(limit = 1000, includeSelf = false).isSuccess)
-        assert(clientB.downloadOnce(limit = 1000, includeSelf = false).isSuccess)
+        assertDownloadSuccess(clientA.downloadOnce(limit = 1000, includeSelf = false))
+        assertDownloadSuccess(clientB.downloadOnce(limit = 1000, includeSelf = false))
 
         // Validate counts align
         val usersA = scalarLong(dbA, "SELECT COUNT(*) FROM users").toInt()
@@ -158,11 +158,11 @@ class AndroidOversqliteClientTest {
 
         // Perform upload to server and assert success
         val uploadResult = client.uploadOnce()
-        assert(uploadResult.isSuccess) { "Upload failed: ${uploadResult.exceptionOrNull()}" }
+        assertUploadSuccess(uploadResult)
 
         // Optional: Perform a download cycle to ensure no pending server changes
         val page = client.downloadOnce(limit = 1000, includeSelf = false)
-        assert(page.isSuccess) { "Download failed: ${page.exceptionOrNull()}" }
+        assertDownloadSuccess(page)
 
         // After successful upload pending should be cleared and meta version > 0
         assertEquals(
@@ -219,7 +219,7 @@ class AndroidOversqliteClientTest {
 
         // Upload from device A
         val uploadResult = clientA.uploadOnce()
-        assert(uploadResult.isSuccess) { "Upload failed: ${uploadResult.exceptionOrNull()}" }
+        assertUploadSuccess(uploadResult)
 
         // Device B hydrates via API (windowed snapshot, includeSelf=false)
         val hydB = clientB.hydrate(includeSelf = false, limit = 1000, windowed = true)
@@ -245,12 +245,12 @@ class AndroidOversqliteClientTest {
         // Ensure B has queued a pending update
         val pendingB = scalarLong(dbB, "SELECT COUNT(*) FROM _sync_pending")
         assert(pendingB > 0) { "No pending changes queued on device B after UPDATE" }
-        assert(clientB.uploadOnce().isSuccess)
+        assertUploadSuccess(clientB.uploadOnce())
 
         // Device A downloads (no direct cursor manipulation). Retry until we see the update.
         var seen = false
         repeat(15) {
-            clientA.downloadOnce(limit = 1000, includeSelf = false)
+            assertDownloadSuccess(clientA.downloadOnce(limit = 1000, includeSelf = false))
             val n = scalarText(dbA, "SELECT name FROM users WHERE id='$u1'")
             if (n == newName) {
                 seen = true; return@repeat
@@ -270,7 +270,9 @@ class AndroidOversqliteClientTest {
         run {
             var ok = false
             repeat(3) {
-                if (clientA.uploadOnce().isSuccess) {
+                val uploadResult = clientA.uploadOnce()
+                if (uploadResult.isSuccess) {
+                    assertUploadSuccess(uploadResult)
                     ok = true; return@repeat
                 }
             }
@@ -279,7 +281,7 @@ class AndroidOversqliteClientTest {
 
         // Device B downloads and verifies Bob gone
         val dlB = clientB.downloadOnce(limit = 1000, includeSelf = false)
-        assert(dlB.isSuccess)
+        assertDownloadSuccess(dlB)
         assertEquals(1, count(dbB, "users", "1=1"))
     }
 
@@ -308,7 +310,7 @@ class AndroidOversqliteClientTest {
             userIds1 += id
             dbA.execSQL("INSERT INTO users(id, name, email) VALUES('$id','User$it','u$it@example.com')")
             if ((it + 1) % 50 == 0) {
-                assert(clientA.uploadOnce().isSuccess)
+                assertUploadSuccessWithConflicts(clientA.uploadOnce())
             }
         }
         // Posts batch 1
@@ -318,11 +320,11 @@ class AndroidOversqliteClientTest {
             dbA.execSQL("INSERT INTO posts(id, title, content, author_id) VALUES('$id','T$it','C$it','$author')")
             if ((it + 1) % 100 == 0) {
                 val uploadResult = clientA.uploadOnce()
-                assert(uploadResult.isSuccess) { "Upload failed at iteration $it: ${uploadResult.exceptionOrNull()}" }
+                assertUploadSuccessWithConflicts(uploadResult)
             }
         }
         // Final upload drain
-        repeat(3) { clientA.uploadOnce() }
+        repeat(3) { assertUploadSuccessWithConflicts(clientA.uploadOnce()) }
         assertEquals(0, count(dbA, "_sync_pending", "1=1"))
 
         // Simulate uninstall -> New device B with fresh DB
@@ -348,7 +350,7 @@ class AndroidOversqliteClientTest {
             userIds2 += id
             dbB.execSQL("INSERT INTO users(id, name, email) VALUES('$id','User2_$it','u2_$it@example.com')")
             if ((it + 1) % 50 == 0) {
-                assert(clientB.uploadOnce().isSuccess)
+                assertUploadSuccessWithConflicts(clientB.uploadOnce())
             }
         }
         repeat(300) {
@@ -357,10 +359,10 @@ class AndroidOversqliteClientTest {
             val author = allUsers[it % allUsers.size]
             dbB.execSQL("INSERT INTO posts(id, title, content, author_id) VALUES('$id','T2_$it','C2_$it','$author')")
             if ((it + 1) % 100 == 0) {
-                assert(clientB.uploadOnce().isSuccess)
+                assertUploadSuccessWithConflicts(clientB.uploadOnce())
             }
         }
-        repeat(3) { clientB.uploadOnce() }
+        repeat(3) { assertUploadSuccessWithConflicts(clientB.uploadOnce()) }
         assertEquals(0, count(dbB, "_sync_pending", "1=1"))
 
         // Simulate uninstall again -> New device C

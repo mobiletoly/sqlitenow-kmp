@@ -4,14 +4,21 @@ import dev.goquick.sqlitenow.common.logger
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlin.contracts.ExperimentalContracts
+import kotlin.contracts.InvocationKind
+import kotlin.contracts.contract
+
 import kotlin.concurrent.Volatile
+import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 
 /**
  * A multiplatform SQLite-backed implementation of OversqliteClient.
@@ -34,6 +41,12 @@ import kotlin.concurrent.Volatile
  *     }
  * }
  * ```
+ *
+ * @param db The SQLite database connection
+ * @param config The oversqlite configuration
+ * @param http The authenticated HTTP client (must provide token refresh logic)
+ * @param resolver The conflict resolution strategy
+ * @param tablesUpdateListener Callback for table updates, useful for UI updates
  */
 class DefaultOversqliteClient(
     private val db: SafeSQLiteConnection,
@@ -42,11 +55,8 @@ class DefaultOversqliteClient(
     private val resolver: Resolver = ServerWinsResolver,
     private val tablesUpdateListener: (table: Set<String>) -> Unit,
 ) : OversqliteClient {
-    // Prevent concurrent uploadOnce/downloadOnce DB phases from overlapping
+    // Prevent concurrent hydration/upload/download DB phases from overlapping
     private val opGate = Semaphore(1)
-
-    // Cache PRAGMA table_info lookups per table (lowercased key)
-    private val tableColumnsCache = mutableMapOf<String, List<String>>()
 
     private val bootstrapper = SyncBootstrapper(config = config)
 
@@ -58,7 +68,7 @@ class DefaultOversqliteClient(
         resolver = resolver,
         upsertBusinessFromPayload = ::upsertBusinessFromPayload,
         updateRowMeta = ::updateRowMeta,
-        ioDispatcher = ioDispatcher
+        ioDispatcher = ioDispatcher,
     )
 
     private val downloader = SyncDownloader(
@@ -104,32 +114,30 @@ class DefaultOversqliteClient(
             logger.d { "uploadOnce: start" }
 
             // Phase 1 (DB, gated): read nextChangeId and prepare changes
-            opGate.acquire()
-            val prepared = try {
-                val nextChangeId = withContext(db.dispatcher) {
+            val prepared = opGate.lockOnDatabaseDispatcher {
+                val nextChangeId =
                     db.prepare("SELECT next_change_id FROM _sync_client_info LIMIT 1")
-                        .use { st -> if (st.step()) st.getLong(0) else null } ?: error("_sync_client_info missing")
-                }
-                withContext(db.dispatcher) { uploader.prepareUpload(db, nextChangeId) }
-            } finally {
-                opGate.release()
+                        .use { st -> if (st.step()) st.getLong(0) else null }
+                        ?: error("_sync_client_info missing")
+                uploader.prepareUpload(db, nextChangeId)
             }
             if (prepared.changes.isEmpty()) {
-                return@runCatching UploadSummary(0, 0, 0, 0, 0)
+                return@runCatching UploadSummary(
+                    total = 0,
+                    applied = 0,
+                    conflict = 0,
+                    invalid = 0,
+                    materializeError = 0,
+                )
             }
 
             // Phase 2 (Network): perform upload
-            val response = uploader.performUpload(prepared.request)
+            val response = uploader.performUpload(prepared).getOrElse { throw it }
 
             // Phase 3 (DB, gated): finalize
             val updatedTables = mutableSetOf<String>()
-            val summary = try {
-                opGate.acquire()
-                withContext(db.dispatcher) {
-                    uploader.finalizeUpload(db, prepared.changes, response, updatedTables)
-                }
-            } finally {
-                opGate.release()
+            val summary = opGate.lockOnDatabaseDispatcher {
+                uploader.finalizeUpload(db, prepared.changes, response, updatedTables)
             }
 
             // Post-upload lookback drain (network + db), not holding DB context
@@ -157,33 +165,25 @@ class DefaultOversqliteClient(
 
         val result = runCatching {
             // Phase 1 (DB, gated): read client info
-            opGate.acquire()
-            val clientInfo = try {
-                withContext(db.dispatcher) { downloader.getClientInfoNow(db) }
-            } finally {
-                opGate.release()
+            val clientInfo = opGate.lockOnDatabaseDispatcher {
+                downloader.getClientInfoNow(db)
             }
 
             // Phase 2 (Network): fetch changes
             val response = downloader.fetchChangesNow(
                 clientInfo.sourceId, clientInfo.lastServerSeq, limit, includeSelf, until
-            )
+            ).getOrElse { throw it }
 
             // Phase 3 (DB, gated): apply
-            val downloadResult = try {
-                opGate.acquire()
-                withContext(db.dispatcher) {
-                    downloader.applyDownloadedPage(
-                        db = db,
-                        response = response,
-                        includeSelf = includeSelf,
-                        sourceId = clientInfo.sourceId,
-                        previousAfter = clientInfo.lastServerSeq,
-                        isPostUploadLookback = isPostUploadLookback
-                    )
-                }
-            } finally {
-                opGate.release()
+            val downloadResult = opGate.lockOnDatabaseDispatcher {
+                downloader.applyDownloadedPage(
+                    db = db,
+                    response = response,
+                    includeSelf = includeSelf,
+                    sourceId = clientInfo.sourceId,
+                    previousAfter = clientInfo.lastServerSeq,
+                    isPostUploadLookback = isPostUploadLookback
+                )
             }
 
             if (downloadResult.updatedTables.isNotEmpty()) tablesUpdateListener(downloadResult.updatedTables)
@@ -202,29 +202,21 @@ class DefaultOversqliteClient(
         if (downloadsPaused) return Result.success(0 to 0L)
 
         val result = runCatching {
-            opGate.acquire()
-            val clientInfo = try {
-                withContext(db.dispatcher) { downloader.getClientInfoNow(db) }
-            } finally {
-                opGate.release()
+            val clientInfo = opGate.lockOnDatabaseDispatcher {
+                downloader.getClientInfoNow(db)
             }
             val response = downloader.fetchChangesNow(
                 clientInfo.sourceId, clientInfo.lastServerSeq, limit, includeSelf, until
-            )
-            val downloadResult = try {
-                opGate.acquire()
-                withContext(db.dispatcher) {
-                    downloader.applyDownloadedPage(
-                        db = db,
-                        response = response,
-                        includeSelf = includeSelf,
-                        sourceId = clientInfo.sourceId,
-                        previousAfter = clientInfo.lastServerSeq,
-                        isPostUploadLookback = isPostUploadLookback
-                    )
-                }
-            } finally {
-                opGate.release()
+            ).getOrElse { throw it }
+            val downloadResult = opGate.lockOnDatabaseDispatcher {
+                downloader.applyDownloadedPage(
+                    db = db,
+                    response = response,
+                    includeSelf = includeSelf,
+                    sourceId = clientInfo.sourceId,
+                    previousAfter = clientInfo.lastServerSeq,
+                    isPostUploadLookback = isPostUploadLookback
+                )
             }
             downloadResult.applied to downloadResult.nextAfter
         }.onFailure {
@@ -242,11 +234,8 @@ class DefaultOversqliteClient(
     ): Result<Unit> {
         val result = runCatching {
             // Phase 0 (DB, gated): get client info and initial cursor
-            opGate.acquire()
-            val clientInfo = try {
-                withContext(db.dispatcher) { downloader.getClientInfoNow(db) }
-            } finally {
-                opGate.release()
+            val clientInfo = opGate.lockOnDatabaseDispatcher {
+                downloader.getClientInfoNow(db)
             }
 
             var after = clientInfo.lastServerSeq
@@ -258,47 +247,39 @@ class DefaultOversqliteClient(
                 val untilParam = if (windowed) frozenUntil else 0L
                 val response = downloader.fetchChangesNow(
                     clientInfo.sourceId, after, limit, includeSelf, untilParam
-                )
+                ).getOrElse { throw it }
 
                 if (first) {
                     frozenUntil = if (windowed) response.windowUntil else 0L
                     if (frozenUntil > 0L) {
-                        opGate.acquire()
-                        try {
-                            withContext(db.dispatcher) {
-                                db.execSQL("UPDATE _sync_client_info SET current_window_until=$frozenUntil")
-                            }
-                        } finally { opGate.release() }
+                        opGate.lockOnDatabaseDispatcher {
+                            db.execSQL("UPDATE _sync_client_info SET current_window_until=$frozenUntil")
+                        }
                     }
                     first = false
                 }
 
                 if (response.changes.isEmpty()) {
                     if (response.nextAfter > after) {
-                        opGate.acquire()
-                        try {
-                            withContext(db.dispatcher) {
-                                db.prepare("UPDATE _sync_client_info SET last_server_seq_seen=?").use { st ->
+                        opGate.lockOnDatabaseDispatcher {
+                            db.prepare("UPDATE _sync_client_info SET last_server_seq_seen=?")
+                                .use { st ->
                                     st.bindLong(1, response.nextAfter)
                                     st.step()
                                 }
-                            }
-                        } finally { opGate.release() }
+                        }
                         after = response.nextAfter
                     }
                 } else {
-                    val updatedTables = try {
-                        opGate.acquire()
-                        withContext(db.dispatcher) {
-                            downloader.applyDownloadedPage(
-                                db = db,
-                                response = response,
-                                includeSelf = includeSelf,
-                                sourceId = clientInfo.sourceId,
-                                previousAfter = after
-                            )
-                        }
-                    } finally { opGate.release() }
+                    val updatedTables = opGate.lockOnDatabaseDispatcher {
+                        downloader.applyDownloadedPage(
+                            db = db,
+                            response = response,
+                            includeSelf = includeSelf,
+                            sourceId = clientInfo.sourceId,
+                            previousAfter = after
+                        )
+                    }
                     allUpdatedTables += updatedTables.updatedTables
                     after = updatedTables.nextAfter
                 }
@@ -307,12 +288,9 @@ class DefaultOversqliteClient(
             }
 
             if (frozenUntil > 0L) {
-                opGate.acquire()
-                try {
-                    withContext(db.dispatcher) {
-                        db.execSQL("UPDATE _sync_client_info SET current_window_until=0")
-                    }
-                } finally { opGate.release() }
+                opGate.lockOnDatabaseDispatcher {
+                    db.execSQL("UPDATE _sync_client_info SET current_window_until=0")
+                }
             }
 
             if (allUpdatedTables.isNotEmpty()) tablesUpdateListener(allUpdatedTables)
@@ -343,28 +321,56 @@ class DefaultOversqliteClient(
         // Remove debug logging
     }
 
+    @OptIn(ExperimentalEncodingApi::class)
     private suspend fun upsertBusinessFromPayload(
         db: SafeSQLiteConnection, table: String, pk: String, payload: JsonElement?
     ) {
+        if (config.verboseLogs) {
+            logger.i { "[VERBOSE] DefaultOversqliteClient: upserting record table=$table pk=$pk" }
+            if (payload != null) {
+                logger.d { "[VERBOSE] DefaultOversqliteClient: payload=$payload" }
+            }
+        }
+
         if (payload == null || payload !is JsonObject) return
         val tableLc = table.lowercase()
-        val tableCols = getTableColumns(db, tableLc).toSet()
+        val ti = TableInfoProvider.get(db, tableLc)
+        val tableCols = ti.columnNamesLower.toSet()
+        val typeMap = ti.typesByNameLower.mapValues { it.value.lowercase() }
+        val pkCol = ti.primaryKey?.name?.lowercase() ?: "id"
+        val pkIsBlob = ti.primaryKeyIsBlob
+
+        if (config.verboseLogs) {
+            logger.d { "[VERBOSE] DefaultOversqliteClient: table info - pkCol=$pkCol, pkIsBlob=$pkIsBlob, columns=${tableCols.joinToString(", ")}" }
+        }
 
         // Normalize payload keys to lowercase for case-insensitive matching
         val normalized: Map<String, JsonElement> =
             payload.keys.associate { it.lowercase() to (payload[it] ?: JsonNull) }
-        // Never set id from payload; only from `pk`
-        val cols = normalized.keys.filter { it != "id" && it in tableCols }
 
+        // Derive PK strictly from payload
+        val pkElem = normalized[pkCol] ?: return
+        val pkPrim = pkElem.jsonPrimitive
+        val pkBind: (Int, androidx.sqlite.SQLiteStatement) -> Unit = { idx, st ->
+            if (pkIsBlob) {
+                // Server sends UUID string, convert to bytes for BLOB storage
+                val bytes = uuidStringToBytes(pkPrim.content)
+                st.bindBlob(idx, bytes)
+            } else {
+                st.bindText(idx, pkPrim.content)
+            }
+        }
+
+        // Columns to write (exclude PK in SET)
+        val cols = normalized.keys.filter { it != pkCol && it in tableCols }
         if (cols.isEmpty()) {
-            // Ensure row exists; if missing, insert stub row with id only
-            val exists = db.prepare("SELECT EXISTS(SELECT 1 FROM $tableLc WHERE id=?)").use { st ->
-                st.bindText(1, pk)
+            val exists = db.prepare("SELECT EXISTS(SELECT 1 FROM $tableLc WHERE $pkCol=?)").use { st ->
+                pkBind(1, st)
                 st.step() && st.getLong(0) == 1L
             }
             if (!exists) {
-                db.prepare("INSERT INTO $tableLc(id) VALUES(?)").use { st ->
-                    st.bindText(1, pk)
+                db.prepare("INSERT INTO $tableLc($pkCol) VALUES(?)").use { st ->
+                    pkBind(1, st)
                     st.step()
                 }
             }
@@ -373,8 +379,7 @@ class DefaultOversqliteClient(
 
         // UPDATE first
         val setClause = cols.joinToString(", ") { "$it=?" }
-        val updateSql = "UPDATE $tableLc SET $setClause WHERE id=?"
-        var updateRowsAffected = 0
+        val updateSql = "UPDATE $tableLc SET $setClause WHERE $pkCol=?"
         db.prepare(updateSql).use { st ->
             cols.forEachIndexed { idx, key ->
                 val prim = normalized[key]?.jsonPrimitive
@@ -382,7 +387,14 @@ class DefaultOversqliteClient(
                 if (prim == null || prim is JsonNull) {
                     st.bindNull(i)
                 } else if (prim.isString) {
-                    st.bindText(i, prim.content)
+                    val colType = (typeMap[key] ?: "")
+                    if (colType.contains("blob")) {
+                        // For BLOB columns, expect Base64 encoding from server
+                        val bytes = Base64.decode(prim.content)
+                        st.bindBlob(i, bytes)
+                    } else {
+                        st.bindText(i, prim.content)
+                    }
                 } else {
                     val c = prim.content
                     if (c.equals("true", true) || c.equals("false", true)) {
@@ -396,28 +408,32 @@ class DefaultOversqliteClient(
                     }
                 }
             }
-            st.bindText(cols.size + 1, pk)
+            pkBind(cols.size + 1, st)
             st.step()
-            // Note: SQLite changes() function not available in this API
         }
 
-        // If UPDATE affected 0 rows, INSERT id + provided columns
-        val changed =
-            db.prepare("SELECT changes()").use { st -> if (st.step()) st.getLong(0) else 0L }
+        // If UPDATE affected 0 rows, INSERT pk + provided columns
+        val changed = db.prepare("SELECT changes()").use { st -> if (st.step()) st.getLong(0) else 0L }
         if (changed == 0L) {
-            val insertCols = listOf("id") + cols
+            val insertCols = listOf(pkCol) + cols
             val placeholders = insertCols.indices.joinToString(", ") { "?" }
             val insertSql = "INSERT INTO $tableLc (${insertCols.joinToString(", ")}) VALUES ($placeholders)"
             db.prepare(insertSql).use { st ->
-                st.bindText(1, pk)
-
+                pkBind(1, st)
                 cols.forEachIndexed { idx, key ->
                     val prim = normalized[key]?.jsonPrimitive
                     val i = idx + 2
                     if (prim == null || prim is JsonNull) {
                         st.bindNull(i)
                     } else if (prim.isString) {
-                        st.bindText(i, prim.content)
+                        val colType = (typeMap[key] ?: "")
+                        if (colType.contains("blob")) {
+                            // For BLOB columns, expect Base64 encoding (except for UUID primary keys)
+                            val bytes = Base64.decode(prim.content)
+                            st.bindBlob(i, bytes)
+                        } else {
+                            st.bindText(i, prim.content)
+                        }
                     } else {
                         val c = prim.content
                         if (c.equals("true", true) || c.equals("false", true)) {
@@ -479,15 +495,41 @@ class DefaultOversqliteClient(
         }
     }
 
-    private suspend fun getTableColumns(db: SafeSQLiteConnection, table: String): List<String> {
-        val key = table.lowercase()
-        tableColumnsCache[key]?.let { return it }
-        val cols = mutableListOf<String>()
-        db.prepare("PRAGMA table_info($key)").use { st ->
-            while (st.step()) cols += st.getText(1).lowercase()
+    @OptIn(ExperimentalContracts::class)
+    private suspend inline fun <T> Semaphore.lockOnDatabaseDispatcher(crossinline action: suspend () -> T): T {
+        contract {
+            callsInPlace(action, InvocationKind.EXACTLY_ONCE)
         }
-        tableColumnsCache[key] = cols
+        acquire()
+        return try {
+            withContext(db.dispatcher) {
+                action()
+            }
+        } finally {
+            release()
+        }
+    }
 
-        return cols
+    /**
+     * Convert hex string to ByteArray for BLOB binding
+     */
+    private fun hexToBytes(hex: String): ByteArray {
+        val clean = hex.trim().removePrefix("0x")
+        require(clean.length % 2 == 0) { "Hex string must have even length" }
+        val out = ByteArray(clean.length / 2)
+        var i = 0
+        while (i < clean.length) {
+            out[i/2] = clean.substring(i, i+2).toInt(16).toByte()
+            i += 2
+        }
+        return out
+    }
+
+    /**
+     * Convert UUID string from wire protocol to ByteArray for BLOB storage using kotlin.uuid.Uuid
+     */
+    @OptIn(ExperimentalUuidApi::class)
+    private fun uuidStringToBytes(uuidString: String): ByteArray {
+        return Uuid.parse(uuidString).toByteArray()
     }
 }

@@ -63,13 +63,53 @@ typealias PersonAddressEntity = PersonAddressQuery.SharedResult.Row
 typealias PersonWithAddressesEntity = PersonQuery.SharedResult.PersonWithAddressRow
 
 private val firstNames = listOf(
-    "John", "Jane", "Alice", "Bob", "Charlie", "Diana", "Eve",
-    "Frank", "Grace", "Henry"
+    // Traditional English names
+    "John", "Jane", "Alice", "Bob", "Charlie", "Diana", "Eve", "Frank", "Grace", "Henry",
+    "William", "Mary", "James", "Patricia", "Robert", "Jennifer", "Michael", "Linda", "David", "Elizabeth",
+    "Richard", "Barbara", "Joseph", "Susan", "Thomas", "Jessica", "Christopher", "Sarah", "Daniel", "Karen",
+    "Paul", "Nancy", "Mark", "Lisa", "Donald", "Betty", "George", "Helen", "Kenneth", "Sandra",
+    "Steven", "Donna", "Edward", "Carol", "Brian", "Ruth", "Ronald", "Sharon", "Anthony", "Michelle",
+    "Kevin", "Laura", "Jason", "Sarah", "Matthew", "Kimberly", "Gary", "Deborah", "Timothy", "Dorothy",
+    "Jose", "Amy", "Larry", "Angela", "Jeffrey", "Ashley", "Frank", "Brenda", "Scott", "Emma",
+    "Eric", "Olivia", "Stephen", "Cynthia", "Andrew", "Marie", "Raymond", "Janet", "Gregory", "Catherine",
+    "Joshua", "Frances", "Jerry", "Christine", "Dennis", "Samantha", "Walter", "Debra", "Patrick", "Rachel",
+    "Peter", "Carolyn", "Harold", "Janet", "Douglas", "Virginia", "Henry", "Maria", "Carl", "Heather",
+    "Alexander", "Sophia", "Benjamin", "Isabella", "Lucas", "Charlotte", "Mason", "Amelia", "Ethan", "Mia",
+    "Noah", "Harper", "Logan", "Evelyn", "Jacob", "Abigail", "Jackson", "Emily", "Aiden", "Elizabeth",
+    "Sebastian", "Sofia", "Gabriel", "Avery", "Carter", "Ella", "Jayden", "Madison", "Luke", "Scarlett",
+    "Anthony", "Victoria", "Isaac", "Aria", "Dylan", "Grace", "Wyatt", "Chloe", "Owen", "Camila",
+    "Caleb", "Penelope", "Nathan", "Riley", "Ryan", "Layla", "Hunter", "Lillian", "Christian", "Nora",
+    "Landon", "Zoey", "Adrian", "Mila", "Jonathan", "Aubrey", "Nolan", "Hannah", "Cameron", "Lily",
+    "Connor", "Addison", "Santiago", "Eleanor", "Jeremiah", "Natalie", "Ezekiel", "Luna", "Angel", "Savannah",
+    "Robert", "Brooklyn", "Axel", "Leah", "Colton", "Zoe", "Jordan", "Stella", "Dominic", "Hazel",
+    "Austin", "Ellie", "Ian", "Paisley", "Adam", "Violet", "Eli", "Claire", "Jose", "Bella",
+    "Jaxon", "Aurora", "Rowan", "Lucy", "Felix", "Anna", "Silas", "Samantha", "Miles", "Caroline"
 )
+
 private val lastNames = listOf(
-    "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia",
-    "Miller", "Davis", "Rodriguez", "Martinez"
+    // Common American surnames
+    "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez",
+    "Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin",
+    "Lee", "Perez", "Thompson", "White", "Harris", "Sanchez", "Clark", "Ramirez", "Lewis", "Robinson",
+    "Walker", "Young", "Allen", "King", "Wright", "Scott", "Torres", "Nguyen", "Hill", "Flores",
+    "Green", "Adams", "Nelson", "Baker", "Hall", "Rivera", "Campbell", "Mitchell", "Carter", "Roberts",
+    "Gomez", "Phillips", "Evans", "Turner", "Diaz", "Parker", "Cruz", "Edwards", "Collins", "Reyes",
+    "Stewart", "Morris", "Morales", "Murphy", "Cook", "Rogers", "Gutierrez", "Ortiz", "Morgan", "Cooper",
+    "Peterson", "Bailey", "Reed", "Kelly", "Howard", "Ramos", "Kim", "Cox", "Ward", "Richardson",
+    "Watson", "Brooks", "Chavez", "Wood", "James", "Bennett", "Gray", "Mendoza", "Ruiz", "Hughes",
+    "Price", "Alvarez", "Castillo", "Sanders", "Patel", "Myers", "Long", "Ross", "Foster", "Jimenez",
+    "O'Connor", "MacDonald", "O'Brien", "Sullivan", "Kennedy", "Murphy", "O'Sullivan", "Walsh", "Ryan", "Byrne",
+    "Schmidt", "Mueller", "Schneider", "Fischer", "Weber", "Meyer", "Wagner", "Becker", "Schulz", "Hoffmann",
+    "Rossi", "Russo", "Ferrari", "Esposito", "Bianchi", "Romano", "Colombo", "Ricci", "Marino", "Greco",
+    "Singh", "Kumar", "Sharma", "Gupta", "Khan", "Ahmed", "Ali", "Hassan", "Hussein", "Rahman",
+    "Chen", "Wang", "Li", "Zhang", "Liu", "Yang", "Huang", "Zhao", "Wu", "Zhou",
+    "Tanaka", "Suzuki", "Takahashi", "Watanabe", "Ito", "Yamamoto", "Nakamura", "Kobayashi", "Kato", "Yoshida",
+    "Johansson", "Andersson", "Karlsson", "Nilsson", "Eriksson", "Larsson", "Olsson", "Persson", "Svensson", "Gustafsson",
+    "Petrov", "Ivanov", "Sidorov", "Smirnov", "Kuznetsov", "Popov", "Volkov", "Sokolov", "Mikhailov", "Fedorov",
+    "Silva", "Santos", "Oliveira", "Souza", "Rodrigues", "Ferreira", "Alves", "Pereira", "Lima", "Gomes",
+    "Dubois", "Martin", "Bernard", "Moreau", "Laurent", "Simon", "Michel", "Lefebvre", "Leroy", "Roux"
 )
+
 private val domains = listOf("gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "example.com")
 
 val db = NowSampleDatabase(
@@ -127,6 +167,7 @@ fun App() {
 
         // TODO .open() is here just for demo purposes. In your app you should open it in some other place
         db.open()
+        db.connection().execSQL("PRAGMA foreign_keys = ON;")
 
         // Listen for real-time changes from Person/SelectAll query
         db.person

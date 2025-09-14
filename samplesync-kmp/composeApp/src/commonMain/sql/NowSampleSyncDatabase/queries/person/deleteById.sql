@@ -1,2 +1,2 @@
 DELETE FROM person
-WHERE id IN (:ids)
+WHERE id = :id

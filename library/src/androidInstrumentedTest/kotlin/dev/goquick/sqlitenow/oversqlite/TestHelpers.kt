@@ -3,7 +3,6 @@ package dev.goquick.sqlitenow.oversqlite
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import io.ktor.client.plugins.auth.providers.bearer
 import io.ktor.client.plugins.defaultRequest
-import io.ktor.client.request.url
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -144,10 +143,11 @@ internal fun createSyncTestClient(
     db: SafeSQLiteConnection,
     userSub: String,
     deviceId: String,
-    tables: List<String>
+    tables: List<String>,
+    verboseLogs: Boolean = false
 ): DefaultOversqliteClient {
     val syncTables = tables.map { SyncTable(tableName = it) }
-    val cfg = OversqliteConfig(schema = "business", syncTables = syncTables)
+    val cfg = OversqliteConfig(schema = "business", syncTables = syncTables, verboseLogs = verboseLogs)
     val httpClient = createAuthenticatedHttpClient(userSub, deviceId)
     return DefaultOversqliteClient(
         db = db,
@@ -200,4 +200,68 @@ internal suspend fun count(db: SafeSQLiteConnection, table: String, whereClause:
     db.prepare(sql).use { st ->
         return if (st.step()) st.getLong(0).toInt() else 0
     }
+}
+
+// Upload/Download result validation helpers
+internal fun assertUploadSuccess(result: Result<UploadSummary>, expectedApplied: Int? = null) {
+    assert(result.isSuccess) { "Upload failed: ${result.exceptionOrNull()}" }
+    val summary = result.getOrThrow()
+
+    // Check for conflicts, errors, and invalid changes
+    assert(summary.conflict == 0) {
+        "Upload had ${summary.conflict} conflicts. Summary: $summary"
+    }
+    assert(summary.invalid == 0) {
+        "Upload had ${summary.invalid} invalid changes. Reasons: ${summary.invalidReasons}. Summary: $summary"
+    }
+    assert(summary.materializeError == 0) {
+        "Upload had ${summary.materializeError} materialize errors. Summary: $summary"
+    }
+
+    // Check that all changes were applied
+    assert(summary.applied == summary.total) {
+        "Not all changes were applied: ${summary.applied}/${summary.total}. Summary: $summary"
+    }
+
+    // Check expected applied count if specified
+    expectedApplied?.let { expected ->
+        assert(summary.applied == expected) {
+            "Expected $expected applied changes, got ${summary.applied}. Summary: $summary"
+        }
+    }
+
+    // Check for error messages
+    summary.firstErrorMessage?.let { errorMsg ->
+        throw AssertionError("Upload had error message: $errorMsg. Summary: $summary")
+    }
+}
+
+internal fun assertDownloadSuccess(result: Result<*>) {
+    assert(result.isSuccess) { "Download failed: ${result.exceptionOrNull()}" }
+}
+
+// More lenient version that allows conflicts but still checks for success
+internal fun assertUploadSuccessWithConflicts(result: Result<UploadSummary>, allowConflicts: Boolean = true) {
+    assert(result.isSuccess) { "Upload failed: ${result.exceptionOrNull()}" }
+    val summary = result.getOrThrow()
+
+    // Check for invalid changes and materialize errors (these are always bad)
+    assert(summary.invalid == 0) {
+        "Upload had ${summary.invalid} invalid changes. Reasons: ${summary.invalidReasons}. Summary: $summary"
+    }
+    assert(summary.materializeError == 0) {
+        "Upload had ${summary.materializeError} materialize errors. Summary: $summary"
+    }
+
+    if (!allowConflicts) {
+        assert(summary.conflict == 0) {
+            "Upload had ${summary.conflict} conflicts. Summary: $summary"
+        }
+    }
+}
+
+// Helper to get upload summary for detailed checking
+internal fun getUploadSummary(result: Result<UploadSummary>): UploadSummary {
+    assert(result.isSuccess) { "Upload failed: ${result.exceptionOrNull()}" }
+    return result.getOrThrow()
 }

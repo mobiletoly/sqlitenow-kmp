@@ -1,7 +1,7 @@
 -- @@{ enableSync=true }
 CREATE TABLE person
 (
-    id         TEXT PRIMARY KEY NOT NULL,
+    id         BLOB PRIMARY KEY NOT NULL DEFAULT (randomblob(16)),
     -- @@{  field=first_name, propertyName=myFirstName }
     first_name TEXT                NOT NULL,
     -- @@{ field=last_name, propertyName=myLastName }
@@ -22,7 +22,8 @@ CREATE TABLE person
     is_active  INTEGER             NOT NULL DEFAULT 1,
 
     notes      TEXT
-);
+)
+WITHOUT ROWID;
 
 CREATE INDEX idx_person_name ON person (last_name, first_name);
 CREATE INDEX idx_person_email ON person (email);

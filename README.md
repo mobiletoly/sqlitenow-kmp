@@ -10,7 +10,7 @@ inspired by SQLDelight. Unlike other popular frameworks (such as Room) - it is f
 framework. Write your queries in SQL files, get type-safe Kotlin code generated automatically.
 And no runtime annotations overhead, everything is generated at compile time.
 
-**🔄 Sync-Ready**: SQLiteNow includes a complete synchronization system for multi-device applications,
+**Sync-Ready**: SQLiteNow includes a complete synchronization system for multi-device applications,
 allowing seamless data sync across devices with conflict resolution and offline-first capabilities.
 
 Full documentation is available in the https://mobiletoly.github.io/sqlitenow-kmp/ pages.
@@ -28,7 +28,7 @@ tablets, and other devices.
 
 ## Key Features
 
-### 🔄 Multi-Device Synchronization
+### Multi-Device Synchronization
 - **Built-in Sync System** - Complete synchronization solution for multi-device applications
 - **Conflict Resolution** - Automatic conflict resolution with pluggable strategies (Server Wins, Client Wins, etc.)
 - **Change Tracking** - Automatic tracking of INSERT, UPDATE, DELETE operations
@@ -36,7 +36,7 @@ tablets, and other devices.
 - **JWT Authentication** - Secure sync with customizable authentication via HttpClient
 - **Incremental Sync** - Efficient sync with pagination and change-based updates
 
-### 📝 Type-Safe SQL Generation
+### Type-Safe SQL Generation
 - **Pure SQL Control** - Write your queries in SQL files, get type-safe Kotlin code
 - **Comment-based Annotations** - Control code generation using simple `-- @@{ annotations }`
   comments in your SQL.
@@ -48,13 +48,16 @@ tablets, and other devices.
 
 ## Why SQLiteNow exists if SQLDelight is really awesome
 
+Even if you don't care about multi-device synchronization, SQLiteNow has few key differences
+from SQLDelight:
+
 First of all, I wanted to target specifically SQLite in Kotlin Multiplatform environment, it is my
 platform of choice as of now for mobile development. SQLiteNow built on top of using multiplatform
 SQLite driver from AndroidX.
 
-Second, since we use comment-based annotations (and I'm planning to add user-defined annotations in
-the future), no plugin is required (like in case of SQLDelight), so you can easily use just a
-regular SQL files that will be validated by your IDE or other external tools for correctness.
+Second, since we use comment-based annotations, no plugin is required (like in case of SQLDelight),
+so you can easily use just a regular SQL files that will be validated by your IDE or other external
+tools for correctness.
 
 Third, I wanted to have a more flexible and extensible code generation system that can be easily
 extended and customized. I use hexagonal architecture in my code, but sometimes converting between

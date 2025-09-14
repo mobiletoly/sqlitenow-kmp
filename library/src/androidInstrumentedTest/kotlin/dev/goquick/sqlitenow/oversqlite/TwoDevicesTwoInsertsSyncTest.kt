@@ -47,38 +47,41 @@ class TwoDevicesTwoInsertsSyncTest {
         )
 
         suspend fun fullSync(client: DefaultOversqliteClient, limit: Int = 500) {
-            client.uploadOnce()
+            assertUploadSuccessWithConflicts(client.uploadOnce())
             var more = true
             while (more) {
-                val (applied, _) = client.downloadOnce(limit = limit, includeSelf = false)
-                    .getOrNull() ?: (0 to 0L)
+                val downloadResult = client.downloadOnce(limit = limit, includeSelf = false)
+                assertDownloadSuccess(downloadResult)
+                val (applied, _) = downloadResult.getOrNull() ?: (0 to 0L)
                 more = applied == limit
                 if (applied == 0) break
             }
         }
 
         // Bootstrap + initial hydrate on both users
-        assert(client1.bootstrap(userA, dev1).isSuccess)
-        assert(client2.bootstrap(userA, dev2).isSuccess)
-        assert(client1.hydrate(includeSelf = false, limit = 1000, windowed = true).isSuccess)
-        assert(client2.hydrate(includeSelf = false, limit = 1000, windowed = true).isSuccess)
+        assert(client1.bootstrap(userA, dev1).isSuccess) { "Bootstrap 1 failed: ${client1.bootstrap(userA, dev1).exceptionOrNull()}" }
+        assert(client2.bootstrap(userA, dev2).isSuccess) { "Bootstrap 2 failed: ${client2.bootstrap(userA, dev2).exceptionOrNull()}" }
+        val hydrate1 = client1.hydrate(includeSelf = false, limit = 1000, windowed = true)
+        assert(hydrate1.isSuccess) { "Hydrate 1 failed: ${hydrate1.exceptionOrNull()}" }
+        val hydrate2 = client2.hydrate(includeSelf = false, limit = 1000, windowed = true)
+        assert(hydrate2.isSuccess) { "Hydrate 2 failed: ${hydrate2.exceptionOrNull()}" }
 
         // Insert one row per device
         val a1 = java.util.UUID.randomUUID().toString()
         db1.execSQL("INSERT INTO users(id, name, email) VALUES('$a1','Alice','alice@example.com')")
-        assert(client1.uploadOnce().isSuccess)
+        assertUploadSuccess(client1.uploadOnce(), expectedApplied = 1)
 
         val b1 = java.util.UUID.randomUUID().toString()
         db2.execSQL("INSERT INTO users(id, name, email) VALUES('$b1','Bob','bob@example.com')")
-        assert(client2.uploadOnce().isSuccess)
+        assertUploadSuccess(client2.uploadOnce(), expectedApplied = 1)
 
         // Sync each user once
-        client1.downloadOnce(limit = 1000, includeSelf = false)
-        client2.downloadOnce(limit = 1000, includeSelf = false)
+        assertDownloadSuccess(client1.downloadOnce(limit = 1000, includeSelf = false))
+        assertDownloadSuccess(client2.downloadOnce(limit = 1000, includeSelf = false))
 
         // Now delete A's record locally and upload
         db1.execSQL("DELETE FROM users WHERE id='$a1'")
-        assert(client1.uploadOnce().isSuccess)
+        assertUploadSuccess(client1.uploadOnce(), expectedApplied = 1)
 
         // Full-sync flows like the app: upload then page downloads until drained
         fullSync(client1)
@@ -125,8 +128,9 @@ class TwoDevicesTwoInsertsSyncTest {
             suspend fun downloadDrain(client: DefaultOversqliteClient, limit: Int = 500) {
                 var more = true
                 while (more) {
-                    val (applied, _) = client.downloadOnce(limit = limit, includeSelf = false)
-                        .getOrNull() ?: (0 to 0L)
+                    val downloadResult = client.downloadOnce(limit = limit, includeSelf = false)
+                    assertDownloadSuccess(downloadResult)
+                    val (applied, _) = downloadResult.getOrNull() ?: (0 to 0L)
                     more = applied == limit
                     if (applied == 0) break
                 }
@@ -142,16 +146,16 @@ class TwoDevicesTwoInsertsSyncTest {
             val a1 = java.util.UUID.randomUUID().toString()
             val b1 = java.util.UUID.randomUUID().toString()
             db1.execSQL("INSERT INTO users(id, name, email) VALUES('$a1','Alice','alice@example.com')")
-            assert(client1.uploadOnce().isSuccess)
+            assertUploadSuccess(client1.uploadOnce(), expectedApplied = 1)
             db2.execSQL("INSERT INTO users(id, name, email) VALUES('$b1','Bob','bob@example.com')")
-            assert(client2.uploadOnce().isSuccess)
+            assertUploadSuccess(client2.uploadOnce(), expectedApplied = 1)
             downloadDrain(client1); downloadDrain(client2)
 
             // Delete a1 on device 1, then mimic download-before-upload
             db1.execSQL("DELETE FROM users WHERE id='$a1'")
             downloadDrain(client1) // app might call download loop first
             // Now upload; internal lookback could re-download a1, but deletion-aware phase should restore it
-            assert(client1.uploadOnce().isSuccess)
+            assertUploadSuccess(client1.uploadOnce(), expectedApplied = 1)
             downloadDrain(client1)
 
             // Validate: a1 is not present; b1 remains
@@ -186,12 +190,13 @@ class TwoDevicesTwoInsertsSyncTest {
         )
 
         suspend fun fullSync(client: DefaultOversqliteClient) {
-            client.uploadOnce()
+            assertUploadSuccessWithConflicts(client.uploadOnce())
             val limit = 500
             var more = true
             while (more) {
-                val (applied, _) = client.downloadOnce(limit = limit, includeSelf = false)
-                    .getOrNull() ?: (0 to 0L)
+                val downloadResult = client.downloadOnce(limit = limit, includeSelf = false)
+                assertDownloadSuccess(downloadResult)
+                val (applied, _) = downloadResult.getOrNull() ?: (0 to 0L)
                 more = applied == limit
                 if (applied == 0) break
             }
@@ -290,12 +295,13 @@ class TwoDevicesTwoInsertsSyncTest {
         )
 
         suspend fun fullSync(client: DefaultOversqliteClient) {
-            client.uploadOnce()
+            assertUploadSuccessWithConflicts(client.uploadOnce())
             val limit = 500
             var more = true
             while (more) {
-                val (applied, _) = client.downloadOnce(limit = limit, includeSelf = false)
-                    .getOrNull() ?: (0 to 0L)
+                val downloadResult = client.downloadOnce(limit = limit, includeSelf = false)
+                assertDownloadSuccess(downloadResult)
+                val (applied, _) = downloadResult.getOrNull() ?: (0 to 0L)
                 more = applied == limit
                 if (applied == 0) break
             }
@@ -431,12 +437,12 @@ class TwoDevicesTwoInsertsSyncTest {
         // Insert on device 1 and upload
         val id1 = java.util.UUID.randomUUID().toString()
         db1.execSQL("INSERT INTO users(id, name, email) VALUES('$id1','Alice','alice@example.com')")
-        assert(client1.uploadOnce().isSuccess)
+        assertUploadSuccess(client1.uploadOnce(), expectedApplied = 1)
 
         // Insert on device 2 and upload
         val id2 = java.util.UUID.randomUUID().toString()
         db2.execSQL("INSERT INTO users(id, name, email) VALUES('$id2','Bob','bob@example.com')")
-        assert(client2.uploadOnce().isSuccess)
+        assertUploadSuccess(client2.uploadOnce(), expectedApplied = 1)
 
         // Sync/download both devices with retries to account for eventual consistency
         suspend fun syncUntilBothSeeTwo(maxAttempts: Int = 10): Pair<Int, Int> {
@@ -444,8 +450,8 @@ class TwoDevicesTwoInsertsSyncTest {
             var c2 = count(db2, "users", "1=1")
             var attempts = 0
             while ((c1 < 2 || c2 < 2) && attempts < maxAttempts) {
-                client1.downloadOnce(limit = 1000, includeSelf = false)
-                client2.downloadOnce(limit = 1000, includeSelf = false)
+                assertDownloadSuccess(client1.downloadOnce(limit = 1000, includeSelf = false))
+                assertDownloadSuccess(client2.downloadOnce(limit = 1000, includeSelf = false))
                 c1 = count(db1, "users", "1=1")
                 c2 = count(db2, "users", "1=1")
                 if (c1 < 2 || c2 < 2) kotlinx.coroutines.delay(200)

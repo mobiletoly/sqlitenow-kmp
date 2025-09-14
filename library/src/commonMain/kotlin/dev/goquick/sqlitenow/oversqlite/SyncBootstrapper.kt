@@ -16,21 +16,28 @@ internal class SyncBootstrapper(
         userId: String,
         sourceId: String
     ): Result<Unit> = runCatching {
-        logger.i { "bootstrap: start userId=$userId sourceId=$sourceId" }
+        if (config.verboseLogs) {
+            logger.i { "[VERBOSE] bootstrap: start userId=$userId sourceId=$sourceId" }
+            logger.i { "[VERBOSE] bootstrap: config=$config" }
+        } else {
+            logger.i { "bootstrap: start userId=$userId sourceId=$sourceId" }
+        }
 
         configureDatabaseSettings(db)
         createMetadataTables(db)
         ensureClientRowExists(db, userId, sourceId)
         createTriggersForTables(db)
-        logger.i { "bootstrap: done" }
+
+        if (config.verboseLogs) {
+            logger.i { "[VERBOSE] bootstrap: done successfully" }
+        } else {
+            logger.i { "bootstrap: done" }
+        }
     }.onFailure { exception ->
         logger.e(exception) { "bootstrap: failed userId=$userId sourceId=$sourceId" }
     }
 
     private suspend fun configureDatabaseSettings(db: SafeSQLiteConnection) {
-        db.execSQL("PRAGMA foreign_keys=ON")
-
-        // Optional: WAL and a modest busy timeout for transient contention
         try {
             db.execSQL("PRAGMA journal_mode=WAL")
         } catch (_: Throwable) {
@@ -122,9 +129,16 @@ internal class SyncBootstrapper(
         // Create triggers for each sync table with its specific primary key
         config.syncTables.forEach { syncTable ->
             val tableLc = syncTable.tableName.lowercase()
-            logger.d { "bootstrap: creating triggers for table=$tableLc" }
+            if (config.verboseLogs) {
+                logger.i { "[VERBOSE] bootstrap: creating triggers for table=$tableLc, syncKeyColumn=${syncTable.syncKeyColumnName}" }
+            } else {
+                logger.d { "bootstrap: creating triggers for table=$tableLc" }
+            }
 
             val primaryKeyColumn = determinePrimaryKeyColumn(db, syncTable)
+            if (config.verboseLogs) {
+                logger.i { "[VERBOSE] bootstrap: determined primary key column='$primaryKeyColumn' for table=$tableLc" }
+            }
             createTriggersForTable(db, tableLc, primaryKeyColumn)
         }
     }
@@ -145,72 +159,91 @@ internal class SyncBootstrapper(
         return "id"
     }
 
-    private suspend fun detectPrimaryKeyColumn(db: SafeSQLiteConnection, table: String): String? {
-        db.prepare("PRAGMA table_info($table)").use { st ->
-            while (st.step()) {
-                val columnName = st.getText(1)
-                val isPrimaryKey = st.getLong(5) == 1L
-                if (isPrimaryKey) {
-                    return columnName
-                }
-            }
-        }
-        return null
-    }
+    private suspend fun detectPrimaryKeyColumn(db: SafeSQLiteConnection, table: String): String? =
+        TableInfoProvider.get(db, table).primaryKey?.name
 
     private suspend fun createTriggersForTable(db: SafeSQLiteConnection, table: String, primaryKeyColumn: String) {
         val tableLc = table.lowercase()
         val columns = getTableColumns(db, tableLc)
         val newRowJson = jsonObjectExpr(columns, prefix = "NEW")
+        val pkIsBlob = isPrimaryKeyBlob(db, tableLc, primaryKeyColumn)
+        val pkExprNew = if (pkIsBlob) "lower(hex(NEW.$primaryKeyColumn))" else "NEW.$primaryKeyColumn"
+        val pkExprOld = if (pkIsBlob) "lower(hex(OLD.$primaryKeyColumn))" else "OLD.$primaryKeyColumn"
 
-        createInsertTrigger(db, tableLc, primaryKeyColumn, newRowJson)
-        createUpdateTrigger(db, tableLc, primaryKeyColumn, newRowJson)
-        createDeleteTrigger(db, tableLc, primaryKeyColumn)
+        if (config.verboseLogs) {
+            logger.i { "[VERBOSE] bootstrap: table=$tableLc, primaryKey=$primaryKeyColumn, isBlob=$pkIsBlob" }
+            logger.i { "[VERBOSE] bootstrap: columns=${columns.joinToString(", ")}" }
+        }
+
+        // Build a JSON payload expression that renders BLOB columns as hex(NEW.col) text
+        val tableInfo = TableInfoProvider.get(db, tableLc)
+        val blobAwarePayloadExpr = buildJsonObjectExprHexAware(
+            tableInfo = tableInfo,
+            prefix = "NEW"
+        )
+
+        createInsertTrigger(db, tableLc, primaryKeyColumn, newRowJson, pkExprNew, blobAwarePayloadExpr)
+        createUpdateTrigger(db, tableLc, primaryKeyColumn, newRowJson, pkExprNew, blobAwarePayloadExpr)
+        createDeleteTrigger(db, tableLc, primaryKeyColumn, pkExprOld)
+
+        if (config.verboseLogs) {
+            logger.i { "[VERBOSE] bootstrap: triggers created successfully for table=$tableLc" }
+        }
     }
 
     private suspend fun createInsertTrigger(
         db: SafeSQLiteConnection,
         tableLc: String,
         primaryKeyColumn: String,
-        newRowJson: String
+        newRowJson: String,
+        pkExprNew: String,
+        payloadExpr: String
     ) {
-        db.execSQL(
+        val triggerSql =
             """
             CREATE TRIGGER IF NOT EXISTS trg_${tableLc}_ai
             AFTER INSERT ON ${tableLc}
             WHEN COALESCE((SELECT apply_mode FROM _sync_client_info LIMIT 1), 0) = 0
             BEGIN
               INSERT OR IGNORE INTO _sync_row_meta(table_name, pk_uuid, server_version, deleted)
-              VALUES ('${tableLc}', NEW.${primaryKeyColumn}, 0, 0);
+              VALUES ('${tableLc}', ${pkExprNew}, 0, 0);
 
               -- Reset deleted flag when record is reinserted
               -- This handles the case where a record was deleted and then reinserted
               UPDATE _sync_row_meta SET deleted=0, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-              WHERE table_name='${tableLc}' AND pk_uuid=NEW.${primaryKeyColumn} AND deleted=1;
+              WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew} AND deleted=1;
 
               INSERT INTO _sync_pending(table_name, pk_uuid, op, base_version, payload, change_id)
-              SELECT '${tableLc}', NEW.${primaryKeyColumn}, 'INSERT', 0, ${newRowJson}, (SELECT next_change_id FROM _sync_client_info LIMIT 1)
-              WHERE NOT EXISTS (SELECT 1 FROM _sync_pending WHERE table_name='${tableLc}' AND pk_uuid=NEW.${primaryKeyColumn});
+              SELECT '${tableLc}', ${pkExprNew}, 'INSERT', 0, ${payloadExpr}, (SELECT next_change_id FROM _sync_client_info LIMIT 1)
+              WHERE NOT EXISTS (SELECT 1 FROM _sync_pending WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew});
 
               UPDATE _sync_pending SET
                 op='INSERT',
-                base_version=(SELECT server_version FROM _sync_row_meta WHERE table_name='${tableLc}' AND pk_uuid=NEW.${primaryKeyColumn}),
-                payload=${newRowJson},
+                base_version=(SELECT server_version FROM _sync_row_meta WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew}),
+                payload=${payloadExpr},
                 queued_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-              WHERE table_name='${tableLc}' AND pk_uuid=NEW.${primaryKeyColumn};
+              WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew};
 
               UPDATE _sync_client_info SET next_change_id = next_change_id + 1
               WHERE changes() > 0 AND last_insert_rowid() > 0;
             END
             """.trimIndent()
-        )
+
+        if (config.verboseLogs) {
+            logger.i { "[VERBOSE] bootstrap: creating INSERT trigger for table=$tableLc" }
+            logger.d { "[VERBOSE] INSERT trigger SQL: $triggerSql" }
+        }
+
+        db.execSQL(triggerSql)
     }
 
     private suspend fun createUpdateTrigger(
         db: SafeSQLiteConnection,
         tableLc: String,
         primaryKeyColumn: String,
-        newRowJson: String
+        newRowJson: String,
+        pkExprNew: String,
+        payloadExpr: String
     ) {
         db.execSQL(
             """
@@ -219,24 +252,24 @@ internal class SyncBootstrapper(
             WHEN COALESCE((SELECT apply_mode FROM _sync_client_info LIMIT 1), 0) = 0
             BEGIN
               INSERT OR IGNORE INTO _sync_row_meta(table_name, pk_uuid, server_version, deleted)
-              VALUES ('${tableLc}', NEW.${primaryKeyColumn}, 0, 0);
+              VALUES ('${tableLc}', ${pkExprNew}, 0, 0);
 
               UPDATE _sync_row_meta SET deleted=0, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-              WHERE table_name='${tableLc}' AND pk_uuid=NEW.${primaryKeyColumn};
+              WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew};
 
               INSERT INTO _sync_pending(table_name, pk_uuid, op, base_version, payload, change_id)
-              SELECT '${tableLc}', NEW.${primaryKeyColumn}, 'UPDATE',
-                     (SELECT server_version FROM _sync_row_meta WHERE table_name='${tableLc}' AND pk_uuid=NEW.${primaryKeyColumn}),
-                     ${newRowJson},
+              SELECT '${tableLc}', ${pkExprNew}, 'UPDATE',
+                     (SELECT server_version FROM _sync_row_meta WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew}),
+                     ${payloadExpr},
                      (SELECT next_change_id FROM _sync_client_info LIMIT 1)
-              WHERE NOT EXISTS (SELECT 1 FROM _sync_pending WHERE table_name='${tableLc}' AND pk_uuid=NEW.${primaryKeyColumn});
+              WHERE NOT EXISTS (SELECT 1 FROM _sync_pending WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew});
 
               UPDATE _sync_pending SET
                 op = CASE WHEN op='INSERT' THEN 'INSERT' ELSE 'UPDATE' END,
-                base_version = CASE WHEN op='INSERT' THEN base_version ELSE COALESCE((SELECT server_version FROM _sync_row_meta WHERE table_name='${tableLc}' AND pk_uuid=NEW.${primaryKeyColumn}), 0) END,
-                payload = ${newRowJson},
+                base_version = CASE WHEN op='INSERT' THEN base_version ELSE COALESCE((SELECT server_version FROM _sync_row_meta WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew}), 0) END,
+                payload = ${payloadExpr},
                 queued_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-              WHERE table_name='${tableLc}' AND pk_uuid=NEW.${primaryKeyColumn};
+              WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew};
 
               UPDATE _sync_client_info SET next_change_id = next_change_id + 1
               WHERE changes() > 0 AND last_insert_rowid() > 0;
@@ -245,7 +278,7 @@ internal class SyncBootstrapper(
         )
     }
 
-    private suspend fun createDeleteTrigger(db: SafeSQLiteConnection, tableLc: String, primaryKeyColumn: String) {
+    private suspend fun createDeleteTrigger(db: SafeSQLiteConnection, tableLc: String, primaryKeyColumn: String, pkExprOld: String) {
         db.execSQL(
             """
             CREATE TRIGGER IF NOT EXISTS trg_${tableLc}_ad
@@ -253,58 +286,50 @@ internal class SyncBootstrapper(
             WHEN COALESCE((SELECT apply_mode FROM _sync_client_info LIMIT 1), 0) = 0
             BEGIN
               INSERT OR IGNORE INTO _sync_row_meta(table_name, pk_uuid, server_version, deleted)
-              VALUES ('${tableLc}', OLD.${primaryKeyColumn}, 0, 1);
+              VALUES ('${tableLc}', ${pkExprOld}, 0, 1);
 
               INSERT INTO _sync_pending(table_name, pk_uuid, op, base_version, payload, change_id)
-              SELECT '${tableLc}', OLD.${primaryKeyColumn}, 'DELETE',
-                     COALESCE((SELECT server_version FROM _sync_row_meta WHERE table_name='${tableLc}' AND pk_uuid=OLD.${primaryKeyColumn}), 0),
+              SELECT '${tableLc}', ${pkExprOld}, 'DELETE',
+                     COALESCE((SELECT server_version FROM _sync_row_meta WHERE table_name='${tableLc}' AND pk_uuid=${pkExprOld}), 0),
                      NULL,
                      (SELECT next_change_id FROM _sync_client_info LIMIT 1)
-              WHERE NOT EXISTS (SELECT 1 FROM _sync_pending WHERE table_name='${tableLc}' AND pk_uuid=OLD.${primaryKeyColumn});
+              WHERE NOT EXISTS (SELECT 1 FROM _sync_pending WHERE table_name='${tableLc}' AND pk_uuid=${pkExprOld});
 
               INSERT INTO _sync_pending(table_name, pk_uuid, op, base_version, payload, change_id)
-              SELECT '${tableLc}', OLD.${primaryKeyColumn}, 'DELETE',
-                     COALESCE((SELECT server_version FROM _sync_row_meta WHERE table_name='${tableLc}' AND pk_uuid=OLD.${primaryKeyColumn}), 0),
+              SELECT '${tableLc}', ${pkExprOld}, 'DELETE',
+                     COALESCE((SELECT server_version FROM _sync_row_meta WHERE table_name='${tableLc}' AND pk_uuid=${pkExprOld}), 0),
                      NULL,
                      (SELECT next_change_id FROM _sync_client_info LIMIT 1)
-              WHERE NOT EXISTS (SELECT 1 FROM _sync_pending WHERE table_name='${tableLc}' AND pk_uuid=OLD.${primaryKeyColumn});
+              WHERE NOT EXISTS (SELECT 1 FROM _sync_pending WHERE table_name='${tableLc}' AND pk_uuid=${pkExprOld});
 
               UPDATE _sync_pending SET
                 op = 'DELETE',
-                base_version = COALESCE((SELECT server_version FROM _sync_row_meta WHERE table_name='${tableLc}' AND pk_uuid=OLD.${primaryKeyColumn}), 0),
+                base_version = COALESCE((SELECT server_version FROM _sync_row_meta WHERE table_name='${tableLc}' AND pk_uuid=${pkExprOld}), 0),
                 payload = NULL,
                 queued_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-              WHERE table_name='${tableLc}' AND pk_uuid=OLD.${primaryKeyColumn} AND op != 'INSERT';
+              WHERE table_name='${tableLc}' AND pk_uuid=${pkExprOld} AND op != 'INSERT';
 
               UPDATE _sync_client_info SET next_change_id = next_change_id + 1
               WHERE changes() > 0 AND last_insert_rowid() > 0;
 
-              DELETE FROM _sync_pending WHERE table_name='${tableLc}' AND pk_uuid=OLD.${primaryKeyColumn} AND op='INSERT';
+              DELETE FROM _sync_pending WHERE table_name='${tableLc}' AND pk_uuid=${pkExprOld} AND op='INSERT';
 
               UPDATE _sync_row_meta SET deleted=1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-              WHERE table_name='${tableLc}' AND pk_uuid=OLD.${primaryKeyColumn};
+              WHERE table_name='${tableLc}' AND pk_uuid=${pkExprOld};
 
               DELETE FROM _sync_row_meta
-              WHERE table_name='${tableLc}' AND pk_uuid=OLD.${primaryKeyColumn} AND server_version=0
-                AND NOT EXISTS (SELECT 1 FROM _sync_pending WHERE table_name='${tableLc}' AND pk_uuid=OLD.${primaryKeyColumn});
+              WHERE table_name='${tableLc}' AND pk_uuid=${pkExprOld} AND server_version=0
+                AND NOT EXISTS (SELECT 1 FROM _sync_pending WHERE table_name='${tableLc}' AND pk_uuid=${pkExprOld});
             END
             """.trimIndent()
         )
     }
 
-    // Cache PRAGMA table_info lookups per table (lowercased key)
-    private val tableColumnsCache = mutableMapOf<String, List<String>>()
+    private suspend fun isPrimaryKeyBlob(db: SafeSQLiteConnection, table: String, primaryKeyColumn: String): Boolean =
+        TableInfoProvider.get(db, table).primaryKeyIsBlob
 
-    private suspend fun getTableColumns(db: SafeSQLiteConnection, table: String): List<String> {
-        val key = table.lowercase()
-        tableColumnsCache[key]?.let { return it }
-        val cols = mutableListOf<String>()
-        db.prepare("PRAGMA table_info($key)").use { st ->
-            while (st.step()) cols += st.getText(1).lowercase()
-        }
-        tableColumnsCache[key] = cols
-        return cols
-    }
+    private suspend fun getTableColumns(db: SafeSQLiteConnection, table: String): List<String> =
+        TableInfoProvider.get(db, table).columnNamesLower
 
     private fun jsonObjectExpr(
         columns: List<String>,
@@ -313,4 +338,20 @@ internal class SyncBootstrapper(
         "json_object(" + columns.joinToString(", ") {
             "'${it.lowercase()}', $prefix.$it"
         } + ")"
+
+    private fun buildJsonObjectExprHexAware(
+        tableInfo: TableInfo,
+        prefix: String,
+    ): String {
+        val pairs = tableInfo.columns.map { col ->
+            val name = col.name.lowercase()
+            val expr = if (col.declaredType.lowercase().contains("blob")) {
+                "lower(hex($prefix.$name))"
+            } else {
+                "$prefix.$name"
+            }
+            "'${name}', $expr"
+        }
+        return "json_object(" + pairs.joinToString(", ") + ")"
+    }
 }

@@ -89,50 +89,134 @@ typealias PersonWithAddressesEntity = PersonQuery.SharedResult.PersonWithAddress
 
 private val firstNames = listOf(
     // Traditional English names
-    "John", "Jane", "Alice", "Bob", "Charlie", "Diana", "Eve", "Frank", "Grace", "Henry",
-    "William", "Mary", "James", "Patricia", "Robert", "Jennifer", "Michael", "Linda", "David", "Elizabeth",
-    "Richard", "Barbara", "Joseph", "Susan", "Thomas", "Jessica", "Christopher", "Sarah", "Daniel", "Karen",
-    "Paul", "Nancy", "Mark", "Lisa", "Donald", "Betty", "George", "Helen", "Kenneth", "Sandra",
-    "Steven", "Donna", "Edward", "Carol", "Brian", "Ruth", "Ronald", "Sharon", "Anthony", "Michelle",
-    "Kevin", "Laura", "Jason", "Sarah", "Matthew", "Kimberly", "Gary", "Deborah", "Timothy", "Dorothy",
-    "Jose", "Amy", "Larry", "Angela", "Jeffrey", "Ashley", "Frank", "Brenda", "Scott", "Emma",
-    "Eric", "Olivia", "Stephen", "Cynthia", "Andrew", "Marie", "Raymond", "Janet", "Gregory", "Catherine",
-    "Joshua", "Frances", "Jerry", "Christine", "Dennis", "Samantha", "Walter", "Debra", "Patrick", "Rachel",
-    "Peter", "Carolyn", "Harold", "Janet", "Douglas", "Virginia", "Henry", "Maria", "Carl", "Heather",
-    "Alexander", "Sophia", "Benjamin", "Isabella", "Lucas", "Charlotte", "Mason", "Amelia", "Ethan", "Mia",
-    "Noah", "Harper", "Logan", "Evelyn", "Jacob", "Abigail", "Jackson", "Emily", "Aiden", "Elizabeth",
-    "Sebastian", "Sofia", "Gabriel", "Avery", "Carter", "Ella", "Jayden", "Madison", "Luke", "Scarlett",
-    "Anthony", "Victoria", "Isaac", "Aria", "Dylan", "Grace", "Wyatt", "Chloe", "Owen", "Camila",
-    "Caleb", "Penelope", "Nathan", "Riley", "Ryan", "Layla", "Hunter", "Lillian", "Christian", "Nora",
-    "Landon", "Zoey", "Adrian", "Mila", "Jonathan", "Aubrey", "Nolan", "Hannah", "Cameron", "Lily",
-    "Connor", "Addison", "Santiago", "Eleanor", "Jeremiah", "Natalie", "Ezekiel", "Luna", "Angel", "Savannah",
-    "Robert", "Brooklyn", "Axel", "Leah", "Colton", "Zoe", "Jordan", "Stella", "Dominic", "Hazel",
-    "Austin", "Ellie", "Ian", "Paisley", "Adam", "Violet", "Eli", "Claire", "Jose", "Bella",
-    "Jaxon", "Aurora", "Rowan", "Lucy", "Felix", "Anna", "Silas", "Samantha", "Miles", "Caroline"
+    "John",
+    "Jane",
+    "Alice",
+    "Bob",
+    "Charlie",
+    "Diana",
+    "Eve",
+    "Frank",
+    "Grace",
+    "Henry",
+    "William",
+    "Mary",
+    "James",
+    "Patricia",
+    "Robert",
+    "Jennifer",
+    "Michael",
+    "Linda",
+    "David",
+    "Elizabeth",
+    "Richard",
+    "Barbara",
+    "Joseph",
+    "Susan",
+    "Thomas",
+    "Jessica",
+    "Christopher",
+    "Sarah",
+    "Daniel",
+    "Karen",
+    "Paul",
+    "Nancy",
+    "Mark",
+    "Lisa",
+    "Donald",
+    "Betty",
+    "George",
+    "Helen",
+    "Kenneth",
+    "Sandra",
+    "Steven",
+    "Donna",
+    "Edward",
+    "Carol",
+    "Brian",
+    "Ruth",
+    "Ronald",
+    "Sharon",
+    "Anthony",
+    "Michelle",
+    "Kevin",
+    "Laura",
+    "Jason",
+    "Sarah",
+    "Matthew",
+    "Kimberly",
+    "Gary",
+    "Deborah",
+    "Timothy",
+    "Dorothy",
+    "Jose",
+    "Amy",
 )
 
 private val lastNames = listOf(
     // Common American surnames
-    "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez",
-    "Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin",
-    "Lee", "Perez", "Thompson", "White", "Harris", "Sanchez", "Clark", "Ramirez", "Lewis", "Robinson",
-    "Walker", "Young", "Allen", "King", "Wright", "Scott", "Torres", "Nguyen", "Hill", "Flores",
-    "Green", "Adams", "Nelson", "Baker", "Hall", "Rivera", "Campbell", "Mitchell", "Carter", "Roberts",
-    "Gomez", "Phillips", "Evans", "Turner", "Diaz", "Parker", "Cruz", "Edwards", "Collins", "Reyes",
-    "Stewart", "Morris", "Morales", "Murphy", "Cook", "Rogers", "Gutierrez", "Ortiz", "Morgan", "Cooper",
-    "Peterson", "Bailey", "Reed", "Kelly", "Howard", "Ramos", "Kim", "Cox", "Ward", "Richardson",
-    "Watson", "Brooks", "Chavez", "Wood", "James", "Bennett", "Gray", "Mendoza", "Ruiz", "Hughes",
-    "Price", "Alvarez", "Castillo", "Sanders", "Patel", "Myers", "Long", "Ross", "Foster", "Jimenez",
-    "O'Connor", "MacDonald", "O'Brien", "Sullivan", "Kennedy", "Murphy", "O'Sullivan", "Walsh", "Ryan", "Byrne",
-    "Schmidt", "Mueller", "Schneider", "Fischer", "Weber", "Meyer", "Wagner", "Becker", "Schulz", "Hoffmann",
-    "Rossi", "Russo", "Ferrari", "Esposito", "Bianchi", "Romano", "Colombo", "Ricci", "Marino", "Greco",
-    "Singh", "Kumar", "Sharma", "Gupta", "Khan", "Ahmed", "Ali", "Hassan", "Hussein", "Rahman",
-    "Chen", "Wang", "Li", "Zhang", "Liu", "Yang", "Huang", "Zhao", "Wu", "Zhou",
-    "Tanaka", "Suzuki", "Takahashi", "Watanabe", "Ito", "Yamamoto", "Nakamura", "Kobayashi", "Kato", "Yoshida",
-    "Johansson", "Andersson", "Karlsson", "Nilsson", "Eriksson", "Larsson", "Olsson", "Persson", "Svensson", "Gustafsson",
-    "Petrov", "Ivanov", "Sidorov", "Smirnov", "Kuznetsov", "Popov", "Volkov", "Sokolov", "Mikhailov", "Fedorov",
-    "Silva", "Santos", "Oliveira", "Souza", "Rodrigues", "Ferreira", "Alves", "Pereira", "Lima", "Gomes",
-    "Dubois", "Martin", "Bernard", "Moreau", "Laurent", "Simon", "Michel", "Lefebvre", "Leroy", "Roux"
+    "Smith",
+    "Johnson",
+    "Williams",
+    "Brown",
+    "Jones",
+    "Garcia",
+    "Miller",
+    "Davis",
+    "Rodriguez",
+    "Martinez",
+    "Hernandez",
+    "Lopez",
+    "Gonzalez",
+    "Wilson",
+    "Anderson",
+    "Thomas",
+    "Taylor",
+    "Moore",
+    "Jackson",
+    "Martin",
+    "Lee",
+    "Perez",
+    "Thompson",
+    "White",
+    "Harris",
+    "Sanchez",
+    "Clark",
+    "Ramirez",
+    "Lewis",
+    "Robinson",
+    "Walker",
+    "Young",
+    "Allen",
+    "King",
+    "Wright",
+    "Scott",
+    "Torres",
+    "Nguyen",
+    "Hill",
+    "Flores",
+    "Green",
+    "Adams",
+    "Nelson",
+    "Baker",
+    "Hall",
+    "Rivera",
+    "Campbell",
+    "Mitchell",
+    "Carter",
+    "Roberts",
+    "Gomez",
+    "Phillips",
+    "Evans",
+    "Turner",
+    "Diaz",
+    "Parker",
+    "Cruz",
+    "Edwards",
+    "Collins",
+    "Reyes",
+    "Stewart",
+    "Morris",
 )
 
 private val domains = listOf("gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "example.com")
@@ -202,7 +286,8 @@ private suspend fun setupSyncClient(
         val client = db.newOversqliteClient(
             schema = "business",
             httpClient = httpClient,
-            resolver = ServerWinsResolver
+            resolver = ServerWinsResolver,
+            verboseLogs = true,
         )
 
         // Bootstrap is always required
@@ -269,6 +354,7 @@ fun App() {
 
         // TODO .open() is here just for demo purposes. In your app you should open it in some other place
         db.open()
+        db.connection().execSQL("PRAGMA foreign_keys = ON;")
 
         // Listen for real-time changes from Person/SelectAll query
         db.person
@@ -374,7 +460,11 @@ fun App() {
                                 }
                             }
                         }
-                    }.onFailure { appLog.e(it) { "uploadOnce failed" } }
+                    }.onFailure {
+                        appLog.e(it) { "uploadOnce failed" }
+                        errorMessage = "Upload failed: ${it.message ?: "unknown"}"
+                        return@collectLatest
+                    }
                     val limit = 500
                     var more = true
                     var total = 0
@@ -395,9 +485,9 @@ fun App() {
     // Periodic nudge (e.g., every 60s) only when signed in
     LaunchedEffect(signedIn, bootstrapDone) {
         if (signedIn && bootstrapDone) {
-            appLog.i { "Scheduling periodic sync every 3s" }
+            appLog.i { "Scheduling periodic sync every 60s" }
             while (signedIn) {
-                delay(7_000)
+                delay(5_000)
                 syncTrigger.tryEmit(Unit)
             }
         }
@@ -427,7 +517,10 @@ fun App() {
                 bootstrapDone = bootstrapDone,
                 onAddPerson = {
                     coroutineScope.launch {
-                        addRandomPerson { error -> errorMessage = error; reportMessage = null }
+                        addRandomPerson { error ->
+                            errorMessage = error;
+                            reportMessage = null
+                        }
                         syncTrigger.tryEmit(Unit)
                     }
                 },
@@ -509,7 +602,8 @@ fun App() {
                     onRandomize = { p ->
                         coroutineScope.launch {
                             randomizePerson(p) { error ->
-                                errorMessage = error; reportMessage = null
+                                errorMessage = error;
+                                reportMessage = null
                             }
                             syncTrigger.tryEmit(Unit)
                         }
@@ -517,7 +611,8 @@ fun App() {
                     onDelete = { p ->
                         coroutineScope.launch {
                             deletePerson(p.id) { error ->
-                                errorMessage = error; reportMessage = null
+                                errorMessage = error;
+                                reportMessage = null
                             }
                             syncTrigger.tryEmit(Unit)
                         }
@@ -525,7 +620,8 @@ fun App() {
                     onAddAddress = { pid ->
                         coroutineScope.launch {
                             addRandomAddress(pid) { error ->
-                                errorMessage = error; reportMessage = null
+                                errorMessage = error;
+                                reportMessage = null
                             }
                             syncTrigger.tryEmit(Unit)
                         }
@@ -533,7 +629,8 @@ fun App() {
                     onAddComment = { pid ->
                         coroutineScope.launch {
                             addRandomComment(pid) { error ->
-                                errorMessage = error; reportMessage = null
+                                errorMessage = error;
+                                reportMessage = null
                             }
                             syncTrigger.tryEmit(Unit)
                             commentsRefreshTrigger.tryEmit(Unit)
@@ -556,7 +653,11 @@ fun App() {
                     )
                 },
                 text = { Text(msg, fontSize = 14.sp) },
-                confirmButton = { TextButton(onClick = { reportMessage = null }) { Text("OK") } }
+                confirmButton = {
+                    TextButton(onClick = { reportMessage = null }) {
+                        Text("OK")
+                    }
+                }
             )
         }
 
@@ -627,8 +728,8 @@ fun PersonCard(
     person: PersonEntity,
     onRandomize: (PersonEntity) -> Unit,
     onDelete: (PersonEntity) -> Unit,
-    onAddAddress: (String) -> Unit = {},
-    onAddComment: (String) -> Unit = {},
+    onAddAddress: (ByteArray) -> Unit = {},
+    onAddComment: (ByteArray) -> Unit = {},
     commentsRefreshTrigger: MutableSharedFlow<Unit>? = null,
 ) {
     Card(
@@ -711,7 +812,11 @@ fun PersonCard(
                 )
 
                 // Comments list (if any) - now reactive to database changes and refresh triggers
-                var comments by remember(person.id) { mutableStateOf<List<CommentEntity>>(emptyList()) }
+                var comments by remember(person.id.toList()) {
+                    mutableStateOf<List<CommentEntity>>(
+                        emptyList()
+                    )
+                }
 
                 // Function to refresh comments
                 val refreshComments = suspend {
@@ -722,7 +827,7 @@ fun PersonCard(
                 }
 
                 // Initial load and reactive updates
-                LaunchedEffect(person.id) {
+                LaunchedEffect(person.id.toList()) {
                     // Start with reactive flow
                     launch {
                         db.comment
@@ -903,7 +1008,6 @@ suspend fun addRandomPerson(onError: (String) -> Unit) {
     try {
         db.person.add(
             PersonQuery.Add.Params(
-                id = generateUuid(),
                 firstName = firstName,
                 lastName = lastName,
                 email = email,
@@ -930,11 +1034,11 @@ suspend fun addRandomPerson(onError: (String) -> Unit) {
 }
 
 // Helper function to delete a person
-suspend fun deletePerson(personId: String, onError: (String) -> Unit = {}) {
+suspend fun deletePerson(personId: ByteArray, onError: (String) -> Unit = {}) {
     try {
-        db.person.deleteByIds(
-            PersonQuery.DeleteByIds.Params(
-                ids = listOf(personId)
+        db.person.deleteById(
+            PersonQuery.DeleteById.Params(
+                id = personId
             )
         ).execute()
     } catch (e: SQLiteException) {
@@ -982,7 +1086,7 @@ suspend fun randomizePerson(person: PersonEntity, onError: (String) -> Unit = {}
 @OptIn(ExperimentalUuidApi::class)
 private fun generateUuid(): String = Uuid.random().toString()
 
-suspend fun addRandomAddress(personId: String, onError: (String) -> Unit = {}) {
+suspend fun addRandomAddress(personId: ByteArray, onError: (String) -> Unit = {}) {
     try {
         val streets = listOf("Main St", "Oak Ave", "Pine Rd", "Maple Blvd")
         val cities = listOf("Springfield", "Riverdale", "Fairview", "Greenville")
@@ -995,7 +1099,6 @@ suspend fun addRandomAddress(personId: String, onError: (String) -> Unit = {}) {
         val isPrimary = Random.nextBoolean()
         db.personAddress.add(
             PersonAddressQuery.Add.Params(
-                id = generateUuid(),
                 personId = personId,
                 addressType = addressType,
                 street = street,
@@ -1013,7 +1116,7 @@ suspend fun addRandomAddress(personId: String, onError: (String) -> Unit = {}) {
 }
 
 @OptIn(ExperimentalTime::class)
-suspend fun addRandomComment(personId: String, onError: (String) -> Unit = {}) {
+suspend fun addRandomComment(personId: ByteArray, onError: (String) -> Unit = {}) {
     try {
         val comments =
             listOf("Great person!", "Met at the event.", "Loves Kotlin", "Follows up quickly")
@@ -1112,8 +1215,8 @@ private fun PersonsList(
     persons: List<PersonEntity>,
     onRandomize: (PersonEntity) -> Unit,
     onDelete: (PersonEntity) -> Unit,
-    onAddAddress: (String) -> Unit,
-    onAddComment: (String) -> Unit,
+    onAddAddress: (ByteArray) -> Unit,
+    onAddComment: (ByteArray) -> Unit,
     commentsRefreshTrigger: MutableSharedFlow<Unit>? = null,
 ) {
     Column(
@@ -1158,7 +1261,6 @@ private fun EmptyPersonsPlaceholder() {
         }
     }
 }
-
 
 @Composable
 private fun ErrorDialog(message: String?, onDismiss: () -> Unit) {

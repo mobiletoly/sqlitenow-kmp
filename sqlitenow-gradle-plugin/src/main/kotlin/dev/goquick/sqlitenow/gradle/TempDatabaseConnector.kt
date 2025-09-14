@@ -54,7 +54,7 @@ internal class TempDatabaseConnector(
 
         // Enable foreign keys
         conn.createStatement().use { stmt ->
-            stmt.execute(/*language=sqlite*/ "PRAGMA foreign_keys = ON;")
+            stmt.execute("PRAGMA foreign_keys = ON;")
         }
 
         return conn

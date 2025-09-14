@@ -119,6 +119,9 @@ data class OversqliteConfig(
     val downloadLimit: Int = 1000,
     val syncWindowLookback: Long = 100L,
     val lookbackMaxPasses: Int = 20,
+    val uploadPath: String = "/sync/upload",
+    val downloadPath: String = "/sync/download",
+    val verboseLogs: Boolean = false, // Enable detailed debug logging for troubleshooting
 )
 
 /**
