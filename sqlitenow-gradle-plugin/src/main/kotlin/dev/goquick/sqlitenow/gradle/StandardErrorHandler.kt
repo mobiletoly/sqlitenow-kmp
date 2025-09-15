@@ -25,12 +25,4 @@ object StandardErrorHandler {
         logger.error("SQL statement: $sql")
         throw RuntimeException("SQL execution failed$contextInfo", error)
     }
-
-    /**
-     * Handles code generation errors with consistent logging.
-     */
-    fun handleCodeGenerationError(namespace: String, error: Exception, generationType: String = "code"): Nothing {
-        println("Failed to generate $generationType for namespace '$namespace': ${error.message}")
-        throw RuntimeException("$generationType generation failed for namespace '$namespace'", error)
-    }
 }
