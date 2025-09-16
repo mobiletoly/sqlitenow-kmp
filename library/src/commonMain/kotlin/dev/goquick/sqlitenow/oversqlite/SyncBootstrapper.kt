@@ -16,6 +16,9 @@ internal class SyncBootstrapper(
         userId: String,
         sourceId: String
     ): Result<Unit> = runCatching {
+        // Clear per-db table info cache to avoid stale schema info across app runs/tests
+        TableInfoProvider.clear(db)
+
         if (config.verboseLogs) {
             logger.i { "[VERBOSE] bootstrap: start userId=$userId sourceId=$sourceId" }
             logger.i { "[VERBOSE] bootstrap: config=$config" }

@@ -404,7 +404,7 @@ fun App() {
                         username = savedUser
                         appLog.i { "Restored session for user=$savedUser device=$did" }
                         // Nudge sync worker to run soon
-                        syncTrigger.tryEmit(Unit)
+                        // TODO syncTrigger.tryEmit(Unit)
                     },
                     onError = { error ->
                         appLog.e(error) { "Failed to restore session; showing sign-in" }
@@ -487,7 +487,7 @@ fun App() {
         if (signedIn && bootstrapDone) {
             appLog.i { "Scheduling periodic sync every 60s" }
             while (signedIn) {
-                delay(5_000)
+                delay(555_000)
                 syncTrigger.tryEmit(Unit)
             }
         }
@@ -521,7 +521,7 @@ fun App() {
                             errorMessage = error;
                             reportMessage = null
                         }
-                        syncTrigger.tryEmit(Unit)
+                        // TODO syncTrigger.tryEmit(Unit)
                     }
                 },
                 onSync = {
@@ -605,7 +605,7 @@ fun App() {
                                 errorMessage = error;
                                 reportMessage = null
                             }
-                            syncTrigger.tryEmit(Unit)
+                            // TODO syncTrigger.tryEmit(Unit)
                         }
                     },
                     onDelete = { p ->
@@ -614,7 +614,7 @@ fun App() {
                                 errorMessage = error;
                                 reportMessage = null
                             }
-                            syncTrigger.tryEmit(Unit)
+                            // TODO syncTrigger.tryEmit(Unit)
                         }
                     },
                     onAddAddress = { pid ->
@@ -623,7 +623,7 @@ fun App() {
                                 errorMessage = error;
                                 reportMessage = null
                             }
-                            syncTrigger.tryEmit(Unit)
+                            // TODO syncTrigger.tryEmit(Unit)
                         }
                     },
                     onAddComment = { pid ->
@@ -632,7 +632,7 @@ fun App() {
                                 errorMessage = error;
                                 reportMessage = null
                             }
-                            syncTrigger.tryEmit(Unit)
+                            // TODO syncTrigger.tryEmit(Unit)
                             commentsRefreshTrigger.tryEmit(Unit)
                         }
                     }

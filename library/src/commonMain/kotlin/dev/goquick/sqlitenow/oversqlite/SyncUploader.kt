@@ -225,13 +225,16 @@ internal class SyncUploader(
             "DELETE" -> null
             else -> resolvePayload(db, p)
         }
-        val pkWire = resolvePkWire(db, p)
+        // Important: keep local pk (as stored in _sync_pending.pk_uuid) in the ChangeUpload
+        // so that DB-side finalization (deleting from _sync_pending, updating _sync_row_meta)
+        // uses the correct identifier. We will override to wire format (UUID string for BLOB PKs)
+        // only at network time via performUpload() using pkOverride.
         ChangeUpload(
             sourceChangeId = p.changeId!!,
             schema = config.schema.lowercase(),
             table = p.table.lowercase(),
             op = p.op,
-            pk = pkWire,
+            pk = p.pk,
             serverVersion = p.baseVersion,
             payload = payloadElement
         )
@@ -335,6 +338,25 @@ internal class SyncUploader(
         val ti = TableInfoProvider.get(db, table)
         val pk = ti.primaryKey
         return (pk?.name ?: "id") to (pk?.declaredType ?: "")
+    }
+
+    private suspend fun deleteBusinessRow(
+        db: SafeSQLiteConnection,
+        table: String,
+        pkLocal: String
+    ) {
+        val tableLc = table.lowercase()
+        val (pkCol, pkDecl) = getPrimaryKeyInfo(db, tableLc)
+        val isBlob = pkDecl.lowercase().contains("blob")
+        val sql = "DELETE FROM $tableLc WHERE $pkCol=?"
+        db.prepare(sql).use { st ->
+            if (isBlob) {
+                st.bindBlob(1, uuidHexToBytes(pkLocal))
+            } else {
+                st.bindText(1, pkLocal)
+            }
+            st.step()
+        }
     }
 
     /**
@@ -563,10 +585,7 @@ internal class SyncUploader(
             if (!deleted) {
                 upsertBusinessFromPayload(db, change.table, change.pk, obj["payload"])
             } else {
-                db.prepare("DELETE FROM ${change.table.lowercase()} WHERE id=?").use { del ->
-                    del.bindText(1, change.pk)
-                    del.step()
-                }
+                deleteBusinessRow(db, change.table, change.pk)
             }
             updatedTables += change.table
             updateRowMeta(db, change.table, change.pk, sv, deleted)
@@ -597,10 +616,7 @@ internal class SyncUploader(
             logger.d { "DELETE conflict: maintaining local DELETE, updating server version to $sv" }
 
             // Ensure the record is deleted from business table
-            db.prepare("DELETE FROM ${change.table.lowercase()} WHERE id=?").use { del ->
-                del.bindText(1, change.pk)
-                del.step()
-            }
+            deleteBusinessRow(db, change.table, change.pk)
 
             // Update metadata to track server version but keep deleted=true
             updateRowMeta(db, change.table, change.pk, sv, true)

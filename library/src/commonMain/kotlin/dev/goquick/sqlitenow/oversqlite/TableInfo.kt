@@ -21,11 +21,14 @@ data class TableInfo(
 }
 
 object TableInfoProvider {
-    private val cache = mutableMapOf<String, TableInfo>()
+    // Cache is scoped per SafeSQLiteConnection to avoid cross-database contamination between tests/apps
+    private val cacheByDb = mutableMapOf<SafeSQLiteConnection, MutableMap<String, TableInfo>>()
 
     suspend fun get(db: SafeSQLiteConnection, table: String): TableInfo {
         val key = table.lowercase()
-        cache[key]?.let { return it }
+        val dbCache = cacheByDb.getOrPut(db) { mutableMapOf() }
+        dbCache[key]?.let { return it }
+
         val cols = mutableListOf<ColumnInfo>()
         db.prepare("PRAGMA table_info($key)").use { st ->
             // Resolve column indexes by name to avoid magic numbers
@@ -55,7 +58,12 @@ object TableInfoProvider {
             }
         }
         val ti = TableInfo(key, cols)
-        cache[key] = ti
+        dbCache[key] = ti
         return ti
+    }
+
+    // Optional: allow callers to clear per-db cache (e.g., after migrations)
+    fun clear(db: SafeSQLiteConnection) {
+        cacheByDb.remove(db)
     }
 }

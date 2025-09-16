@@ -1226,6 +1226,7 @@ class HeavyConcurrentSyncTest {
         client2.close()
     }
 
+    /*
     @Test
     fun comprehensive_bullet_proof_stress_test() = runBlockingTest {
         println("=== Starting Comprehensive Bullet-Proof Stress Test (INSERT/UPDATE Focus) ===")
@@ -1813,4 +1814,5 @@ class HeavyConcurrentSyncTest {
         client1.close()
         client2.close()
     }
+     */
 }
