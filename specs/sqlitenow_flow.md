@@ -2,7 +2,7 @@
 
 This document explains the SQLiteNow ("sqlitenow") synchronization client library for Kotlin
 Multiplatform (KMP). It is written so another engineer can implement a compatible client in a
-different language without reading the original KMP code.
+different language without learning the original KMP code.
 
 ## Table of Contents
 
@@ -46,10 +46,12 @@ The library uses three core metadata tables:
 
 ```sql
 CREATE TABLE IF NOT EXISTS _sync_client_info (
-  source_id TEXT PRIMARY KEY,            -- stable id for this device
-  next_change_id INTEGER NOT NULL,       -- local monotonic id for outgoing changes
-  last_server_seq_seen INTEGER NOT NULL, -- server change-stream cursor (watermark)
-  apply_mode INTEGER NOT NULL DEFAULT 0  -- internal flag used during downloads
+  user_id TEXT NOT NULL PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  next_change_id INTEGER NOT NULL DEFAULT 1,
+  last_server_seq_seen INTEGER NOT NULL DEFAULT 0,
+  apply_mode INTEGER NOT NULL DEFAULT 0,
+  current_window_until INTEGER NOT NULL DEFAULT 0
 );
 ```
 
@@ -58,9 +60,10 @@ CREATE TABLE IF NOT EXISTS _sync_client_info (
 ```sql
 CREATE TABLE IF NOT EXISTS _sync_row_meta (
   table_name TEXT NOT NULL,
-  pk_uuid    TEXT NOT NULL,            -- primary key value (string uuid)
-  server_version INTEGER NOT NULL,     -- last server version we have seen/applied
-  deleted    INTEGER NOT NULL,         -- 0/1 logical tombstone (server truth)
+  pk_uuid    TEXT NOT NULL,            -- primary key value (text; hex for BLOB UUIDs)
+  server_version INTEGER NOT NULL DEFAULT 0,
+  deleted    INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   PRIMARY KEY (table_name, pk_uuid)
 );
 ```
@@ -69,14 +72,14 @@ CREATE TABLE IF NOT EXISTS _sync_row_meta (
 
 ```sql
 CREATE TABLE IF NOT EXISTS _sync_pending (
-  queued_at   INTEGER NOT NULL,        -- millis timestamp
   table_name  TEXT NOT NULL,
   pk_uuid     TEXT NOT NULL,
-  op          TEXT NOT NULL,           -- INSERT | UPDATE | DELETE
-  base_version INTEGER NOT NULL,       -- version we believe server has for this row
-  payload     TEXT,                    -- JSON for INSERT/UPDATE, NULL for DELETE
-  change_id   INTEGER,                 -- assigned just-in-time before upload
-  UNIQUE(table_name, pk_uuid, change_id)
+  op          TEXT NOT NULL CHECK (op IN ('INSERT','UPDATE','DELETE')),
+  base_version INTEGER DEFAULT 0,
+  payload     TEXT,
+  change_id   INTEGER,
+  queued_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  PRIMARY KEY (table_name, pk_uuid)
 );
 ```
 
@@ -90,9 +93,19 @@ CREATE INDEX IF NOT EXISTS idx_row_meta ON _sync_row_meta(table_name, pk_uuid);
 ### 2.5 Database Triggers
 
 Triggers are the heart of SQLiteNow - they automatically capture all local changes and queue them
-for synchronization. For each business table that needs sync, create these three triggers:
+for synchronization. The library installs BLOB-aware triggers for each sync table that:
 
-#### INSERT Trigger
+- Guard on `apply_mode=0` to suppress triggers during download/apply
+- Maintain `_sync_row_meta` (set/reset deleted, keep server_version)
+- Coalesce operations (e.g., UPDATE after INSERT remains INSERT)
+- Increment `next_change_id` when a pending row changes
+- For BLOB UUID primary keys, use `lower(hex(pk))` as the local `pk_uuid` and render BLOB columns as
+  hex in JSON payloads; on the wire, PKs are UUID strings and other BLOB columns are Base64
+
+The following examples are conceptual; the installed triggers include the additional safeguards and
+coalescing outlined above.
+
+#### INSERT Trigger (conceptual)
 
 ```sql
 CREATE TRIGGER IF NOT EXISTS sync_insert_users
@@ -114,7 +127,7 @@ BEGIN
 END;
 ```
 
-#### UPDATE Trigger
+#### UPDATE Trigger (conceptual)
 
 ```sql
 CREATE TRIGGER IF NOT EXISTS sync_update_users
@@ -137,7 +150,7 @@ BEGIN
 END;
 ```
 
-#### DELETE Trigger
+#### DELETE Trigger (conceptual)
 
 ```sql
 CREATE TRIGGER IF NOT EXISTS sync_delete_users
@@ -159,6 +172,35 @@ BEGIN
   );
 END;
 ```
+
+#### 2.6 Hex Encoding for BLOB UUID Primary Keys
+
+Some apps store UUID primary keys as BLOB(16). To keep triggers and metadata simple and portable:
+
+- Locally, the client stores `pk_uuid` as a lowercase hex string of the UUID bytes.
+- On the wire, the primary key is a UUID string (e.g., `550e8400-e29b-41d4-a716-446655440000`).
+- Non-PK BLOB columns are represented as Base64 in payloads on the wire.
+
+Trigger expressions must therefore use a PK-aware expression:
+
+```sql
+-- If PK is BLOB UUID (recommended for triggers):
+--   pk_expr_new = lower(hex(NEW.id))
+--   pk_expr_old = lower(hex(OLD.id))
+-- If PK is TEXT (UUID string):
+--   pk_expr_new = NEW.id
+--   pk_expr_old = OLD.id
+```
+
+The installed triggers compute the correct expression based on table schema. The JSON payload built
+in triggers renders BLOB columns as hex for local persistence; the client converts these to Base64
+for non-PK BLOB columns and to UUID string for BLOB UUID primary keys when sending to the server.
+
+Why hex locally?
+
+- Uniform metadata: `_sync_row_meta.pk_uuid` is always text, independent of PK column storage.
+- Simple joins and lookups in metadata without custom collations or binary handling.
+- Lossless mapping: hex ↔ bytes is exact and cheap.
 
 #### Key Trigger Design Elements
 
@@ -183,15 +225,16 @@ COALESCE((SELECT server_version FROM _sync_row_meta
 - Uses 0 if no metadata exists (new record)
 - Critical for conflict detection on the server
 
-**3. JSON Payload Construction**
+**3. JSON Payload Construction & Binary Columns**
 
 ```sql
 json_object('id', NEW.id, 'name', NEW.name, 'email', NEW.email)
 ```
 
-- Captures complete record state for INSERT/UPDATE operations
-- NULL for DELETE operations (no data needed)
-- Must include all syncable columns
+- Captures complete record state for INSERT/UPDATE operations; NULL for DELETE operations
+- For BLOB PKs (UUID stored as BLOB), local `pk_uuid` is lowercase hex; on the wire, the PK is a
+  UUID string
+- Non-PK BLOB columns are encoded as Base64 in payloads on the wire
 
 **4. Timestamp Precision**
 
@@ -216,6 +259,8 @@ json_object('id', NEW.id, 'name', NEW.name, 'email', NEW.email)
 3. Ensure metadata tables exist
 4. **Create triggers for all business tables** that need synchronization
 5. Create sync system tables for business tables with `enableSync=true` annotation
+6. Clear any cached table-info for this database before (re)installing triggers to avoid stale
+   schema information
 
 ### 3.2 Hydrate (Initial/Full Recovery)
 
@@ -275,28 +320,25 @@ UPDATE _sync_client_info SET next_change_id = ?
 
 ```json
 {
-  "lastServerSeqSeen": 12345,
-  // optional optimization hint
+  "last_server_seq_seen": 12345,
   "changes": [
     {
-      "sourceChangeId": 17,
+      "source_change_id": 17,
       "schema": "business",
-      // logical schema name
       "table": "users",
-      // lowercased
       "op": "UPDATE",
-      // INSERT|UPDATE|DELETE
       "pk": "uuid-string",
-      "serverVersion": 2,
-      // base_version from _sync_row_meta
-      "payload": {
-        ...
-      }
-      // null for DELETE
+      "server_version": 2,
+      "payload": { }
     }
   ]
 }
 ```
+
+Notes:
+- The client maintains row identifiers in local format (text; hex for BLOB UUID PKs) for all
+  database work. Immediately before the HTTP call, it converts PKs to wire format (UUID string) in
+  the request body.
 
 ### 4.4 Upload Response Format (Server → Client)
 
@@ -304,20 +346,15 @@ UPDATE _sync_client_info SET next_change_id = ?
 {
   "statuses": [
     {
-      "sourceChangeId": 17,
+      "source_change_id": 17,
       "status": "applied|conflict|invalid|materialize_error",
-      "newServerVersion": 3,
-      // for applied/conflict when server row exists
-      "serverRow": {
-        ...
-      },
-      // optional, server canonical row for conflicts
-      "message": "..."
-      // optional diagnostics
+      "new_server_version": 3,
+      "server_row": { },
+      "message": "...",
+      "invalid": { "reason": "fk_missing|bad_payload|..." }
     }
   ],
-  "highestServerSeq": 668501
-  // optional: highest seq in server log
+  "highest_server_seq": 668501
 }
 ```
 
@@ -335,7 +372,7 @@ UPDATE _sync_row_meta SET
 WHERE table_name = ? AND pk_uuid = ?
 
 -- Remove from pending queue
-DELETE FROM _sync_pending WHERE change_id = ?
+DELETE FROM _sync_pending WHERE table_name = ? AND pk_uuid = ?
 ```
 
 #### Conflict Status
@@ -356,14 +393,15 @@ DELETE FROM _sync_pending WHERE change_id = ?
 ### 5.1 Download Request (Client → Server)
 
 ```
-GET /sync/download?after=<last_server_seq_seen>&limit=<N>&includeSelf=<bool>&schema=<name>
+GET /sync/download?after=<last_server_seq_seen>&limit=<N>&include_self=<bool>&schema=<name>[&until=<seq>]
 ```
 
 Parameters:
 
 - `after`: Client's current watermark (`last_server_seq_seen`)
 - `limit`: Maximum number of changes to return
-- `includeSelf`: Whether to include changes from this client's `source_id`
+- `include_self`: Whether to include changes from this client's `source_id`
+- `until`: Optional frozen upper bound for windowed hydration
 - `schema`: Logical schema name (e.g., "business")
 
 ### 5.2 Download Response (Server → Client)
@@ -373,20 +411,16 @@ Parameters:
   "changes": [
     {
       "op": "INSERT|UPDATE|DELETE",
-      "tableName": "users",
+      "table": "users",
       "pk": "uuid-string",
-      "serverVersion": 3,
-      "payload": {
-        ...
-      },
-      // null for DELETE
-      "sourceId": "device-uuid"
+      "server_version": 3,
+      "payload": { },
+      "source_id": "device-uuid"
     }
   ],
-  "nextAfter": 668501,
-  "hasMore": false,
-  "windowUntil": 0
-  // optional frozen upper-bound for windowing
+  "next_after": 668501,
+  "has_more": false,
+  "window_until": 0
 }
 ```
 
@@ -394,38 +428,36 @@ Parameters:
 
 Process changes in a single transaction with triggers disabled:
 
-```sql
-BEGIN TRANSACTION;
+```pseudocode
+BEGIN;
+SET apply_mode = 1;  // suppress triggers
 
--- CRITICAL: Disable triggers to prevent infinite loops
-UPDATE _sync_client_info SET apply_mode = 1;
+for change in page:
+  if (!include_self && change.source_id == client.source_id) continue
 
--- For each change in the page:
--- If includeSelf=false and change.sourceId == client.source_id: SKIP
+  // Resolve PK binding by column type.
+  // If PK column type contains 'BLOB', bind Blob(UUID.fromString(change.pk).toBytes())
+  // else bind Text(change.pk)
 
--- For DELETE operations:
-DELETE FROM <business_table> WHERE id = ?;
-UPDATE _sync_row_meta SET
-  server_version = ?,
-  deleted = 1
-WHERE table_name = ? AND pk_uuid = ?;
+  if (change.op == DELETE):
+    DELETE FROM <table> WHERE <pk_col> = :pk
+    UPSERT _sync_row_meta(table_name, pk_uuid, server_version, deleted=1)
+  else:  // INSERT/UPDATE
+    UPSERT business row from change.payload  // triggers suppressed by apply_mode
+    UPSERT _sync_row_meta(table_name, pk_uuid, server_version, deleted=0)
 
--- For INSERT/UPDATE operations:
--- Upsert business data from payload (triggers won't fire due to apply_mode=1)
-INSERT OR REPLACE INTO <business_table> (...) VALUES (...);
-UPDATE _sync_row_meta SET
-  server_version = ?,
-  deleted = 0
-WHERE table_name = ? AND pk_uuid = ?;
+  // Advance watermark if next_after > previous_after
+SET last_server_seq_seen = response.next_after
 
--- Update watermark
-UPDATE _sync_client_info SET last_server_seq_seen = ?;
-
--- CRITICAL: Re-enable triggers
-UPDATE _sync_client_info SET apply_mode = 0;
-
+SET apply_mode = 0;  // re-enable triggers
 COMMIT;
 ```
+
+Post-upload lookback (internal): During a short window after uploads, the client downloads a bounded
+range including self to ensure metadata (especially deletes) is consistent. It uses a version check
+keyed by the correct local PK format (hex for BLOB UUID PKs) to avoid applying stale changes. The
+client also skips intermediate DELETEs that are superseded by later INSERT/UPDATE for the same row
+within the same page.
 
 **Why apply_mode is Essential:**
 
@@ -685,15 +717,16 @@ resurrect" the deleted record on Device A.
 DELETE operations have no payload data, so the conflict resolver automatically chose "AcceptServer",
 causing the server's updated version to overwrite the local DELETE.
 
-**The Fix:**
+**The Fix (as implemented):**
 
-```
-If local operation is DELETE:
-  Always choose KeepLocal (prefer the DELETE)
-  Update local metadata to server's version
-  Re-enqueue DELETE with new server version
-  Server will then accept the DELETE and propagate to all devices
-```
+- Prefer local DELETE in conflict paths; ensure the business row is deleted locally with PK-type
+  aware binding (BLOB UUID vs TEXT).
+- Update `_sync_row_meta` to reflect the server version (deleted=1), so subsequent lookbacks do not
+  resurrect the row.
+- Update the pending DELETE to use the server's version as the new `base_version` when retrying.
+- Post-upload lookback is performed (including self) with a version check using the correct local
+  PK format (hex for BLOB UUIDs), and with an optimization to skip intermediate DELETEs superseded
+  by later changes in the same page.
 
 **Why This Works:**
 
@@ -701,6 +734,52 @@ If local operation is DELETE:
 - Maintains data consistency across all devices
 - Server still validates the DELETE against current version
 - Other devices receive and apply the DELETE correctly
+
+---
+
+## 11. Diagrams (Mermaid)
+
+### 11.1 Incremental Sync (Upload → Lookback → Download)
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor App
+  participant DB as SQLite (WAL)
+  participant Client as OversqliteClient
+  participant Server
+
+  App->>DB: INSERT/UPDATE/DELETE business rows
+  DB-->>DB: Triggers enqueue into _sync_pending (apply_mode=0)
+
+  App->>Client: uploadOnce()
+  Client->>DB: Read next_change_id, pending
+  Client->>Server: POST /sync/upload (UUID strings on wire)
+  Server-->>Client: statuses, highest_server_seq
+  Client->>DB: Apply statuses (update _sync_row_meta, delete from _sync_pending)
+
+  Note over Client: Post-upload lookback
+  Client->>Server: GET /sync/download?include_self=true
+  Server-->>Client: Page of changes
+  Client->>DB: Apply page atomically (apply_mode=1)
+
+  App->>Client: downloadOnce()
+  Client->>Server: GET /sync/download
+  Server-->>Client: Page of changes
+  Client->>DB: Apply page atomically (apply_mode=1)
+```
+
+### 11.2 Encoding Map
+
+```mermaid
+flowchart LR
+  A[PK in business table] -->|BLOB(16)| B[Local pk_uuid = hex(bytes)]
+  A -->|TEXT (UUID string)| C[Local pk_uuid = text]
+  B --> D[Wire PK = UUID string]
+  C --> D
+  E[Non-PK BLOB columns] --> F[Local JSON payload = hex]
+  F --> G[Wire payload = Base64]
+```
 
 ---
 
@@ -714,7 +793,9 @@ If local operation is DELETE:
    `_sync_pending`
 2. **Upload**: Send queued changes to server → Server responds with APPLIED/CONFLICT
 3. **Conflict Resolution**: For conflicts, decide AcceptServer or KeepLocal → Re-queue if needed
-4. **Post-Upload Lookback**: Download recent changes to catch missed updates and sync metadata
+4. **Post-Upload Lookback**: Download a bounded recent window (including self) to catch missed
+   updates and sync metadata; skip intermediate DELETEs that are superseded by later changes in the
+   same page
 5. **Download**: Fetch new changes from other devices → Apply with **triggers disabled** to prevent
    loops
 

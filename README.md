@@ -28,14 +28,6 @@ tablets, and other devices.
 
 ## Key Features
 
-### Multi-Device Synchronization
-- **Built-in Sync System** - Complete synchronization solution for multi-device applications
-- **Conflict Resolution** - Automatic conflict resolution with pluggable strategies (Server Wins, Client Wins, etc.)
-- **Change Tracking** - Automatic tracking of INSERT, UPDATE, DELETE operations
-- **Offline-First** - Works seamlessly offline, syncs when connection is available
-- **JWT Authentication** - Secure sync with customizable authentication via HttpClient
-- **Incremental Sync** - Efficient sync with pagination and change-based updates
-
 ### Type-Safe SQL Generation
 - **Pure SQL Control** - Write your queries in SQL files, get type-safe Kotlin code
 - **Comment-based Annotations** - Control code generation using simple `-- @@{ annotations }`
@@ -45,6 +37,16 @@ tablets, and other devices.
   using [androidx.sqlite](https://developer.android.com/kotlin/multiplatform/sqlite) driver
 - **SQLite Focused** - Optimized specifically for SQLite features and capabilities
 - **Migration support** - Migration scripts are supported to manage database schema changes
+
+### Multi-Device Synchronization
+- **Built-in Sync System** - Complete synchronization solution for multi-device applications
+- **Conflict Resolution** - Automatic conflict resolution with pluggable strategies (Server Wins, Client Wins, etc.)
+- **Change Tracking** - Automatic tracking of INSERT, UPDATE, DELETE operations
+- **Offline-First** - Works seamlessly offline, syncs when connection is available
+- **JWT Authentication** - Secure sync with customizable authentication via HttpClient
+- **Incremental Sync** - Efficient sync with pagination and change-based updates
+
+(does not require to use Type-Safe SQL Generation, can be used with other SQLite libraries as well)
 
 ## Why SQLiteNow exists if SQLDelight is really awesome
 

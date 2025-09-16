@@ -103,7 +103,7 @@ SQLiteNow automatically tracks changes to your data when sync is enabled on a ta
 ### What Gets Tracked?
 - **INSERT operations**: New records are marked for upload
 - **UPDATE operations**: Modified records are marked for upload
-- **DELETE operations**: Deleted records are marked for upload (tombstone records)
+- **DELETE operations**: Deleted records are marked for upload
 
 ### How Tracking Works
 - **Automatic**: No manual intervention required once configured

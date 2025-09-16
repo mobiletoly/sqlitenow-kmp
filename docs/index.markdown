@@ -39,6 +39,7 @@ tablets, and other devices.
 - **JWT Authentication** - Secure sync with customizable authentication via HttpClient
 - **Incremental Sync** - Efficient sync with pagination and change-based updates
 
+(does not require to use Type-Safe SQL Generation, can be used with other SQLite libraries as well)
 
 ## Why SQLiteNow exists if SQLDelight is really awesome
 

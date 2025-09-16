@@ -46,45 +46,64 @@ iosMain.dependencies {
 
 ## Step 2: Enable Sync on Tables
 
-First, decide which tables should be synchronized across devices. Add the `enableSync=true` annotation to enable sync tracking:
+First, decide which tables should be synchronized across devices. Add the `enableSync=true`
+annotation to enable sync tracking:
 
 ```sql
 -- Enable sync for this table
 -- @@{ enableSync=true }
 CREATE TABLE person (
-    id TEXT PRIMARY KEY NOT NULL,  -- MUST be uuid
+    id TEXT PRIMARY KEY NOT NULL,  -- TEXT with UUID string
     first_name TEXT NOT NULL,
     last_name TEXT NOT NULL,
     email TEXT UNIQUE,
     created_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
+-- Alternative: BLOB primary key with UUID bytes
 -- @@{ enableSync=true }
 CREATE TABLE note (
-    id TEXT PRIMARY KEY NOT NULL,  -- MUST be uuid
+    id BLOB PRIMARY KEY NOT NULL DEFAULT (randomblob(16)),  -- BLOB with UUID bytes
     title TEXT NOT NULL,
     content TEXT,
-    person_id TEXT REFERENCES person(id),
+    person_id TEXT REFERENCES person(id),  -- Foreign key matches referenced table type
     updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 ```
 
 ### Critical Primary Key Requirements
 
-**MANDATORY: Primary keys MUST be TEXT type containing UUIDs**
+**MANDATORY: Primary keys MUST contain UUID data in one of these formats:**
 
+**Option 1: TEXT type with UUID strings**
 ```sql
 CREATE TABLE users (
-    id TEXT PRIMARY KEY NOT NULL,  -- Will contain UUID values
+    id TEXT PRIMARY KEY NOT NULL,  -- Will contain UUID strings like "550e8400-e29b-41d4-a716-446655440000"
     name TEXT NOT NULL
 );
 ```
 
+**Option 2: BLOB type with UUID bytes**
+```sql
+CREATE TABLE users (
+    id BLOB PRIMARY KEY NOT NULL DEFAULT (randomblob(16)),  -- Contains 16-byte UUID data
+    name TEXT NOT NULL
+) WITHOUT ROWID;  -- Recommended for BLOB primary keys
+```
+
 **Why UUIDs are required:**
+
 - **Global uniqueness**: UUIDs prevent conflicts when merging data from multiple devices
 - **Offline creation**: Devices can create records offline without server coordination
 - **Conflict resolution**: The sync system relies on globally unique identifiers
 - **Cross-device consistency**: Same record has same ID across all devices
+
+**Choosing between TEXT and BLOB:**
+
+- **TEXT**: Human-readable, easier debugging, slightly larger storage (36 bytes vs 16 bytes)
+- **BLOB**: More compact storage, better performance, requires `WITHOUT ROWID` for optimal
+  performance
+- **Foreign keys**: Must match the type of the referenced primary key
 
 
 ### Custom Primary Key Column Names
@@ -92,61 +111,79 @@ CREATE TABLE users (
 If your table uses a different column name for the primary key, specify it with `syncKeyColumnName`:
 
 ```sql
--- Custom primary key column name
+-- Custom primary key column name with TEXT
 -- @@{ enableSync=true, syncKeyColumnName=user_uuid }
 CREATE TABLE users (
-    user_uuid TEXT PRIMARY KEY NOT NULL,
+    user_uuid TEXT PRIMARY KEY NOT NULL,  -- TEXT with UUID strings
     name TEXT NOT NULL,
     email TEXT UNIQUE
 );
 
--- Traditional 'id' column (no annotation needed)
--- @@{ enableSync=true }
+-- Custom primary key column name with BLOB
+-- @@{ enableSync=true, syncKeyColumnName=user_id }
 CREATE TABLE orders (
-    id TEXT PRIMARY KEY NOT NULL,
-    user_uuid TEXT NOT NULL,
+    user_id BLOB PRIMARY KEY NOT NULL DEFAULT (randomblob(16)),  -- BLOB with UUID bytes
+    user_uuid TEXT NOT NULL,  -- Foreign key - type must match referenced table
     product_code TEXT NOT NULL
-);
+) WITHOUT ROWID;
 ```
 
 **Important Notes:**
 - Only tables with `enableSync=true` will be synchronized
 - Tables without this annotation remain local-only
 - You can mix sync-enabled and local-only tables in the same database
-- **Primary keys must always be TEXT type containing UUID values**
+- **Primary keys must contain UUID data as either TEXT strings or BLOB bytes**
 - Use `syncKeyColumnName` annotation for custom primary key column names
 - The system can auto-detect primary key columns if not explicitly specified
+- **Foreign keys must match the type of the referenced primary key** (TEXT or BLOB)
 
 ### UUID Generation in Your App
 
-When inserting records, you must generate UUID values for primary keys:
+When inserting records, you must generate UUID values for primary keys. The approach depends on whether you're using TEXT or BLOB primary keys:
 
+**For TEXT primary keys (UUID strings):**
 ```kotlin
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
 @OptIn(ExperimentalUuidApi::class)
 suspend fun createPerson(name: String, email: String) {
-    val personId = Uuid.random().toString()  // Generate UUID
+    val personId = Uuid.random().toString()  // Generate UUID string
 
     database.personQueries.insert(
-        id = personId,  // TEXT primary key with UUID value
+        id = personId,  // TEXT primary key with UUID string
         first_name = name.split(" ").first(),
         last_name = name.split(" ").last(),
         email = email,
         created_at = System.currentTimeMillis()
     )
 }
+```
 
-// For custom primary key column names
+**For BLOB primary keys (UUID bytes):**
+```kotlin
+import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
+
 @OptIn(ExperimentalUuidApi::class)
-suspend fun createUser(name: String, email: String) {
-    val userUuid = Uuid.random().toString()  // Generate UUID
+suspend fun createNote(title: String, content: String) {
+    val noteId = Uuid.random().toByteArray()  // Generate UUID bytes
 
-    database.userQueries.insert(
-        user_uuid = userUuid,  // Custom primary key column
-        name = name,
-        email = email
+    database.noteQueries.insert(
+        id = noteId,  // BLOB primary key with UUID bytes
+        title = title,
+        content = content,
+        updated_at = System.currentTimeMillis()
+    )
+}
+
+// Alternative: Let SQLite generate the BLOB UUID automatically
+suspend fun createNoteWithAutoId(title: String, content: String) {
+    database.noteQueries.insert(
+        // id will be auto-generated by DEFAULT (randomblob(16))
+        title = title,
+        content = content,
+        updated_at = System.currentTimeMillis()
     )
 }
 ```
@@ -406,16 +443,17 @@ Congratulations! You now have basic sync functionality working. Here's what to e
 - Verify the user ID and device ID are properly formatted
 
 ### "Primary key constraint failed" or Sync Errors
-- **Check primary key types**: Ensure all sync table primary keys are `TEXT`, not `INTEGER`
-- **Verify UUID generation**: Make sure you're generating proper UUID strings for primary keys
-- **Foreign key consistency**: Foreign keys referencing sync tables must also be `TEXT` type
+- **Check primary key types**: Ensure all sync table primary keys are `TEXT` or `BLOB`, not `INTEGER`
+- **Verify UUID generation**: Make sure you're generating proper UUID data (strings for TEXT, bytes for BLOB)
+- **Foreign key consistency**: Foreign keys referencing sync tables must match the referenced primary key type (TEXT or BLOB)
 - **Custom primary keys**: Use `syncKeyColumnName` annotation if your primary key isn't named "id"
+- **BLOB primary keys**: Use `WITHOUT ROWID` for optimal performance with BLOB primary keys
 
 ### "No changes to upload"
 - Make sure you've enabled `enableSync=true` on your tables
 - Verify that you're making changes to sync-enabled tables
 - Check that the sync client was created after the database schema was set up
-- Ensure primary keys are TEXT type with UUID values
+- Ensure primary keys contain UUID data (TEXT strings or BLOB bytes)
 
 ### Sync seems slow
 - Adjust the `limit` parameter in upload/download operations
@@ -423,8 +461,9 @@ Congratulations! You now have basic sync functionality working. Here's what to e
 - Monitor network conditions and adjust sync frequency accordingly
 
 ### "Column not found" Errors in Triggers
-- This usually means you're using INTEGER primary keys instead of TEXT
+- This usually means you're using INTEGER primary keys instead of TEXT or BLOB
 - Check that your `syncKeyColumnName` annotation matches your actual column name
 - Verify that the primary key column exists and is properly defined
+- For BLOB primary keys, ensure the column is defined correctly with proper type
 
 For more detailed troubleshooting, see our [Troubleshooting Guide]({{ site.baseurl }}/sync/troubleshooting/).
