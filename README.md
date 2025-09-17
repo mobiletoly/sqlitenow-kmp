@@ -5,30 +5,27 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/mobiletoly/sqlitenow-kmp/gradle.yml?branch=main&logo=github&label=CI)](https://github.com/mobiletoly/sqlitenow-kmp/actions/workflows/gradle.yml)
 [![License](https://img.shields.io/github/license/mobiletoly/sqlitenow-kmp?logo=apache&label=License)](LICENSE)
 
-A Kotlin Multiplatform library for type-safe, SQLite database access **with built-in multi-device synchronization**,
-inspired by SQLDelight. Unlike other popular frameworks (such as Room) - it is full SQL-first
-framework. Write your queries in SQL files, get type-safe Kotlin code generated automatically.
-And no runtime annotations overhead, everything is generated at compile time.
+A Kotlin Multiplatform library for type-safe, SQLite database access, inspired by SQLDelight.
+Unlike other popular frameworks (such as Room) - it is full SQL-first framework. Write your
+queries in SQL files, get type-safe Kotlin code generated automatically. And no runtime annotations
+overhead, everything is generated at compile time.
 
 **Sync-Ready**: SQLiteNow includes a complete synchronization system for multi-device applications,
 allowing seamless data sync across devices with conflict resolution and offline-first capabilities.
 
-Full documentation is available in the https://mobiletoly.github.io/sqlitenow-kmp/ pages.
-
 ## Overview
 
-SQLiteNow generates Kotlin code from your SQL files, giving you full control over your queries while
-maintaining type safety. Unlike SQLDelight, which supports multiple database engines, SQLiteNow is
-focused exclusively on SQLite, allowing for deeper integration and SQLite-specific optimizations.
+SQLiteNow generates Kotlin code from your SQL files, giving you full control over your queries
+while maintaining type safety. Unlike SQLDelight, which supports multiple database engines,
+SQLiteNow is focused exclusively on SQLite, allowing for deeper integration and SQLite-specific
+optimizations.
 
-**Built for Multi-Device Apps**: SQLiteNow includes a complete synchronization system that handles
-data sync between multiple devices, with automatic conflict resolution, change tracking, and
-offline-first architecture. Perfect for mobile apps that need to work seamlessly across phones,
-tablets, and other devices.
+Full documentation is available in the https://mobiletoly.github.io/sqlitenow-kmp/ pages.
 
 ## Key Features
 
 ### Type-Safe SQL Generation
+
 - **Pure SQL Control** - Write your queries in SQL files, get type-safe Kotlin code
 - **Comment-based Annotations** - Control code generation using simple `-- @@{ annotations }`
   comments in your SQL.
@@ -38,15 +35,35 @@ tablets, and other devices.
 - **SQLite Focused** - Optimized specifically for SQLite features and capabilities
 - **Migration support** - Migration scripts are supported to manage database schema changes
 
-### Multi-Device Synchronization
+### Optional Multi-Device Synchronization
+
 - **Built-in Sync System** - Complete synchronization solution for multi-device applications
-- **Conflict Resolution** - Automatic conflict resolution with pluggable strategies (Server Wins, Client Wins, etc.)
+- **Conflict Resolution** - Automatic conflict resolution with pluggable strategies (Server Wins,
+  Client Wins, etc.)
 - **Change Tracking** - Automatic tracking of INSERT, UPDATE, DELETE operations
 - **Offline-First** - Works seamlessly offline, syncs when connection is available
 - **JWT Authentication** - Secure sync with customizable authentication via HttpClient
 - **Incremental Sync** - Efficient sync with pagination and change-based updates
 
-(does not require to use Type-Safe SQL Generation, can be used with other SQLite libraries as well)
+
+## Components
+
+Client-side framework components:
+- **SQLiteNow Generator** - The code generation component of the SQLiteNow framework that
+  generates type-safe Kotlin code from SQL files.
+- **SQLiteNow Library** - The core library that provides convenient APIs for database access.
+- **OverSqlite** - The sync component of the SQLiteNow framework that enables seamless data
+  sharing across multiple devices with automatic conflict resolution, change tracking, and
+  offline-first capabilities.
+
+Server-side components:
+- **OverSync** - Sync server that provides an adapter library for data synchronization.
+  Currently we have **go-oversync** implementation in Go with PostgreSQL as data store.
+
+**It is important to mention** that you can use SQLiteNow Generator and SQLiteNow Library without
+using OverSqlite for synchronization. And vice versa - you can use OverSqlite for synchronization
+of SQLite database with PostgreSQL without using SQLiteNow Generator and SQLiteNow Library.
+
 
 ## Why SQLiteNow exists if SQLDelight is really awesome
 
@@ -174,8 +191,8 @@ val syncClient = db.newOversqliteClient(
 syncClient.bootstrap(userId = "user123", sourceId = "device456")
 
 // Perform full sync (upload local changes, download remote changes)
-val uploadResult = syncClient.uploadOnce(limit = 1000)
-val downloadResult = syncClient.downloadOnce(limit = 1000)
+val uploadResult = syncClient.uploadOnce()
+val downloadResult = syncClient.downloadOnce(limit = 500)
 ```
 
 The sync system automatically handles:
