@@ -143,9 +143,6 @@ When inserting records, you must generate UUID values for primary keys. The appr
 
 **For TEXT primary keys (UUID strings):**
 ```kotlin
-import kotlin.uuid.ExperimentalUuidApi
-import kotlin.uuid.Uuid
-
 @OptIn(ExperimentalUuidApi::class)
 suspend fun createPerson(name: String, email: String) {
     val personId = Uuid.random().toString()  // Generate UUID string
@@ -162,9 +159,6 @@ suspend fun createPerson(name: String, email: String) {
 
 **For BLOB primary keys (UUID bytes):**
 ```kotlin
-import kotlin.uuid.ExperimentalUuidApi
-import kotlin.uuid.Uuid
-
 @OptIn(ExperimentalUuidApi::class)
 suspend fun createNote(title: String, content: String) {
     val noteId = Uuid.random().toByteArray()  // Generate UUID bytes
@@ -195,18 +189,9 @@ suspend fun createNoteWithAutoId(title: String, content: String) {
 
 ## Step 3: Configure Authentication
 
-Create an authenticated HttpClient with JWT token management:
+Create an authenticated HttpClient (ktor) with JWT token management:
 
 ```kotlin
-import io.ktor.client.*
-import io.ktor.client.plugins.auth.*
-import io.ktor.client.plugins.auth.providers.*
-import io.ktor.client.plugins.contentnegotiation.*
-import io.ktor.client.plugins.defaultRequest
-import io.ktor.client.request.url
-import io.ktor.serialization.kotlinx.json.*
-import kotlinx.serialization.json.Json
-
 fun createSyncHttpClient(
     baseUrl: String,
     getToken: suspend () -> String?,
@@ -465,5 +450,3 @@ Congratulations! You now have basic sync functionality working. Here's what to e
 - Check that your `syncKeyColumnName` annotation matches your actual column name
 - Verify that the primary key column exists and is properly defined
 - For BLOB primary keys, ensure the column is defined correctly with proper type
-
-For more detailed troubleshooting, see our [Troubleshooting Guide]({{ site.baseurl }}/sync/troubleshooting/).

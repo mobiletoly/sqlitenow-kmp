@@ -114,6 +114,10 @@ Understand the two-phase process of setting up sync for new devices and initial 
 
 Deep dive into upload and download operations, conflict resolution, and sync strategies.
 
+### [Reactive Sync Updates →]({{ site.baseurl }}/sync/reactive-updates/)
+
+Learn how SQLiteNow automatically updates your UI when sync operations modify data.
+
 ### [Authentication →]({{ site.baseurl }}/sync/authentication/)
 
 Configure JWT authentication, token refresh, and secure communication with your sync server.
@@ -143,6 +147,11 @@ Set up your sync server to handle client requests and manage data synchronizatio
   <a href="{{ site.baseurl }}/sync/sync-operations/" class="doc-nav-card">
     <h3>⚡ Sync Operations</h3>
     <p>Upload, download, and conflict resolution strategies</p>
+  </a>
+
+  <a href="{{ site.baseurl }}/sync/reactive-updates/" class="doc-nav-card">
+    <h3>🔄 Reactive Updates</h3>
+    <p>Automatic UI updates when sync operations modify data</p>
   </a>
 
   <a href="{{ site.baseurl }}/sync/authentication/" class="doc-nav-card">

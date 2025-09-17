@@ -133,6 +133,114 @@ val db = SampleDatabase(
 
 ---
 
+## Reactive UI Updates with Flows
+
+SQLiteNow automatically tracks when your database tables change and can notify your UI through reactive flows. This keeps your interface up-to-date without manual refresh calls.
+
+### Basic Reactive Query
+
+Use the generated `.asFlow()` method to create queries that automatically update when data changes:
+
+```kotlin
+@Composable
+fun PersonList() {
+    var persons by remember { mutableStateOf<List<PersonEntity>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(Unit) {
+        database.person
+            .selectAll(PersonQuery.SelectAll.Params(limit = -1, offset = 0))
+            .asFlow()                    // Reactive flow
+            .flowOn(Dispatchers.IO)      // DB operations on IO thread
+            .collect { personList ->
+                persons = personList      // UI updates automatically
+                isLoading = false
+            }
+    }
+
+    // UI automatically updates when data changes
+    LazyColumn {
+        items(persons) { person ->
+            PersonCard(person = person)
+        }
+    }
+}
+```
+
+### With Data Transformation
+
+Transform data on the IO thread before updating UI:
+
+```kotlin
+LaunchedEffect(Unit) {
+    database.person
+        .selectAll(PersonQuery.SelectAll.Params(limit = -1, offset = 0))
+        .asFlow()
+        .map { personList ->
+            // Transform data on IO thread
+            personList.map { person ->
+                person.copy(
+                    displayName = "${person.firstName} ${person.lastName}".trim(),
+                    isRecent = person.createdAt > recentThreshold
+                )
+            }
+        }
+        .flowOn(Dispatchers.IO)
+        .collect { transformedPersons ->
+            persons = transformedPersons
+        }
+}
+```
+
+### Related Data Updates
+
+Reactive flows work across related tables:
+
+```kotlin
+@Composable
+fun PersonWithComments(personId: ByteArray) {
+    var person by remember { mutableStateOf<PersonEntity?>(null) }
+    var comments by remember { mutableStateOf<List<CommentEntity>>(emptyList()) }
+
+    LaunchedEffect(personId.toList()) {
+        // Person data flow
+        launch {
+            database.person
+                .selectById(PersonQuery.SelectById.Params(id = personId))
+                .asFlow()
+                .flowOn(Dispatchers.IO)
+                .collect { personResult ->
+                    person = personResult.firstOrNull()
+                }
+        }
+
+        // Comments data flow
+        launch {
+            database.comment
+                .selectByPersonId(CommentQuery.SelectByPersonId.Params(personId = personId))
+                .asFlow()
+                .flowOn(Dispatchers.IO)
+                .collect { commentList ->
+                    comments = commentList
+                }
+        }
+    }
+}
+```
+
+### Performance Tips
+
+- **Use LaunchedEffect**: Automatically cancels when composable leaves composition
+- **Apply flowOn(Dispatchers.IO)**: Keep database operations off the main thread
+- **Debounce rapid changes**: Use `.debounce(100)` for high-frequency updates
+- **Limit query scope**: Use specific queries instead of broad `SELECT *` statements
+
+**Note**: When using SQLiteNow's sync features, reactive flows automatically update during sync operations. See [Reactive Sync Updates]({{ site.baseurl }}/sync/reactive-updates/) for sync-specific patterns.
+
+<br>
+
+---
+
 ## Create database schema file
 
 In order to generate SQLiteNow schemas - we use in-memory created SQLite database.
