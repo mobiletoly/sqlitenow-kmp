@@ -608,21 +608,31 @@ internal class SyncDownloader(
         db: SafeSQLiteConnection,
         block: suspend () -> Pair<Int, Long>
     ): Pair<Int, Long> {
-        db.execSQL("BEGIN")
-        try {
-            db.execSQL("PRAGMA defer_foreign_keys = ON")
-            db.execSQL("UPDATE _sync_client_info SET apply_mode=1")
-            val result = block()
-            db.execSQL("UPDATE _sync_client_info SET apply_mode=0")
-            db.execSQL("COMMIT")
-            return result
-        } catch (t: Throwable) {
+        val alreadyInTx = db.inTransaction()
+        return if (alreadyInTx) {
             try {
-                db.execSQL("ROLLBACK")
-            } catch (_: Throwable) {
+                db.execSQL("PRAGMA defer_foreign_keys = ON")
+                db.execSQL("UPDATE _sync_client_info SET apply_mode=1")
+                val result = block()
+                result
+            } finally {
+                // Always clear apply_mode in the same (outer) transaction context
+                try { db.execSQL("UPDATE _sync_client_info SET apply_mode=0") } catch (_: Throwable) {}
             }
-            db.execSQL("UPDATE _sync_client_info SET apply_mode=0")
-            throw t
+        } else {
+            try {
+                db.transaction {
+                    db.execSQL("PRAGMA defer_foreign_keys = ON")
+                    db.execSQL("UPDATE _sync_client_info SET apply_mode=1")
+                    val result = block()
+                    db.execSQL("UPDATE _sync_client_info SET apply_mode=0")
+                    result
+                }
+            } catch (t: Throwable) {
+                // Ensure apply_mode is cleared if transaction rolled back
+                try { db.execSQL("UPDATE _sync_client_info SET apply_mode=0") } catch (_: Throwable) {}
+                throw t
+            }
         }
     }
 

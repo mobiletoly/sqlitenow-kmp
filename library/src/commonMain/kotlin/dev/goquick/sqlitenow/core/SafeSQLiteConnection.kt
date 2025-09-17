@@ -66,4 +66,33 @@ class SafeSQLiteConnection(
             ref.inTransaction()
         }
     }
+
+    /**
+     * Executes the given block within a database transaction, avoiding nested BEGIN/COMMIT.
+     * If a transaction is already active on this connection, the block runs as-is inside
+     * the existing transaction. Otherwise, a new transaction is started and properly
+     * committed or rolled back.
+     */
+    suspend fun <T> transaction(block: suspend () -> T): T {
+        return withContext(dispatcher) {
+            if (ref.inTransaction()) {
+                // Already in a transaction: just run the block safely on the same dispatcher
+                block()
+            } else {
+                ref.execSQL("BEGIN")
+                try {
+                    val result = block()
+                    ref.execSQL("COMMIT")
+                    result
+                } catch (e: Exception) {
+                    try {
+                        ref.execSQL("ROLLBACK")
+                    } catch (_: Exception) {
+                        // ignore rollback errors
+                    }
+                    throw e
+                }
+            }
+        }
+    }
 }

@@ -437,8 +437,7 @@ internal class SyncUploader(
         var firstErrorMessage: String? = null
         val invalidReasons = mutableMapOf<String, Int>()
 
-        db.execSQL("BEGIN")
-        try {
+        db.transaction {
             db.prepare("UPDATE _sync_client_info SET last_server_seq_seen=?").use { st ->
                 st.bindLong(1, response.highestServerSeq)
                 st.step()
@@ -468,12 +467,6 @@ internal class SyncUploader(
                         if (firstErrorMessage == null) firstErrorMessage = status.message
                     }
                 }
-            }
-            db.execSQL("COMMIT")
-        } finally {
-            try {
-                db.execSQL("ROLLBACK")
-            } catch (_: Throwable) {
             }
         }
 

@@ -128,25 +128,8 @@ open class SqliteNowDatabase {
         if (!::conn.isInitialized) {
             throw IllegalStateException("Database connection not initialized. Call open() first.")
         }
-
-        // Use single-threaded dispatcher to avoid deadlock
-        return withContext(conn.dispatcher) {
-            conn.ref.execSQL("BEGIN TRANSACTION;")
-
-            try {
-                val result = block()
-                conn.ref.execSQL("COMMIT;")
-                result
-            } catch (e: Exception) {
-                // Roll back the transaction in case of an exception
-                try {
-                    conn.ref.execSQL("ROLLBACK;")
-                } catch (rollbackException: Exception) {
-                    e.addSuppressed(rollbackException)
-                }
-                throw e
-            }
-        }
+        // Delegate to SafeSQLiteConnection to ensure nested transactions are handled safely
+        return conn.transaction(block)
     }
 
     /**
