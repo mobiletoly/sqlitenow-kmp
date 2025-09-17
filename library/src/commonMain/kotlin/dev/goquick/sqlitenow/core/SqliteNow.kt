@@ -124,12 +124,12 @@ open class SqliteNowDatabase {
      * @return The result of the block
      * @throws Exception Any exception thrown by the block
      */
-    suspend fun <T> transaction(block: suspend () -> T): T {
+    suspend fun <T> transaction(mode: TransactionMode = TransactionMode.DEFERRED, block: suspend () -> T): T {
         if (!::conn.isInitialized) {
             throw IllegalStateException("Database connection not initialized. Call open() first.")
         }
         // Delegate to SafeSQLiteConnection to ensure nested transactions are handled safely
-        return conn.transaction(block)
+        return conn.transaction(mode, block)
     }
 
     /**

@@ -73,13 +73,17 @@ class SafeSQLiteConnection(
      * the existing transaction. Otherwise, a new transaction is started and properly
      * committed or rolled back.
      */
-    suspend fun <T> transaction(block: suspend () -> T): T {
+    suspend fun <T> transaction(mode: TransactionMode = TransactionMode.DEFERRED, block: suspend () -> T): T {
         return withContext(dispatcher) {
             if (ref.inTransaction()) {
                 // Already in a transaction: just run the block safely on the same dispatcher
                 block()
             } else {
-                ref.execSQL("BEGIN")
+                when (mode) {
+                    TransactionMode.DEFERRED -> ref.execSQL("BEGIN")
+                    TransactionMode.IMMEDIATE -> ref.execSQL("BEGIN IMMEDIATE")
+                    TransactionMode.EXCLUSIVE -> ref.execSQL("BEGIN EXCLUSIVE")
+                }
                 try {
                     val result = block()
                     ref.execSQL("COMMIT")
@@ -96,3 +100,11 @@ class SafeSQLiteConnection(
         }
     }
 }
+
+/**
+ * Transaction modes supported by SQLite.
+ * - DEFERRED: default; locks are acquired lazily when first needed.
+ * - IMMEDIATE: acquires a RESERVED lock immediately; prevents other writers.
+ * - EXCLUSIVE: acquires an EXCLUSIVE lock; prevents other readers and writers.
+ */
+enum class TransactionMode { DEFERRED, IMMEDIATE, EXCLUSIVE }

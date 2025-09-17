@@ -52,9 +52,9 @@ class TransactionSafetyTest {
             """.trimIndent()
         )
 
-        database.transaction {
+        database.transaction(TransactionMode.IMMEDIATE) {
             database.connection().ref.execSQL("INSERT INTO t(id, name) VALUES (1, 'outer')")
-            val innerResult = database.transaction {
+            val innerResult = database.transaction(TransactionMode.EXCLUSIVE) {
                 database.connection().ref.execSQL("INSERT INTO t(id, name) VALUES (2, 'inner')")
                 "ok"
             }
@@ -84,9 +84,9 @@ class TransactionSafetyTest {
         )
 
         try {
-            database.transaction {
+            database.transaction(TransactionMode.IMMEDIATE) {
                 database.connection().ref.execSQL("INSERT INTO t2(id, name) VALUES (1, 'outer')")
-                database.transaction {
+                database.transaction(TransactionMode.EXCLUSIVE) {
                     database.connection().ref.execSQL("INSERT INTO t2(id, name) VALUES (2, 'inner')")
                     error("boom")
                 }
@@ -105,4 +105,3 @@ class TransactionSafetyTest {
         }
     }
 }
-
