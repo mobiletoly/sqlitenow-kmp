@@ -218,6 +218,7 @@ open class DataStructCodeGenerator(
             emptySet()
         }
 
+        val sharedCollectedProps = mutableListOf<PropertySpec>()
         generatePropertiesWithInterfaceSupport(
             fields = sharedResult.fields,
             mappedColumns = mappedColumns,
@@ -227,10 +228,16 @@ open class DataStructCodeGenerator(
             fieldCodeGenerator = fieldCodeGenerator,
             constructorBuilder = constructorBuilder
         ) { property ->
+            sharedCollectedProps.add(property)
             dataClassBuilder.addProperty(property)
         }
 
         dataClassBuilder.primaryConstructor(constructorBuilder.build())
+        addArraySafeEqualsAndHashCodeIfNeeded(
+            classBuilder = dataClassBuilder,
+            className = sharedResult.name,
+            properties = sharedCollectedProps
+        )
         return dataClassBuilder.build()
     }
 
@@ -262,6 +269,7 @@ open class DataStructCodeGenerator(
         val propertyNameGeneratorType = statement.annotations.propertyNameGenerator
         val mappedColumns = DynamicFieldMapper.getMappedColumns(statement.fields, statement.src.tableAliases)
         val effectiveExcludeOverrideFields = sharedResultManager.getEffectiveExcludeOverrideFields(statement, namespace)
+        val resultCollectedProps = mutableListOf<PropertySpec>()
         generatePropertiesWithInterfaceSupport(
             fields = statement.fields,
             mappedColumns = mappedColumns,
@@ -271,10 +279,16 @@ open class DataStructCodeGenerator(
             fieldCodeGenerator = fieldCodeGenerator,
             constructorBuilder = constructorBuilder
         ) { property ->
+            resultCollectedProps.add(property)
             dataClassBuilder.addProperty(property)
         }
 
         dataClassBuilder.primaryConstructor(constructorBuilder.build())
+        addArraySafeEqualsAndHashCodeIfNeeded(
+            classBuilder = dataClassBuilder,
+            className = "Result",
+            properties = resultCollectedProps
+        )
         return dataClassBuilder.build()
     }
 
@@ -301,6 +315,7 @@ open class DataStructCodeGenerator(
         val propertyNameGeneratorType = statement.annotations.propertyNameGenerator
 
         val uniqueParams = StatementUtils.getAllNamedParameters(statement)
+        val paramCollectedProps = mutableListOf<PropertySpec>()
         uniqueParams.forEach { paramName ->
             val propertyName = propertyNameGeneratorType.convertToPropertyName(paramName)
             val propertyType = inferParameterType(paramName, statement)
@@ -311,10 +326,16 @@ open class DataStructCodeGenerator(
             val property = PropertySpec.builder(propertyName, propertyType)
                 .initializer(propertyName)
                 .build()
+            paramCollectedProps.add(property)
             paramClassBuilder.addProperty(property)
         }
 
         paramClassBuilder.primaryConstructor(paramConstructorBuilder.build())
+        addArraySafeEqualsAndHashCodeIfNeeded(
+            classBuilder = paramClassBuilder,
+            className = "Params",
+            properties = paramCollectedProps
+        )
         return paramClassBuilder.build()
     }
 
@@ -529,6 +550,7 @@ open class DataStructCodeGenerator(
         val fieldCodeGenerator = SelectFieldCodeGenerator(createTableStatements, fileGenerationHelper.packageName)
 
         // Add ALL fields from the SELECT statement (including those that would normally be mapped to dynamic fields)
+        val joinedCollectedProps = mutableListOf<PropertySpec>()
         fields.forEach { field ->
             // Skip dynamic fields themselves, but include all regular database columns
             if (!field.annotations.isDynamicField) {
@@ -542,12 +564,18 @@ open class DataStructCodeGenerator(
                     .initializer(generatedProperty.name)
                     .build()
 
+                joinedCollectedProps.add(property)
                 dataClassBuilder.addProperty(property)
                 constructorBuilder.addParameter(generatedProperty.name, adjustedType)
             }
         }
 
         dataClassBuilder.primaryConstructor(constructorBuilder.build())
+        addArraySafeEqualsAndHashCodeIfNeeded(
+            classBuilder = dataClassBuilder,
+            className = joinedClassName,
+            properties = joinedCollectedProps
+        )
         return dataClassBuilder.build()
     }
 
@@ -640,4 +668,84 @@ open class DataStructCodeGenerator(
             }
         }
     }
+}
+
+private enum class ArrayKind { NONE, PRIMITIVE, GENERIC }
+
+private val PRIMITIVE_ARRAY_SIMPLE_NAMES = setOf(
+    "ByteArray", "IntArray", "LongArray", "ShortArray",
+    "CharArray", "FloatArray", "DoubleArray", "BooleanArray"
+)
+
+private fun arrayKind(type: TypeName): ArrayKind {
+    return when (type) {
+        is ClassName ->
+            if (type.packageName == "kotlin" && PRIMITIVE_ARRAY_SIMPLE_NAMES.contains(type.simpleName)) ArrayKind.PRIMITIVE else ArrayKind.NONE
+        is com.squareup.kotlinpoet.ParameterizedTypeName -> {
+            val raw = type.rawType
+            if (raw is ClassName && raw.packageName == "kotlin" && raw.simpleName == "Array") ArrayKind.GENERIC else ArrayKind.NONE
+        }
+        else -> ArrayKind.NONE
+    }
+}
+
+private fun isArrayLike(type: TypeName) = arrayKind(type) != ArrayKind.NONE
+private fun isPrimitiveArrayClass(type: TypeName) = arrayKind(type) == ArrayKind.PRIMITIVE
+private fun isGenericArray(type: TypeName) = arrayKind(type) == ArrayKind.GENERIC
+
+private fun addArraySafeEqualsAndHashCodeIfNeeded(
+    classBuilder: TypeSpec.Builder,
+    className: String,
+    properties: List<PropertySpec>
+) {
+    if (properties.none { isArrayLike(it.type) }) return
+
+    val equalsFun = FunSpec.builder("equals")
+        .addModifiers(KModifier.OVERRIDE)
+        .addParameter("other", ClassName("kotlin", "Any").copy(nullable = true))
+        .returns(ClassName("kotlin", "Boolean"))
+        .addStatement("if (this === other) return true")
+        .addStatement("if (other !is %L) return false", className)
+
+    properties.forEach { prop ->
+        val name = prop.name
+        val t = prop.type
+        if (isArrayLike(t)) {
+            val cmp = when {
+                isPrimitiveArrayClass(t) -> "contentEquals"
+                isGenericArray(t) -> "contentDeepEquals"
+                else -> "contentEquals"
+            }
+            if (t.isNullable) {
+                equalsFun.addStatement("if (%L !== other.%L) {", name, name)
+                equalsFun.addStatement("  if (%L == null || other.%L == null) return false", name, name)
+                equalsFun.addStatement("  if (!%L.%L(other.%L)) return false", name, cmp, name)
+                equalsFun.addStatement("}")
+            } else {
+                equalsFun.addStatement("if (!%L.%L(other.%L)) return false", name, cmp, name)
+            }
+        } else {
+            equalsFun.addStatement("if (%L != other.%L) return false", name, name)
+        }
+    }
+    equalsFun.addStatement("return true")
+    classBuilder.addFunction(equalsFun.build())
+
+    val hashFun = FunSpec.builder("hashCode")
+        .addModifiers(KModifier.OVERRIDE)
+        .returns(ClassName("kotlin", "Int"))
+
+    hashFun.addStatement("var result = 1")
+    properties.forEach { prop ->
+        val name = prop.name
+        val t = prop.type
+        val term = when {
+            isPrimitiveArrayClass(t) -> if (t.isNullable) "${name}?.contentHashCode() ?: 0" else "${name}.contentHashCode()"
+            isGenericArray(t) -> if (t.isNullable) "${name}?.contentDeepHashCode() ?: 0" else "${name}.contentDeepHashCode()"
+            else -> if (t.isNullable) "${name}?.hashCode() ?: 0" else "${name}.hashCode()"
+        }
+        hashFun.addStatement("result = 31 * result + (%L)", term)
+    }
+    hashFun.addStatement("return result")
+    classBuilder.addFunction(hashFun.build())
 }

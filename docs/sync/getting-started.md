@@ -24,9 +24,6 @@ Add the required Ktor dependencies to your `build.gradle.kts`:
 
 ```kotlin
 commonMain.dependencies {
-    // SQLiteNow library with sync support
-    implementation("dev.goquick.sqlitenow:core:0.2.0")
-
     // Ktor for HTTP communication
     implementation("io.ktor:ktor-client-core:3.3.0")
     implementation("io.ktor:ktor-client-content-negotiation:3.3.0")

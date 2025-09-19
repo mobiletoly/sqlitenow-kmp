@@ -160,7 +160,7 @@ class SelectStatement(
                     }
                 }
             } catch (e: Exception) {
-//                throw e
+                e.printStackTrace()
                 throw RuntimeException("Failed to extract field sources from SELECT statement: $sql", e)
             }
 

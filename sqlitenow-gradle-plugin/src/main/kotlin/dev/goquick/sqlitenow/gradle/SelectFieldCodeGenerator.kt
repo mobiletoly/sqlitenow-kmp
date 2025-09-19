@@ -228,7 +228,6 @@ class SelectFieldCodeGenerator(
                 if (column != null) {
                     return column.isNullable()
                 }
-
                 // Default to nullable if no explicit annotation or schema constraint is found
                 return true
             }
