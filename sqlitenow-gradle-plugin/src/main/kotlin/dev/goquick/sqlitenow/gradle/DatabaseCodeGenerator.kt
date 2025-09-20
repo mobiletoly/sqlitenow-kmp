@@ -23,6 +23,23 @@ class DatabaseCodeGenerator(
     )
     private val sharedResultManager = SharedResultManager()
 
+    private fun pascalize(source: String): String = source
+        .split('_', '-', ' ')
+        .filter { it.isNotBlank() }
+        .joinToString("") { it.replaceFirstChar { c -> c.uppercase() } }
+
+    private fun determineAdapterBaseName(namespace: String): String {
+        val table = createTableStatements.find { it.src.tableName.equals(namespace, ignoreCase = true) }
+        val base = table?.annotations?.name ?: pascalize(namespace)
+        return base + "Adapters"
+    }
+
+    private fun adapterClassNameFor(namespace: String): String = determineAdapterBaseName(namespace)
+    private fun adapterPropertyNameFor(namespace: String): String {
+        val cls = adapterClassNameFor(namespace)
+        return cls.replaceFirstChar { it.lowercase() }
+    }
+
     /** Data class representing a unique adapter with its function signature. */
     data class UniqueAdapter(
         val functionName: String,
@@ -187,13 +204,14 @@ class DatabaseCodeGenerator(
 
         // Add adapter wrapper parameters to constructor only for namespaces that have adapters
         namespacesWithAdapters.forEach { (namespace, _) ->
-            val adapterClassName = "${namespace.capitalized()}Adapters"
-            constructorBuilder.addParameter("${namespace}Adapters", ClassName("", adapterClassName))
+            val adapterClassName = adapterClassNameFor(namespace)
+            val adapterPropName = adapterPropertyNameFor(namespace)
+            constructorBuilder.addParameter(adapterPropName, ClassName("", adapterClassName))
 
             // Add as private property
-            val propertySpec = PropertySpec.builder("${namespace}Adapters", ClassName("", adapterClassName))
+            val propertySpec = PropertySpec.builder(adapterPropName, ClassName("", adapterClassName))
                 .addModifiers(KModifier.PRIVATE)
-                .initializer("${namespace}Adapters")
+                .initializer(adapterPropName)
                 .build()
             classBuilder.addProperty(propertySpec)
         }
@@ -320,7 +338,7 @@ class DatabaseCodeGenerator(
 
     /** Generates an adapter wrapper class for a specific namespace. */
     private fun generateAdapterClass(namespace: String, adapters: List<UniqueAdapter>): TypeSpec {
-        val adapterClassName = "${namespace.capitalized()}Adapters"
+        val adapterClassName = adapterClassNameFor(namespace)
         val classBuilder = TypeSpec.classBuilder(adapterClassName)
             .addModifiers(KModifier.PUBLIC, KModifier.DATA)
 
@@ -471,6 +489,7 @@ class DatabaseCodeGenerator(
         val capitalizedNamespace = "${namespace.capitalized()}Query"
         val statementAdapters = adapterConfig.collectAllParamConfigs(statement)
         val hasAdapters = statementAdapters.isNotEmpty()
+        val adapterPropName = adapterPropertyNameFor(namespace)
 
         // Build the common method call parameters
         val commonParams = buildString {
@@ -481,7 +500,7 @@ class DatabaseCodeGenerator(
             if (hasAdapters) {
                 statementAdapters.forEach { config ->
                     val actualAdapterName = findAdapterName(namespace, config.adapterFunctionName, adaptersByNamespace)
-                    append(",\n            ${config.adapterFunctionName} = ref.${namespace}Adapters.${actualAdapterName}")
+                    append(",\n            ${config.adapterFunctionName} = ref.$adapterPropName.${actualAdapterName}")
                 }
             }
         }
@@ -539,6 +558,7 @@ class DatabaseCodeGenerator(
         val capitalizedNamespace = "${namespace.capitalized()}Query"
         val statementAdapters = adapterConfig.collectAllParamConfigs(statement)
         val hasAdapters = statementAdapters.isNotEmpty()
+        val adapterPropName = adapterPropertyNameFor(namespace)
 
         // Build the common method call parameters
         val commonParams = buildString {
@@ -549,7 +569,7 @@ class DatabaseCodeGenerator(
             if (hasAdapters) {
                 statementAdapters.forEach { config ->
                     val actualAdapterName = findAdapterName(namespace, config.adapterFunctionName, adaptersByNamespace)
-                    append(",\n                ${config.adapterFunctionName} = ref.${namespace}Adapters.${actualAdapterName}")
+                    append(",\n                ${config.adapterFunctionName} = ref.$adapterPropName.${actualAdapterName}")
                 }
             }
         }
