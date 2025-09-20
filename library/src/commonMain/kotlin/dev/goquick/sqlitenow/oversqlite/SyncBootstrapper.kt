@@ -1,6 +1,6 @@
 package dev.goquick.sqlitenow.oversqlite
 
-import dev.goquick.sqlitenow.common.logger
+import dev.goquick.sqlitenow.common.sqliteNowLogger
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 
 /**
@@ -20,10 +20,10 @@ internal class SyncBootstrapper(
         TableInfoProvider.clear(db)
 
         if (config.verboseLogs) {
-            logger.i { "[VERBOSE] bootstrap: start userId=$userId sourceId=$sourceId" }
-            logger.i { "[VERBOSE] bootstrap: config=$config" }
+            sqliteNowLogger.i { "bootstrap: start userId=$userId sourceId=$sourceId" }
+            sqliteNowLogger.i { "bootstrap: config=$config" }
         } else {
-            logger.i { "bootstrap: start userId=$userId sourceId=$sourceId" }
+            sqliteNowLogger.i { "bootstrap: start userId=$userId sourceId=$sourceId" }
         }
 
         configureDatabaseSettings(db)
@@ -32,12 +32,12 @@ internal class SyncBootstrapper(
         createTriggersForTables(db)
 
         if (config.verboseLogs) {
-            logger.i { "[VERBOSE] bootstrap: done successfully" }
+            sqliteNowLogger.i { "bootstrap: done successfully" }
         } else {
-            logger.i { "bootstrap: done" }
+            sqliteNowLogger.i { "bootstrap: done" }
         }
     }.onFailure { exception ->
-        logger.e(exception) { "bootstrap: failed userId=$userId sourceId=$sourceId" }
+        sqliteNowLogger.e(exception) { "bootstrap: failed userId=$userId sourceId=$sourceId" }
     }
 
     private suspend fun configureDatabaseSettings(db: SafeSQLiteConnection) {
@@ -133,14 +133,14 @@ internal class SyncBootstrapper(
         config.syncTables.forEach { syncTable ->
             val tableLc = syncTable.tableName.lowercase()
             if (config.verboseLogs) {
-                logger.i { "[VERBOSE] bootstrap: creating triggers for table=$tableLc, syncKeyColumn=${syncTable.syncKeyColumnName}" }
+                sqliteNowLogger.i { "bootstrap: creating triggers for table=$tableLc, syncKeyColumn=${syncTable.syncKeyColumnName}" }
             } else {
-                logger.d { "bootstrap: creating triggers for table=$tableLc" }
+                sqliteNowLogger.d { "bootstrap: creating triggers for table=$tableLc" }
             }
 
             val primaryKeyColumn = determinePrimaryKeyColumn(db, syncTable)
             if (config.verboseLogs) {
-                logger.i { "[VERBOSE] bootstrap: determined primary key column='$primaryKeyColumn' for table=$tableLc" }
+                sqliteNowLogger.i { "bootstrap: determined primary key column='$primaryKeyColumn' for table=$tableLc" }
             }
             createTriggersForTable(db, tableLc, primaryKeyColumn)
         }
@@ -158,7 +158,7 @@ internal class SyncBootstrapper(
             return detectedPk
         }
 
-        logger.w { "No primary key detected for table '${syncTable.tableName}', falling back to 'id'" }
+        sqliteNowLogger.w { "No primary key detected for table '${syncTable.tableName}', falling back to 'id'" }
         return "id"
     }
 
@@ -174,8 +174,8 @@ internal class SyncBootstrapper(
         val pkExprOld = if (pkIsBlob) "lower(hex(OLD.$primaryKeyColumn))" else "OLD.$primaryKeyColumn"
 
         if (config.verboseLogs) {
-            logger.i { "[VERBOSE] bootstrap: table=$tableLc, primaryKey=$primaryKeyColumn, isBlob=$pkIsBlob" }
-            logger.i { "[VERBOSE] bootstrap: columns=${columns.joinToString(", ")}" }
+            sqliteNowLogger.i { "bootstrap: table=$tableLc, primaryKey=$primaryKeyColumn, isBlob=$pkIsBlob" }
+            sqliteNowLogger.i { "bootstrap: columns=${columns.joinToString(", ")}" }
         }
 
         // Build a JSON payload expression that renders BLOB columns as hex(NEW.col) text
@@ -190,7 +190,7 @@ internal class SyncBootstrapper(
         createDeleteTrigger(db, tableLc, primaryKeyColumn, pkExprOld)
 
         if (config.verboseLogs) {
-            logger.i { "[VERBOSE] bootstrap: triggers created successfully for table=$tableLc" }
+            sqliteNowLogger.i { "bootstrap: triggers created successfully for table=$tableLc" }
         }
     }
 
@@ -233,8 +233,8 @@ internal class SyncBootstrapper(
             """.trimIndent()
 
         if (config.verboseLogs) {
-            logger.i { "[VERBOSE] bootstrap: creating INSERT trigger for table=$tableLc" }
-            logger.d { "[VERBOSE] INSERT trigger SQL: $triggerSql" }
+            sqliteNowLogger.i { "bootstrap: creating INSERT trigger for table=$tableLc" }
+            sqliteNowLogger.d { "INSERT trigger SQL: $triggerSql" }
         }
 
         db.execSQL(triggerSql)

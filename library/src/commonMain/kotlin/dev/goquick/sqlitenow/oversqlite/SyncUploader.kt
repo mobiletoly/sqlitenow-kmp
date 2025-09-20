@@ -1,7 +1,7 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
-import dev.goquick.sqlitenow.common.logger
+import dev.goquick.sqlitenow.common.sqliteNowLogger
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.request.*
@@ -58,11 +58,11 @@ internal class SyncUploader(
         val pending = loadPendingChanges(db)
 
         if (config.verboseLogs) {
-            logger.i { "[VERBOSE] SyncUploader: preparing upload with ${pending.size} pending changes" }
+            sqliteNowLogger.i { "SyncUploader: preparing upload with ${pending.size} pending changes" }
             pending.forEachIndexed { index, change ->
-                logger.i { "[VERBOSE] SyncUploader: pending[$index] table=${change.table} op=${change.op} pk=${change.pk} baseVersion=${change.baseVersion}" }
+                sqliteNowLogger.i { "SyncUploader: pending[$index] table=${change.table} op=${change.op} pk=${change.pk} baseVersion=${change.baseVersion}" }
                 if (change.payload != null) {
-                    logger.d { "[VERBOSE] SyncUploader: pending[$index] payload=${change.payload}" }
+                    sqliteNowLogger.d { "SyncUploader: pending[$index] payload=${change.payload}" }
                 }
             }
         }
@@ -74,7 +74,7 @@ internal class SyncUploader(
                     .use { st -> if (st.step()) st.getLong(0) else 0L }
 
             if (config.verboseLogs) {
-                logger.i { "[VERBOSE] SyncUploader: no pending changes, returning empty request with lastServerSeq=$lastServerSeq" }
+                sqliteNowLogger.i { "SyncUploader: no pending changes, returning empty request with lastServerSeq=$lastServerSeq" }
             }
 
             return PreparedUpload(
@@ -106,15 +106,15 @@ internal class SyncUploader(
             )
 
             if (config.verboseLogs) {
-                logger.i { "[VERBOSE] SyncUploader: uploading ${wireRequest.changes.size} changes" }
-                logger.i { "[VERBOSE] SyncUploader: lastServerSeqSeen=${wireRequest.lastServerSeqSeen}" }
+                sqliteNowLogger.i { "SyncUploader: uploading ${wireRequest.changes.size} changes" }
+                sqliteNowLogger.i { "SyncUploader: lastServerSeqSeen=${wireRequest.lastServerSeqSeen}" }
                 wireRequest.changes.forEachIndexed { index, change ->
-                    logger.i { "[VERBOSE] SyncUploader: change[$index] table=${change.table} op=${change.op} pk=${change.pk} serverVersion=${change.serverVersion}" }
+                    sqliteNowLogger.i { "SyncUploader: change[$index] table=${change.table} op=${change.op} pk=${change.pk} serverVersion=${change.serverVersion}" }
                     if (change.payload != null) {
-                        logger.d { "[VERBOSE] SyncUploader: change[$index] payload=${change.payload}" }
+                        sqliteNowLogger.d { "SyncUploader: change[$index] payload=${change.payload}" }
                     }
                 }
-                logger.d { "[VERBOSE] SyncUploader: full request payload: $wireRequest" }
+                sqliteNowLogger.d { "SyncUploader: full request payload: $wireRequest" }
             }
 
             val call = http.post(config.uploadPath) {
@@ -125,8 +125,8 @@ internal class SyncUploader(
             if (!call.status.isSuccess()) {
                 val text = runCatching { call.bodyAsText() }.getOrElse { "" }
                 if (config.verboseLogs) {
-                    logger.e { "[VERBOSE] SyncUploader: upload failed with status=${call.status}" }
-                    logger.e { "[VERBOSE] SyncUploader: error response body: $text" }
+                    sqliteNowLogger.e { "SyncUploader: upload failed with status=${call.status}" }
+                    sqliteNowLogger.e { "SyncUploader: error response body: $text" }
                 }
                 return@withContext Result.failure(UploadHttpException(call.status, text))
             }
@@ -134,18 +134,18 @@ internal class SyncUploader(
             val response = runCatching { call.body<UploadResponse>() }
             if (config.verboseLogs && response.isSuccess) {
                 val uploadResponse = response.getOrNull()
-                logger.i { "[VERBOSE] SyncUploader: upload successful, accepted=${uploadResponse?.accepted}" }
-                logger.i { "[VERBOSE] SyncUploader: highestServerSeq=${uploadResponse?.highestServerSeq}" }
+                sqliteNowLogger.i { "SyncUploader: upload successful, accepted=${uploadResponse?.accepted}" }
+                sqliteNowLogger.i { "SyncUploader: highestServerSeq=${uploadResponse?.highestServerSeq}" }
                 uploadResponse?.statuses?.forEachIndexed { index, status ->
-                    logger.i { "[VERBOSE] SyncUploader: status[$index] sourceChangeId=${status.sourceChangeId} status=${status.status} newServerVersion=${status.newServerVersion}" }
+                    sqliteNowLogger.i { "SyncUploader: status[$index] sourceChangeId=${status.sourceChangeId} status=${status.status} newServerVersion=${status.newServerVersion}" }
                     if (status.message != null) {
-                        logger.i { "[VERBOSE] SyncUploader: status[$index] message=${status.message}" }
+                        sqliteNowLogger.i { "SyncUploader: status[$index] message=${status.message}" }
                     }
                     if (status.invalid != null) {
-                        logger.w { "[VERBOSE] SyncUploader: status[$index] invalid=${status.invalid}" }
+                        sqliteNowLogger.w { "SyncUploader: status[$index] invalid=${status.invalid}" }
                     }
                 }
-                logger.d { "[VERBOSE] SyncUploader: full response: $uploadResponse" }
+                sqliteNowLogger.d { "SyncUploader: full response: $uploadResponse" }
             }
 
             response
@@ -470,7 +470,7 @@ internal class SyncUploader(
             }
         }
 
-        logger.d { "uploadOnce: done" }
+        sqliteNowLogger.d { "uploadOnce: done" }
         return UploadSummary(
             total = changes.size,
             applied = appliedCount,
@@ -550,12 +550,12 @@ internal class SyncUploader(
 
         // Handle infrastructure edge cases automatically for non-DELETE operations
         if (localPayload == null) {
-            logger.w { "Local payload is null for $table:$pk, accepting server version" }
+            sqliteNowLogger.w { "Local payload is null for $table:$pk, accepting server version" }
             return MergeResult.AcceptServer
         }
 
         if (serverRow == null) {
-            logger.w { "Server row is null for $table:$pk, keeping local version" }
+            sqliteNowLogger.w { "Server row is null for $table:$pk, keeping local version" }
             return MergeResult.KeepLocal(localPayload)
         }
 
@@ -602,11 +602,11 @@ internal class SyncUploader(
             ?: Json.parseToJsonElement(status.serverRow.toString()) as JsonObject
         val sv = serverObj["server_version"]!!.jsonPrimitive.content.toLong()
 
-        logger.d { "Processing KeepLocal decision for ${change.table}:${change.pk}, op=${change.op}, server_v=$sv" }
+        sqliteNowLogger.d { "Processing KeepLocal decision for ${change.table}:${change.pk}, op=${change.op}, server_v=$sv" }
 
         // Handle DELETE operations specially
         if (change.op == "DELETE") {
-            logger.d { "DELETE conflict: maintaining local DELETE, updating server version to $sv" }
+            sqliteNowLogger.d { "DELETE conflict: maintaining local DELETE, updating server version to $sv" }
 
             // Ensure the record is deleted from business table
             deleteBusinessRow(db, change.table, change.pk)
@@ -629,7 +629,7 @@ internal class SyncUploader(
         } else {
             // Handle INSERT/UPDATE operations normally
             upsertBusinessFromPayload(db, change.table, change.pk, decision.mergedPayload)
-            logger.d { "Applied merged payload for ${change.table}:${change.pk}" }
+            sqliteNowLogger.d { "Applied merged payload for ${change.table}:${change.pk}" }
 
             // Update _sync_row_meta to reflect current server version
             updateRowMeta(db, change.table, change.pk, sv, false)

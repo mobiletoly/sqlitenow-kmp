@@ -10,7 +10,8 @@ import com.squareup.kotlinpoet.TypeName
 class ParameterBinding(
     private val columnLookup: ColumnLookup,
     private val typeMapping: TypeMapping,
-    private val dataStructCodeGenerator: DataStructCodeGenerator
+    private val dataStructCodeGenerator: DataStructCodeGenerator,
+    private val debug: Boolean = false,
 ) {
 
     /**
@@ -76,12 +77,24 @@ class ParameterBinding(
         }
 
         if (isNullable) {
-            generateNullableBinding(fnBld, paramIndex, tempVarName) {
+            generateNullableBinding(
+                fnBld = fnBld,
+                paramIndex = paramIndex,
+                nullableExpr = tempVarName,
+                valueExpr = tempVarName,
+                paramNameForLog = paramName
+            ) {
                 typeMapping.getBindingCall(underlyingType.copy(nullable = false), paramIndex, tempVarName)
             }
         } else {
             val bindingCall = typeMapping.getBindingCall(underlyingType, paramIndex, tempVarName)
             fnBld.addStatement(bindingCall)
+            if (debug) {
+                fnBld.addStatement(
+                    "if (__seenParams.add(%S)) __paramsLog.add(%S + sqliteNowPreview(%L) + %S)",
+                    paramName, "$paramName={", tempVarName, "}"
+                )
+            }
         }
     }
 
@@ -100,13 +113,26 @@ class ParameterBinding(
     ) {
         val isParameterNullable = columnLookup.isParameterNullable(statement, paramName)
         val actualType = getActualParameterType(namespace, className, propertyName)
+        val valueExpr = if (actualType == "Collection") "params.$propertyName.jsonEncodeToSqlite()" else "params.$propertyName"
 
         if (isParameterNullable) {
-            generateNullableBinding(fnBld, paramIndex, "params.$propertyName") {
+            generateNullableBinding(
+                fnBld = fnBld,
+                paramIndex = paramIndex,
+                nullableExpr = "params.$propertyName",
+                valueExpr = valueExpr,
+                paramNameForLog = paramName
+            ) {
                 getBindingMethodCall(paramIndex, propertyName, actualType)
             }
         } else {
             fnBld.addStatement(getBindingMethodCall(paramIndex, propertyName, actualType))
+            if (debug) {
+                fnBld.addStatement(
+                    "if (__seenParams.add(%S)) __paramsLog.add(%S + sqliteNowPreview(%L) + %S)",
+                    paramName, "$paramName={", valueExpr, "}"
+                )
+            }
         }
     }
 
@@ -122,13 +148,28 @@ class ParameterBinding(
     private fun generateNullableBinding(
         fnBld: FunSpec.Builder,
         paramIndex: Int,
-        expression: String,
+        nullableExpr: String,
+        valueExpr: String,
+        paramNameForLog: String,
         bindingCallGenerator: () -> String
     ) {
-        fnBld.addStatement("if (%L == null) {", expression)
+        fnBld.addStatement("if (%L == null) {", nullableExpr)
         fnBld.addStatement("  statement.bindNull(%L)", paramIndex + 1)
+        if (debug) {
+            fnBld.addStatement(
+                "if (__seenParams.add(%S)) __paramsLog.add(%S)",
+                paramNameForLog,
+                "$paramNameForLog={null}"
+            )
+        }
         fnBld.addStatement("} else {")
         fnBld.addStatement("  %L", bindingCallGenerator())
+        if (debug) {
+            fnBld.addStatement(
+                "if (__seenParams.add(%S)) __paramsLog.add(%S + sqliteNowPreview(%L) + %S)",
+                paramNameForLog, "$paramNameForLog={", valueExpr, "}"
+            )
+        }
         fnBld.addStatement("}")
     }
 

@@ -90,7 +90,7 @@ abstract class GenerateDatabaseFilesTask @Inject constructor(
 
 fun generateDatabaseFiles(
     dbName: String, sqlDir: File, packageName: String, outDir: File, schemaDatabaseFile: File?,
-    debug: Boolean
+    debug: Boolean,
 ) {
     val schemaDir = sqlDir.resolve("schema")
     val initSqlDir = sqlDir.resolve("init")
@@ -154,7 +154,8 @@ fun generateDatabaseFiles(
             createViewStatements = dataStructCodeGenerator.createViewStatements,
             packageName = packageName,
             outputDir = outDir,
-            databaseClassName = dbName
+            databaseClassName = dbName,
+            debug = debug
         )
         dbCodeGen.generateDatabaseClass()
     } finally {

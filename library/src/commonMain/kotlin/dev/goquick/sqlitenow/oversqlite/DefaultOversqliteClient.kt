@@ -1,6 +1,6 @@
 package dev.goquick.sqlitenow.oversqlite
 
-import dev.goquick.sqlitenow.common.logger
+import dev.goquick.sqlitenow.common.sqliteNowLogger
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.CoroutineDispatcher
@@ -111,7 +111,7 @@ class DefaultOversqliteClient(
         if (uploadsPaused) return Result.success(UploadSummary(0, 0, 0, 0, 0))
 
         return runCatching {
-            logger.d { "uploadOnce: start" }
+            sqliteNowLogger.d { "uploadOnce: start" }
 
             // Phase 1 (DB, gated): read nextChangeId and prepare changes
             val prepared = opGate.lockOnDatabaseDispatcher {
@@ -149,7 +149,7 @@ class DefaultOversqliteClient(
 
             summary
         }.onFailure {
-            logger.e(it) { "uploadOnce: failed ${it.message}" }
+            sqliteNowLogger.e(it) { "uploadOnce: failed ${it.message}" }
         }
     }
 
@@ -190,7 +190,7 @@ class DefaultOversqliteClient(
 
             downloadResult.applied to downloadResult.nextAfter
         }.onFailure {
-            logger.e(it) { "downloadOnce: failed ${it.message}" }
+            sqliteNowLogger.e(it) { "downloadOnce: failed ${it.message}" }
         }
 
         return result
@@ -220,7 +220,7 @@ class DefaultOversqliteClient(
             }
             downloadResult.applied to downloadResult.nextAfter
         }.onFailure {
-            logger.e(it) { "downloadOnceInternal: failed ${it.message}" }
+            sqliteNowLogger.e(it) { "downloadOnceInternal: failed ${it.message}" }
         }
 
         return result
@@ -294,7 +294,7 @@ class DefaultOversqliteClient(
             }
 
             if (allUpdatedTables.isNotEmpty()) tablesUpdateListener(allUpdatedTables)
-        }.onFailure { logger.e(it) { "hydrate: failed" } }
+        }.onFailure { sqliteNowLogger.e(it) { "hydrate: failed" } }
 
         return result.map { }
     }
@@ -326,9 +326,9 @@ class DefaultOversqliteClient(
         db: SafeSQLiteConnection, table: String, pk: String, payload: JsonElement?
     ) {
         if (config.verboseLogs) {
-            logger.i { "[VERBOSE] DefaultOversqliteClient: upserting record table=$table pk=$pk" }
+            sqliteNowLogger.i { "DefaultOversqliteClient: upserting record table=$table pk=$pk" }
             if (payload != null) {
-                logger.d { "[VERBOSE] DefaultOversqliteClient: payload=$payload" }
+                sqliteNowLogger.d { "DefaultOversqliteClient: payload=$payload" }
             }
         }
 
@@ -341,7 +341,7 @@ class DefaultOversqliteClient(
         val pkIsBlob = ti.primaryKeyIsBlob
 
         if (config.verboseLogs) {
-            logger.d { "[VERBOSE] DefaultOversqliteClient: table info - pkCol=$pkCol, pkIsBlob=$pkIsBlob, columns=${tableCols.joinToString(", ")}" }
+            sqliteNowLogger.d { "DefaultOversqliteClient: table info - pkCol=$pkCol, pkIsBlob=$pkIsBlob, columns=${tableCols.joinToString(", ")}" }
         }
 
         // Normalize payload keys to lowercase for case-insensitive matching
@@ -461,7 +461,7 @@ class DefaultOversqliteClient(
             }
         val lb = maxOf(1000L, config.downloadLimit.toLong() * 2)
         val windowStart = (target - lb).coerceAtLeast(0L)
-        logger.d { "drainLookbackUntilInternal: from=$windowStart to=$target" }
+        sqliteNowLogger.d { "drainLookbackUntilInternal: from=$windowStart to=$target" }
         db.prepare("UPDATE _sync_client_info SET last_server_seq_seen=?").use { st ->
             st.bindLong(1, windowStart)
             st.step()
@@ -471,13 +471,13 @@ class DefaultOversqliteClient(
         val maxPasses = 50
         while (true) {
             val prev = nextAfter
-            logger.d { "drainLookbackUntilInternal: pass $passes downloading from seq=$prev" }
+            sqliteNowLogger.d { "drainLookbackUntilInternal: pass $passes downloading from seq=$prev" }
             val (applied, na) = downloadOnceInternal(
                 limit = config.downloadLimit,
                 includeSelf = true,  // Include self during lookback to update local metadata
                 isPostUploadLookback = true
             ).getOrElse { 0 to prev }
-            logger.d { "drainLookbackUntilInternal: pass $passes downloaded $applied changes, nextAfter=$na" }
+            sqliteNowLogger.d { "drainLookbackUntilInternal: pass $passes downloaded $applied changes, nextAfter=$na" }
             nextAfter = na
             passes++
             val caughtUp = nextAfter >= target

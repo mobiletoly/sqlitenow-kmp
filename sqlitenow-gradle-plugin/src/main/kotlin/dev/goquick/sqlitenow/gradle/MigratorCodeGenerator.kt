@@ -59,7 +59,7 @@ internal class MigratorCodeGenerator(
 
         // Handle initial setup when currentVersion is -1
         codeBlockBuilder.add("    if (currentVersion != ${migrationInspector.latestVersion}) {\n")
-        codeBlockBuilder.add("        conn.ref.execSQL(\"PRAGMA user_version = ${migrationInspector.latestVersion};\")\n")
+        codeBlockBuilder.add("        conn.execSQL(\"PRAGMA user_version = ${migrationInspector.latestVersion};\")\n")
         codeBlockBuilder.add("    }\n")
         codeBlockBuilder.add("\n")
         codeBlockBuilder.add("    if (currentVersion == -1) {\n")
@@ -125,10 +125,10 @@ internal class MigratorCodeGenerator(
             // Handle dollar signs in SQL by using the $$ syntax in the generated code
             if (formattedSql.contains("$")) {
                 // Use $$ syntax for SQL containing dollar signs
-                codeBlockBuilder.addStatement("conn.ref.execSQL($$\"\"\"$formattedSql\"\"\".trimMargin())")
+                codeBlockBuilder.addStatement("conn.execSQL($$\"\"\"$formattedSql\"\"\".trimMargin())")
             } else {
                 // Regular case without dollar signs
-                codeBlockBuilder.addStatement("conn.ref.execSQL(\"\"\"$formattedSql\"\"\".trimMargin())")
+                codeBlockBuilder.addStatement("conn.execSQL(\"\"\"$formattedSql\"\"\".trimMargin())")
             }
         }
     }
@@ -138,6 +138,7 @@ internal class MigratorCodeGenerator(
         // Create the function builder
         val functionBuilder = FunSpec.builder("executeAllSql")
             .addModifiers(KModifier.PRIVATE)
+            .addModifiers(KModifier.SUSPEND)
             .addParameter("conn", ClassName("dev.goquick.sqlitenow.core", "SafeSQLiteConnection"))
 
         // Add the function body
@@ -165,6 +166,7 @@ internal class MigratorCodeGenerator(
         // Create the function builder
         val functionBuilder = FunSpec.builder("executeInitSql")
             .addModifiers(KModifier.PRIVATE)
+            .addModifiers(KModifier.SUSPEND)
             .addParameter("conn", ClassName("dev.goquick.sqlitenow.core", "SafeSQLiteConnection"))
 
         // Add the function body

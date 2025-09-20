@@ -89,7 +89,7 @@ class MigratorCodeGeneratorTest {
         // Verify that the file contains the expected content
         assertTrue(fileContent.contains("class VersionBasedDatabaseMigrations"), "File should contain the class declaration")
         assertTrue(fileContent.contains("override suspend fun applyMigration"), "File should contain the applyMigration function")
-        assertTrue(fileContent.contains("private fun executeAllSql"), "File should contain the executeAllSql function")
+        assertTrue(fileContent.contains("private suspend fun executeAllSql"), "File should contain the executeAllSql function")
         assertTrue(fileContent.contains("migrateToVersion1"), "File should contain migration function for version 1")
         assertTrue(fileContent.contains("CREATE TABLE test_table"), "File should contain the CREATE TABLE statement")
         assertTrue(fileContent.contains("CREATE TABLE another_table"), "File should contain the second CREATE TABLE statement")

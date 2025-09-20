@@ -3,6 +3,7 @@ package dev.goquick.sqlitenow.core
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteStatement
 import androidx.sqlite.execSQL
+import dev.goquick.sqlitenow.common.sqliteNowLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
@@ -19,10 +20,6 @@ class SafeSQLiteConnection(
     val ref: SQLiteConnection
 ) {
     val dispatcher = Dispatchers.IO.limitedParallelism(1)
-
-    init {
-        println("SafeSQLiteConnection created")
-    }
 
     suspend fun <T> withContextAndTrace(block: suspend () -> T): T {
         val creationTrace = Throwable().stackTraceToString().replace("\n\n", "\n")
@@ -42,13 +39,16 @@ class SafeSQLiteConnection(
             throw SqliteNowException(combinedMessage, e)
         }
     }
+
     suspend fun execSQL(sql: String) {
+        sqliteNowLogger.d { "SafeSQLiteConnection.execSQL: $sql" }
         withContext(dispatcher) {
             ref.execSQL(sql)
         }
     }
 
     suspend fun prepare(sql: String): SQLiteStatement {
+        sqliteNowLogger.d { "SafeSQLiteConnection.prepare: $sql" }
         return withContext(dispatcher) {
             val result = ref.prepare(sql)
             result
@@ -57,6 +57,7 @@ class SafeSQLiteConnection(
 
     suspend fun close() {
         withContext(dispatcher) {
+            sqliteNowLogger.d { "SafeSQLiteConnection.close" }
             ref.close()
         }
     }

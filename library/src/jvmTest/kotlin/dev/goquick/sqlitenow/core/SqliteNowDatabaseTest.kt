@@ -98,7 +98,7 @@ class SqliteNowDatabaseTest {
         database.open()
 
         // Create a test table
-        database.connection().ref.execSQL("""
+        database.connection().execSQL("""
             CREATE TABLE test_table (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL
@@ -108,7 +108,7 @@ class SqliteNowDatabaseTest {
         // Execute a transaction that should commit
         val result = database.transaction {
             // Insert a row
-            database.connection().ref.execSQL("""
+            database.connection().execSQL("""
                 INSERT INTO test_table (id, name) VALUES (1, 'Test Name');
             """)
 
@@ -136,7 +136,7 @@ class SqliteNowDatabaseTest {
         database.open()
 
         // Create a test table
-        database.connection().ref.execSQL("""
+        database.connection().execSQL("""
             CREATE TABLE test_table (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL
@@ -147,7 +147,7 @@ class SqliteNowDatabaseTest {
         try {
             database.transaction {
                 // Insert a row
-                database.connection().ref.execSQL("""
+                database.connection().execSQL("""
                     INSERT INTO test_table (id, name) VALUES (1, 'Test Name');
                 """)
 
@@ -163,7 +163,7 @@ class SqliteNowDatabaseTest {
         }
 
         // Verify that the row was not inserted (rolled back)
-        val statement = database.connection().ref.prepare("SELECT COUNT(*) FROM test_table;")
+        val statement = database.connection().prepare("SELECT COUNT(*) FROM test_table;")
         try {
             statement.step()
             val count = statement.getInt(0)

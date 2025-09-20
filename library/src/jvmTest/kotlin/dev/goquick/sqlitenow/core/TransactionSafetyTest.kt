@@ -43,7 +43,7 @@ class TransactionSafetyTest {
     fun nestedTransactionCommitsSafely() = runTest {
         database.open()
 
-        database.connection().ref.execSQL(
+        database.connection().execSQL(
             """
             CREATE TABLE t (
               id INTEGER PRIMARY KEY,
@@ -53,15 +53,15 @@ class TransactionSafetyTest {
         )
 
         database.transaction(TransactionMode.IMMEDIATE) {
-            database.connection().ref.execSQL("INSERT INTO t(id, name) VALUES (1, 'outer')")
+            database.connection().execSQL("INSERT INTO t(id, name) VALUES (1, 'outer')")
             val innerResult = database.transaction(TransactionMode.EXCLUSIVE) {
-                database.connection().ref.execSQL("INSERT INTO t(id, name) VALUES (2, 'inner')")
+                database.connection().execSQL("INSERT INTO t(id, name) VALUES (2, 'inner')")
                 "ok"
             }
             assertEquals("ok", innerResult)
         }
 
-        val st = database.connection().ref.prepare("SELECT COUNT(*) FROM t")
+        val st = database.connection().prepare("SELECT COUNT(*) FROM t")
         try {
             st.step()
             assertEquals(2, st.getInt(0))
@@ -74,7 +74,7 @@ class TransactionSafetyTest {
     fun nestedTransactionInnerFailureRollsBackAll() = runTest {
         database.open()
 
-        database.connection().ref.execSQL(
+        database.connection().execSQL(
             """
             CREATE TABLE t2 (
               id INTEGER PRIMARY KEY,
@@ -85,9 +85,9 @@ class TransactionSafetyTest {
 
         try {
             database.transaction(TransactionMode.IMMEDIATE) {
-                database.connection().ref.execSQL("INSERT INTO t2(id, name) VALUES (1, 'outer')")
+                database.connection().execSQL("INSERT INTO t2(id, name) VALUES (1, 'outer')")
                 database.transaction(TransactionMode.EXCLUSIVE) {
-                    database.connection().ref.execSQL("INSERT INTO t2(id, name) VALUES (2, 'inner')")
+                    database.connection().execSQL("INSERT INTO t2(id, name) VALUES (2, 'inner')")
                     error("boom")
                 }
             }
@@ -95,7 +95,7 @@ class TransactionSafetyTest {
             // expected
         }
 
-        val st = database.connection().ref.prepare("SELECT COUNT(*) FROM t2")
+        val st = database.connection().prepare("SELECT COUNT(*) FROM t2")
         try {
             st.step()
             // Since we do not use savepoints, the outer transaction is rolled back as well

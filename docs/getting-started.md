@@ -67,7 +67,7 @@ sqliteNow {
     databases {
         create("SampleDatabase") {
             packageName.set("com.example.app.db")
-            debug = true
+            debug = false
         }
     }
 }
@@ -79,6 +79,10 @@ and will be under `com.example.app.db`, and will be available to your `commonMai
 
 _Note:_ If you don't see **generateSampleDatabase** task in your Gradle tasks list - try
 running `./gradlew build` first.
+
+_Note:_ you can set `debug = true` to enable additional logging and stack traces (good for
+troubleshooting, but turn it off in production). If you enable debug mode - make sure to
+add `co.touchlab:kermit` to your dependencies, we use it for logging.
 
 ## Project Structure
 

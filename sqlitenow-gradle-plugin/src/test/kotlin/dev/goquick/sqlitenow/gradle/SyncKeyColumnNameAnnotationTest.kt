@@ -4,7 +4,6 @@ import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
-import java.nio.file.Files
 import kotlin.test.assertTrue
 
 /**
@@ -71,7 +70,7 @@ class SyncKeyColumnNameAnnotationTest {
             packageName = "com.test.db",
             outDir = outputDir,
             schemaDatabaseFile = null,
-            debug = false
+            debug = false,
         )
 
         // Check that the generated database file contains correct SyncTable objects
@@ -163,7 +162,7 @@ class SyncKeyColumnNameAnnotationTest {
             packageName = "com.test.db",
             outDir = outputDir,
             schemaDatabaseFile = null,
-            debug = false
+            debug = false,
         )
 
         // Check generated content
@@ -174,7 +173,7 @@ class SyncKeyColumnNameAnnotationTest {
         val databaseFile = generatedFiles.find { it.name.contains("TestDatabase") }
         assertTrue(databaseFile != null, "Database file should be generated")
 
-        val generatedContent = databaseFile!!.readText()
+        val generatedContent = databaseFile.readText()
 
         // Verify only sync table is included
         assertTrue(

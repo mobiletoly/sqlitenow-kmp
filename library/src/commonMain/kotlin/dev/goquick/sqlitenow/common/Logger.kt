@@ -18,15 +18,15 @@ private class CustomLogFormatter(
     }
 }
 
-internal class SqliteNowLogger(scope: String) : Logger(
-    loggerConfigInit(
+class SqliteNowLogger(severity: Severity) : Logger(
+    config = loggerConfigInit(
         platformLogWriter(
-            CustomLogFormatter(scope, platform() != PlatformType.ANDROID)
-        )
-    ).apply {
-        setMinSeverity(Severity.Info)
-    },
-    scope
+            CustomLogFormatter("sqlitenow", platform() != PlatformType.ANDROID)
+        ),
+        minSeverity = severity
+    ),
+    tag = "sqlitenow"
 )
 
-internal val logger = SqliteNowLogger("sqlitenow")
+internal val originalSqliteNowLogger = SqliteNowLogger(severity = Severity.Info)
+var sqliteNowLogger = originalSqliteNowLogger

@@ -3,7 +3,10 @@ package dev.goquick.sqlitenow.core
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.sqlite.driver.bundled.SQLITE_OPEN_CREATE
 import androidx.sqlite.driver.bundled.SQLITE_OPEN_READWRITE
-import androidx.sqlite.execSQL
+import co.touchlab.kermit.Severity
+import dev.goquick.sqlitenow.common.SqliteNowLogger
+import dev.goquick.sqlitenow.common.originalSqliteNowLogger
+import dev.goquick.sqlitenow.common.sqliteNowLogger
 import dev.goquick.sqlitenow.common.validateFileExists
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -12,7 +15,6 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 
 /**
  * Base class for generated database classes.
@@ -35,6 +37,18 @@ open class SqliteNowDatabase {
     constructor(dbName: String, migration: DatabaseMigrations) {
         this.dbName = dbName
         this.migration = migration
+    }
+
+    /**
+     * Optional constructor that allows enabling verbose debug logging.
+     * When debug is true, increases logger verbosity to Debug; otherwise uses default Info level.
+     */
+    constructor(dbName: String, migration: DatabaseMigrations, debug: Boolean) : this(dbName, migration) {
+        sqliteNowLogger = if (debug && originalSqliteNowLogger == sqliteNowLogger) {
+            SqliteNowLogger(Severity.Debug)
+        } else {
+            sqliteNowLogger
+        }
     }
 
     /**
@@ -88,12 +102,12 @@ open class SqliteNowDatabase {
     /**
      * Gets the current user_version from the database.
      */
-    internal fun getUserVersion(): Int {
+    internal suspend fun getUserVersion(): Int {
         if (!::conn.isInitialized) {
             throw IllegalStateException("Database connection not initialized. Call open() first.")
         }
 
-        val statement = conn.ref.prepare("PRAGMA user_version;")
+        val statement = conn.prepare("PRAGMA user_version;")
         return try {
             statement.step()
             statement.getInt(0)
@@ -110,9 +124,7 @@ open class SqliteNowDatabase {
             throw IllegalStateException("Database connection not initialized. Call open() first.")
         }
 
-        withContext(conn.dispatcher) {
-            conn.ref.execSQL("PRAGMA user_version = $version;")
-        }
+        conn.execSQL("PRAGMA user_version = $version;")
     }
 
     /**
@@ -136,15 +148,15 @@ open class SqliteNowDatabase {
      * Creates sync system tables required for synchronization functionality.
      * These tables are only created when there are tables with enableSync=true annotation.
      */
-    private fun createSyncSystemTables() {
+    private suspend fun createSyncSystemTables() {
         // Create change log table
-        conn.ref.execSQL(SyncSystemTables.CREATE_CHANGE_LOG_TABLE_SQL.trimIndent())
+        conn.execSQL(SyncSystemTables.CREATE_CHANGE_LOG_TABLE_SQL.trimIndent())
 
         // Create sync control table (with single row constraint)
-        conn.ref.execSQL(SyncSystemTables.CREATE_SYNC_CONTROL_TABLE_SQL.trimIndent())
+        conn.execSQL(SyncSystemTables.CREATE_SYNC_CONTROL_TABLE_SQL.trimIndent())
 
         // Initialize sync control table (only one record allowed)
-        conn.ref.execSQL(SyncSystemTables.INITIALIZE_SYNC_CONTROL_SQL.trimIndent())
+        conn.execSQL(SyncSystemTables.INITIALIZE_SYNC_CONTROL_SQL.trimIndent())
     }
 
     /**
@@ -152,9 +164,7 @@ open class SqliteNowDatabase {
      */
     suspend fun close() {
         if (::conn.isInitialized) {
-            withContext(conn.dispatcher) {
-                conn.ref.close()
-            }
+            conn.close()
         }
     }
 

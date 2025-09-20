@@ -27,7 +27,7 @@ internal class QueryCodeGenerator(
         dataStructCodeGenerator.createViewStatements
     )
     private val typeMapping = TypeMapping()
-    private val parameterBinding = ParameterBinding(columnLookup, typeMapping, dataStructCodeGenerator)
+    private val parameterBinding = ParameterBinding(columnLookup, typeMapping, dataStructCodeGenerator, debug)
     private val adapterConfig = AdapterConfig(columnLookup, dataStructCodeGenerator.createTableStatements, packageName)
     private val selectFieldGenerator = SelectFieldCodeGenerator(
         dataStructCodeGenerator.createTableStatements,
@@ -71,6 +71,9 @@ internal class QueryCodeGenerator(
 
         if (!debug) {
             fileSpecBuilder.addImport("kotlinx.coroutines", "withContext")
+        } else {
+            fileSpecBuilder.addImport("dev.goquick.sqlitenow.common", "sqliteNowLogger")
+            fileSpecBuilder.addImport("dev.goquick.sqlitenow.core.util", "sqliteNowPreview")
         }
 
         // Generate bindStatementParams function first
@@ -466,7 +469,7 @@ internal class QueryCodeGenerator(
 
         // Prepare the statement and bind parameters
         codeBuilder.append("  val sql = $capitalizedNamespace.$className.SQL\n")
-        codeBuilder.append("  val statement = conn.ref.prepare(sql)\n")
+        codeBuilder.append("  val statement = conn.prepare(sql)\n")
 
         val namedParameters = getNamedParameters(statement)
         if (namedParameters.isNotEmpty()) {
@@ -497,6 +500,10 @@ internal class QueryCodeGenerator(
     ) {
         val namedParameters = getNamedParameters(statement)
         if (namedParameters.isNotEmpty()) {
+            if (debug) {
+                fnBld.addStatement("val __paramsLog = mutableListOf<String>()")
+                fnBld.addStatement("val __seenParams = mutableSetOf<String>()")
+            }
             val processedAdapterVars = mutableMapOf<String, String>()
             namedParameters.forEachIndexed { index, paramName ->
                 val propertyName = statement.annotations.propertyNameGenerator.convertToPropertyName(paramName)
@@ -509,6 +516,12 @@ internal class QueryCodeGenerator(
                     namespace = namespace,
                     className = className,
                     processedAdapterVars = processedAdapterVars
+                )
+            }
+            if (debug) {
+                fnBld.addStatement(
+                    "sqliteNowLogger.d { %S + __paramsLog.joinToString(%S) }",
+                    "bind ${namespace.capitalized()}Query.$className params: ", ", "
                 )
             }
         }

@@ -125,9 +125,9 @@ class QueryCodeGeneratorTest {
         assertTrue(deleteByIdFileContent.contains("val sql = PersonQuery.DeleteById.SQL"), "Should use SQL constants from query objects")
 
         // Verify statement preparation in execute functions
-        assertTrue(getByIdFileContent.contains("val statement = conn.ref.prepare(sql)"), "Should prepare SQL statement")
-        assertTrue(addFileContent.contains("val statement = conn.ref.prepare(sql)"), "Should prepare SQL statement")
-        assertTrue(deleteByIdFileContent.contains("val statement = conn.ref.prepare(sql)"), "Should prepare SQL statement")
+        assertTrue(getByIdFileContent.contains("val statement = conn.prepare(sql)"), "Should prepare SQL statement")
+        assertTrue(addFileContent.contains("val statement = conn.prepare(sql)"), "Should prepare SQL statement")
+        assertTrue(deleteByIdFileContent.contains("val statement = conn.prepare(sql)"), "Should prepare SQL statement")
 
         // Verify that execute functions call bindStatementParams
         assertTrue(getByIdFileContent.contains("PersonQuery.GetById.bindStatementParams("), "Execute should call bindStatementParams")

@@ -1903,7 +1903,7 @@ class DataStructCodeGeneratorTest {
             "Execute function should use SQL constant"
         )
         assertTrue(
-            generatedCode.contains("val statement = conn.ref.prepare(sql)"),
+            generatedCode.contains("val statement = conn.prepare(sql)"),
             "Execute function should prepare statement"
         )
         assertTrue(

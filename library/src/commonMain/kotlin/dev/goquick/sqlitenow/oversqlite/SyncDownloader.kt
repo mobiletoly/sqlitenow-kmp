@@ -1,7 +1,7 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
-import dev.goquick.sqlitenow.common.logger
+import dev.goquick.sqlitenow.common.sqliteNowLogger
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.request.*
@@ -44,16 +44,16 @@ internal class SyncDownloader(
         isPostUploadLookback: Boolean = false
     ): DownloadResult {
         if (config.verboseLogs) {
-            logger.i { "[VERBOSE] SyncDownloader: starting download limit=$limit includeSelf=$includeSelf until=$until isPostUploadLookback=$isPostUploadLookback" }
+            sqliteNowLogger.i { "SyncDownloader: starting download limit=$limit includeSelf=$includeSelf until=$until isPostUploadLookback=$isPostUploadLookback" }
         } else {
-            logger.d { "downloadOnce: start limit=$limit includeSelf=$includeSelf until=$until isPostUploadLookback=$isPostUploadLookback" }
+            sqliteNowLogger.d { "downloadOnce: start limit=$limit includeSelf=$includeSelf until=$until isPostUploadLookback=$isPostUploadLookback" }
         }
 
         // 1. Get client info
         val clientInfo = getClientInfo(db)
 
         if (config.verboseLogs) {
-            logger.i { "[VERBOSE] SyncDownloader: client info sourceId=${clientInfo.sourceId} lastServerSeq=${clientInfo.lastServerSeq}" }
+            sqliteNowLogger.i { "SyncDownloader: client info sourceId=${clientInfo.sourceId} lastServerSeq=${clientInfo.lastServerSeq}" }
         }
 
         // 2. Fetch changes from server
@@ -61,15 +61,15 @@ internal class SyncDownloader(
             .getOrElse { throw it }
 
         if (config.verboseLogs) {
-            logger.i { "[VERBOSE] SyncDownloader: received ${response.changes.size} changes, nextAfter=${response.nextAfter} windowUntil=${response.windowUntil}" }
+            sqliteNowLogger.i { "SyncDownloader: received ${response.changes.size} changes, nextAfter=${response.nextAfter} windowUntil=${response.windowUntil}" }
             response.changes.forEachIndexed { index, change ->
-                logger.i { "[VERBOSE] SyncDownloader: change[$index] serverId=${change.serverId} table=${change.tableName} op=${change.op} pk=${change.pk} serverVersion=${change.serverVersion} deleted=${change.deleted}" }
+                sqliteNowLogger.i { "SyncDownloader: change[$index] serverId=${change.serverId} table=${change.tableName} op=${change.op} pk=${change.pk} serverVersion=${change.serverVersion} deleted=${change.deleted}" }
                 if (change.payload != null) {
-                    logger.d { "[VERBOSE] SyncDownloader: change[$index] payload=${change.payload}" }
+                    sqliteNowLogger.d { "SyncDownloader: change[$index] payload=${change.payload}" }
                 }
             }
         } else {
-            logger.d { "downloadOnce: changes=${response.changes.size} nextAfter=${response.nextAfter} windowUntil=${response.windowUntil}" }
+            sqliteNowLogger.d { "downloadOnce: changes=${response.changes.size} nextAfter=${response.nextAfter} windowUntil=${response.windowUntil}" }
         }
 
         // 3. Handle empty response
@@ -95,7 +95,7 @@ internal class SyncDownloader(
             isPostUploadLookback = isPostUploadLookback
         )
 
-        logger.d { "downloadOnce: applied=$applied nextAfter=$nextAfter" }
+        sqliteNowLogger.d { "downloadOnce: applied=$applied nextAfter=$nextAfter" }
         return DownloadResult(applied, nextAfter, updatedTables)
     }
 
@@ -105,7 +105,7 @@ internal class SyncDownloader(
         limit: Int,
         windowed: Boolean
     ): Set<String> {
-        logger.i { "hydrate: start includeSelf=$includeSelf limit=$limit windowed=$windowed" }
+        sqliteNowLogger.i { "hydrate: start includeSelf=$includeSelf limit=$limit windowed=$windowed" }
 
         val clientInfo = getClientInfo(db)
         var after = clientInfo.lastServerSeq
@@ -121,7 +121,7 @@ internal class SyncDownloader(
             if (first) {
                 frozenUntil = if (windowed) response.windowUntil else 0L
                 if (frozenUntil > 0) db.execSQL("UPDATE _sync_client_info SET current_window_until=$frozenUntil")
-                logger.d { "hydrate: windowUntil=$frozenUntil" }
+                sqliteNowLogger.d { "hydrate: windowUntil=$frozenUntil" }
                 first = false
             }
 
@@ -145,14 +145,14 @@ internal class SyncDownloader(
                 )
                 allUpdatedTables += updatedTables
                 after = nextAfter
-                logger.d { "hydrate: page applied=$pageApplied nextAfter=$after hasMore=${response.hasMore}" }
+                sqliteNowLogger.d { "hydrate: page applied=$pageApplied nextAfter=$after hasMore=${response.hasMore}" }
             }
 
             if (!response.hasMore) break
         }
 
         if (frozenUntil > 0L) db.execSQL("UPDATE _sync_client_info SET current_window_until=0")
-        logger.i { "hydrate: done" }
+        sqliteNowLogger.i { "hydrate: done" }
 
         return allUpdatedTables
     }
@@ -216,11 +216,11 @@ internal class SyncDownloader(
         val url = buildDownloadUrl(lastServerSeq, limit, includeSelf, until, config.schema)
 
         if (config.verboseLogs) {
-            logger.i { "[VERBOSE] SyncDownloader: fetching changes from server" }
-            logger.i { "[VERBOSE] SyncDownloader: request URL: $url" }
-            logger.i { "[VERBOSE] SyncDownloader: parameters - after=$lastServerSeq, limit=$limit, includeSelf=$includeSelf, until=$until, schema=${config.schema}" }
+            sqliteNowLogger.i { "SyncDownloader: fetching changes from server" }
+            sqliteNowLogger.i { "SyncDownloader: request URL: $url" }
+            sqliteNowLogger.i { "SyncDownloader: parameters - after=$lastServerSeq, limit=$limit, includeSelf=$includeSelf, until=$until, schema=${config.schema}" }
         } else {
-            logger.d { "Download request: after=$lastServerSeq, limit=$limit, includeSelf=$includeSelf, until=$until" }
+            sqliteNowLogger.d { "Download request: after=$lastServerSeq, limit=$limit, includeSelf=$includeSelf, until=$until" }
         }
 
         // Perform network I/O on injected IO dispatcher to avoid blocking db.dispatcher
@@ -229,8 +229,8 @@ internal class SyncDownloader(
             if (!call.status.isSuccess()) {
                 val text = runCatching { call.bodyAsText() }.getOrElse { "" }
                 if (config.verboseLogs) {
-                    logger.e { "[VERBOSE] SyncDownloader: download failed with status=${call.status}" }
-                    logger.e { "[VERBOSE] SyncDownloader: error response body: $text" }
+                    sqliteNowLogger.e { "SyncDownloader: download failed with status=${call.status}" }
+                    sqliteNowLogger.e { "SyncDownloader: error response body: $text" }
                 }
                 return@withContext Result.failure(DownloadHttpException(call.status, text))
             }
@@ -238,8 +238,8 @@ internal class SyncDownloader(
             val response = runCatching { call.body<DownloadResponse>() }
             if (config.verboseLogs && response.isSuccess) {
                 val downloadResponse = response.getOrNull()
-                logger.i { "[VERBOSE] SyncDownloader: download successful, received ${downloadResponse?.changes?.size} changes" }
-                logger.d { "[VERBOSE] SyncDownloader: full response: $downloadResponse" }
+                sqliteNowLogger.i { "SyncDownloader: download successful, received ${downloadResponse?.changes?.size} changes" }
+                sqliteNowLogger.d { "SyncDownloader: full response: $downloadResponse" }
             }
 
             response
@@ -266,23 +266,23 @@ internal class SyncDownloader(
         }
 
         if (config.verboseLogs) {
-            logger.i { "[VERBOSE] SyncDownloader: applying ${changesToApply.size} changes (optimized from ${resp.changes.size})" }
-            logger.i { "[VERBOSE] SyncDownloader: includeSelf=$includeSelf, sourceId=$sourceId, isPostUploadLookback=$isPostUploadLookback" }
+            sqliteNowLogger.i { "SyncDownloader: applying ${changesToApply.size} changes (optimized from ${resp.changes.size})" }
+            sqliteNowLogger.i { "SyncDownloader: includeSelf=$includeSelf, sourceId=$sourceId, isPostUploadLookback=$isPostUploadLookback" }
         }
 
         changesToApply.forEach { ch ->
             onTableTouched(ch.tableName.lowercase())
             if (!includeSelf && ch.sourceId == sourceId) {
                 if (config.verboseLogs) {
-                    logger.d { "[VERBOSE] SyncDownloader: skipping self change serverId=${ch.serverId} table=${ch.tableName} op=${ch.op}" }
+                    sqliteNowLogger.d { "SyncDownloader: skipping self change serverId=${ch.serverId} table=${ch.tableName} op=${ch.op}" }
                 }
                 return@forEach
             }
 
             if (config.verboseLogs) {
-                logger.i { "[VERBOSE] SyncDownloader: applying change serverId=${ch.serverId} table=${ch.tableName} op=${ch.op} pk=${ch.pk} serverVersion=${ch.serverVersion}" }
+                sqliteNowLogger.i { "SyncDownloader: applying change serverId=${ch.serverId} table=${ch.tableName} op=${ch.op} pk=${ch.pk} serverVersion=${ch.serverVersion}" }
                 if (ch.payload != null) {
-                    logger.d { "[VERBOSE] SyncDownloader: change payload=${ch.payload}" }
+                    sqliteNowLogger.d { "SyncDownloader: change payload=${ch.payload}" }
                 }
             }
 
@@ -470,7 +470,7 @@ internal class SyncDownloader(
         localPendingChange: Pair<String, String>
     ) {
         // There's a local pending INSERT/UPDATE - this is a conflict that needs resolution
-        logger.d { "Conflict detected: server ${ch.op} v${ch.serverVersion} vs local ${localPendingChange.first} for ${ch.tableName}:${ch.pk}" }
+        sqliteNowLogger.d { "Conflict detected: server ${ch.op} v${ch.serverVersion} vs local ${localPendingChange.first} for ${ch.tableName}:${ch.pk}" }
 
         // Create a server row object for conflict resolution
         val serverRowJson = buildJsonObject {
@@ -482,7 +482,7 @@ internal class SyncDownloader(
         val localPayloadJson = try {
             Json.parseToJsonElement(localPendingChange.second)
         } catch (e: Exception) {
-            logger.w { "Failed to parse local payload for conflict resolution: ${localPendingChange.second}" }
+            sqliteNowLogger.w { "Failed to parse local payload for conflict resolution: ${localPendingChange.second}" }
             null
         }
 
@@ -501,7 +501,7 @@ internal class SyncDownloader(
 
         when (decision) {
             is MergeResult.AcceptServer -> {
-                logger.d { "Conflict resolution: accepting server version for ${ch.tableName}:${ch.pk}" }
+                sqliteNowLogger.d { "Conflict resolution: accepting server version for ${ch.tableName}:${ch.pk}" }
                 upsertBusinessFromPayload(db, ch.tableName, ch.pk, ch.payload)
                 updateRowMeta(db, ch.tableName, pkForMeta, ch.serverVersion, false)
                 // Remove the local pending change since we're accepting server
@@ -513,7 +513,7 @@ internal class SyncDownloader(
             }
 
             is MergeResult.KeepLocal -> {
-                logger.d { "Conflict resolution: keeping local version for ${ch.tableName}:${ch.pk}" }
+                sqliteNowLogger.d { "Conflict resolution: keeping local version for ${ch.tableName}:${ch.pk}" }
                 upsertBusinessFromPayload(db, ch.tableName, ch.pk, decision.mergedPayload)
                 // Update the pending change to use the server version as base
                 db.prepare(
@@ -545,12 +545,12 @@ internal class SyncDownloader(
     ): MergeResult {
         // Handle infrastructure edge cases automatically
         if (localPayload == null) {
-            logger.w { "Local payload is null for $table:$pk, accepting server version" }
+            sqliteNowLogger.w { "Local payload is null for $table:$pk, accepting server version" }
             return MergeResult.AcceptServer
         }
 
         if (serverRow == null) {
-            logger.w { "Server row is null for $table:$pk, keeping local version" }
+            sqliteNowLogger.w { "Server row is null for $table:$pk, keeping local version" }
             return MergeResult.KeepLocal(localPayload)
         }
 
@@ -582,7 +582,7 @@ internal class SyncDownloader(
                     }
 
             if (ch.serverVersion > currentServerVersion) {
-                logger.d { "Applying server ${ch.op} v${ch.serverVersion} for ${ch.tableName}:${ch.pk} (current v$currentServerVersion)" }
+                sqliteNowLogger.d { "Applying server ${ch.op} v${ch.serverVersion} for ${ch.tableName}:${ch.pk} (current v$currentServerVersion)" }
                 upsertBusinessFromPayload(db, ch.tableName, ch.pk, ch.payload)
                 updateRowMeta(db, ch.tableName, pkForMeta, ch.serverVersion, false)
             } else {
@@ -667,7 +667,7 @@ internal class SyncDownloader(
 
                         if (hasLaterInsertOrUpdate) {
                             // Skip DELETE if there's a later INSERT/UPDATE with higher server version for the same record
-                            logger.d { "Skipping DELETE during lookback: ${change.tableName}:${change.pk.take(8)} v${change.serverVersion} (superseded by later INSERT/UPDATE)" }
+                            sqliteNowLogger.d { "Skipping DELETE during lookback: ${change.tableName}:${change.pk.take(8)} v${change.serverVersion} (superseded by later INSERT/UPDATE)" }
                         } else {
                             optimizedChanges.add(change)
                         }

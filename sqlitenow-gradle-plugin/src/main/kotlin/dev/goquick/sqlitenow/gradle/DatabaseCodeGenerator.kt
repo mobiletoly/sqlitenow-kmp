@@ -14,6 +14,7 @@ class DatabaseCodeGenerator(
     private val packageName: String,
     private val outputDir: File,
     private val databaseClassName: String,
+    private val debug: Boolean = false,
 ) {
     private val adapterConfig = AdapterConfig(
         columnLookup = ColumnLookup(createTableStatements, createViewStatements),
@@ -173,6 +174,11 @@ class DatabaseCodeGenerator(
         val constructorBuilder = FunSpec.constructorBuilder()
             .addParameter("dbName", String::class)
             .addParameter("migration", ClassName("dev.goquick.sqlitenow.core", "DatabaseMigrations"))
+            .addParameter(
+                ParameterSpec.builder("debug", Boolean::class)
+                    .defaultValue("%L", debug)
+                    .build()
+            )
 
         // Add adapter wrapper parameters to constructor only for namespaces that have adapters
         namespacesWithAdapters.forEach { (namespace, _) ->
@@ -192,6 +198,7 @@ class DatabaseCodeGenerator(
         // Add superclass constructor call
         classBuilder.addSuperclassConstructorParameter("dbName = dbName")
         classBuilder.addSuperclassConstructorParameter("migration = migration")
+        classBuilder.addSuperclassConstructorParameter("debug = debug")
 
         // Add router properties for each namespace
         nsWithStatements.keys.forEach { namespace ->
