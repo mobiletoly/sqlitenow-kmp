@@ -23,6 +23,11 @@ internal class QueryCodeGenerator(
     private val outputDir: File,
     private val debug: Boolean = false,
 ) {
+    private fun pascalize(source: String): String = source
+        .split('_', '-', ' ')
+        .filter { it.isNotBlank() }
+        .joinToString("") { it.replaceFirstChar { c -> c.uppercase() } }
+    private fun queryNamespaceName(namespace: String): String = pascalize(namespace) + "Query"
     private val columnLookup = ColumnLookup(
         dataStructCodeGenerator.createTableStatements,
         dataStructCodeGenerator.createViewStatements
@@ -63,7 +68,7 @@ internal class QueryCodeGenerator(
         packageName: String
     ) {
         val className = statement.getDataClassName()
-        val fileName = "${namespace.capitalized()}Query_$className"
+        val fileName = "${queryNamespaceName(namespace)}_$className"
 
         val fileSpecBuilder = FileSpec.builder(packageName, fileName)
             .addFileComment("Generated query extension functions for ${namespace}.${className}")
@@ -203,7 +208,7 @@ internal class QueryCodeGenerator(
         namespace: String,
         statement: AnnotatedSelectStatement
     ): FunSpec {
-        val capitalizedNamespace = "${namespace.capitalized()}Query"
+        val capitalizedNamespace = queryNamespaceName(namespace)
         val className = statement.getDataClassName()
         val fnBld = FunSpec.builder("readStatementResult")
             .addKdoc("Read statement and convert it to ${capitalizedNamespace}.${className}.Result entity")
@@ -261,7 +266,7 @@ internal class QueryCodeGenerator(
         namespace: String,
         className: String
     ) {
-        val capitalizedNamespace = "${namespace.capitalized()}Query"
+        val capitalizedNamespace = queryNamespaceName(namespace)
 
         val receiverType = ClassName(packageName, capitalizedNamespace).nestedClass(className)
         fnBld.receiver(receiverType)
@@ -293,7 +298,7 @@ internal class QueryCodeGenerator(
         includeParamsParameter: Boolean = false,
         adapterType: AdapterType = AdapterType.NONE
     ) {
-        val capitalizedNamespace = "${namespace.capitalized()}Query"
+        val capitalizedNamespace = queryNamespaceName(namespace)
 
         val receiverType = ClassName(packageName, capitalizedNamespace).nestedClass(className)
         fnBld.receiver(receiverType)
@@ -413,7 +418,7 @@ internal class QueryCodeGenerator(
      * Uses SharedResult_Joined if the statement has sharedResult annotation, otherwise uses regular Result_Joined.
      */
     private fun createJoinedResultTypeName(namespace: String, statement: AnnotatedSelectStatement): ClassName {
-        val capitalizedNamespace = "${namespace.capitalized()}Query"
+        val capitalizedNamespace = queryNamespaceName(namespace)
         return if (statement.annotations.sharedResult != null) {
             // For shared results: PersonQuery.SharedResult.PersonWithAddressRow_Joined
             ClassName(packageName, capitalizedNamespace)
@@ -433,7 +438,7 @@ internal class QueryCodeGenerator(
      * Consolidates duplicate ClassName construction for Params types.
      */
     private fun createParamsTypeName(namespace: String, className: String): ClassName {
-        val capitalizedNamespace = "${namespace.capitalized()}Query"
+        val capitalizedNamespace = queryNamespaceName(namespace)
         return ClassName(packageName, capitalizedNamespace)
             .nestedClass(className)
             .nestedClass("Params")
@@ -463,7 +468,7 @@ internal class QueryCodeGenerator(
         className: String,
         functionName: String,
     ) {
-        val capitalizedNamespace = "${namespace.capitalized()}Query"
+        val capitalizedNamespace = queryNamespaceName(namespace)
 
         // Build the complete withContext block as a single statement
         val codeBuilder = StringBuilder()
@@ -474,7 +479,7 @@ internal class QueryCodeGenerator(
         }
 
         // Prepare the statement and bind parameters
-        codeBuilder.append("  val sql = $capitalizedNamespace.$className.SQL\n")
+            codeBuilder.append("  val sql = $capitalizedNamespace.$className.SQL\n")
         codeBuilder.append("  val statement = conn.prepare(sql)\n")
 
         val namedParameters = getNamedParameters(statement)
@@ -527,7 +532,7 @@ internal class QueryCodeGenerator(
             if (debug) {
                 fnBld.addStatement(
                     "sqliteNowLogger.d { %S + __paramsLog.joinToString(%S) }",
-                    "bind ${namespace.capitalized()}Query.$className params: ", ", "
+                    "bind ${queryNamespaceName(namespace)}.$className params: ", ", "
                 )
             }
         }
@@ -562,7 +567,7 @@ internal class QueryCodeGenerator(
         namespace: String
     ) {
         val resultType = SharedResultTypeUtils.createResultTypeString(namespace, statement)
-        val capitalizedNamespace = "${namespace.capitalized()}Query"
+        val capitalizedNamespace = queryNamespaceName(namespace)
         val className = statement.getDataClassName()
 
         // Build parameter list for readJoinedStatementResult (same adapters as this function)
@@ -763,7 +768,7 @@ internal class QueryCodeGenerator(
         className: String,
         functionName: String = "executeAsList"
     ) {
-        val capitalizedNamespace = "${namespace.capitalized()}Query"
+        val capitalizedNamespace = queryNamespaceName(namespace)
         val resultType = SharedResultTypeUtils.createResultTypeString(namespace, statement)
 
         // Build parameter list for readStatementResult: statement and only sqlColumnToXxx adapters
@@ -908,9 +913,9 @@ internal class QueryCodeGenerator(
     ) {
         // Create the joined result type name
         val resultType = if (statement.annotations.sharedResult != null) {
-            "${namespace.capitalized()}Query.SharedResult.${statement.annotations.sharedResult}_Joined"
+            "${queryNamespaceName(namespace)}.SharedResult.${statement.annotations.sharedResult}_Joined"
         } else {
-            "${namespace.capitalized()}Query.${statement.getDataClassName()}.Result_Joined"
+            "${queryNamespaceName(namespace)}.${statement.getDataClassName()}.Result_Joined"
         }
 
         // Build the constructor call with ALL properties (no exclusions)
@@ -942,7 +947,7 @@ internal class QueryCodeGenerator(
         className: String,
         paramsString: String
     ) {
-        val capitalizedNamespace = "${namespace.capitalized()}Query"
+        val capitalizedNamespace = queryNamespaceName(namespace)
         val resultType = SharedResultTypeUtils.createResultTypeString(namespace, statement)
 
         // Find ALL collection fields

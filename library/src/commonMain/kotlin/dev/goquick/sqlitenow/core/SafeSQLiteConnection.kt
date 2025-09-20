@@ -95,6 +95,7 @@ class SafeSQLiteConnection(
                     } catch (_: Exception) {
                         // ignore rollback errors
                     }
+                    sqliteNowLogger.e(e) { "Transaction failed: ${e.message}" }
                     throw e
                 }
             }

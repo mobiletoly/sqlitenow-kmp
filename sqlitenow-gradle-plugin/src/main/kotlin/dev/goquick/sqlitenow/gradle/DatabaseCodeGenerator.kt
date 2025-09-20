@@ -28,17 +28,19 @@ class DatabaseCodeGenerator(
         .filter { it.isNotBlank() }
         .joinToString("") { it.replaceFirstChar { c -> c.uppercase() } }
 
-    private fun determineAdapterBaseName(namespace: String): String {
+    private fun baseNameForNamespace(namespace: String): String {
         val table = createTableStatements.find { it.src.tableName.equals(namespace, ignoreCase = true) }
-        val base = table?.annotations?.name ?: pascalize(namespace)
-        return base + "Adapters"
+        return table?.annotations?.name ?: pascalize(namespace)
     }
 
-    private fun adapterClassNameFor(namespace: String): String = determineAdapterBaseName(namespace)
+    private fun adapterClassNameFor(namespace: String): String = baseNameForNamespace(namespace) + "Adapters"
     private fun adapterPropertyNameFor(namespace: String): String {
         val cls = adapterClassNameFor(namespace)
         return cls.replaceFirstChar { it.lowercase() }
     }
+    private fun queryNamespaceName(namespace: String): String = pascalize(namespace) + "Query"
+    private fun routerClassNameFor(namespace: String): String = baseNameForNamespace(namespace) + "Router"
+    private fun routerPropertyNameFor(namespace: String): String = baseNameForNamespace(namespace).replaceFirstChar { it.lowercase() }
 
     /** Data class representing a unique adapter with its function signature. */
     data class UniqueAdapter(
@@ -225,8 +227,9 @@ class DatabaseCodeGenerator(
 
         // Add router properties for each namespace
         nsWithStatements.keys.forEach { namespace ->
-            val routerClassName = "${namespace.capitalized()}Router"
-            val routerProperty = PropertySpec.builder(namespace, ClassName("", routerClassName))
+            val routerClassName = routerClassNameFor(namespace)
+            val routerPropName = routerPropertyNameFor(namespace)
+            val routerProperty = PropertySpec.builder(routerPropName, ClassName("", routerClassName))
                 .initializer("$routerClassName(ref = this)")
                 .build()
             classBuilder.addProperty(routerProperty)
@@ -366,7 +369,7 @@ class DatabaseCodeGenerator(
         statements: List<AnnotatedStatement>,
         adaptersByNamespace: Map<String, List<UniqueAdapter>>
     ): TypeSpec {
-        val routerClassName = "${namespace.capitalized()}Router"
+        val routerClassName = routerClassNameFor(namespace)
         val classBuilder = TypeSpec.classBuilder(routerClassName)
             .addModifiers(KModifier.PUBLIC)
 
@@ -420,7 +423,7 @@ class DatabaseCodeGenerator(
         // Create the property type
         val propertyType = if (hasParams) {
             // Function type: (Params) -> ExecuteRunners
-            val paramsType = ClassName(packageName, "${namespace.capitalized()}Query")
+            val paramsType = ClassName(packageName, queryNamespaceName(namespace))
                 .nestedClass(className)
                 .nestedClass("Params")
             val executeRunnersType = ClassName("dev.goquick.sqlitenow.core", "ExecuteRunners")
@@ -458,7 +461,7 @@ class DatabaseCodeGenerator(
         // Create the property type
         val propertyType = if (hasParams) {
             // Function type: (Params) -> SelectRunners<ResultType>
-            val paramsType = ClassName(packageName, "${namespace.capitalized()}Query")
+            val paramsType = ClassName(packageName, queryNamespaceName(namespace))
                 .nestedClass(className)
                 .nestedClass("Params")
             val selectRunnersType = ClassName("dev.goquick.sqlitenow.core", "SelectRunners")
@@ -486,7 +489,7 @@ class DatabaseCodeGenerator(
         hasParams: Boolean,
         adaptersByNamespace: Map<String, List<UniqueAdapter>>
     ): String {
-        val capitalizedNamespace = "${namespace.capitalized()}Query"
+        val capitalizedNamespace = queryNamespaceName(namespace)
         val statementAdapters = adapterConfig.collectAllParamConfigs(statement)
         val hasAdapters = statementAdapters.isNotEmpty()
         val adapterPropName = adapterPropertyNameFor(namespace)
@@ -555,7 +558,7 @@ class DatabaseCodeGenerator(
         hasParams: Boolean,
         adaptersByNamespace: Map<String, List<UniqueAdapter>>
     ): String {
-        val capitalizedNamespace = "${namespace.capitalized()}Query"
+        val capitalizedNamespace = queryNamespaceName(namespace)
         val statementAdapters = adapterConfig.collectAllParamConfigs(statement)
         val hasAdapters = statementAdapters.isNotEmpty()
         val adapterPropName = adapterPropertyNameFor(namespace)

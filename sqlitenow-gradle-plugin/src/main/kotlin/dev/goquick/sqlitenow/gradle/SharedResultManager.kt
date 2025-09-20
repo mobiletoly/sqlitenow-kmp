@@ -8,6 +8,10 @@ import dev.goquick.sqlitenow.gradle.AnnotationConstants.PROPERTY_NAME_GENERATOR
  * Centralizes the logic to avoid duplication across multiple files.
  */
 object SharedResultTypeUtils {
+    private fun pascalize(source: String): String = source
+        .split('_', '-', ' ')
+        .filter { it.isNotBlank() }
+        .joinToString("") { it.replaceFirstChar { c -> c.uppercase() } }
 
     /** The name of the shared result container object */
     const val SHARED_RESULT_OBJECT_NAME = "SharedResult"
@@ -23,7 +27,7 @@ object SharedResultTypeUtils {
         namespace: String,
         sharedResultName: String
     ): ClassName {
-        return ClassName(packageName, "${namespace.capitalized()}Query")
+        return ClassName(packageName, "${pascalize(namespace)}Query")
             .nestedClass(SHARED_RESULT_OBJECT_NAME)
             .nestedClass(sharedResultName)
     }
@@ -43,7 +47,7 @@ object SharedResultTypeUtils {
             createSharedResultTypeName(packageName, namespace, statement.annotations.sharedResult!!)
         } else {
             val className = statement.getDataClassName()
-            ClassName(packageName, "${namespace.capitalized()}Query")
+            ClassName(packageName, "${pascalize(namespace)}Query")
                 .nestedClass(className)
                 .nestedClass("Result")
         }
@@ -58,7 +62,7 @@ object SharedResultTypeUtils {
         namespace: String,
         statement: AnnotatedSelectStatement
     ): String {
-        val capitalizedNamespace = "${namespace.capitalized()}Query"
+        val capitalizedNamespace = "${pascalize(namespace)}Query"
         return if (statement.annotations.sharedResult != null) {
             "$capitalizedNamespace.$SHARED_RESULT_OBJECT_NAME.${statement.annotations.sharedResult}"
         } else {

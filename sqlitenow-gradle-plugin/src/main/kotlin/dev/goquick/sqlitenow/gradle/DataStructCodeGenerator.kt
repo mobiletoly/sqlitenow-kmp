@@ -26,6 +26,10 @@ open class DataStructCodeGenerator(
     statementExecutors: MutableList<DeferredStatementExecutor>,
     providedCreateTableStatements: List<AnnotatedCreateTableStatement>? = null
 ) {
+    private fun pascalize(source: String): String = source
+        .split('_', '-', ' ')
+        .filter { it.isNotBlank() }
+        .joinToString("") { it.replaceFirstChar { c -> c.uppercase() } }
     open val createTableStatements = providedCreateTableStatements ?: statementExecutors
         .filterIsInstance<CreateTableStatementExecutor>()
         .map {
@@ -68,7 +72,7 @@ open class DataStructCodeGenerator(
         namespace: String,
         packageName: String,
     ): FileSpec.Builder {
-        val fileName = "${namespace.capitalized()}Query"
+        val fileName = "${pascalize(namespace)}Query"
         val fileSpecBuilder = FileSpec.builder(packageName, fileName)
             .addFileComment("Generated code for $namespace namespace queries")
             .addFileComment("\nDo not modify this file manually")
@@ -78,7 +82,7 @@ open class DataStructCodeGenerator(
                     .build()
             )
 
-        val capitalizedNamespace = "${namespace.capitalized()}Query"
+        val capitalizedNamespace = "${pascalize(namespace)}Query"
         val namespaceObject = TypeSpec.objectBuilder(capitalizedNamespace)
             .addKdoc("Contains queries for the $namespace namespace")
 
