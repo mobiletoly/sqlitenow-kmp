@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.concurrent.Volatile
 
 /**
  * Base class for generated database classes.
@@ -27,6 +28,9 @@ open class SqliteNowDatabase {
     // Table change notification system
     private val tableChangeFlows = mutableMapOf<String, MutableSharedFlow<Unit>>()
     private val tableChangesFlowMutex = Mutex()
+
+    @Volatile
+    private var enableTableChangeNotifications = false
 
     /**
      * Constructor for the database.
@@ -142,6 +146,21 @@ open class SqliteNowDatabase {
         }
         // Delegate to SafeSQLiteConnection to ensure nested transactions are handled safely
         return conn.transaction(mode, block)
+    }
+
+    /**
+     * Disables table change notifications. Disabling notifications can improve performance
+     * or UI conflicts when perform initial data imports or bulk updates.
+     */
+    fun disableTableChangeNotifications() {
+        this.enableTableChangeNotifications = false
+    }
+
+    /**
+     * Enables table change notifications.
+     */
+    fun enableTableChangeNotifications() {
+        this.enableTableChangeNotifications = true
     }
 
     /**
