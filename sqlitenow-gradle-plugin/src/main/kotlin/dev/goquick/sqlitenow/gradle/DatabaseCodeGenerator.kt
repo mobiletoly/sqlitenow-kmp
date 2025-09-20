@@ -146,6 +146,11 @@ class DatabaseCodeGenerator(
         val fileBuilder = FileSpec.builder(packageName, databaseClassName)
             .addFileComment("Generated database class with unified adapter management")
             .addFileComment("Do not modify this file manually")
+            .addAnnotation(
+                AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
+                    .addMember("%T::class", ClassName("kotlin.uuid", "ExperimentalUuidApi"))
+                    .build()
+            )
 
         fileBuilder.addImport("dev.goquick.sqlitenow.core", "DatabaseMigrations")
         fileBuilder.addImport("dev.goquick.sqlitenow.core", "SqliteNowDatabase")

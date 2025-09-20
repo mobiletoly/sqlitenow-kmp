@@ -1,10 +1,12 @@
 package dev.goquick.sqlitenow.gradle
 
 import com.squareup.kotlinpoet.ClassName
+import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterSpec
+import com.squareup.kotlinpoet.ParameterizedTypeName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
@@ -70,6 +72,11 @@ open class DataStructCodeGenerator(
         val fileSpecBuilder = FileSpec.builder(packageName, fileName)
             .addFileComment("Generated code for $namespace namespace queries")
             .addFileComment("\nDo not modify this file manually")
+            .addAnnotation(
+                AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
+                    .addMember("%T::class", ClassName("kotlin.uuid", "ExperimentalUuidApi"))
+                    .build()
+            )
 
         val capitalizedNamespace = "${namespace.capitalized()}Query"
         val namespaceObject = TypeSpec.objectBuilder(capitalizedNamespace)

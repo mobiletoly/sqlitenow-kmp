@@ -1,6 +1,7 @@
 package dev.goquick.sqlitenow.gradle
 
 import com.squareup.kotlinpoet.ClassName
+import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.Dynamic
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
@@ -67,6 +68,11 @@ internal class QueryCodeGenerator(
         val fileSpecBuilder = FileSpec.builder(packageName, fileName)
             .addFileComment("Generated query extension functions for ${namespace}.${className}")
             .addFileComment("\nDO NOT MODIFY THIS FILE MANUALLY!")
+            .addAnnotation(
+                AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
+                    .addMember("%T::class", ClassName("kotlin.uuid", "ExperimentalUuidApi"))
+                    .build()
+            )
             .addImport("dev.goquick.sqlitenow.core.util", "jsonEncodeToSqlite")
 
         if (!debug) {

@@ -244,6 +244,11 @@ internal class MigratorCodeGenerator(
         // Build the file spec
         val fileSpecBuilder = FileSpec.builder(packageName, className)
             .addType(classBuilder.build())
+            .addAnnotation(
+                AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
+                    .addMember("%T::class", ClassName("kotlin.uuid", "ExperimentalUuidApi"))
+                    .build()
+            )
             .addImport("dev.goquick.sqlitenow.core", "SafeSQLiteConnection")
             .addImport("androidx.sqlite", "execSQL")
             .addImport("dev.goquick.sqlitenow.core", "DatabaseMigrations")
