@@ -159,4 +159,53 @@ class SchemaInspectorTest {
         assertEquals(1, schemaInspector.getCreateTableStatements(conn).size, "Should have 1 CREATE TABLE statement")
         assertEquals("test_table", schemaInspector.getCreateTableStatements(conn)[0].name, "Should have test_table")
     }
+
+    @Test
+    @DisplayName("Test CREATE VIEW execution is ordered by dependencies")
+    fun testCreateViewDependencyOrder() {
+        // Base table
+        val tableSql = """
+            CREATE TABLE base_table (
+                id INTEGER PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL
+            );
+        """.trimIndent()
+
+        // Dependent view (references other view)
+        val viewA = """
+            CREATE VIEW view_a AS
+            SELECT id FROM activity_category_join_view;
+        """.trimIndent()
+
+        // Referenced view
+        val viewB = """
+            CREATE VIEW activity_category_join_view AS
+            SELECT id, name FROM base_table;
+        """.trimIndent()
+
+        // Write files in order that would fail without topological sorting
+        File(schemaDir, "01_base.sql").writeText(tableSql)
+        File(schemaDir, "02_view_a.sql").writeText(viewA)
+        File(schemaDir, "03_view_b.sql").writeText(viewB)
+
+        val inspector = SchemaInspector(schemaDirectory = schemaDir)
+
+        // Execute CREATE TABLE statements
+        val createdTables = inspector.getCreateTableStatements(conn)
+        kotlin.test.assertEquals(1, createdTables.size)
+
+        // Execute CREATE VIEW statements; should not throw despite file order
+        val createdViews = inspector.getCreateViewStatements(conn)
+        kotlin.test.assertEquals(2, createdViews.size)
+
+        // Verify both views exist in the database
+        conn.createStatement().use { st ->
+            st.executeQuery("SELECT name FROM sqlite_master WHERE type='view' AND name='activity_category_join_view'").use { rs ->
+                kotlin.test.assertTrue(rs.next(), "activity_category_join_view should be created")
+            }
+            st.executeQuery("SELECT name FROM sqlite_master WHERE type='view' AND name='view_a'").use { rs ->
+                kotlin.test.assertTrue(rs.next(), "view_a should be created")
+            }
+        }
+    }
 }

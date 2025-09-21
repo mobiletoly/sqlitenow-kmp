@@ -45,9 +45,10 @@ open class DataStructCodeGenerator(
                 throw e
             }
         }
-    val createViewStatements = statementExecutors
-        .filterIsInstance<CreateViewStatementExecutor>()
-        .map {
+    val createViewStatements = run {
+        val viewExecs = statementExecutors.filterIsInstance<CreateViewStatementExecutor>()
+        val sorted = sortViewsByDependencies(viewExecs)
+        sorted.map {
             try {
                 it.execute(conn) as AnnotatedCreateViewStatement
             } catch (e: Exception) {
@@ -60,6 +61,7 @@ open class DataStructCodeGenerator(
                 throw e
             }
         }
+    }
 
     private val annotationResolver = FieldAnnotationResolver(createTableStatements, createViewStatements)
     private val columnLookup = ColumnLookup(createTableStatements, createViewStatements)
@@ -67,6 +69,42 @@ open class DataStructCodeGenerator(
     private val stmtProcessingHelper = StatementProcessingHelper(conn, annotationResolver)
     private val sharedResultManager = SharedResultManager()
     val nsWithStatements = stmtProcessingHelper.processQueriesDirectory(queriesDir)
+
+    private fun sortViewsByDependencies(viewExecutors: List<CreateViewStatementExecutor>): List<CreateViewStatementExecutor> {
+        if (viewExecutors.size <= 1) return viewExecutors
+        val nameToExec = viewExecutors.associateBy { it.viewName() }
+        val viewNames = nameToExec.keys.toSet()
+
+        val adj = mutableMapOf<String, MutableList<String>>()
+        val indeg = mutableMapOf<String, Int>().apply { viewNames.forEach { this[it] = 0 } }
+
+        viewExecutors.forEach { exec ->
+            val v = exec.viewName()
+            val deps = exec.referencedTableOrViewNames().filter { it in viewNames }
+            deps.forEach { dep ->
+                adj.getOrPut(dep) { mutableListOf() }.add(v)
+                indeg[v] = (indeg[v] ?: 0) + 1
+            }
+        }
+
+        val queue = ArrayDeque<String>(indeg.filter { it.value == 0 }.keys)
+        val orderedNames = mutableListOf<String>()
+        while (queue.isNotEmpty()) {
+            val u = queue.removeFirst()
+            orderedNames.add(u)
+            adj[u]?.forEach { w ->
+                indeg[w] = (indeg[w] ?: 0) - 1
+                if ((indeg[w] ?: 0) == 0) queue.add(w)
+            }
+        }
+
+        if (orderedNames.size < viewExecutors.size) {
+            val remaining = viewExecutors.map { it.viewName() }.filter { it !in orderedNames }
+            orderedNames.addAll(remaining)
+        }
+
+        return orderedNames.mapNotNull { nameToExec[it] }
+    }
 
     fun generateNamespaceDataStructuresCode(
         namespace: String,
