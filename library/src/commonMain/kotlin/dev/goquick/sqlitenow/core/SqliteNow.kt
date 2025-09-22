@@ -68,8 +68,13 @@ open class SqliteNowDatabase {
 
     /**
      * Opens a database connection and applies migrations.
+     *
+     * @param preInit Optional suspend function to run before migrations are applied.
+     *  this will be executed outside of initialization/migration transaction, so it
+     *  is useful for operation such as setting PRAGMAs that must be set before initialization
+     *  or migration.
      */
-    suspend fun open() {
+    suspend fun open(preInit: suspend (conn: SafeSQLiteConnection) -> Unit = {}) {
         if (::conn.isInitialized) {
             throw IllegalStateException("Database connection already initialized")
         }
@@ -81,6 +86,7 @@ open class SqliteNowDatabase {
             flags = SQLITE_OPEN_CREATE or SQLITE_OPEN_READWRITE
         )
         conn = SafeSQLiteConnection(realConn)
+        preInit(conn)
 
         transaction {
             val currentVersion = if (!dbFileExists) {
