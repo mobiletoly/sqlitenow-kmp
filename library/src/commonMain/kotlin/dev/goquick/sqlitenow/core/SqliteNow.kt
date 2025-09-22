@@ -48,8 +48,8 @@ open class SqliteNowDatabase {
      * When debug is true, increases logger verbosity to Debug; otherwise uses default Info level.
      */
     constructor(dbName: String, migration: DatabaseMigrations, debug: Boolean) : this(dbName, migration) {
-        sqliteNowLogger = if (debug && originalSqliteNowLogger == sqliteNowLogger) {
-            SqliteNowLogger(Severity.Debug)
+        sqliteNowLogger = if (originalSqliteNowLogger == sqliteNowLogger) {
+            SqliteNowLogger(if (debug) Severity.Debug else Severity.Info)
         } else {
             sqliteNowLogger
         }

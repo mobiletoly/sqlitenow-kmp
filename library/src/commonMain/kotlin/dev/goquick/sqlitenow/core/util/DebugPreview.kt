@@ -22,7 +22,7 @@ fun sqliteNowPreview(value: Any?): String = when (value) {
 }
 
 private fun previewString(s: String): String {
-    val max = 60
+    val max = 120
     return if (s.length > max) {
         val shown = s.substring(0, max) + "…"
         '"' + shown + '"' + "(len=" + s.length + ")"

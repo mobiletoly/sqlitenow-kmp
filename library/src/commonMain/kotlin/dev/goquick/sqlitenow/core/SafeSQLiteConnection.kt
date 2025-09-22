@@ -17,7 +17,8 @@ import kotlinx.coroutines.withContext
  * from multiple coroutines.
  */
 class SafeSQLiteConnection(
-    val ref: SQLiteConnection
+    val ref: SQLiteConnection,
+    val debug: Boolean = false,
 ) {
     val dispatcher = Dispatchers.IO.limitedParallelism(1)
 

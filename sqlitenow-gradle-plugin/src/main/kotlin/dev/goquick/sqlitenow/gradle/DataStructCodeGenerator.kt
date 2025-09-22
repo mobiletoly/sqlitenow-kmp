@@ -282,6 +282,12 @@ open class DataStructCodeGenerator(
         }
 
         dataClassBuilder.primaryConstructor(constructorBuilder.build())
+        // Add empty public companion object for extensibility
+        dataClassBuilder.addType(
+            TypeSpec.companionObjectBuilder()
+                .addModifiers(KModifier.PUBLIC)
+                .build()
+        )
         addArraySafeEqualsAndHashCodeIfNeeded(
             classBuilder = dataClassBuilder,
             className = sharedResult.name,
@@ -333,6 +339,12 @@ open class DataStructCodeGenerator(
         }
 
         dataClassBuilder.primaryConstructor(constructorBuilder.build())
+        // Add empty public companion object for extensibility
+        dataClassBuilder.addType(
+            TypeSpec.companionObjectBuilder()
+                .addModifiers(KModifier.PUBLIC)
+                .build()
+        )
         addArraySafeEqualsAndHashCodeIfNeeded(
             classBuilder = dataClassBuilder,
             className = "Result",
@@ -620,6 +632,12 @@ open class DataStructCodeGenerator(
         }
 
         dataClassBuilder.primaryConstructor(constructorBuilder.build())
+        // Add empty public companion object for extensibility
+        dataClassBuilder.addType(
+            TypeSpec.companionObjectBuilder()
+                .addModifiers(KModifier.PUBLIC)
+                .build()
+        )
         addArraySafeEqualsAndHashCodeIfNeeded(
             classBuilder = dataClassBuilder,
             className = joinedClassName,
