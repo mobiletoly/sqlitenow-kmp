@@ -56,7 +56,7 @@ class StatementProcessingHelper(
         validateSqlStatements(sqlStatements, file.name)
 
         val sqlStatement = sqlStatements.first()
-        val parsedStatement = CCJSqlParserUtil.parse(sqlStatement.sql)
+        val parsedStatement = CCJSqlParserUtil.parse(normalizeSelectForParser(sqlStatement.sql))
 
         return try {
             when (parsedStatement) {
@@ -255,5 +255,19 @@ class StatementProcessingHelper(
         mergedAnnotations.putAll(selectAnnotations)
 
         return FieldAnnotationOverrides.parse(mergedAnnotations)
+    }
+
+    /**
+     * Normalizes SELECT statements for JSqlParser.
+     *
+     * JSqlParser 4.x can misinterpret extra blank lines between the SELECT list and
+     * the FROM clause as the end of the statement. To avoid this, collapse multiple
+     * consecutive blank lines into a single newline before parsing. This does not
+     * change SQL semantics and keeps formatting largely intact.
+     */
+    private fun normalizeSelectForParser(sql: String): String {
+        // Collapse 2+ consecutive blank lines (including lines with only spaces/tabs)
+        val collapsed = sql.replace(Regex("(?m)(?:\\r?\\n[ \t]*){2,}"), "\n")
+        return collapsed.trim()
     }
 }
