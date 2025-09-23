@@ -163,6 +163,10 @@ For example, you can use `name` annotation to customize the generated class name
 | `implements=Interface`            | Implement interface                       | `implements=PersonEssentialFields`             |
 | `excludeOverrideFields=fields`    | Exclude fields from override              | `excludeOverrideFields=['phone', 'birthDate']` |
 
+Notes for `excludeOverrideFields`:
+- Supports simple wildcard patterns (`*` and `?`). Example: `excludeOverrideFields=['joined_schedule_*']`.
+- Patterns are matched against the generated property name, the SQL label/alias, and the original column name.
+
 ## Field-level Annotations
 
 | Annotation                    | Purpose                           | Example                                              |

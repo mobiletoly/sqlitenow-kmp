@@ -612,6 +612,7 @@ open class DataStructCodeGenerator(
 
         // Add ALL fields from the SELECT statement (including those that would normally be mapped to dynamic fields)
         val joinedCollectedProps = mutableListOf<PropertySpec>()
+
         fields.forEach { field ->
             // Skip dynamic fields themselves, but include all regular database columns
             if (!field.annotations.isDynamicField) {
@@ -709,6 +710,9 @@ open class DataStructCodeGenerator(
         constructorBuilder: FunSpec.Builder,
         onPropertyGenerated: (PropertySpec) -> Unit
     ) {
+        // Pre-compile exclude patterns (support simple globs like joined_schedule_*)
+        val excludeRegexes: List<Regex> = excludeOverrideFields?.map { pattern -> globToRegex(pattern) } ?: emptyList()
+
         fields.forEach { field ->
             // Skip columns that are mapped to dynamic fields
             if (!mappedColumns.contains(field.src.fieldName)) {
@@ -720,7 +724,13 @@ open class DataStructCodeGenerator(
                 // Add override modifier if implementing an interface and field is not excluded
                 val finalProperty = if (implementsInterface != null) {
                     val fieldName = property.name
-                    val isExcluded = excludeOverrideFields?.contains(fieldName) == true
+                    // Consider multiple name candidates: generated property name, SQL label/alias, and original column name
+                    val candidates = listOf(
+                        fieldName,
+                        field.src.fieldName,
+                        field.src.originalColumnName
+                    ).filter { it.isNotBlank() }
+                    val isExcluded = excludeRegexes.any { re -> candidates.any { cand -> re.matches(cand) } }
 
                     if (!isExcluded) {
                         property.toBuilder().addModifiers(KModifier.OVERRIDE).build()
@@ -735,6 +745,27 @@ open class DataStructCodeGenerator(
             }
         }
     }
+}
+
+/**
+ * Converts a simple glob pattern (supporting '*' and '?') into a Regex that matches the entire string.
+ * Escapes all regex metacharacters except '*' and '?' which are translated to ".*" and "." respectively.
+ */
+private fun globToRegex(glob: String): Regex {
+    val sb = StringBuilder()
+    sb.append('^')
+    for (ch in glob) {
+        when (ch) {
+            '*' -> sb.append(".*")
+            '?' -> sb.append('.')
+            '.', '+', '(', ')', '[', ']', '{', '}', '^', '$', '|', '\\' -> {
+                sb.append('\\').append(ch)
+            }
+            else -> sb.append(ch)
+        }
+    }
+    sb.append('$')
+    return Regex(sb.toString())
 }
 
 private enum class ArrayKind { NONE, PRIMITIVE, GENERIC }

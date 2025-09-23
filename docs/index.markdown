@@ -73,6 +73,25 @@ This will generate shared data class **Person** that implements my custom
 **PersonEssentialFields** interface but because this interface does not include `phone` and
 `birthDate` fields - they will be excluded.
 
+Note: `excludeOverrideFields` supports simple wildcard patterns. You can use globs like
+`joined_schedule_*` to exclude many fields at once. Patterns are matched against:
+- the generated property name (e.g., `joinedScheduleActivityId`),
+- the SQL column label/alias (e.g., `joined_schedule_activity_id`), and
+- the original column name.
+
+Example:
+
+```sqlite
+-- @@{ sharedResult=Row, implements=MyInterface,
+--      excludeOverrideFields=[id, packageDocs, joined_schedule_*] }
+SELECT
+  sch.activity_id AS joined_schedule_activity_id,
+  sch.mandatory_to_setup AS joined_schedule_mandatory_to_setup,
+  sch.repeat AS joined_schedule_repeat
+FROM schedule sch
+```
+All `joined_schedule_*` columns (and their generated property names) are excluded from overrides.
+
 Here is another one that you place in your **queries/person/selectAllWithAddresses.sql** file:
 
 ```sqlite
