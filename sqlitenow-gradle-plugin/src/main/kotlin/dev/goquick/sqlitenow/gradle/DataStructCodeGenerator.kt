@@ -259,7 +259,7 @@ open class DataStructCodeGenerator(
         }
 
         val constructorBuilder = FunSpec.constructorBuilder()
-        val fieldCodeGenerator = SelectFieldCodeGenerator(createTableStatements, fileGenerationHelper.packageName)
+        val fieldCodeGenerator = SelectFieldCodeGenerator(createTableStatements, createViewStatements, fileGenerationHelper.packageName)
 
         val mappedColumns = if (sourceStatement != null) {
             DynamicFieldMapper.getMappedColumns(sharedResult.fields, sourceStatement.src.tableAliases)
@@ -320,7 +320,7 @@ open class DataStructCodeGenerator(
         // Pass all createTableStatements to SelectFieldCodeGenerator so it can properly
         // map view columns back to original table columns. The SelectFieldCodeGenerator
         // already handles searching across all tables when needed.
-        val fieldCodeGenerator = SelectFieldCodeGenerator(createTableStatements, fileGenerationHelper.packageName)
+        val fieldCodeGenerator = SelectFieldCodeGenerator(createTableStatements, createViewStatements, fileGenerationHelper.packageName)
         val propertyNameGeneratorType = statement.annotations.propertyNameGenerator
         val mappedColumns = DynamicFieldMapper.getMappedColumns(statement.fields, statement.src.tableAliases)
         val effectiveExcludeOverrideFields = sharedResultManager.getEffectiveExcludeOverrideFields(statement, namespace)
@@ -608,7 +608,7 @@ open class DataStructCodeGenerator(
             .addKdoc("Joined row data containing all fields from the SQL query without any dynamic field mapping")
 
         val constructorBuilder = FunSpec.constructorBuilder()
-        val fieldCodeGenerator = SelectFieldCodeGenerator(createTableStatements, fileGenerationHelper.packageName)
+        val fieldCodeGenerator = SelectFieldCodeGenerator(createTableStatements, createViewStatements, fileGenerationHelper.packageName)
 
         // Add ALL fields from the SELECT statement (including those that would normally be mapped to dynamic fields)
         val joinedCollectedProps = mutableListOf<PropertySpec>()

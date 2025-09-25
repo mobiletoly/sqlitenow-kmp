@@ -8,8 +8,37 @@ import com.squareup.kotlinpoet.TypeName
 class AdapterConfig(
     private val columnLookup: ColumnLookup,
     private val createTableStatements: List<AnnotatedCreateTableStatement>,
+    private val createViewStatements: List<AnnotatedCreateViewStatement> = emptyList(),
     private val packageName: String? = null
 ) {
+    // Backward-compatible constructor used by some tests
+    constructor(
+        columnLookup: ColumnLookup,
+        createTableStatements: List<AnnotatedCreateTableStatement>,
+        packageName: String?
+    ) : this(columnLookup, createTableStatements, emptyList(), packageName)
+    /** Resolve original base column name for a field, considering VIEW mappings. */
+    fun baseOriginalNameForField(field: AnnotatedSelectStatement.Field): String {
+        val fs = field.src
+        // Try view mapping by tableName first
+        if (fs.tableName.isNotEmpty()) {
+            columnLookup.findViewByName(fs.tableName)?.let { view ->
+                view.fields.find { it.src.fieldName.equals(fs.fieldName, ignoreCase = true) }?.let { vf ->
+                    return vf.src.originalColumnName
+                }
+            }
+        }
+        // Fallback to direct original name or alias with heuristic prefix strip
+        if (fs.originalColumnName.isNotEmpty()) {
+            val mo = Regex("^joined_[^_]+_(.*)$").matchEntire(fs.originalColumnName)
+            if (mo != null && mo.groupValues.size > 1) return mo.groupValues[1]
+            return fs.originalColumnName
+        }
+        // Heuristic on alias
+        val m = Regex("^joined_[^_]+_(.*)$").matchEntire(fs.fieldName)
+        if (m != null && m.groupValues.size > 1) return m.groupValues[1]
+        return fs.fieldName
+    }
     data class ParamConfig(
         val paramName: String,
         val adapterFunctionName: String,
@@ -95,7 +124,7 @@ class AdapterConfig(
         processedAdapters: MutableSet<String>
     ): List<ParamConfig> {
         val configs = mutableListOf<ParamConfig>()
-        val selectFieldGenerator = SelectFieldCodeGenerator(createTableStatements, packageName)
+        val selectFieldGenerator = SelectFieldCodeGenerator(createTableStatements, createViewStatements, packageName)
 
         statement.fields.forEach { field: AnnotatedSelectStatement.Field ->
             // Skip dynamic fields - they don't need adapters since they're not read from database
@@ -104,8 +133,9 @@ class AdapterConfig(
             }
 
             if (hasAdapterAnnotation(field)) {
-                // Use actual column name for adapter function name (ignore property name customizations)
-                val columnName = PropertyNameGeneratorType.LOWER_CAMEL_CASE.convertToPropertyName(field.src.originalColumnName)
+                // Use base original column name (resolve via VIEW if needed)
+                val baseName = baseOriginalNameForField(field)
+                val columnName = PropertyNameGeneratorType.LOWER_CAMEL_CASE.convertToPropertyName(baseName)
                 val adapterFunctionName = getOutputAdapterFunctionName(columnName)
 
                 // Skip if already processed
@@ -189,20 +219,33 @@ class AdapterConfig(
         // If not, check if the underlying column in CREATE TABLE has an adapter annotation
         val fieldSource = field.src
         if (fieldSource.tableName.isNotEmpty() && fieldSource.originalColumnName.isNotEmpty()) {
-            val createTableStatement = createTableStatements
-                .find { it.src.tableName == fieldSource.tableName }
-
-            if (createTableStatement != null) {
-                // Find the column in the CREATE TABLE statement
-                val column = createTableStatement.findColumnByName(fieldSource.originalColumnName)
-
-                if (column != null) {
-                    // Check if the column has an adapter annotation
-                    return column.annotations.containsKey(AnnotationConstants.ADAPTER)
+            // Try as a direct table first
+            createTableStatements.find { it.src.tableName == fieldSource.tableName }?.let { table ->
+                table.findColumnByName(fieldSource.originalColumnName)?.let { col ->
+                    return col.annotations.containsKey(AnnotationConstants.ADAPTER)
+                }
+            }
+            // If not a table, try resolving through a VIEW: tableName may be a view name
+            val view = columnLookup.findViewByName(fieldSource.tableName)
+            if (view != null) {
+                val viewField = view.fields.find { it.src.fieldName.equals(fieldSource.fieldName, ignoreCase = true) }
+                if (viewField != null) {
+                    createTableStatements.find { it.src.tableName.equals(viewField.src.tableName, ignoreCase = true) }?.let { table ->
+                        table.findColumnByName(viewField.src.originalColumnName)?.let { col ->
+                            return col.annotations.containsKey(AnnotationConstants.ADAPTER)
+                        }
+                    }
                 }
             }
         }
 
+        // Fallback: try to resolve by base original column name across all tables (best-effort)
+        val baseName = baseOriginalNameForField(field)
+        createTableStatements.forEach { table ->
+            table.findColumnByName(baseName)?.let { col ->
+                if (col.annotations.containsKey(AnnotationConstants.ADAPTER)) return true
+            }
+        }
         return false
     }
 

@@ -135,7 +135,7 @@ class StatementProcessingHelper(
         )
 
         // Extract annotations from comments
-        val statementAnnotations = StatementAnnotationOverrides.parse(
+        var statementAnnotations = StatementAnnotationOverrides.parse(
             extractAnnotations(sqlStatement.topComments)
         )
         val fieldAnnotations = extractFieldAssociatedAnnotations(sqlStatement.innerComments)
@@ -159,7 +159,7 @@ class StatementProcessingHelper(
             )
         }
 
-        // Add dynamic fields from annotations
+        // Add dynamic fields from SELECT-level annotations
         val dynamicFields = mutableListOf<AnnotatedSelectStatement.Field>()
         fieldAnnotations.forEach { (fieldName, annotations) ->
             if (annotations[AnnotationConstants.IS_DYNAMIC_FIELD] == true) {
@@ -180,6 +180,49 @@ class StatementProcessingHelper(
             }
         }
 
+        // Inherit dynamic field mappings from referenced VIEWS (unless overridden by SELECT)
+        if (annotationResolver != null) {
+            // Build a set of already-declared dynamic field names to enforce precedence
+            val declaredDynamicNames = dynamicFields.map { it.src.fieldName }.toMutableSet()
+
+            // Walk through FROM + JOIN aliases and find views
+            stmt.tableAliases.forEach { (alias, tableOrViewName) ->
+                val view = annotationResolver.findView(tableOrViewName)
+                if (view != null) {
+                    // Merge statement-level collectionKey from view if not specified on SELECT
+                    if (statementAnnotations.collectionKey == null && view.annotations.collectionKey != null) {
+                        statementAnnotations = statementAnnotations.copy(
+                            collectionKey = view.annotations.collectionKey
+                        )
+                    }
+                    // Collect dynamic fields declared on this view and any underlying views it references
+                    val inheritedDynamicFields = collectTransitiveDynamicFields(view, annotationResolver)
+                    // For each dynamic field, inject into this SELECT unless overridden
+                    inheritedDynamicFields.forEach { df ->
+                        if (!declaredDynamicNames.contains(df.name)) {
+                            // Adapt view-level mapping to this SELECT context: set sourceTable to the view alias
+                            val adapted = df.annotations.copy(
+                                sourceTable = alias
+                            )
+                            val dummyFieldSource = SelectStatement.FieldSource(
+                                fieldName = df.name,
+                                tableName = "",
+                                originalColumnName = df.name,
+                                dataType = "DYNAMIC"
+                            )
+                            val dynField = AnnotatedSelectStatement.Field(
+                                src = dummyFieldSource,
+                                annotations = adapted
+                            )
+                            dynamicFields.add(dynField)
+                            fields.add(dynField)
+                            declaredDynamicNames.add(df.name)
+                        }
+                    }
+                }
+            }
+        }
+
         // Validate alias.column format if mappingType is used
         if (dynamicFields.any { it.annotations.mappingType != null }) {
             DynamicFieldMapper.validateAliasColumnFormat(stmt, dynamicFields)
@@ -191,6 +234,24 @@ class StatementProcessingHelper(
             annotations = statementAnnotations,
             fields = fields
         )
+    }
+
+    /** Recursively collect dynamic fields from a view and its referenced views. */
+    private fun collectTransitiveDynamicFields(
+        view: AnnotatedCreateViewStatement,
+        resolver: FieldAnnotationResolver
+    ): List<AnnotatedCreateViewStatement.DynamicField> {
+        val result = mutableListOf<AnnotatedCreateViewStatement.DynamicField>()
+        // Add direct dynamic fields
+        result.addAll(view.dynamicFields)
+        // Recurse into any referenced views from this view's SELECT
+        view.src.selectStatement.tableAliases.forEach { (_, name) ->
+            val child = resolver.findView(name)
+            if (child != null) {
+                result.addAll(collectTransitiveDynamicFields(child, resolver))
+            }
+        }
+        return result
     }
 
     /**

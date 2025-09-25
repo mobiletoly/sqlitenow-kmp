@@ -277,12 +277,9 @@ data class FieldAnnotationOverrides(
                     )
                 }
 
-                // When mappingType=collection, collectionKey is required
-                if (mappingType == AnnotationConstants.MAPPING_TYPE_COLLECTION) {
-                    if (collectionKey == null || collectionKey.isBlank()) {
-                        throw IllegalArgumentException("When annotation '${AnnotationConstants.MAPPING_TYPE}=collection' is specified, '${AnnotationConstants.COLLECTION_KEY}' is required")
-                    }
-                }
+                // When mappingType=collection, collectionKey may be provided either
+                // at the field level (here) or at the statement level (on SELECT/VIEW).
+                // Do not enforce presence here to allow statement-level overrides.
 
                 // When mappingType is used, this should be a dynamic field
                 if (annotations[AnnotationConstants.IS_DYNAMIC_FIELD] != true) {

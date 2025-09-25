@@ -36,10 +36,15 @@ internal class QueryCodeGenerator(
     private val typeMapping = TypeMapping()
     private val parameterBinding =
         ParameterBinding(columnLookup, typeMapping, dataStructCodeGenerator, debug)
-    private val adapterConfig =
-        AdapterConfig(columnLookup, dataStructCodeGenerator.createTableStatements, packageName)
+    private val adapterConfig = AdapterConfig(
+        columnLookup,
+        dataStructCodeGenerator.createTableStatements,
+        dataStructCodeGenerator.createViewStatements,
+        packageName
+    )
     private val selectFieldGenerator = SelectFieldCodeGenerator(
         dataStructCodeGenerator.createTableStatements,
+        dataStructCodeGenerator.createViewStatements,
         packageName
     )
 
@@ -393,13 +398,53 @@ internal class QueryCodeGenerator(
     /**
      * Helper function to get filtered adapter function names.
      */
-    private fun getFilteredAdapterNames(
+  private fun getFilteredAdapterNames(
         statement: AnnotatedStatement,
         filter: (AdapterConfig.ParamConfig) -> Boolean
     ): List<String> {
         val adapterConfigs = adapterConfig.collectAllParamConfigs(statement)
         return adapterConfigs.filter(filter).map { it.adapterFunctionName }
     }
+
+    // ----- Small helpers to reduce duplication -----
+
+    private fun resultConversionAdapterNames(statement: AnnotatedStatement): List<String> =
+        getFilteredAdapterNames(statement) { config ->
+            config.adapterFunctionName.startsWith("sqlValueTo")
+        }
+
+    private fun parameterBindingAdapterNames(statement: AnnotatedStatement): List<String> =
+        getFilteredAdapterNames(statement) { config ->
+            config.adapterFunctionName.endsWith("ToSqlValue")
+        }
+
+    private fun buildJoinedReadParamsList(statement: AnnotatedSelectStatement): List<String> {
+        val params = mutableListOf("statement")
+        params += resultConversionAdapterNames(statement)
+        return params
+    }
+
+    private fun withContextHeader(): String =
+        if (debug) "return conn.withContextAndTrace {" else "return withContext(conn.dispatcher) {"
+
+    private fun prepareAndMaybeBindParamsLines(
+        statement: AnnotatedStatement,
+        capitalizedNamespace: String,
+        className: String
+    ): List<String> {
+        val lines = mutableListOf<String>()
+        lines += "val sql = $capitalizedNamespace.$className.SQL"
+        lines += "val statement = conn.prepare(sql)"
+        val namedParameters = getNamedParameters(statement)
+        if (namedParameters.isNotEmpty()) {
+            val params = mutableListOf("statement", "params")
+            params += parameterBindingAdapterNames(statement)
+            lines += "$capitalizedNamespace.$className.bindStatementParams(${params.joinToString(", ")})"
+        }
+        return lines
+    }
+
+    // IndentedCodeBuilder moved to its own file for reuse
 
     /**
      * Helper function to create Joined Result type name for SELECT statements.
@@ -460,36 +505,24 @@ internal class QueryCodeGenerator(
         functionName: String,
     ) {
         val capitalizedNamespace = queryNamespaceName(namespace)
-        // Build the complete withContext block as a single statement
-        val codeBuilder = StringBuilder()
-        if (debug) {
-            codeBuilder.append("return conn.withContextAndTrace {\n")
-        } else {
-            codeBuilder.append("return withContext(conn.dispatcher) {\n")
-        }
-        // Prepare the statement and bind parameters
-        codeBuilder.append("  val sql = $capitalizedNamespace.$className.SQL\n")
-        codeBuilder.append("  val statement = conn.prepare(sql)\n")
-        val namedParameters = getNamedParameters(statement)
-        if (namedParameters.isNotEmpty()) {
-            // Build parameter list for bindStatementParams: statement, params, and only xxxToSqlColumn adapters
-            val paramsList = mutableListOf("statement", "params")
-            val parameterBindingAdapters = getFilteredAdapterNames(statement) { config ->
-                config.adapterFunctionName.endsWith("ToSqlValue")
+        val b = IndentedCodeBuilder()
+        b.line(withContextHeader())
+        b.indent(by = 2) {
+            // Prepare SQL and optionally bind params
+            prepareAndMaybeBindParamsLines(statement, capitalizedNamespace, className).forEach { line ->
+                b.line(line)
             }
-            paramsList.addAll(parameterBindingAdapters)
-            val paramsString = paramsList.joinToString(", ")
-            codeBuilder.append("  $capitalizedNamespace.$className.bindStatementParams($paramsString)\n")
+            // Add execution logic
+            addSqlExecutionImplementationToBuilder(
+                b,
+                statement,
+                namespace,
+                className,
+                functionName
+            )
         }
-        addSqlExecutionImplementationToCodeBuilder(
-            codeBuilder,
-            statement,
-            namespace,
-            className,
-            functionName
-        )
-        codeBuilder.append("}")
-        fnBld.addStatement(codeBuilder.toString())
+        b.line("}")
+        fnBld.addStatement(b.build())
     }
 
     /**
@@ -566,10 +599,7 @@ internal class QueryCodeGenerator(
         // Build parameter list for readJoinedStatementResult (same adapters as this function)
         val paramsList = mutableListOf("statement")
         // Add result conversion adapter function names (same as current function parameters)
-        val resultConversionAdapters = getFilteredAdapterNames(statement) { config ->
-            config.adapterFunctionName.startsWith("sqlValueTo")
-        }
-        paramsList.addAll(resultConversionAdapters)
+        paramsList.addAll(resultConversionAdapterNames(statement))
         val paramsString = paramsList.joinToString(", ")
         // Call readJoinedStatementResult and transform the result
         val transformationCall = buildString {
@@ -674,7 +704,13 @@ internal class QueryCodeGenerator(
         }
         val nullCheckCondition = nullCheckConditions.joinToString(" && ")
         // Generate the constructor arguments with proper type conversions
-        val constructorArgs = generateConstructorArgumentsFromMapping(mapping, statement, sourceVar, additionalIndent = 6)
+        val constructorArgs = generateConstructorArgumentsFromMapping(
+            mapping,
+            statement,
+            sourceVar,
+            additionalIndent = 6,
+            enforceNonNull = (dynamicField.annotations.notNull == true)
+        )
         // Generate the complete mapping code with NULL check
         val notNull = dynamicField.annotations.notNull == true
         return if (notNull) {
@@ -726,8 +762,8 @@ internal class QueryCodeGenerator(
      * Helper function to add SQL execution implementation to a StringBuilder.
      * Generates different code for SELECT vs INSERT/DELETE statements.
      */
-    private fun addSqlExecutionImplementationToCodeBuilder(
-        codeBuilder: StringBuilder,
+    private fun addSqlExecutionImplementationToBuilder(
+        b: IndentedCodeBuilder,
         statement: AnnotatedStatement,
         namespace: String,
         className: String,
@@ -735,8 +771,8 @@ internal class QueryCodeGenerator(
     ) {
         when (statement) {
             is AnnotatedSelectStatement -> {
-                addSelectExecutionImplementationToCodeBuilder(
-                    codeBuilder,
+                addSelectExecutionImplementationToBuilder(
+                    b,
                     statement,
                     namespace,
                     className,
@@ -745,15 +781,15 @@ internal class QueryCodeGenerator(
             }
 
             is AnnotatedExecuteStatement -> {
-                addExecuteStatementImplementationToCodeBuilder(codeBuilder)
+                addExecuteStatementImplementationToBuilder(b)
             }
 
             is AnnotatedCreateTableStatement -> {
-                codeBuilder.append("  TODO(\"Unimplemented\")\n")
+                b.line("TODO(\"Unimplemented\")")
             }
 
             is AnnotatedCreateViewStatement -> {
-                codeBuilder.append("  TODO(\"Unimplemented\")\n")
+                b.line("TODO(\"Unimplemented\")")
             }
         }
     }
@@ -762,8 +798,8 @@ internal class QueryCodeGenerator(
      * Helper function to add SELECT statement execution implementation to StringBuilder.
      * Generates code to execute query and convert results to data classes using readStatementResult.
      */
-    private fun addSelectExecutionImplementationToCodeBuilder(
-        codeBuilder: StringBuilder,
+    private fun addSelectExecutionImplementationToBuilder(
+        bOuter: IndentedCodeBuilder,
         statement: AnnotatedSelectStatement,
         namespace: String,
         className: String,
@@ -771,65 +807,54 @@ internal class QueryCodeGenerator(
     ) {
         val capitalizedNamespace = queryNamespaceName(namespace)
         val resultType = SharedResultTypeUtils.createResultTypeString(namespace, statement)
-        // Build parameter list for readStatementResult: statement and only sqlColumnToXxx adapters
-        val paramsList = mutableListOf("statement")
-        // Add result conversion adapter function names
-        val resultConversionAdapters = getFilteredAdapterNames(statement) { config ->
-            config.adapterFunctionName.startsWith("sqlValueTo")
-        }
-        paramsList.addAll(resultConversionAdapters)
-        val paramsString = paramsList.joinToString(", ")
-        codeBuilder.append("  statement.use { statement ->\n")
-        when (functionName) {
-            "executeAsList" -> {
-                if (statement.hasCollectionMapping()) {
-                    // For collection mapping: read all joined rows, group them, then create mapped objects
-                    addCollectionMappingExecuteAsListImplementation(
-                        codeBuilder,
-                        statement,
-                        namespace,
-                        className,
-                        paramsString
-                    )
-                } else {
-                    // For regular queries: use readStatementResult directly
-                    codeBuilder.append("    val results = mutableListOf<$resultType>()\n")
-                    codeBuilder.append("    while (statement.step()) {\n")
-                    codeBuilder.append("      results.add($capitalizedNamespace.$className.readStatementResult($paramsString))\n")
-                    codeBuilder.append("    }\n")
-                    codeBuilder.append("    results\n")
+        val paramsString = buildJoinedReadParamsList(statement).joinToString(", ")
+        bOuter.line("statement.use { statement ->")
+        bOuter.indent(by = 2) {
+            when (functionName) {
+                "executeAsList" -> {
+                    if (statement.hasCollectionMapping()) {
+                        addCollectionMappingExecuteAsListImplementation(
+                            this,
+                            statement,
+                            namespace,
+                            className,
+                            paramsString
+                        )
+                    } else {
+                        line("val results = mutableListOf<$resultType>()")
+                        line("while (statement.step()) {")
+                        indent { line("results.add($capitalizedNamespace.$className.readStatementResult($paramsString))") }
+                        line("}")
+                        line("results")
+                    }
+                }
+                "executeAsOne" -> {
+                    line("if (statement.step()) {")
+                    indent { line("$capitalizedNamespace.$className.readStatementResult($paramsString)") }
+                    line("} else {")
+                    indent { line("throw IllegalStateException(\"Query returned no results, but exactly one result was expected\")") }
+                    line("}")
+                }
+                "executeAsOneOrNull" -> {
+                    line("if (statement.step()) {")
+                    indent { line("$capitalizedNamespace.$className.readStatementResult($paramsString)") }
+                    line("} else {")
+                    indent { line("null") }
+                    line("}")
                 }
             }
-
-            "executeAsOne" -> {
-                codeBuilder.append("    if (statement.step()) {\n")
-                codeBuilder.append("      $capitalizedNamespace.$className.readStatementResult($paramsString)\n")
-                codeBuilder.append("    } else {\n")
-                codeBuilder.append("      throw IllegalStateException(\"Query returned no results, but exactly one result was expected\")\n")
-                codeBuilder.append("    }\n")
-            }
-
-            "executeAsOneOrNull" -> {
-                codeBuilder.append("    if (statement.step()) {\n")
-                codeBuilder.append("      $capitalizedNamespace.$className.readStatementResult($paramsString)\n")
-                codeBuilder.append("    } else {\n")
-                codeBuilder.append("      null\n")
-                codeBuilder.append("    }\n")
-            }
         }
-        codeBuilder.append("  }\n")
+        bOuter.line("}")
     }
 
     /**
      * Helper function to add INSERT/DELETE statement execution implementation to StringBuilder.
      * Generates code to execute statement without returning a value.
      */
-    private fun addExecuteStatementImplementationToCodeBuilder(
-        codeBuilder: StringBuilder,
-    ) {
-        codeBuilder.append("  statement.use { statement ->\n")
-        codeBuilder.append("    statement.step()\n")
-        codeBuilder.append("  }\n")
+    private fun addExecuteStatementImplementationToBuilder(b: IndentedCodeBuilder) {
+        b.line("statement.use { statement ->")
+        b.indent(by = 2) { b.line("statement.step()") }
+        b.line("}")
     }
 
     /**
@@ -845,6 +870,8 @@ internal class QueryCodeGenerator(
 
     /**
      * Generate getter call for a field with proper nullability handling.
+     * Only applies converters when the field or its underlying column has an adapter annotation
+     * (custom types or explicitly annotated), not for every primitive/standard type.
      */
     private fun generateGetterCallInternal(
         field: AnnotatedSelectStatement.Field,
@@ -852,51 +879,46 @@ internal class QueryCodeGenerator(
         propertyNameGenerator: PropertyNameGeneratorType,
         isFromJoinedTable: Boolean,
     ): String {
-        if (adapterConfig.hasAdapterAnnotation(field)) {
-            // Use actual column name for adapter function name (ignore property name customizations)
-            val columnName =
-                PropertyNameGeneratorType.LOWER_CAMEL_CASE.convertToPropertyName(field.src.originalColumnName)
+        val desiredType = selectFieldGenerator.generateProperty(field, propertyNameGenerator).type
+        val isCustomDesiredType = isCustomKotlinType(desiredType)
+        if (isCustomDesiredType || adapterConfig.hasAdapterAnnotation(field)) {
+            // Use base original column name to derive adapter function name (view-aware)
+            val baseOriginal = adapterConfig.baseOriginalNameForField(field)
+            val columnName = PropertyNameGeneratorType.LOWER_CAMEL_CASE.convertToPropertyName(baseOriginal)
             val adapterParamName = adapterConfig.getOutputAdapterFunctionName(columnName)
-            val property = selectFieldGenerator.generateProperty(
-                field,
-                PropertyNameGeneratorType.LOWER_CAMEL_CASE
-            )
-            val inputNullable = property.type.isNullable
-            val baseGetterCall =
-                getUnderlyingTypeAndGetter(field, columnIndex).second.replace("stmt", "statement")
-            // Handle NULL checks based on whether this is a joined table field
+
+            val inputNullable = desiredType.isNullable
+            val baseGetterCall = getUnderlyingTypeAndGetter(field, columnIndex).second.replace("stmt", "statement")
+
             return if (isFromJoinedTable || inputNullable) {
                 if (isFromJoinedTable) {
-                    // For joined table fields, always return null directly when database value is NULL
-                    // This prevents adapters from returning non-null defaults (like emptyList())
-                    // which would make it impossible to detect missing joined records
+                    // For joined table fields, return null if DB value is NULL to keep joined-row nullability
                     "if (statement.isNull($columnIndex)) null else $adapterParamName($baseGetterCall)"
                 } else {
-                    // For non-joined nullable fields, use the original logic
+                    // For nullable fields, propagate null to the adapter
                     "if (statement.isNull($columnIndex)) $adapterParamName(null) else $adapterParamName($baseGetterCall)"
                 }
             } else {
                 "$adapterParamName($baseGetterCall)"
             }
         } else {
-            // No adapter, use direct getter with proper type mapping
-            val property = selectFieldGenerator.generateProperty(field, propertyNameGenerator)
-            val kotlinType = property.type
-            // For joined data classes, use TypeMapping for better type handling
-            val baseGetterCall = if (isFromJoinedTable) {
-                typeMapping.getGetterCall(kotlinType.copy(nullable = false), columnIndex)
-                    .replace("stmt", "statement")
-            } else {
-                typeMapping.getGetterCall(kotlinType.copy(nullable = false), columnIndex)
-                    .replace("stmt", "statement")
-            }
-            // Handle NULL checks - for joined tables, always add NULL check regardless of schema nullability
+            // No adapter: use direct getter based on desired property type
+            val kotlinType = desiredType
+            val baseGetterCall = typeMapping
+                .getGetterCall(kotlinType.copy(nullable = false), columnIndex)
+                .replace("stmt", "statement")
+
             return if (isFromJoinedTable || kotlinType.isNullable) {
                 "if (statement.isNull($columnIndex)) null else $baseGetterCall"
             } else {
                 baseGetterCall
             }
         }
+    }
+
+    private fun isCustomKotlinType(type: com.squareup.kotlinpoet.TypeName): Boolean {
+        val t = type.toString()
+        return !(t.startsWith("kotlin.") || t.startsWith("kotlinx."))
     }
 
     /**
@@ -921,11 +943,10 @@ internal class QueryCodeGenerator(
             // Include ALL fields from the SELECT statement (no dynamic field mapping or exclusions)
             val allFields = statement.fields.filter { !it.annotations.isDynamicField }
             allFields.forEachIndexed { index, field ->
-                val propertyName =
-                    getPropertyName(field, statement.annotations.propertyNameGenerator)
-                // For joined data classes, override nullability for fields from joined tables
+                val propertyName = getPropertyName(field, statement.annotations.propertyNameGenerator)
                 val getterCall = generateJoinedGetterCall(field, index, allFields)
-                append("  $propertyName = $getterCall,\n")
+                val typeComment = buildTypeComment(field)
+                append("  $propertyName = $getterCall, // $typeComment\n")
             }
             append(")")
         }
@@ -933,11 +954,23 @@ internal class QueryCodeGenerator(
     }
 
     /**
+     * Builds a concise end-of-line comment describing the SQL -> Kotlin type mapping for a field.
+     */
+    private fun buildTypeComment(field: AnnotatedSelectStatement.Field): String {
+        val sqlType = field.src.dataType
+        val kotlinType = selectFieldGenerator
+            .generateProperty(field, PropertyNameGeneratorType.LOWER_CAMEL_CASE)
+            .type
+            .toString()
+        return "$sqlType -> $kotlinType"
+    }
+
+    /**
      * Generates executeAsList implementation for collection mapping queries.
      * This reads all joined rows, groups them by the main entity, and creates mapped objects with collections.
      */
     private fun addCollectionMappingExecuteAsListImplementation(
-        codeBuilder: StringBuilder,
+        b: IndentedCodeBuilder,
         statement: AnnotatedSelectStatement,
         namespace: String,
         className: String,
@@ -991,12 +1024,12 @@ internal class QueryCodeGenerator(
         } else {
             "${capitalizedNamespace}.$className.Result_Joined"
         }
-        codeBuilder.append("    // Read all joined rows first\n")
-        codeBuilder.append("    val joinedRows = mutableListOf<$joinedClassFullName>()\n")
-        codeBuilder.append("    while (statement.step()) {\n")
-        codeBuilder.append("      joinedRows.add($capitalizedNamespace.$className.readJoinedStatementResult($paramsString))\n")
-        codeBuilder.append("    }\n")
-        codeBuilder.append("\n")
+        b.line("// Read all joined rows first")
+        b.line("val joinedRows = mutableListOf<$joinedClassFullName>()")
+        b.line("while (statement.step()) {")
+        b.indent(by = 2) { b.line("joinedRows.add($capitalizedNamespace.$className.readJoinedStatementResult($paramsString))") }
+        b.line("}")
+        b.line("")
         // Determine the type of the grouping key field using the helper function
         val groupingField = findFieldByCollectionKey(collectionKey, statement.fields)
         val groupingKeyType = if (groupingField != null) {
@@ -1010,84 +1043,90 @@ internal class QueryCodeGenerator(
         } else {
             "Any" // Fallback, though this should not happen due to validation above
         }
-        codeBuilder.append("    // Group joined rows by $groupingKey\n")
-        codeBuilder.append("    val groupedRows: Map<$groupingKeyType, List<$joinedClassFullName>> = joinedRows.groupBy { it.$groupingKey }\n")
-        codeBuilder.append("\n")
-        codeBuilder.append("    // Create mapped objects with collections\n")
-        codeBuilder.append("    groupedRows.map { (_, rowsForEntity: List<$joinedClassFullName>) ->\n")
-        codeBuilder.append("      val firstRow = rowsForEntity.first()\n")
-        codeBuilder.append("      $resultType(\n")
-        // Add regular fields (copy from first row) - exclude mapped columns
-        val mappedColumns = getMappedColumnsForStatement(statement)
-        val regularFields = statement.fields.filter {
-            !it.annotations.isDynamicField && !mappedColumns.contains(it.src.fieldName)
-        }
-        regularFields.forEach { field ->
-            val propertyName = getPropertyName(field, statement.annotations.propertyNameGenerator)
-            codeBuilder.append("        $propertyName = firstRow.$propertyName,\n")
-        }
-        // Add per-row dynamic fields (mappingType=perRow) using firstRow
-        val perRowDynamicFields = statement.fields.filter {
-            it.annotations.isDynamicField && it.annotations.mappingType == AnnotationConstants.MAPPING_TYPE_PER_ROW
-        }
-        perRowDynamicFields.forEach { dynamicField ->
-            val propertyName =
-                getPropertyName(dynamicField, statement.annotations.propertyNameGenerator)
-            val mappingCode = generateDynamicFieldMappingCodeFromJoined(
-                dynamicField,
-                statement,
-                sourceVar = "firstRow"
-            )
-            codeBuilder.append("        $propertyName = $mappingCode,\n")
-        }
-        // Add ALL collection fields with filtering for NULL joined records
-        collectionFields.forEachIndexed { index, collectionField ->
-            val collectionPropertyName =
-                getPropertyName(collectionField, statement.annotations.propertyNameGenerator)
-            // Generate NULL check conditions for all joined table columns
-            val selectStatement = statement.src
-            val mappings = DynamicFieldMapper.createDynamicFieldMappings(
-                selectStatement,
-                listOf(collectionField)
-            )
-            val mapping = mappings.firstOrNull()
-            if (mapping != null && mapping.columns.isNotEmpty()) {
-                val nullCheckConditions = mapping.columns.map { column ->
-                    val fieldName = column.fieldName
-                    val joinedPropertyName =
-                        statement.annotations.propertyNameGenerator.convertToPropertyName(fieldName)
-                    "row.$joinedPropertyName == null"
+        b.line("// Group joined rows by $groupingKey")
+        b.line("val groupedRows: Map<$groupingKeyType, List<$joinedClassFullName>> = joinedRows.groupBy { it.$groupingKey }")
+        b.line("")
+        b.line("// Create mapped objects with collections")
+        b.line("groupedRows.map { (_, rowsForEntity: List<$joinedClassFullName>) ->")
+        b.indent(by = 2) {
+            b.line("val firstRow = rowsForEntity.first()")
+            b.line("$resultType(")
+            b.indent(by = 2) {
+                val ctorBlocks = mutableListOf<List<String>>()
+                // Regular fields
+                val mappedColumns = getMappedColumnsForStatement(statement)
+                val regularFields = statement.fields.filter { !it.annotations.isDynamicField && !mappedColumns.contains(it.src.fieldName) }
+                regularFields.forEach { field ->
+                    val prop = getPropertyName(field, statement.annotations.propertyNameGenerator)
+                    ctorBlocks += listOf("$prop = firstRow.$prop")
                 }
-                val nullCheckCondition = nullCheckConditions.joinToString(" && ")
-                codeBuilder.append("        $collectionPropertyName = rowsForEntity\n")
-                codeBuilder.append("          .filter { row -> !($nullCheckCondition) }\n")
-                codeBuilder.append("          .map { row: $joinedClassFullName ->\n")
-            } else {
-                // Fallback if mapping is not available
-                codeBuilder.append("        $collectionPropertyName = rowsForEntity.map { row: $joinedClassFullName ->\n")
-            }
-            // Extract the element type from the collection type (e.g., List<PersonAddressQuery.SharedResult.Row> -> PersonAddressQuery.SharedResult.Row)
-            val elementType = collectionField.annotations.propertyType?.let { propertyType ->
-                if (propertyType.contains("<") && propertyType.contains(">")) {
-                    propertyType.substringAfter("<").substringBeforeLast(">")
-                } else {
-                    propertyType
+                // Per-row dynamic fields
+                val perRowDynamicFields = statement.fields.filter { it.annotations.isDynamicField && it.annotations.mappingType == AnnotationConstants.MAPPING_TYPE_PER_ROW }
+                perRowDynamicFields.forEach { dynamicField ->
+                    val prop = getPropertyName(dynamicField, statement.annotations.propertyNameGenerator)
+                    val mappingCode = generateDynamicFieldMappingCodeFromJoined(dynamicField, statement, sourceVar = "firstRow")
+                    ctorBlocks += listOf("$prop = $mappingCode")
                 }
-            } ?: "Unknown"
-            codeBuilder.append("            $elementType(\n")
-            // Add collection item properties using the same logic as the joined-to-mapped transformation
-            addCollectionItemPropertiesFromJoined(codeBuilder, collectionField, statement)
-            codeBuilder.append("            )\n")
-            codeBuilder.append("          }\n")
-            // Find the unique identifier field for deduplication from JOIN conditions
-            val uniqueField =
-                findUniqueFieldForCollection(collectionField, selectStatement, statement)
-            if (uniqueField != null) {
-                codeBuilder.append("          .distinctBy { it.$uniqueField },")
+                // Collection fields as multi-line blocks
+                val collectionFields = statement.fields.filter { it.annotations.isDynamicField && it.annotations.mappingType == AnnotationConstants.MAPPING_TYPE_COLLECTION }
+                collectionFields.forEach { collectionField ->
+                    val prop = getPropertyName(collectionField, statement.annotations.propertyNameGenerator)
+                    val selectStatement = statement.src
+                    val mapping = DynamicFieldMapper.createDynamicFieldMappings(selectStatement, listOf(collectionField)).firstOrNull()
+                    val block = mutableListOf<String>()
+                    if (mapping != null && mapping.columns.isNotEmpty()) {
+                        val nullChecks = mapping.columns.map { col ->
+                            val jp = statement.annotations.propertyNameGenerator.convertToPropertyName(col.fieldName)
+                            "row.$jp == null"
+                        }
+                        val cond = nullChecks.joinToString(" && ")
+                        block += "$prop = rowsForEntity"
+                        block += ".filter { row -> !($cond) }"
+                        block += ".map { row: $joinedClassFullName ->"
+                        val elementType = collectionField.annotations.propertyType?.let { pt -> if (pt.contains("<") && pt.contains(">")) pt.substringAfter("<").substringBeforeLast(">") else pt } ?: "Unknown"
+                        block += "  $elementType("
+                        // Add item constructor args (indented at +2 in emission)
+                        val args = generateConstructorArgumentsFromMapping(mapping, statement, "row").split(",\n").map { it.trim() }
+                        args.forEachIndexed { i, arg ->
+                            val comma = if (i < args.lastIndex) "," else ""
+                            block += "    $arg$comma"
+                        }
+                        block += "  )"
+                        block += "}"
+                    } else {
+                        block += "$prop = rowsForEntity.map { row: $joinedClassFullName ->"
+                        val elementType = collectionField.annotations.propertyType?.let { pt -> if (pt.contains("<") && pt.contains(">")) pt.substringAfter("<").substringBeforeLast(">") else pt } ?: "Unknown"
+                        block += "  $elementType("
+                        val args = DynamicFieldMapper.createDynamicFieldMappings(selectStatement, listOf(collectionField)).firstOrNull()?.let { generateConstructorArgumentsFromMapping(it, statement, "row").split(",\n").map { s -> s.trim() } } ?: emptyList()
+                        args.forEachIndexed { i, arg ->
+                            val comma = if (i < args.lastIndex) "," else ""
+                            block += "    $arg$comma"
+                        }
+                        block += "  )"
+                        block += "}"
+                    }
+                    // Append distinctBy if available as part of the block's last line
+                    val unique = findUniqueFieldForCollection(collectionField, selectStatement, statement)
+                    if (unique != null) {
+                        // Attach distinctBy on its own line; comma added during emission if needed
+                        block += ".distinctBy { it.$unique }"
+                    }
+                    ctorBlocks += block
+                }
+
+                // Emit all constructor blocks, comma after each block except the last
+                ctorBlocks.forEachIndexed { idx, lines ->
+                    val isLastBlock = idx == ctorBlocks.lastIndex
+                    lines.forEachIndexed { li, ln ->
+                        val isLastLine = li == lines.lastIndex
+                        val suffix = if (isLastLine && !isLastBlock) "," else ""
+                        b.line(ln + suffix)
+                    }
+                }
             }
-            codeBuilder.append("\n")
+            b.line(")")
         }
-        codeBuilder.append("      )\n    }\n")
+        b.line("}")
     }
 
     /**
@@ -1109,7 +1148,7 @@ internal class QueryCodeGenerator(
      * Helper method to add collection item properties from joined data.
      */
     private fun addCollectionItemPropertiesFromJoined(
-        codeBuilder: StringBuilder,
+        b: IndentedCodeBuilder,
         collectionField: AnnotatedSelectStatement.Field,
         statement: AnnotatedSelectStatement
     ) {
@@ -1118,13 +1157,13 @@ internal class QueryCodeGenerator(
             DynamicFieldMapper.createDynamicFieldMappings(selectStatement, listOf(collectionField))
         val mapping = mappings.firstOrNull()
         if (mapping == null || mapping.columns.isEmpty()) {
-            codeBuilder.append("          // No columns found for mapping\n")
+            b.line("// No columns found for mapping")
             return
         }
         // Generate the constructor parameters using joined data properties with named parameters
         val constructorArgs = generateConstructorArgumentsFromMapping(mapping, statement, "row")
         constructorArgs.split(",\n").forEach { arg ->
-            codeBuilder.append("              ${arg.trim()},\n")
+            b.line("${arg.trim()},")
         }
     }
 
@@ -1220,8 +1259,7 @@ internal class QueryCodeGenerator(
             if (mappingColumn != null) {
                 // Use the target property name from the mapping (which handles removeAliasPrefix)
                 val basePropertyName = if (mapping.removeAliasPrefix != null &&
-                    mappingColumn.fieldName.startsWith(mapping.removeAliasPrefix) &&
-                    mappingColumn.fieldName != mappingColumn.originalColumnName
+                    mappingColumn.fieldName.startsWith(mapping.removeAliasPrefix)
                 ) {
                     // Remove the prefix for the target property name
                     mappingColumn.fieldName.removePrefix(mapping.removeAliasPrefix)
@@ -1247,31 +1285,42 @@ internal class QueryCodeGenerator(
         mapping: DynamicFieldMapper.DynamicFieldMapping,
         statement: AnnotatedSelectStatement,
         sourceVariableName: String,
-        additionalIndent: Int = 0
+        additionalIndent: Int = 0,
+        enforceNonNull: Boolean = false
     ): String {
         val indent = " ".repeat(6 + additionalIndent)
+        val sourceIsView = run {
+            val alias = mapping.sourceTableAlias
+            val tableName = statement.src.tableAliases[alias] ?: alias
+            dataStructCodeGenerator.createViewStatements.any { it.src.viewName.equals(tableName, ignoreCase = true) }
+        }
         return mapping.columns.joinToString(",\n$indent") { column ->
             val fieldName = column.fieldName
             // The joined data class uses the raw field names (e.g., addressId, addressPersonId)
             val joinedPropertyName =
                 statement.annotations.propertyNameGenerator.convertToPropertyName(fieldName)
             // For the constructor parameter name, we need the original column name (with prefix removed if applicable)
-            val basePropertyName = if (mapping.removeAliasPrefix != null &&
-                fieldName.startsWith(mapping.removeAliasPrefix) &&
-                fieldName != column.originalColumnName
-            ) {
-                // This is an aliased column, remove the prefix for the parameter name
-                fieldName.removePrefix(mapping.removeAliasPrefix)
-            } else {
-                fieldName
+            val isAliased = fieldName != column.originalColumnName
+            val basePropertyName = when {
+                // Aliased columns with prefix: remove prefix
+                isAliased && mapping.removeAliasPrefix != null && fieldName.startsWith(mapping.removeAliasPrefix) ->
+                    fieldName.removePrefix(mapping.removeAliasPrefix)
+                // View-sourced synthetic names often include the prefix verbatim; strip for parameter names
+                !isAliased && sourceIsView && mapping.removeAliasPrefix != null && fieldName.startsWith(mapping.removeAliasPrefix) ->
+                    fieldName.removePrefix(mapping.removeAliasPrefix)
+                else ->
+                    // Use original column name to match target shared result parameter naming
+                    column.originalColumnName.ifBlank { fieldName }
             }
             val parameterName =
                 statement.annotations.propertyNameGenerator.convertToPropertyName(basePropertyName)
             val isTargetNullable = isTargetPropertyNullable(column)
-            val valueExpression = if (isTargetNullable) {
-                "$sourceVariableName.$joinedPropertyName"  // No conversion needed for nullable targets
+            val valueExpression = if (enforceNonNull) {
+                "$sourceVariableName.$joinedPropertyName!!"
+            } else if (isTargetNullable) {
+                "$sourceVariableName.$joinedPropertyName"
             } else {
-                "$sourceVariableName.$joinedPropertyName!!"  // Use !! for non-nullable targets
+                "$sourceVariableName.$joinedPropertyName!!"
             }
             "$parameterName = $valueExpression"
         }

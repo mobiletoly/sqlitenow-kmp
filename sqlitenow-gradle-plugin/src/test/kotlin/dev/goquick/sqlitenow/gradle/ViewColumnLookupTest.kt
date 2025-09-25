@@ -159,7 +159,8 @@ class ViewColumnLookupTest {
                     excludeOverrideFields = null,
                     collectionKey = null
                 ),
-                fields = emptyList()
+                fields = emptyList(),
+                dynamicFields = emptyList()
             )
         )
 
@@ -375,7 +376,8 @@ class ViewColumnLookupTest {
                         notNull = null
                     )
                 )
-            )
+            ),
+            dynamicFields = emptyList()
         )
 
         // Create SELECT statement that queries the VIEW
@@ -482,7 +484,8 @@ class ViewColumnLookupTest {
                         notNull = null
                     )
                 )
-            )
+            ),
+            dynamicFields = emptyList()
         )
 
         // Create a SELECT statement that queries the VIEW
@@ -638,7 +641,8 @@ class ViewColumnLookupTest {
                         notNull = null
                     )
                 )
-            )
+            ),
+            dynamicFields = emptyList()
         )
 
         // Create a SELECT statement that queries the VIEW with its own field annotations

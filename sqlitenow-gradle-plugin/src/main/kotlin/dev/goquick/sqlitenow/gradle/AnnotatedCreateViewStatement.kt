@@ -11,10 +11,15 @@ data class AnnotatedCreateViewStatement(
     override val name: String,
     val src: CreateViewStatement,
     override val annotations: StatementAnnotationOverrides,
-    val fields: List<Field>
+    val fields: List<Field>,
+    val dynamicFields: List<DynamicField>
 ) : AnnotatedStatement {
     data class Field(
         val src: SelectStatement.FieldSource,
+        val annotations: FieldAnnotationOverrides
+    )
+    data class DynamicField(
+        val name: String,
         val annotations: FieldAnnotationOverrides
     )
     companion object {
@@ -28,7 +33,14 @@ data class AnnotatedCreateViewStatement(
                 extractAnnotations(topComments)
             )
             val fieldAnnotations = extractFieldAssociatedAnnotations(innerComments)
-
+            // Collect dynamic field annotations declared at VIEW level
+            val dynamicFields = mutableListOf<DynamicField>()
+            fieldAnnotations.forEach { (fieldName, ann) ->
+                if (ann[AnnotationConstants.IS_DYNAMIC_FIELD] == true) {
+                    val overrides = FieldAnnotationOverrides.parse(ann)
+                    dynamicFields += DynamicField(name = fieldName, annotations = overrides)
+                }
+            }
             return AnnotatedCreateViewStatement(
                 name = name,
                 src = createViewStatement,
@@ -41,7 +53,8 @@ data class AnnotatedCreateViewStatement(
                         src = field,
                         annotations = annotations
                     )
-                }
+                },
+                dynamicFields = dynamicFields
             )
         }
     }

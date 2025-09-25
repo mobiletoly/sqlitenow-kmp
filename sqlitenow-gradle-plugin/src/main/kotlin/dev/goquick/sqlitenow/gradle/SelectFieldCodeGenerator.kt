@@ -15,6 +15,7 @@ import com.squareup.kotlinpoet.TypeName
  */
 class SelectFieldCodeGenerator(
     createTableStatements: List<AnnotatedCreateTableStatement> = emptyList(),
+    private val createViewStatements: List<AnnotatedCreateViewStatement> = emptyList(),
     private val packageName: String? = null
 ) {
     // Convert the list to a map with table name as the key for more efficient lookups
@@ -138,21 +139,46 @@ class SelectFieldCodeGenerator(
 
         // First try to find the column in the specified table
         if (tableName.isNotBlank()) {
+            // 1) Direct table lookup
             val table = tableMap[tableName.lowercase()]
             if (table != null) {
                 val column = findColumnInTable(table, originalColumnName, fieldName)
-                if (column != null) {
-                    return column
+                if (column != null) return column
+            }
+
+            // 2) View lookup: if tableName matches a view, map to its underlying table/column
+            val view = createViewStatements.find { it.src.viewName.equals(tableName, ignoreCase = true) }
+            if (view != null) {
+                // Find view field by alias
+                val vf = view.fields.find { it.src.fieldName.equals(fieldName, ignoreCase = true) }
+                if (vf != null) {
+                    val underlyingTable = tableMap[vf.src.tableName.lowercase()]
+                    if (underlyingTable != null) {
+                        val col = findColumnInTable(underlyingTable, vf.src.originalColumnName, fieldName)
+                        if (col != null) return col
+                    }
                 }
             }
         }
 
-        // If we didn't find a match or no specific table is provided, check all tables
+        // 3) Fallback: check all tables
         // This is important for fields that come from joined tables
         for (table in tableMap.values) {
             val column = findColumnInTable(table, originalColumnName, fieldName)
             if (column != null) {
                 return column
+            }
+        }
+
+        // 4) Fallback: try to resolve via any view exposing this alias and map to underlying table
+        for (view in createViewStatements) {
+            val vf = view.fields.find { it.src.fieldName.equals(fieldName, ignoreCase = true) }
+            if (vf != null) {
+                val underlyingTable = tableMap[vf.src.tableName.lowercase()]
+                if (underlyingTable != null) {
+                    val col = findColumnInTable(underlyingTable, vf.src.originalColumnName, fieldName)
+                    if (col != null) return col
+                }
             }
         }
 
