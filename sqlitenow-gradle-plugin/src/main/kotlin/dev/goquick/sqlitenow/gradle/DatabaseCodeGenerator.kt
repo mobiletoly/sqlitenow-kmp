@@ -5,7 +5,8 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import java.io.File
 
 /**
- * Generates a high-level database class that simplifies usage of generated data structures and queries.
+ * Generates a high-level database class that simplifies usage of generated data structures
+ * and queries.
  */
 class DatabaseCodeGenerator(
     private val nsWithStatements: Map<String, List<AnnotatedStatement>>,
@@ -57,11 +58,6 @@ class DatabaseCodeGenerator(
         }
         return winners.mapValues { it.value.first }
     }
-
-    private fun pascalize(source: String): String = source
-        .split('_', '-', ' ')
-        .filter { it.isNotBlank() }
-        .joinToString("") { it.replaceFirstChar { c -> c.uppercase() } }
 
     private fun baseNameForNamespace(namespace: String): String {
         val table =

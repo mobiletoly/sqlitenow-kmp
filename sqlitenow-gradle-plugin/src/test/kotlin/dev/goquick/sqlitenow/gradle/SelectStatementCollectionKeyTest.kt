@@ -2,7 +2,6 @@ package dev.goquick.sqlitenow.gradle
 
 import dev.goquick.sqlitenow.gradle.inspect.SelectStatement
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.assertThrows
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 
@@ -200,7 +199,7 @@ class SelectStatementCollectionKeyTest {
     }
 
     @Test
-    fun `collectionKey works with removeAliasPrefix`() {
+    fun `collectionKey works with aliasPrefix`() {
         val statement = AnnotatedSelectStatement(
             name = "SelectWithPrefixRemoval",
             src = SelectStatement(
@@ -242,7 +241,7 @@ class SelectStatementCollectionKeyTest {
                         AnnotationConstants.MAPPING_TYPE to "collection",
                         AnnotationConstants.SOURCE_TABLE to "a",
                         AnnotationConstants.COLLECTION_KEY to "address_id",
-                        AnnotationConstants.REMOVE_ALIAS_PREFIX to "address_"
+                        AnnotationConstants.ALIAS_PREFIX to "address_"
                     ))
                 )
             )
@@ -252,6 +251,6 @@ class SelectStatementCollectionKeyTest {
         val addressField = statement.fields.find { it.annotations.isDynamicField }
         assertNotNull(addressField)
         assertEquals("address_id", addressField.annotations.collectionKey)
-        assertEquals("address_", addressField.annotations.removeAliasPrefix)
+        assertEquals("address_", addressField.annotations.aliasPrefix)
     }
 }

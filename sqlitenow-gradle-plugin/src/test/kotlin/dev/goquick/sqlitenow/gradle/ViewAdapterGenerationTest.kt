@@ -64,7 +64,7 @@ class ViewAdapterGenerationTest {
                    mappingType=perRow,
                    propertyType=ActivityCategoryQuery.SharedResult.Row,
                    sourceTable=cat,
-                   removeAliasPrefix=joined_category_ } */
+                   aliasPrefix=joined_category_ } */
 
             FROM activity act
             LEFT JOIN activity_category_join_view cat ON act.category_doc_id = cat.joined_category_doc_id

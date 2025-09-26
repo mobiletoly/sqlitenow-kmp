@@ -635,7 +635,7 @@ class AnnotationsTest {
             AnnotationConstants.PROPERTY_TYPE to "PersonAddressQuery.SharedResult.Row",
             AnnotationConstants.MAPPING_TYPE to "perRow",
             AnnotationConstants.SOURCE_TABLE to "a",
-            AnnotationConstants.REMOVE_ALIAS_PREFIX to "address_"
+            AnnotationConstants.ALIAS_PREFIX to "address_"
         )
 
         val result = FieldAnnotationOverrides.parse(annotations)
@@ -644,7 +644,7 @@ class AnnotationsTest {
         assertEquals("PersonAddressQuery.SharedResult.Row", result.propertyType)
         assertEquals("perRow", result.mappingType)
         assertEquals("a", result.sourceTable)
-        assertEquals("address_", result.removeAliasPrefix)
+        assertEquals("address_", result.aliasPrefix)
     }
 
     @Test

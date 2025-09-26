@@ -5,11 +5,8 @@ import com.squareup.kotlinpoet.PropertySpec
 import dev.goquick.sqlitenow.gradle.inspect.SelectStatement
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
-import java.io.File
 import java.sql.Connection
 import kotlin.test.assertContains
-import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.test.assertFalse
 
@@ -53,7 +50,7 @@ class DynamicFieldMappingExclusionTest {
         name: String,
         mappingType: String,
         sourceTableAlias: String,
-        removeAliasPrefix: String? = null,
+        aliasPrefix: String? = null,
         propertyType: String = "List<Row>",
     ): AnnotatedSelectStatement.Field {
         val src = Mockito.mock(SelectStatement.FieldSource::class.java)
@@ -68,7 +65,7 @@ class DynamicFieldMappingExclusionTest {
             notNull = true,
             adapter = false,
             isDynamicField = true,
-            removeAliasPrefix = removeAliasPrefix,
+            aliasPrefix = aliasPrefix,
             mappingType = mappingType,
             sourceTable = sourceTableAlias,
             collectionKey = "joined_package_doc_id"
@@ -88,7 +85,7 @@ class DynamicFieldMappingExclusionTest {
                 name = "packageDocs",
                 mappingType = AnnotationConstants.MAPPING_TYPE_COLLECTION,
                 sourceTableAlias = "pkg",
-                removeAliasPrefix = "joined_package_",
+                aliasPrefix = "joined_package_",
                 propertyType = "kotlin.collections.List<ActivityPackageQuery.SharedResult.Row>"
             )
         )
@@ -131,7 +128,7 @@ class DynamicFieldMappingExclusionTest {
                 name = "packageDoc",
                 mappingType = AnnotationConstants.MAPPING_TYPE_PER_ROW,
                 sourceTableAlias = "pkg",
-                removeAliasPrefix = "joined_package_",
+                aliasPrefix = "joined_package_",
                 propertyType = "ActivityPackageQuery.SharedResult.Row"
             )
         )

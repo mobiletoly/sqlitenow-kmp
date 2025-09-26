@@ -18,7 +18,7 @@ First add SQLiteNow version to your `libs.version.toml` file
 
 ```toml
 [version]
-sqlite = "2.6.0"
+sqlite = "2.6.1"
 sqlitenow = "0.2.0"
 kotlinx-datetime = "0.7.1"
 

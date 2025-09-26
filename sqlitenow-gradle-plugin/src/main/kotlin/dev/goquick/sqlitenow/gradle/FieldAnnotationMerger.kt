@@ -31,8 +31,8 @@ object FieldAnnotationMerger {
         if (fieldAnnotations.defaultValue != null) {
             targetAnnotations[AnnotationConstants.DEFAULT_VALUE] = fieldAnnotations.defaultValue
         }
-        if (fieldAnnotations.removeAliasPrefix != null) {
-            targetAnnotations[AnnotationConstants.REMOVE_ALIAS_PREFIX] = fieldAnnotations.removeAliasPrefix
+        if (fieldAnnotations.aliasPrefix != null) {
+            targetAnnotations[AnnotationConstants.ALIAS_PREFIX] = fieldAnnotations.aliasPrefix
         }
         if (fieldAnnotations.mappingType != null) {
             targetAnnotations[AnnotationConstants.MAPPING_TYPE] = fieldAnnotations.mappingType

@@ -90,7 +90,7 @@ class FieldAnnotationResolver(
                annotations.notNull != null ||
                annotations.isDynamicField ||
                annotations.defaultValue != null ||
-               annotations.removeAliasPrefix != null ||
+               annotations.aliasPrefix != null ||
                annotations.mappingType != null ||
                annotations.sourceTable != null
     }

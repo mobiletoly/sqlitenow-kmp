@@ -2,7 +2,6 @@ package dev.goquick.sqlitenow.gradle
 
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.AnnotationSpec
-import com.squareup.kotlinpoet.Dynamic
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.LambdaTypeName
@@ -23,11 +22,6 @@ internal class QueryCodeGenerator(
     private val outputDir: File,
     private val debug: Boolean = false,
 ) {
-    private fun pascalize(source: String): String = source
-        .split('_', '-', ' ')
-        .filter { it.isNotBlank() }
-        .joinToString("") { it.replaceFirstChar { c -> c.uppercase() } }
-
     private fun queryNamespaceName(namespace: String): String = pascalize(namespace) + "Query"
     private val columnLookup = ColumnLookup(
         dataStructCodeGenerator.createTableStatements,
@@ -689,8 +683,8 @@ internal class QueryCodeGenerator(
     ): String {
         val selectStatement = statement.src
         // Use DynamicFieldMapper to get the mapping information
-        val mappings =
-            DynamicFieldMapper.createDynamicFieldMappings(selectStatement, listOf(dynamicField))
+        val mappings = DynamicFieldMapper.createDynamicFieldMappings(
+            selectStatement, listOf(dynamicField))
         val mapping = mappings.firstOrNull()
         if (mapping == null || mapping.columns.isEmpty()) {
             return "null // No columns found for mapping"
@@ -967,7 +961,8 @@ internal class QueryCodeGenerator(
 
     /**
      * Generates executeAsList implementation for collection mapping queries.
-     * This reads all joined rows, groups them by the main entity, and creates mapped objects with collections.
+     * This reads all joined rows, groups them by the main entity, and creates mapped objects
+     * with collections.
      */
     private fun addCollectionMappingExecuteAsListImplementation(
         b: IndentedCodeBuilder,
@@ -1145,29 +1140,6 @@ internal class QueryCodeGenerator(
     }
 
     /**
-     * Helper method to add collection item properties from joined data.
-     */
-    private fun addCollectionItemPropertiesFromJoined(
-        b: IndentedCodeBuilder,
-        collectionField: AnnotatedSelectStatement.Field,
-        statement: AnnotatedSelectStatement
-    ) {
-        val selectStatement = statement.src
-        val mappings =
-            DynamicFieldMapper.createDynamicFieldMappings(selectStatement, listOf(collectionField))
-        val mapping = mappings.firstOrNull()
-        if (mapping == null || mapping.columns.isEmpty()) {
-            b.line("// No columns found for mapping")
-            return
-        }
-        // Generate the constructor parameters using joined data properties with named parameters
-        val constructorArgs = generateConstructorArgumentsFromMapping(mapping, statement, "row")
-        constructorArgs.split(",\n").forEach { arg ->
-            b.line("${arg.trim()},")
-        }
-    }
-
-    /**
      * Generates getter call for joined data classes with proper JOIN nullability handling.
      * For fields from joined tables, always adds NULL checks regardless of schema nullability.
      */
@@ -1246,7 +1218,7 @@ internal class QueryCodeGenerator(
                 "collectionKey '$collectionKey' not found in SELECT statement. Available fields: $availableFields"
             )
         }
-        // Convert to the target property name, considering removeAliasPrefix
+        // Convert to the target property name, considering aliasPrefix
         val mapping = if (selectStatement != null) {
             DynamicFieldMapper.createDynamicFieldMappings(selectStatement, listOf(collectionField))
                 .firstOrNull()
@@ -1257,12 +1229,12 @@ internal class QueryCodeGenerator(
             // Find the corresponding column in the mapping
             val mappingColumn = mapping.columns.find { it.fieldName == matchingField.src.fieldName }
             if (mappingColumn != null) {
-                // Use the target property name from the mapping (which handles removeAliasPrefix)
-                val basePropertyName = if (mapping.removeAliasPrefix != null &&
-                    mappingColumn.fieldName.startsWith(mapping.removeAliasPrefix)
+                // Use the target property name from the mapping (which handles aliasPrefix)
+                val basePropertyName = if (mapping.aliasPrefix != null &&
+                    mappingColumn.fieldName.startsWith(mapping.aliasPrefix)
                 ) {
                     // Remove the prefix for the target property name
-                    mappingColumn.fieldName.removePrefix(mapping.removeAliasPrefix)
+                    mappingColumn.fieldName.removePrefix(mapping.aliasPrefix)
                 } else {
                     // Use the original column name
                     mappingColumn.originalColumnName
@@ -1303,11 +1275,11 @@ internal class QueryCodeGenerator(
             val isAliased = fieldName != column.originalColumnName
             val basePropertyName = when {
                 // Aliased columns with prefix: remove prefix
-                isAliased && mapping.removeAliasPrefix != null && fieldName.startsWith(mapping.removeAliasPrefix) ->
-                    fieldName.removePrefix(mapping.removeAliasPrefix)
+                isAliased && mapping.aliasPrefix != null && fieldName.startsWith(mapping.aliasPrefix) ->
+                    fieldName.removePrefix(mapping.aliasPrefix)
                 // View-sourced synthetic names often include the prefix verbatim; strip for parameter names
-                !isAliased && sourceIsView && mapping.removeAliasPrefix != null && fieldName.startsWith(mapping.removeAliasPrefix) ->
-                    fieldName.removePrefix(mapping.removeAliasPrefix)
+                !isAliased && sourceIsView && mapping.aliasPrefix != null && fieldName.startsWith(mapping.aliasPrefix) ->
+                    fieldName.removePrefix(mapping.aliasPrefix)
                 else ->
                     // Use original column name to match target shared result parameter naming
                     column.originalColumnName.ifBlank { fieldName }

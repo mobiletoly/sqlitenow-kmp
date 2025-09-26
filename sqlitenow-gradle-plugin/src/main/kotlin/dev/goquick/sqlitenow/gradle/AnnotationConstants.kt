@@ -10,7 +10,7 @@ object AnnotationConstants {
     const val FIELD = "field"
     const val DYNAMIC_FIELD = "dynamicField"
     const val DEFAULT_VALUE = "defaultValue"
-    const val REMOVE_ALIAS_PREFIX = "removeAliasPrefix"
+    const val ALIAS_PREFIX = "aliasPrefix"
     const val MAPPING_TYPE = "mappingType"
     const val SOURCE_TABLE = "sourceTable"
 

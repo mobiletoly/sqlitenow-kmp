@@ -26,10 +26,6 @@ open class DataStructCodeGenerator(
     statementExecutors: MutableList<DeferredStatementExecutor>,
     providedCreateTableStatements: List<AnnotatedCreateTableStatement>? = null
 ) {
-    private fun pascalize(source: String): String = source
-        .split('_', '-', ' ')
-        .filter { it.isNotBlank() }
-        .joinToString("") { it.replaceFirstChar { c -> c.uppercase() } }
     open val createTableStatements = providedCreateTableStatements ?: statementExecutors
         .filterIsInstance<CreateTableStatementExecutor>()
         .map {
@@ -579,7 +575,7 @@ open class DataStructCodeGenerator(
     /**
      * Generates a Joined data class for dynamic field mapping that includes ALL columns from the SELECT statement.
      * This class contains all fields without any dynamic field mapping or column exclusions.
-     * The removeAliasPrefix annotation is ignored - joined column names are used.
+     * The aliasPrefix annotation is ignored - joined column names are used.
      * Used for both mappingType=collection and mappingType=perRow.
      */
     private fun generateJoinedDataClass(

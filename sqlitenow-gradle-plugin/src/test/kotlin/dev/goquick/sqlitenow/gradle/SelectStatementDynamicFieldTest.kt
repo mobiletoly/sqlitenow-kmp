@@ -168,7 +168,7 @@ class SelectStatementDynamicFieldTest {
     }
 
     @Test
-    fun `removeAliasPrefix works with dynamic fields`() {
+    fun `aliasPrefix works with dynamic fields`() {
         val statement = AnnotatedSelectStatement(
             name = "SelectWithAliasPrefix",
             src = SelectStatement(
@@ -210,13 +210,13 @@ class SelectStatementDynamicFieldTest {
                         AnnotationConstants.PROPERTY_TYPE to "Address",
                         AnnotationConstants.MAPPING_TYPE to "perRow",
                         AnnotationConstants.SOURCE_TABLE to "a",
-                        AnnotationConstants.REMOVE_ALIAS_PREFIX to "address_"
+                        AnnotationConstants.ALIAS_PREFIX to "address_"
                     ))
                 ),
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource("address_street", "a", "street", "TEXT"),
                     annotations = FieldAnnotationOverrides.parse(mapOf(
-                        AnnotationConstants.REMOVE_ALIAS_PREFIX to "address_"
+                        AnnotationConstants.ALIAS_PREFIX to "address_"
                     ))
                 )
             )
@@ -225,7 +225,7 @@ class SelectStatementDynamicFieldTest {
         assertNotNull(statement)
         val dynamicField = statement.fields.find { it.annotations.isDynamicField }
         assertNotNull(dynamicField)
-        assertEquals("address_", dynamicField.annotations.removeAliasPrefix)
+        assertEquals("address_", dynamicField.annotations.aliasPrefix)
     }
 
     @Test

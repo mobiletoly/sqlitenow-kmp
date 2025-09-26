@@ -62,7 +62,7 @@ class ViewDynamicFieldsIntegrationTest {
                    mappingType=perRow,
                    propertyType=ActivityCategoryQuery.SharedResult.Row,
                    sourceTable=cat,
-                   removeAliasPrefix=joined_category_,
+                   aliasPrefix=joined_category_,
                    notNull=true } */
 
             FROM activity act

@@ -238,7 +238,7 @@ data class FieldAnnotationOverrides(
     val adapter: Boolean?,
     val isDynamicField: Boolean = false,
     val defaultValue: String? = null,
-    val removeAliasPrefix: String? = null,
+    val aliasPrefix: String? = null,
     val mappingType: String? = null,
     val sourceTable: String? = null,
     val collectionKey: String? = null,
@@ -256,7 +256,7 @@ data class FieldAnnotationOverrides(
             // Validate mapping type annotations
             val mappingType = annotations[AnnotationConstants.MAPPING_TYPE] as? String
             val sourceTable = annotations[AnnotationConstants.SOURCE_TABLE] as? String
-            val removeAliasPrefix = annotations[AnnotationConstants.REMOVE_ALIAS_PREFIX] as? String
+            val aliasPrefix = annotations[AnnotationConstants.ALIAS_PREFIX] as? String
             val collectionKey = annotations[AnnotationConstants.COLLECTION_KEY] as? String
 
             if (mappingType != null) {
@@ -304,7 +304,7 @@ data class FieldAnnotationOverrides(
                 adapter = adapter,
                 isDynamicField = annotations[AnnotationConstants.IS_DYNAMIC_FIELD] as? Boolean ?: false,
                 defaultValue = annotations[AnnotationConstants.DEFAULT_VALUE] as? String,
-                removeAliasPrefix = removeAliasPrefix,
+                aliasPrefix = aliasPrefix,
                 mappingType = mappingType,
                 sourceTable = sourceTable,
                 collectionKey = collectionKey,

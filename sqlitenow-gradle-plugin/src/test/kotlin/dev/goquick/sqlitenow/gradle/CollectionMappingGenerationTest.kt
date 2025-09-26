@@ -40,7 +40,7 @@ class CollectionMappingGenerationTest {
             """.trimIndent()
         )
 
-        // Person query with collection mapping from alias a (removeAliasPrefix=addr_)
+        // Person query with collection mapping from alias a (aliasPrefix=addr_)
         val personDir = File(queriesDir, "person").apply { mkdirs() }
         File(personDir, "selectWithAddresses.sql").writeText(
             """
@@ -56,7 +56,7 @@ class CollectionMappingGenerationTest {
                    propertyType=List<AddressQuery.SharedResult.Row>,
                    sourceTable=a,
                    collectionKey=addr_address_id,
-                   removeAliasPrefix=addr_ } */
+                   aliasPrefix=addr_ } */
 
             FROM person p LEFT JOIN address a ON p.doc_id = a.person_doc_id;
             """.trimIndent()
@@ -124,7 +124,7 @@ class CollectionMappingGenerationTest {
                    mappingType=perRow,
                    propertyType=DetailQuery.SharedResult.Row,
                    sourceTable=d,
-                   removeAliasPrefix=det_ } */
+                   aliasPrefix=det_ } */
 
             FROM person p LEFT JOIN detail d ON p.doc_id = d.doc_id;
             """.trimIndent()

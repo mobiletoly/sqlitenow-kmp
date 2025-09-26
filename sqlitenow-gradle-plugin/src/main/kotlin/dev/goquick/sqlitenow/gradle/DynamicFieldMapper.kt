@@ -1,8 +1,6 @@
 package dev.goquick.sqlitenow.gradle
 
 import dev.goquick.sqlitenow.gradle.inspect.SelectStatement
-import net.sf.jsqlparser.statement.select.PlainSelect
-import net.sf.jsqlparser.schema.Table
 
 /**
  * Utility class for handling dynamic field mapping with table aliases.
@@ -16,7 +14,7 @@ class DynamicFieldMapper {
     data class DynamicFieldMapping(
         val fieldName: String,
         val sourceTableAlias: String,
-        val removeAliasPrefix: String?,
+        val aliasPrefix: String?,
         val mappingType: String,
         val propertyType: String,
         val columns: List<SelectStatement.FieldSource>,
@@ -45,8 +43,8 @@ class DynamicFieldMapper {
 
             // Get all table aliases from SelectStatement
             val tableAliases = selectStatement.tableAliases
-            // Collect any removeAliasPrefix hints from dynamic fields
-            val allowedPrefixes = fieldsWithMappingType.mapNotNull { it.annotations.removeAliasPrefix }
+            // Collect any aliasPrefix hints from dynamic fields
+            val allowedPrefixes = fieldsWithMappingType.mapNotNull { it.annotations.aliasPrefix }
 
             // Determine relevant aliases for dynamic mapping (source tables from dynamic fields)
             val relevantAliases = fieldsWithMappingType.mapNotNull { it.annotations.sourceTable }.toSet()
@@ -55,7 +53,7 @@ class DynamicFieldMapper {
             selectStatement.fields.forEach { fieldSource ->
                 val tableName = fieldSource.tableName
 
-                // Only validate fields that belong to relevant aliases or match removeAliasPrefix patterns
+                // Only validate fields that belong to relevant aliases or match aliasPrefix patterns
                 val shouldValidate = relevantAliases.contains(tableName) || allowedPrefixes.any { prefix ->
                     prefix.isNotBlank() && fieldSource.fieldName.startsWith(prefix)
                 }
@@ -64,7 +62,7 @@ class DynamicFieldMapper {
                 // Check if the table name corresponds to a known alias mapping
                 val isValidTable = tableAliases.containsValue(tableName) || tableAliases.containsKey(tableName)
 
-                // VIEW/star-friendly fallback: accept fields that match declared removeAliasPrefix
+                // VIEW/star-friendly fallback: accept fields that match declared aliasPrefix
                 val matchesPrefix = allowedPrefixes.any { prefix ->
                     prefix.isNotBlank() && fieldSource.fieldName.startsWith(prefix)
                 }
@@ -120,7 +118,7 @@ class DynamicFieldMapper {
 
             fieldsWithMappingType.forEach { dynamicField ->
                 val sourceTableAlias = dynamicField.annotations.sourceTable
-                val removeAliasPrefix = dynamicField.annotations.removeAliasPrefix
+                val aliasPrefix = dynamicField.annotations.aliasPrefix
                 val mappingType = dynamicField.annotations.mappingType!!
                 val propertyType = dynamicField.annotations.propertyType!!
 
@@ -138,10 +136,10 @@ class DynamicFieldMapper {
                             f.tableName.equals(sourceTableAlias, ignoreCase = true)
                         }
                     }
-                    // Try 3: VIEW/star-friendly fallback using removeAliasPrefix
-                    if (columns.isEmpty() && !removeAliasPrefix.isNullOrBlank()) {
+                    // Try 3: VIEW/star-friendly fallback using aliasPrefix
+                    if (columns.isEmpty() && !aliasPrefix.isNullOrBlank()) {
                         columns = selectStatement.fields.filter { f ->
-                            f.fieldName.startsWith(removeAliasPrefix)
+                            f.fieldName.startsWith(aliasPrefix)
                         }
                     }
 
@@ -154,7 +152,7 @@ class DynamicFieldMapper {
                             DynamicFieldMapping(
                                 fieldName = dynamicField.src.fieldName,
                                 sourceTableAlias = sourceTableAlias,
-                                removeAliasPrefix = removeAliasPrefix,
+                                aliasPrefix = aliasPrefix,
                                 mappingType = mappingType,
                                 propertyType = propertyType,
                                 columns = columns,
@@ -185,7 +183,7 @@ class DynamicFieldMapper {
 
             dynamicFieldsWithMapping.forEach { dynamicField ->
                 val sourceTableAlias = dynamicField.annotations.sourceTable
-                val removeAliasPrefix = dynamicField.annotations.removeAliasPrefix
+                val aliasPrefix = dynamicField.annotations.aliasPrefix
                 if (sourceTableAlias != null) {
                     var matched = false
                     // Method 1: alias -> underlying table name mapping
@@ -208,11 +206,11 @@ class DynamicFieldMapper {
                             }
                         }
                     }
-                    // Method 3: VIEW/star-friendly fallback using removeAliasPrefix
-                    if (!matched && !removeAliasPrefix.isNullOrBlank()) {
+                    // Method 3: VIEW/star-friendly fallback using aliasPrefix
+                    if (!matched && !aliasPrefix.isNullOrBlank()) {
                         fields.forEach { field ->
                             if (!field.annotations.isDynamicField &&
-                                field.src.fieldName.startsWith(removeAliasPrefix)) {
+                                field.src.fieldName.startsWith(aliasPrefix)) {
                                 mappedColumns.add(field.src.fieldName)
                             }
                         }
