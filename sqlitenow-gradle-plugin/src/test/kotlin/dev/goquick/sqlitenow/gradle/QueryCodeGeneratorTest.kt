@@ -1,5 +1,6 @@
 package dev.goquick.sqlitenow.gradle
 
+import dev.goquick.sqlitenow.gradle.inspect.CreateTableStatement
 import java.io.File
 import java.nio.file.Path
 import org.junit.jupiter.api.BeforeEach
@@ -7,6 +8,7 @@ import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class QueryCodeGeneratorTest {
@@ -751,6 +753,162 @@ class QueryCodeGeneratorTest {
         // Verify that each query object has its own affectedTables field
         val affectedTablesCount = fileContent.split("public val affectedTables: Set<String>").size - 1
         assertEquals(3, affectedTablesCount, "Should have 3 affectedTables fields (one for each query)")
+    }
+
+    @Test
+    @DisplayName("Test QueryCodeGenerator generates RETURNING clause functions")
+    fun testGenerateReturningClauseFunctions() {
+        // Create a test namespace directory with SQL files
+        val userDir = File(queriesDir, "user")
+        userDir.mkdirs()
+
+        // Create SQL files - one with RETURNING, one without
+        File(userDir, "addWithReturning.sql").writeText("""
+            -- @@{name=AddWithReturning}
+            INSERT INTO users (name, email) VALUES (:userName, :userEmail) RETURNING *;
+        """.trimIndent())
+
+        File(userDir, "addWithoutReturning.sql").writeText("""
+            -- @@{name=AddWithoutReturning}
+            INSERT INTO users (name, email) VALUES (:userName, :userEmail);
+        """.trimIndent())
+
+        // Create an in-memory SQLite database for testing
+        val realConnection = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
+
+        // Create the users table
+        realConnection.createStatement().execute("""
+            CREATE TABLE users (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """.trimIndent())
+
+        // Create table definition for the QueryCodeGenerator
+        val usersTableStatement = AnnotatedCreateTableStatement(
+            name = "CreateUsers",
+            src = CreateTableStatement(
+                sql = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)",
+                tableName = "users",
+                columns = listOf(
+                    CreateTableStatement.Column(
+                        name = "id",
+                        dataType = "INTEGER",
+                        notNull = false,
+                        primaryKey = true,
+                        autoIncrement = false,
+                        unique = false
+                    ),
+                    CreateTableStatement.Column(
+                        name = "name",
+                        dataType = "TEXT",
+                        notNull = true,
+                        primaryKey = false,
+                        autoIncrement = false,
+                        unique = false
+                    ),
+                    CreateTableStatement.Column(
+                        name = "email",
+                        dataType = "TEXT",
+                        notNull = true,
+                        primaryKey = false,
+                        autoIncrement = false,
+                        unique = false
+                    ),
+                    CreateTableStatement.Column(
+                        name = "created_at",
+                        dataType = "TEXT",
+                        notNull = false,
+                        primaryKey = false,
+                        autoIncrement = false,
+                        unique = false
+                    )
+                )
+            ),
+            annotations = StatementAnnotationOverrides(
+                name = null,
+                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
+                sharedResult = null,
+                implements = null,
+                excludeOverrideFields = null,
+                collectionKey = null
+            ),
+            columns = listOf(
+                AnnotatedCreateTableStatement.Column(
+                    src = CreateTableStatement.Column("id", "INTEGER", false, true, false, false),
+                    annotations = emptyMap()
+                ),
+                AnnotatedCreateTableStatement.Column(
+                    src = CreateTableStatement.Column("name", "TEXT", true, false, false, false),
+                    annotations = emptyMap()
+                ),
+                AnnotatedCreateTableStatement.Column(
+                    src = CreateTableStatement.Column("email", "TEXT", true, false, false, false),
+                    annotations = emptyMap()
+                ),
+                AnnotatedCreateTableStatement.Column(
+                    src = CreateTableStatement.Column("created_at", "TEXT", false, false, false, false),
+                    annotations = emptyMap()
+                )
+            )
+        )
+
+        // Create DataStructCodeGenerator with real SQL files
+        val dataStructGenerator = createDataStructCodeGeneratorWithMockExecutors(
+            conn = realConnection,
+            queriesDir = queriesDir,
+            createTableStatements = listOf(usersTableStatement),
+            packageName = "com.test.db",
+            outputDir = outputDir
+        )
+
+        // Create QueryCodeGenerator
+        val queryGenerator = QueryCodeGenerator(
+            dataStructCodeGenerator = dataStructGenerator,
+            packageName = "com.test.db",
+            outputDir = outputDir
+        )
+
+        // Generate the query code
+        queryGenerator.generateCode()
+
+        // Verify RETURNING query generates three functions
+        val returningFile = File(outputDir, "com/test/db/UserQuery_AddWithReturning.kt")
+        assertTrue(returningFile.exists(), "AddWithReturning query file should be generated")
+
+        val returningContent = returningFile.readText()
+
+        // Should generate three RETURNING functions
+        assertTrue(returningContent.contains("fun UserQuery.AddWithReturning.executeReturningList("),
+                  "Should generate executeReturningList function")
+        assertTrue(returningContent.contains("fun UserQuery.AddWithReturning.executeReturningOne("),
+                  "Should generate executeReturningOne function")
+        assertTrue(returningContent.contains("fun UserQuery.AddWithReturning.executeReturningOneOrNull("),
+                  "Should generate executeReturningOneOrNull function")
+
+        // Check return types
+        assertTrue(returningContent.contains("): List<UserQuery.AddWithReturning.Result>"),
+                  "executeReturningList should return List<Result>")
+        assertTrue(returningContent.contains("): UserQuery.AddWithReturning.Result ="),
+                  "executeReturningOne should return Result")
+        assertTrue(returningContent.contains("): UserQuery.AddWithReturning.Result? ="),
+                  "executeReturningOneOrNull should return Result?")
+
+        // Verify non-RETURNING query generates single execute function
+        val nonReturningFile = File(outputDir, "com/test/db/UserQuery_AddWithoutReturning.kt")
+        assertTrue(nonReturningFile.exists(), "AddWithoutReturning query file should be generated")
+
+        val nonReturningContent = nonReturningFile.readText()
+
+        // Should generate only execute function
+        assertTrue(nonReturningContent.contains("fun UserQuery.AddWithoutReturning.execute("),
+                  "Should generate execute function")
+        assertFalse(nonReturningContent.contains("executeReturning"),
+                   "Should not generate executeReturning functions")
+
+        realConnection.close()
     }
 
 

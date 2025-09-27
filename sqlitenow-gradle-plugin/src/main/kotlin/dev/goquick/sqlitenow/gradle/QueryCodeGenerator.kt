@@ -10,6 +10,7 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.TypeName
 import dev.goquick.sqlitenow.gradle.StatementUtils.getNamedParameters
 import dev.goquick.sqlitenow.gradle.inspect.SelectStatement
+import dev.goquick.sqlitenow.gradle.inspect.InsertStatement
 import java.io.File
 
 /**
@@ -104,6 +105,13 @@ internal class QueryCodeGenerator(
                 fileSpecBuilder.addFunction(readJoinedStatementResultFunction)
             }
         }
+
+        // For EXECUTE statements with RETURNING clause, also generate readStatementResult function
+        if (statement is AnnotatedExecuteStatement && statement.hasReturningClause()) {
+            val readStatementResultFunction =
+                generateReadStatementResultFunctionForExecute(namespace, statement)
+            fileSpecBuilder.addFunction(readStatementResultFunction)
+        }
         // Then generate execute function(s) that use bindStatementParams and readStatementResult
         when (statement) {
             is AnnotatedSelectStatement -> {
@@ -123,8 +131,20 @@ internal class QueryCodeGenerator(
             }
 
             is AnnotatedExecuteStatement -> {
-                val queryFunction = generateExecuteQueryFunction(namespace, statement)
-                fileSpecBuilder.addFunction(queryFunction)
+                if (statement.hasReturningClause()) {
+                    // Generate multiple functions for RETURNING queries (like SELECT queries)
+                    val executeReturningListFunction = generateExecuteQueryFunction(namespace, statement, "executeReturningList")
+                    val executeReturningOneFunction = generateExecuteQueryFunction(namespace, statement, "executeReturningOne")
+                    val executeReturningOneOrNullFunction = generateExecuteQueryFunction(namespace, statement, "executeReturningOneOrNull")
+
+                    fileSpecBuilder.addFunction(executeReturningListFunction)
+                    fileSpecBuilder.addFunction(executeReturningOneFunction)
+                    fileSpecBuilder.addFunction(executeReturningOneOrNullFunction)
+                } else {
+                    // Generate single execute function for non-RETURNING queries
+                    val executeFunction = generateExecuteQueryFunction(namespace, statement, "execute")
+                    fileSpecBuilder.addFunction(executeFunction)
+                }
             }
 
             is AnnotatedCreateTableStatement, is AnnotatedCreateViewStatement -> return
@@ -232,21 +252,79 @@ internal class QueryCodeGenerator(
     }
 
     /**
-     * Generates an extension function for execute (INSERT/DELETE/UPDATE) statements.
-     * Example: fun Person.AddUser.execute(conn: Connection, params: Person.AddUser.Params)
+     * Generates a readStatementResult extension function for EXECUTE statements with RETURNING clause.
+     * Example: fun Activity.Add.readStatementResult(statement: SQLiteStatement, adapters...): Activity.Add.Result
      */
-    private fun generateExecuteQueryFunction(
+    private fun generateReadStatementResultFunctionForExecute(
         namespace: String,
         statement: AnnotatedExecuteStatement
     ): FunSpec {
+        val capitalizedNamespace = queryNamespaceName(namespace)
         val className = statement.getDataClassName()
-        val fnBld = FunSpec.builder("execute")
+        val fnBld = FunSpec.builder("readStatementResult")
+            .addKdoc("Read statement and convert it to ${capitalizedNamespace}.${className}.Result entity")
+
+        // Reuse the same structure setup as SELECT statements
+        setupStatementFunctionStructure(
+            fnBld, statement, namespace, className,
+            includeParamsParameter = false,
+            adapterType = AdapterType.RESULT_CONVERSION
+        )
+
+        // Set return type
+        val resultType = ClassName(packageName, capitalizedNamespace).nestedClass(className).nestedClass("Result")
+        fnBld.returns(resultType)
+
+        // Add processing logic - reuse SELECT logic by converting EXECUTE to SELECT-like structure
+        addReadStatementResultProcessingForExecute(fnBld, statement, namespace)
+        return fnBld.build()
+    }
+
+    /**
+     * Generates an extension function for execute (INSERT/DELETE/UPDATE) statements.
+     * Example: fun Person.AddUser.execute(conn: Connection, params: Person.AddUser.Params)
+     * For RETURNING statements: fun Person.AddUser.executeReturningList(conn: Connection, params: Person.AddUser.Params): List<Person.AddUser.Result>
+     */
+    private fun generateExecuteQueryFunction(
+        namespace: String,
+        statement: AnnotatedExecuteStatement,
+        functionName: String = if (statement.hasReturningClause()) "executeReturningList" else "execute"
+    ): FunSpec {
+        val className = statement.getDataClassName()
+        val hasReturning = statement.hasReturningClause()
+
+        val fnBld = FunSpec.builder(functionName)
             .addModifiers(com.squareup.kotlinpoet.KModifier.SUSPEND)
-            .addKdoc("Executes the ${statement.name} query.")
+            .addKdoc("${if (hasReturning) "Executes and returns results from" else "Executes"} the ${statement.name} query.")
+
         setupExecuteFunctionStructure(fnBld, statement, namespace, className)
-        // Set return type: Unit (no return value needed for INSERT/DELETE/UPDATE)
-        fnBld.returns(Unit::class)
-        addSqlStatementProcessing(fnBld, statement, namespace, className, functionName = "execute")
+
+        // Set return type based on function name
+        if (hasReturning) {
+            val capitalizedNamespace = queryNamespaceName(namespace)
+            val resultType = ClassName(packageName, capitalizedNamespace).nestedClass(className).nestedClass("Result")
+
+            when (functionName) {
+                "executeReturningList" -> {
+                    val listType = ClassName("kotlin.collections", "List").parameterizedBy(resultType)
+                    fnBld.returns(listType)
+                }
+                "executeReturningOne" -> {
+                    fnBld.returns(resultType)
+                }
+                "executeReturningOneOrNull" -> {
+                    fnBld.returns(resultType.copy(nullable = true))
+                }
+                else -> {
+                    // Fallback for backward compatibility
+                    fnBld.returns(resultType)
+                }
+            }
+        } else {
+            fnBld.returns(Unit::class)
+        }
+
+        addSqlStatementProcessing(fnBld, statement, namespace, className, functionName = functionName)
         return fnBld.build()
     }
 
@@ -274,7 +352,14 @@ internal class QueryCodeGenerator(
             val paramsParam = ParameterSpec.builder("params", paramsType).build()
             fnBld.addParameter(paramsParam)
         }
+
+        // Add input adapters (for parameter binding)
         addAdapterParameters(fnBld, statement)
+
+        // For EXECUTE statements with RETURNING clause, also add output adapters (for result conversion)
+        if (statement is AnnotatedExecuteStatement && statement.hasReturningClause()) {
+            addResultConversionAdapterParametersForExecute(fnBld, statement)
+        }
     }
 
     /**
@@ -306,10 +391,13 @@ internal class QueryCodeGenerator(
         // Add adapters based on type
         when (adapterType) {
             AdapterType.PARAMETER_BINDING -> addParameterBindingAdapterParameters(fnBld, statement)
-            AdapterType.RESULT_CONVERSION -> addResultConversionAdapterParameters(
-                fnBld,
-                statement as AnnotatedSelectStatement
-            )
+            AdapterType.RESULT_CONVERSION -> {
+                when (statement) {
+                    is AnnotatedSelectStatement -> addResultConversionAdapterParameters(fnBld, statement)
+                    is AnnotatedExecuteStatement -> addResultConversionAdapterParametersForExecute(fnBld, statement)
+                    else -> throw IllegalArgumentException("Unsupported statement type for result conversion adapters")
+                }
+            }
 
             AdapterType.NONE -> {} /* No adapters */
         }
@@ -351,6 +439,77 @@ internal class QueryCodeGenerator(
     ) {
         addAdapterParameters(fnBld, statement) { config ->
             config.adapterFunctionName.startsWith("sqlValueTo")
+        }
+    }
+
+    /**
+     * Method to add result conversion adapter parameters for EXECUTE statements with RETURNING clause.
+     * Similar to SELECT statements but works with table columns instead of query fields.
+     */
+    private fun addResultConversionAdapterParametersForExecute(
+        fnBld: FunSpec.Builder,
+        statement: AnnotatedExecuteStatement
+    ) {
+        // Get the table name from the execute statement
+        val tableName = when (val src = statement.src) {
+            is InsertStatement -> src.table
+            else -> return // Only INSERT statements supported
+        }
+
+        // Find the table definition
+        val tableStatement = dataStructCodeGenerator.createTableStatements.find {
+            it.src.tableName.equals(tableName, ignoreCase = true)
+        } ?: return
+
+        // Get RETURNING columns
+        val returningColumns = when (val src = statement.src) {
+            is InsertStatement -> src.returningColumns
+            else -> emptyList<String>()
+        }
+
+        // Determine which columns to include
+        val columnsToInclude = if (returningColumns.contains("*")) {
+            // RETURNING * - include all table columns
+            tableStatement.columns
+        } else {
+            // RETURNING specific columns - include only those columns
+            tableStatement.columns.filter { column ->
+                returningColumns.any { returningCol ->
+                    returningCol.equals(column.src.name, ignoreCase = true)
+                }
+            }
+        }
+
+        // Add adapter parameters for columns that need them
+        val processedAdapters = mutableSetOf<String>()
+        columnsToInclude.forEach { column ->
+            if (column.annotations.containsKey(AnnotationConstants.ADAPTER)) {
+                val propertyName = statement.annotations.propertyNameGenerator.convertToPropertyName(column.src.name)
+                val adapterFunctionName = adapterConfig.getOutputAdapterFunctionName(propertyName)
+
+                // Skip if already processed
+                if (adapterFunctionName in processedAdapters) {
+                    return@forEach
+                }
+                processedAdapters.add(adapterFunctionName)
+
+                // Create adapter parameter
+                val baseType = SqliteTypeToKotlinCodeConverter.mapSqlTypeToKotlinType(column.src.dataType)
+                val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE] as? String
+                val isNullable = column.isNullable()
+                val targetType = SqliteTypeToKotlinCodeConverter.determinePropertyType(baseType, propertyType, isNullable, packageName)
+
+                val inputType = baseType.copy(nullable = isNullable)
+                val outputType = targetType.copy(nullable = isNullable)
+
+                val adapterType = LambdaTypeName.get(
+                    parameters = arrayOf(inputType),
+                    returnType = outputType
+                )
+
+                val parameterSpec = ParameterSpec.builder(adapterFunctionName, adapterType).build()
+                fnBld.addParameter(parameterSpec)
+            }
         }
     }
 
@@ -416,6 +575,63 @@ internal class QueryCodeGenerator(
         val params = mutableListOf("statement")
         params += resultConversionAdapterNames(statement)
         return params
+    }
+
+    private fun buildExecuteReadParamsList(statement: AnnotatedExecuteStatement): List<String> {
+        val params = mutableListOf("statement")
+        params += resultConversionAdapterNamesForExecute(statement)
+        return params
+    }
+
+    private fun resultConversionAdapterNamesForExecute(statement: AnnotatedExecuteStatement): List<String> {
+        // Get the table name from the execute statement
+        val tableName = when (val src = statement.src) {
+            is InsertStatement -> src.table
+            else -> return emptyList()
+        }
+
+        // Find the table definition
+        val tableStatement = dataStructCodeGenerator.createTableStatements.find {
+            it.src.tableName.equals(tableName, ignoreCase = true)
+        } ?: return emptyList()
+
+        // Get RETURNING columns
+        val returningColumns = when (val src = statement.src) {
+            is InsertStatement -> src.returningColumns
+            else -> emptyList<String>()
+        }
+
+        // Determine which columns to include
+        val columnsToInclude = if (returningColumns.contains("*")) {
+            // RETURNING * - include all table columns
+            tableStatement.columns
+        } else {
+            // RETURNING specific columns - include only those columns
+            tableStatement.columns.filter { column ->
+                returningColumns.any { returningCol ->
+                    returningCol.equals(column.src.name, ignoreCase = true)
+                }
+            }
+        }
+
+        // Get adapter function names for columns that need them
+        val adapterNames = mutableListOf<String>()
+        val processedAdapters = mutableSetOf<String>()
+        columnsToInclude.forEach { column ->
+            if (column.annotations.containsKey(AnnotationConstants.ADAPTER)) {
+                val propertyName = statement.annotations.propertyNameGenerator.convertToPropertyName(column.src.name)
+                val adapterFunctionName = adapterConfig.getOutputAdapterFunctionName(propertyName)
+
+                // Skip if already processed
+                if (adapterFunctionName in processedAdapters) {
+                    return@forEach
+                }
+                processedAdapters.add(adapterFunctionName)
+                adapterNames.add(adapterFunctionName)
+            }
+        }
+
+        return adapterNames
     }
 
     private fun withContextHeader(): String =
@@ -775,7 +991,11 @@ internal class QueryCodeGenerator(
             }
 
             is AnnotatedExecuteStatement -> {
-                addExecuteStatementImplementationToBuilder(b)
+                if (statement.hasReturningClause()) {
+                    addExecuteReturningStatementImplementationToBuilder(b, statement, namespace, className, functionName)
+                } else {
+                    addExecuteStatementImplementationToBuilder(b)
+                }
             }
 
             is AnnotatedCreateTableStatement -> {
@@ -850,6 +1070,238 @@ internal class QueryCodeGenerator(
         b.indent(by = 2) { b.line("statement.step()") }
         b.line("}")
     }
+
+    /**
+     * Helper function to add INSERT statement with RETURNING clause execution implementation.
+     * Generates code to execute statement and return the result(s) based on function type.
+     */
+    private fun addExecuteReturningStatementImplementationToBuilder(
+        b: IndentedCodeBuilder,
+        statement: AnnotatedExecuteStatement,
+        namespace: String,
+        className: String,
+        functionName: String
+    ) {
+        val capitalizedNamespace = queryNamespaceName(namespace)
+        val paramsString = buildExecuteReadParamsList(statement).joinToString(", ")
+
+        when (functionName) {
+            "executeReturningList" -> {
+                // Generate list collection logic (similar to SELECT executeAsList)
+                b.line("statement.use { statement ->")
+                b.indent(by = 2) {
+                    b.line("val results = mutableListOf<$capitalizedNamespace.$className.Result>()")
+                    b.line("while (statement.step()) {")
+                    b.indent(by = 2) {
+                        b.line("results.add($capitalizedNamespace.$className.readStatementResult($paramsString))")
+                    }
+                    b.line("}")
+                    b.line("results")
+                }
+                b.line("}")
+            }
+            "executeReturningOne" -> {
+                // Generate single result logic (similar to SELECT executeAsOne)
+                b.line("statement.use { statement ->")
+                b.indent(by = 2) {
+                    b.line("if (statement.step()) {")
+                    b.indent(by = 2) {
+                        b.line("$capitalizedNamespace.$className.readStatementResult($paramsString)")
+                    }
+                    b.line("} else {")
+                    b.indent(by = 2) {
+                        b.line("throw IllegalStateException(\"INSERT with RETURNING returned no results, but exactly one result was expected\")")
+                    }
+                    b.line("}")
+                }
+                b.line("}")
+            }
+            "executeReturningOneOrNull" -> {
+                // Generate nullable single result logic (similar to SELECT executeAsOneOrNull)
+                b.line("statement.use { statement ->")
+                b.indent(by = 2) {
+                    b.line("if (statement.step()) {")
+                    b.indent(by = 2) {
+                        b.line("$capitalizedNamespace.$className.readStatementResult($paramsString)")
+                    }
+                    b.line("} else {")
+                    b.indent(by = 2) {
+                        b.line("null")
+                    }
+                    b.line("}")
+                }
+                b.line("}")
+            }
+            else -> {
+                // Fallback for backward compatibility
+                b.line("statement.use { statement ->")
+                b.indent(by = 2) {
+                    b.line("if (statement.step()) {")
+                    b.indent(by = 2) {
+                        b.line("$capitalizedNamespace.$className.readStatementResult(statement)")
+                    }
+                    b.line("} else {")
+                    b.indent(by = 2) {
+                        b.line("throw IllegalStateException(\"INSERT with RETURNING returned no results\")")
+                    }
+                    b.line("}")
+                }
+                b.line("}")
+            }
+        }
+    }
+
+    /**
+     * Helper function to add readStatementResult processing logic for EXECUTE statements with RETURNING clause.
+     * This generates code to read a single row from the statement and convert it to a Result object.
+     * Reuses SELECT statement logic by converting EXECUTE RETURNING columns to SELECT-like fields.
+     */
+    private fun addReadStatementResultProcessingForExecute(
+        fnBld: FunSpec.Builder,
+        statement: AnnotatedExecuteStatement,
+        namespace: String
+    ) {
+        val capitalizedNamespace = queryNamespaceName(namespace)
+        val className = statement.getDataClassName()
+        val resultType = "$capitalizedNamespace.$className.Result"
+
+        // Convert EXECUTE statement to SELECT-like fields for reusing existing logic
+        val selectLikeFields = createSelectLikeFieldsFromExecuteReturning(statement)
+
+        // Build the constructor call with all properties - reuse SELECT logic
+        val constructorCall = buildString {
+            append("return $resultType(\n")
+            selectLikeFields.forEachIndexed { index, field ->
+                val propertyName = statement.annotations.propertyNameGenerator.convertToPropertyName(field.src.fieldName)
+                // Reuse the existing SELECT getter call logic
+                val getterCall = generateGetterCallInternal(
+                    field = field,
+                    columnIndex = index,
+                    propertyNameGenerator = statement.annotations.propertyNameGenerator,
+                    isFromJoinedTable = false
+                )
+                append("  $propertyName = $getterCall")
+                if (index < selectLikeFields.size - 1) {
+                    append(",")
+                }
+                append("\n")
+            }
+            append(")")
+        }
+        fnBld.addStatement(constructorCall)
+    }
+
+    /**
+     * Converts EXECUTE statement RETURNING columns to SELECT-like fields so we can reuse existing SELECT logic.
+     * This creates fake AnnotatedSelectStatement.Field objects that represent the RETURNING columns.
+     */
+    private fun createSelectLikeFieldsFromExecuteReturning(statement: AnnotatedExecuteStatement): List<AnnotatedSelectStatement.Field> {
+        // Get the table name from the execute statement
+        val tableName = when (val src = statement.src) {
+            is InsertStatement -> src.table
+            else -> throw IllegalArgumentException("Only INSERT statements with RETURNING are supported")
+        }
+
+        // Find the table definition
+        val tableStatement = dataStructCodeGenerator.createTableStatements.find {
+            it.src.tableName.equals(tableName, ignoreCase = true)
+        } ?: throw IllegalArgumentException("Table '$tableName' not found")
+
+        // Get RETURNING columns
+        val returningColumns = when (val src = statement.src) {
+            is InsertStatement -> src.returningColumns
+            else -> emptyList<String>()
+        }
+
+        // Determine which columns to include
+        val columnsToInclude = if (returningColumns.contains("*")) {
+            // RETURNING * - include all table columns
+            tableStatement.columns
+        } else {
+            // RETURNING specific columns - include only those columns
+            tableStatement.columns.filter { column ->
+                returningColumns.any { returningCol ->
+                    returningCol.equals(column.src.name, ignoreCase = true)
+                }
+            }
+        }
+
+        // Convert table columns to SELECT-like fields
+        return columnsToInclude.map { column ->
+            // Create a fake SelectStatement.FieldSource that represents this column
+            val fieldSrc = SelectStatement.FieldSource(
+                fieldName = column.src.name,
+                tableName = tableName,
+                originalColumnName = column.src.name,
+                dataType = column.src.dataType
+            )
+
+            // Create field annotations - copy from table column annotations
+            val annotationMap = mutableMapOf<String, Any?>()
+            if (column.annotations.containsKey(AnnotationConstants.ADAPTER)) {
+                annotationMap[AnnotationConstants.ADAPTER] = AnnotationConstants.ADAPTER_CUSTOM
+            }
+            column.annotations[AnnotationConstants.PROPERTY_TYPE]?.let { propertyType ->
+                annotationMap[AnnotationConstants.PROPERTY_TYPE] = propertyType
+            }
+
+            val fieldAnnotations = FieldAnnotationOverrides.parse(annotationMap)
+
+            AnnotatedSelectStatement.Field(fieldSrc, fieldAnnotations)
+        }
+    }
+
+    /**
+     * Generate getter call for an EXECUTE statement column with proper adapter handling.
+     * Similar to generateGetterCallInternal but works with table columns instead of query fields.
+     */
+    private fun generateGetterCallForExecuteColumn(
+        column: AnnotatedCreateTableStatement.Column,
+        columnIndex: Int,
+        propertyNameGenerator: PropertyNameGeneratorType
+    ): String {
+        val propertyName = propertyNameGenerator.convertToPropertyName(column.src.name)
+        val hasAdapter = column.annotations.containsKey(AnnotationConstants.ADAPTER)
+
+        if (hasAdapter) {
+            // Use adapter function
+            val adapterFunctionName = adapterConfig.getOutputAdapterFunctionName(propertyName)
+            val kotlinType = SqliteTypeToKotlinCodeConverter.mapSqlTypeToKotlinType(column.src.dataType)
+            val baseGetterCall = typeMapping.getGetterCall(kotlinType, columnIndex).replace("stmt", "statement")
+
+            return if (column.isNullable()) {
+                "if (statement.isNull($columnIndex)) $adapterFunctionName(null) else $adapterFunctionName($baseGetterCall)"
+            } else {
+                "$adapterFunctionName($baseGetterCall)"
+            }
+        } else {
+            // No adapter: use direct getter based on the desired property type
+            // We need to determine the desired property type from the Result data class
+            val desiredType = getDesiredPropertyTypeForExecuteColumn(column, propertyNameGenerator)
+            val baseGetterCall = typeMapping.getGetterCall(desiredType.copy(nullable = false), columnIndex).replace("stmt", "statement")
+
+            return if (column.isNullable()) {
+                "if (statement.isNull($columnIndex)) null else $baseGetterCall"
+            } else {
+                baseGetterCall
+            }
+        }
+    }
+
+    /**
+     * Get the desired property type for an EXECUTE statement column.
+     * This should match the type used in the generated Result data class.
+     */
+    private fun getDesiredPropertyTypeForExecuteColumn(
+        column: AnnotatedCreateTableStatement.Column,
+        propertyNameGenerator: PropertyNameGeneratorType
+    ): TypeName {
+        // For now, use the same logic as the data class generator
+        // This should match what DataStructCodeGenerator generates for the Result class
+        return SqliteTypeToKotlinCodeConverter.mapSqlTypeToKotlinType(column.src.dataType)
+    }
+
+
 
     /**
      * Helper function to get the property name for a field.

@@ -107,6 +107,15 @@ class NamedParametersProcessor(
                                 updateSet.values[0].accept(customExprDp)
                             }
                         }
+
+                        // Handle RETURNING clause manually
+                        insert.returningClause?.let { returningClause ->
+                            buffer.append(" RETURNING ")
+                            returningClause.forEachIndexed { index, selectItem ->
+                                if (index > 0) buffer.append(", ")
+                                buffer.append(selectItem.toString())
+                            }
+                        }
                     }
                 }
 

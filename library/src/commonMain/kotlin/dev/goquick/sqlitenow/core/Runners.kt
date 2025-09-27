@@ -12,3 +12,9 @@ interface SelectRunners<T : Any> {
 interface ExecuteRunners {
     suspend fun execute()
 }
+
+interface ExecuteReturningRunners<T : Any> {
+    suspend fun executeReturningList(): List<T>
+    suspend fun executeReturningOne(): T
+    suspend fun executeReturningOneOrNull(): T?
+}

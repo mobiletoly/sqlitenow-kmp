@@ -194,6 +194,12 @@ open class DataStructCodeGenerator(
             queryObjectBuilder.addType(resultDataClass)
         }
 
+        // Add Result data class for EXECUTE statements with RETURNING clause
+        if (statement is AnnotatedExecuteStatement && statement.hasReturningClause()) {
+            val resultDataClass = generateResultDataClassForExecuteStatement(statement, namespace)
+            queryObjectBuilder.addType(resultDataClass)
+        }
+
         // Add Joined data class for SELECT statements with dynamic field mapping (unless they use shared results)
         if (statement is AnnotatedSelectStatement && statement.annotations.sharedResult == null) {
             if (statement.hasDynamicFieldMapping()) {
@@ -741,6 +747,89 @@ open class DataStructCodeGenerator(
             }
         }
     }
+
+    /**
+     * Generates a Result data class for EXECUTE statements with RETURNING clause.
+     * Since RETURNING works similar to SELECT, we use a similar approach to generate the Result class.
+     * For RETURNING *, we include all columns from the table.
+     * For specific columns, we include only those columns.
+     */
+    private fun generateResultDataClassForExecuteStatement(
+        statement: AnnotatedExecuteStatement,
+        namespace: String
+    ): TypeSpec {
+        // Get the table name from the execute statement
+        val tableName = when (val src = statement.src) {
+            is InsertStatement -> src.table
+            else -> throw IllegalArgumentException("Only INSERT statements with RETURNING are supported")
+        }
+
+        // Get the RETURNING columns
+        val returningColumns = statement.getReturningColumns()
+
+        // Find the table definition from createTableStatements
+        val tableStatement = createTableStatements.find { it.src.tableName == tableName }
+            ?: throw IllegalArgumentException("Table '$tableName' not found in schema")
+
+        // Get all columns from the table (use annotated columns, not raw columns)
+        val allTableColumns = tableStatement.columns
+
+        // Determine which columns to include in the Result class
+        val columnsToInclude = if (returningColumns.contains("*")) {
+            // RETURNING * - include all table columns
+            allTableColumns
+        } else {
+            // RETURNING specific columns - include only those columns
+            allTableColumns.filter { column ->
+                returningColumns.any { returningCol ->
+                    returningCol.equals(column.src.name, ignoreCase = true)
+                }
+            }
+        }
+
+        // Generate properties for the Result class using the same approach as SELECT statements
+        val properties = columnsToInclude.map { column ->
+            // Convert SQL type to Kotlin type using the same approach as other methods
+            val baseType = SqliteTypeToKotlinCodeConverter.mapSqlTypeToKotlinType(column.src.dataType)
+            val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE] as? String
+            val isNullable = column.isNullable()
+
+            val kotlinType = SqliteTypeToKotlinCodeConverter.determinePropertyType(
+                baseType,
+                propertyType,
+                isNullable,
+                fileGenerationHelper.packageName
+            )
+
+            // Generate property name using the same utility function as other methods
+            val propertyName = PropertyNameGeneratorType.LOWER_CAMEL_CASE.convertToPropertyName(column.src.name)
+
+            PropertySpec.builder(propertyName, kotlinType)
+                .initializer(propertyName)
+                .build()
+        }
+
+        // Create constructor parameters
+        val constructorParams = properties.map { prop ->
+            ParameterSpec.builder(prop.name, prop.type)
+                .build()
+        }
+
+        return TypeSpec.classBuilder("Result")
+            .addModifiers(KModifier.DATA)
+            .primaryConstructor(
+                FunSpec.constructorBuilder()
+                    .addParameters(constructorParams)
+                    .build()
+            )
+            .addProperties(properties)
+            .addKdoc("Data class for ${statement.name} query results.")
+            .addType(
+                TypeSpec.companionObjectBuilder()
+                    .build()
+            )
+            .build()
+    }
 }
 
 /**
@@ -843,3 +932,5 @@ private fun addArraySafeEqualsAndHashCodeIfNeeded(
     hashFun.addStatement("return result")
     classBuilder.addFunction(hashFun.build())
 }
+
+

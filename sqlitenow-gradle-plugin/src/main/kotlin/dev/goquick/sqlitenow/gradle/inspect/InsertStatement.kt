@@ -11,7 +11,9 @@ class InsertStatement(
     override val namedParameters: List<String>,
     val columnNamesAssociatedWithNamedParameters: Map<String, String>,
     override val withSelectStatements: List<SelectStatement>,
-    override val parameterCastTypes: Map<String, String> = emptyMap()
+    override val parameterCastTypes: Map<String, String> = emptyMap(),
+    val hasReturningClause: Boolean = false,
+    val returningColumns: List<String> = emptyList()
 ) : ExecuteStatement {
 
     companion object {
@@ -44,6 +46,24 @@ class InsertStatement(
                 }
             }
 
+            // Check for RETURNING clause
+            val returningClause = insert.returningClause
+            val hasReturningClause = returningClause != null
+            val returningColumns = if (hasReturningClause) {
+                returningClause.map { selectItem ->
+                    if (selectItem.alias != null) {
+                        throw IllegalArgumentException("RETURNING clause with aliases is currently not supported: $selectItem")
+                    }
+                    val node = selectItem.astNode
+                    if (node.jjtGetFirstToken().toString() != node.jjtGetLastToken().toString()) {
+                        throw IllegalArgumentException("RETURNING clause with expressions is currently not supported: $selectItem")
+                    }
+                    selectItem.toString()
+                }
+            } else {
+                emptyList()
+            }
+
             val processor = NamedParametersProcessor(stmt = insert)
             return InsertStatement(
                 sql = processor.processedSql,
@@ -52,6 +72,8 @@ class InsertStatement(
                 columnNamesAssociatedWithNamedParameters = columnNamesAssociatedWithNamedParameters,
                 withSelectStatements = withSelectStatements,
                 parameterCastTypes = processor.parameterCastTypes,
+                hasReturningClause = hasReturningClause,
+                returningColumns = returningColumns,
             )
         }
     }

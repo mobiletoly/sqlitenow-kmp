@@ -2,6 +2,7 @@ package dev.goquick.sqlitenow.gradle
 
 import com.squareup.kotlinpoet.*
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
+import dev.goquick.sqlitenow.gradle.inspect.InsertStatement
 import java.io.File
 
 /**
@@ -522,6 +523,83 @@ class DatabaseCodeGenerator(
     }
 
     /**
+     * Collects output adapter configurations for EXECUTE statements with RETURNING clause.
+     * This is similar to how SELECT statements collect output adapters.
+     */
+    private fun collectOutputAdaptersForExecuteReturning(statement: AnnotatedExecuteStatement): List<AdapterConfig.ParamConfig> {
+        if (!statement.hasReturningClause()) {
+            return emptyList()
+        }
+
+        // Get the table name from the execute statement
+        val tableName = when (val src = statement.src) {
+            is InsertStatement -> src.table
+            else -> return emptyList()
+        }
+
+        // Find the table definition
+        val tableStatement = createTableStatements.find {
+            it.src.tableName.equals(tableName, ignoreCase = true)
+        } ?: return emptyList()
+
+        // Get RETURNING columns
+        val returningColumns = when (val src = statement.src) {
+            is InsertStatement -> src.returningColumns
+            else -> emptyList<String>()
+        }
+
+        // Determine which columns to include
+        val columnsToInclude = if (returningColumns.contains("*")) {
+            // RETURNING * - include all table columns
+            tableStatement.columns
+        } else {
+            // RETURNING specific columns - include only those columns
+            tableStatement.columns.filter { column ->
+                returningColumns.any { returningCol ->
+                    returningCol.equals(column.src.name, ignoreCase = true)
+                }
+            }
+        }
+
+        // Create adapter configurations for columns that need them
+        val configs = mutableListOf<AdapterConfig.ParamConfig>()
+        val processedAdapters = mutableSetOf<String>()
+
+        columnsToInclude.forEach { column ->
+            if (column.annotations.containsKey(AnnotationConstants.ADAPTER)) {
+                val propertyName = statement.annotations.propertyNameGenerator.convertToPropertyName(column.src.name)
+                val adapterFunctionName = adapterConfig.getOutputAdapterFunctionName(propertyName)
+
+                // Skip if already processed
+                if (adapterFunctionName in processedAdapters) {
+                    return@forEach
+                }
+                processedAdapters.add(adapterFunctionName)
+
+                // Create adapter configuration for output (result conversion)
+                val baseType = SqliteTypeToKotlinCodeConverter.mapSqlTypeToKotlinType(column.src.dataType)
+                val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE] as? String
+                val isNullable = column.isNullable()
+                val targetType = SqliteTypeToKotlinCodeConverter.determinePropertyType(baseType, propertyType, isNullable, packageName)
+
+                val inputType = baseType.copy(nullable = isNullable)
+                val outputType = targetType.copy(nullable = isNullable)
+
+                val config = AdapterConfig.ParamConfig(
+                    paramName = column.src.name,
+                    adapterFunctionName = adapterFunctionName,
+                    inputType = inputType,
+                    outputType = outputType,
+                    isNullable = isNullable
+                )
+                configs.add(config)
+            }
+        }
+
+        return configs
+    }
+
+    /**
      * Finds the primary key column for a table.
      * Returns null if no primary key is found or if there are multiple primary keys.
      */
@@ -596,14 +674,24 @@ class DatabaseCodeGenerator(
                 }
 
                 is AnnotatedExecuteStatement -> {
-                    // Generate ExecuteRunners object for INSERT/UPDATE/DELETE statements
-                    classBuilder.addProperty(
-                        generateExecuteRunnersProperty(
-                            statement,
-                            namespace,
-                            adaptersByNamespace
+                    // Generate ExecuteRunners or ExecuteReturningRunners object based on RETURNING clause
+                    if (statement.hasReturningClause()) {
+                        classBuilder.addProperty(
+                            generateExecuteReturningRunnersProperty(
+                                statement,
+                                namespace,
+                                adaptersByNamespace
+                            )
                         )
-                    )
+                    } else {
+                        classBuilder.addProperty(
+                            generateExecuteRunnersProperty(
+                                statement,
+                                namespace,
+                                adaptersByNamespace
+                            )
+                        )
+                    }
                 }
 
                 else -> {
@@ -643,6 +731,50 @@ class DatabaseCodeGenerator(
 
         // Generate the object expression implementing ExecuteRunners
         val objectExpression = generateExecuteRunnersObjectExpression(
+            statement, namespace, className,
+            hasParams, adaptersByNamespace
+        )
+
+        return PropertySpec.builder(propertyName, propertyType)
+            .initializer(objectExpression)
+            .build()
+    }
+
+    /** Generates an ExecuteReturningRunners property for INSERT statements with RETURNING clause. */
+    private fun generateExecuteReturningRunnersProperty(
+        statement: AnnotatedExecuteStatement,
+        namespace: String,
+        adaptersByNamespace: Map<String, List<UniqueAdapter>>
+    ): PropertySpec {
+        val className = statement.getDataClassName()
+        val propertyName = className.replaceFirstChar { it.lowercase() }
+
+        // Check if statement has parameters
+        val namedParameters = StatementUtils.getNamedParameters(statement)
+        val hasParams = namedParameters.isNotEmpty()
+
+        // Get the result type for RETURNING clause
+        val resultType = ClassName(packageName, queryNamespaceName(namespace))
+            .nestedClass(className)
+            .nestedClass("Result")
+
+        // Create the property type
+        val propertyType = if (hasParams) {
+            // Function type: (Params) -> ExecuteReturningRunners<ResultType>
+            val paramsType = ClassName(packageName, queryNamespaceName(namespace))
+                .nestedClass(className)
+                .nestedClass("Params")
+            val executeReturningRunnersType = ClassName("dev.goquick.sqlitenow.core", "ExecuteReturningRunners")
+                .parameterizedBy(resultType)
+            LambdaTypeName.get(parameters = arrayOf(paramsType), returnType = executeReturningRunnersType)
+        } else {
+            // Direct ExecuteReturningRunners<ResultType> type
+            ClassName("dev.goquick.sqlitenow.core", "ExecuteReturningRunners")
+                .parameterizedBy(resultType)
+        }
+
+        // Generate the object expression implementing ExecuteReturningRunners
+        val objectExpression = generateExecuteReturningRunnersObjectExpression(
             statement, namespace, className,
             hasParams, adaptersByNamespace
         )
@@ -824,6 +956,96 @@ class DatabaseCodeGenerator(
                 b.line(")")
                 b.line("// Notify listeners that tables have changed")
                 b.line("ref.notifyTablesChanged($capitalizedNamespace.$className.affectedTables)")
+            }
+            b.line("}")
+        }
+        b.line("}")
+
+        if (hasParams) {
+            b.line("}")
+        }
+
+        return b.build()
+    }
+
+    /** Generates the object expression that implements ExecuteReturningRunners interface. */
+    private fun generateExecuteReturningRunnersObjectExpression(
+        statement: AnnotatedExecuteStatement,
+        namespace: String,
+        className: String,
+        hasParams: Boolean,
+        adaptersByNamespace: Map<String, List<UniqueAdapter>>
+    ): String {
+        val capitalizedNamespace = queryNamespaceName(namespace)
+
+        // For RETURNING queries, we need both input and output adapters
+        val inputAdapters = adapterConfig.collectAllParamConfigs(statement) // Input adapters for parameter binding
+        val outputAdapters = collectOutputAdaptersForExecuteReturning(statement) // Output adapters for result conversion
+        val allAdapters = inputAdapters + outputAdapters
+
+        val paramLines = buildCommonParamsLines(
+            hasParams = hasParams,
+            statementAdapters = allAdapters,
+            namespace = namespace,
+            adaptersByNamespace = adaptersByNamespace,
+        )
+
+        val b = IndentedCodeBuilder()
+        if (hasParams) {
+            b.line("{ params ->")
+        }
+        b.line("object : ExecuteReturningRunners<${capitalizedNamespace}.${className}.Result> {")
+        b.indent(by = 2) {
+            // executeReturningList method
+            b.line("override suspend fun executeReturningList(): List<${capitalizedNamespace}.${className}.Result> {")
+            b.indent(by = 2) {
+                b.line("val result = $capitalizedNamespace.$className.executeReturningList(")
+                b.indent(by = 2) {
+                    paramLines.forEachIndexed { idx, line ->
+                        val suffix = if (idx < paramLines.lastIndex) "," else ""
+                        b.line("$line$suffix")
+                    }
+                }
+                b.line(")")
+                b.line("// Notify listeners that tables have changed")
+                b.line("ref.notifyTablesChanged($capitalizedNamespace.$className.affectedTables)")
+                b.line("return result")
+            }
+            b.line("}")
+            b.line("")
+
+            // executeReturningOne method
+            b.line("override suspend fun executeReturningOne(): ${capitalizedNamespace}.${className}.Result {")
+            b.indent(by = 2) {
+                b.line("val result = $capitalizedNamespace.$className.executeReturningOne(")
+                b.indent(by = 2) {
+                    paramLines.forEachIndexed { idx, line ->
+                        val suffix = if (idx < paramLines.lastIndex) "," else ""
+                        b.line("$line$suffix")
+                    }
+                }
+                b.line(")")
+                b.line("// Notify listeners that tables have changed")
+                b.line("ref.notifyTablesChanged($capitalizedNamespace.$className.affectedTables)")
+                b.line("return result")
+            }
+            b.line("}")
+            b.line("")
+
+            // executeReturningOneOrNull method
+            b.line("override suspend fun executeReturningOneOrNull(): ${capitalizedNamespace}.${className}.Result? {")
+            b.indent(by = 2) {
+                b.line("val result = $capitalizedNamespace.$className.executeReturningOneOrNull(")
+                b.indent(by = 2) {
+                    paramLines.forEachIndexed { idx, line ->
+                        val suffix = if (idx < paramLines.lastIndex) "," else ""
+                        b.line("$line$suffix")
+                    }
+                }
+                b.line(")")
+                b.line("// Notify listeners that tables have changed")
+                b.line("ref.notifyTablesChanged($capitalizedNamespace.$className.affectedTables)")
+                b.line("return result")
             }
             b.line("}")
         }

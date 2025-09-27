@@ -48,7 +48,7 @@ SELECT p.id,
        mappingType=perRow,
        propertyType=my.app.Address,
        sourceTable=a
-       removeAliasPrefix=address_
+       aliasPrefix=address_
    } */
 
 FROM Person p
@@ -108,8 +108,8 @@ Check [Collection Recipes]({{ site.baseurl }}/documentation/collection-recipes/)
 - **`sourceTable`**: Table alias for the joined table (`a` for `person_address` table)
 
 
-- **`removeAliasPrefix`**: Prefix to remove from column names (optional). In the example above,
-  `removeAliasPrefix=address_` will remove `address_` prefix from all column name aliases, so
+- **`aliasPrefix`**: Prefix to remove from column names (optional). In the example above,
+  `aliasPrefix=address_` will remove `address_` prefix from all column name aliases, so
   `address_id` will be mapped to `id` property of `Address` object.
 
 
@@ -144,7 +144,7 @@ SELECT p.id AS person_id,
        propertyType=List<my.app.Address>,
        sourceTable=a,
        collectionKey=address_id
-       removeAliasPrefix=address_ 
+       aliasPrefix=address_ 
        notNull=true } */
 
 FROM Person p
