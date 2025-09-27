@@ -20,7 +20,7 @@ class HeavyConcurrentSyncTest {
 
     @Before
     fun setUp() {
-        if (skipAllTest) {
+        if (skipAllOversqliteTest) {
             throw UnsupportedOperationException("(TEMPORARY setUp) Not implemented yet")
         }
     }

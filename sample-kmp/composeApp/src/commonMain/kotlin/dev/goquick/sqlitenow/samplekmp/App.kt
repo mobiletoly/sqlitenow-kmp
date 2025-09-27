@@ -135,21 +135,11 @@ val db = NowSampleDatabase(
         }
     ),
     commentAdapters = NowSampleDatabase.CommentAdapters(
-        sqlValueToCreatedAt = {
-            LocalDateTime.fromSqliteTimestamp(it)
-        },
-        createdAtToSqlValue = {
-            it.toSqliteTimestamp()
-        },
-        sqlValueToTags = { it?.jsonDecodeFromSqlite() ?: emptyList() },
-        tagsToSqlValue = { it?.jsonEncodeToSqlite() }
+        createdAtToSqlValue = { ts -> ts.toSqliteTimestamp() },
+        tagsToSqlValue = { tags -> tags?.jsonEncodeToSqlite() }
     ),
     personAddressAdapters = NowSampleDatabase.PersonAddressAdapters(
         addressTypeToSqlValue = { it.value },
-        sqlValueToAddressType = { AddressType.from(it) },
-        sqlValueToCreatedAt = {
-            it.let { LocalDateTime.fromSqliteTimestamp(it) }
-        },
     ),
     migration = VersionBasedDatabaseMigrations()
 )
@@ -488,7 +478,7 @@ suspend fun addRandomPerson(onError: (String) -> Unit) {
     } else null
 
     try {
-        db.person.add(
+        val results = db.person.add(
             PersonQuery.Add.Params(
                 firstName = firstName,
                 lastName = lastName,
@@ -497,7 +487,8 @@ suspend fun addRandomPerson(onError: (String) -> Unit) {
                 birthDate = birthDate,
                 notes = notes,
             )
-        ).execute()
+        ).executeReturningList()
+        println(results)
     } catch (e: SQLiteException) {
         e.printStackTrace()
         // Check if duplicate
@@ -558,4 +549,3 @@ suspend fun randomizePerson(person: PersonEntity, onError: (String) -> Unit = {}
         onError("Unexpected error: ${e.message}")
     }
 }
-

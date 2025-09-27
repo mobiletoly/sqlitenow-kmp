@@ -2,11 +2,9 @@ package dev.goquick.sqlitenow.oversqlite
 
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
-import androidx.sqlite.execSQL
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -21,7 +19,7 @@ class SimpleUpdateSyncDebuggingTest {
 
     @Before
     fun setUp() {
-        if (skipAllTest) {
+        if (skipAllOversqliteTest) {
             throw UnsupportedOperationException("(TEMPORARY setUp) Not implemented yet")
         }
     }

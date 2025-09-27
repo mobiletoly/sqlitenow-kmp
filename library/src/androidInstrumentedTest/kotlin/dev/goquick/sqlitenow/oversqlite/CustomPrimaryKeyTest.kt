@@ -27,7 +27,7 @@ class CustomPrimaryKeyTest {
 
     @Before
     fun setUp() {
-        if (skipAllTest) {
+        if (skipAllOversqliteTest) {
             throw UnsupportedOperationException("(TEMPORARY setUp) Not implemented yet")
         }
 

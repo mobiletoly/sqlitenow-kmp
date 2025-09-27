@@ -14,4 +14,5 @@ ON CONFLICT(email) DO UPDATE SET first_name = :firstName,
                                  last_name  = :lastName,
                                  phone      = :phone,
                                  birth_date = :birthDate,
-                                 notes      = :notes;
+                                 notes      = :notes
+RETURNING *;

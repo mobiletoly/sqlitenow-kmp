@@ -28,13 +28,13 @@ SELECT p.id         AS person_id,
        mappingType=perRow,
        propertyType=PersonAddressQuery.SharedResult.Row,
        sourceTable=a,
-       removeAliasPrefix=address_ } */
+       aliasPrefix=address_ } */
 
 /* @@{ dynamicField=comment,
        mappingType=perRow,
        propertyType=CommentQuery.SharedResult.Row,
        sourceTable=c,
-       removeAliasPrefix=comment_ } */
+       aliasPrefix=comment_ } */
 
 FROM person p
          LEFT JOIN person_address a ON p.id = a.person_id

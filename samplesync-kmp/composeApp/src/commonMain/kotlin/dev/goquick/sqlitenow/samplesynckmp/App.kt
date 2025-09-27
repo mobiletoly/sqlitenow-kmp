@@ -244,21 +244,11 @@ val db = NowSampleSyncDatabase(
         },
     ),
     commentAdapters = NowSampleSyncDatabase.CommentAdapters(
-        sqlValueToCreatedAt = {
-            LocalDateTime.fromSqliteTimestamp(it)
-        },
-        createdAtToSqlValue = {
-            it.toSqliteTimestamp()
-        },
-        sqlValueToTags = { it?.jsonDecodeFromSqlite() ?: emptyList() },
-        tagsToSqlValue = { it?.jsonEncodeToSqlite() }
+        createdAtToSqlValue = { ts -> ts.toSqliteTimestamp() },
+        tagsToSqlValue = { tags -> tags?.jsonEncodeToSqlite() }
     ),
     personAddressAdapters = NowSampleSyncDatabase.PersonAddressAdapters(
         addressTypeToSqlValue = { it.value },
-        sqlValueToAddressType = { AddressType.from(it) },
-        sqlValueToCreatedAt = {
-            it.let { LocalDateTime.fromSqliteTimestamp(it) }
-        },
     ),
     migration = VersionBasedDatabaseMigrations()
 )

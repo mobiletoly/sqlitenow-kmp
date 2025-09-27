@@ -32,7 +32,7 @@ SELECT p.id         AS person_id,
        sourceTable=a,
        collectionKey=address_id,
        notNull=true,
-       removeAliasPrefix=address_ } */
+       aliasPrefix=address_ } */
 
 /* @@{ dynamicField=comments,
        mappingType=collection,
@@ -40,7 +40,7 @@ SELECT p.id         AS person_id,
        collectionKey=comment_id,
        sourceTable=c,
        notNull=true,
-       removeAliasPrefix=comment_ } */
+       aliasPrefix=comment_ } */
 
 FROM person p
          LEFT JOIN person_address a ON p.id = a.person_id

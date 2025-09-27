@@ -3,7 +3,6 @@ package dev.goquick.sqlitenow.oversqlite
 import android.content.Context
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
-import androidx.sqlite.execSQL
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
@@ -21,7 +20,7 @@ class AndroidOversqliteClientTest {
 
     @Before
     fun setUp() {
-        if (skipAllTest) {
+        if (skipAllOversqliteTest) {
             throw UnsupportedOperationException("(TEMPORARY setUp) Not implemented yet")
         }
 

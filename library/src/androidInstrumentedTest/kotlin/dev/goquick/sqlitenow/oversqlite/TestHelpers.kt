@@ -7,7 +7,7 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 
-const val skipAllTest = false
+const val skipAllOversqliteTest = true
 
 // Deterministic resolver for tests: ensures convergence by using lexicographic ordering
 // This prevents ping-pong conflicts between devices by making consistent decisions

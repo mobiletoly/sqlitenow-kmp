@@ -9,11 +9,9 @@ import io.ktor.client.plugins.auth.providers.BearerTokens
 import io.ktor.client.plugins.auth.providers.bearer
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
-import io.ktor.client.request.url
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -26,7 +24,7 @@ class SlowNetworkDbConcurrencyTest {
 
     @Before
     fun setUp() {
-        if (skipAllTest) {
+        if (skipAllOversqliteTest) {
             throw UnsupportedOperationException("(TEMPORARY setUp) Not implemented yet")
         }
     }
