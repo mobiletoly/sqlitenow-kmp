@@ -39,12 +39,10 @@ class TypeAdaptersTest {
             migration = VersionBasedDatabaseMigrations(),
             debug = true,
             categoryAdapters = LibraryTestDatabase.CategoryAdapters(
-                sqlValueToCreatedAt = { LocalDateTime.fromSqliteTimestamp(it) },
                 sqlValueToBirthDate = { it?.let { LocalDate.fromSqliteDate(it) } }
             ),
             personAdapters = LibraryTestDatabase.PersonAdapters(
                 birthDateToSqlValue = { it?.toSqliteDate() },
-                sqlValueToAddressType = { AddressType.from(it) },
                 sqlValueToTags = { it?.let { Json.decodeFromString<List<String>>(it) } }
             ),
             commentAdapters = LibraryTestDatabase.CommentAdapters(
@@ -55,7 +53,9 @@ class TypeAdaptersTest {
                 sqlValueToAssignedAt = { LocalDateTime.fromSqliteTimestamp(it) }
             ),
             personAddressAdapters = LibraryTestDatabase.PersonAddressAdapters(
-                addressTypeToSqlValue = { it.value }
+                addressTypeToSqlValue = { it.value },
+                sqlValueToAddressType = { AddressType.from(it) },
+                sqlValueToCreatedAt = { LocalDateTime.fromSqliteTimestamp(it) }
             )
         )
     }

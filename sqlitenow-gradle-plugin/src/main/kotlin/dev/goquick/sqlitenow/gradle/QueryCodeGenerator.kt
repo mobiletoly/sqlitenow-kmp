@@ -11,6 +11,8 @@ import com.squareup.kotlinpoet.TypeName
 import dev.goquick.sqlitenow.gradle.StatementUtils.getNamedParameters
 import dev.goquick.sqlitenow.gradle.inspect.SelectStatement
 import dev.goquick.sqlitenow.gradle.inspect.InsertStatement
+import dev.goquick.sqlitenow.gradle.inspect.UpdateStatement
+import dev.goquick.sqlitenow.gradle.inspect.DeleteStatement
 import java.io.File
 
 /**
@@ -453,7 +455,9 @@ internal class QueryCodeGenerator(
         // Get the table name from the execute statement
         val tableName = when (val src = statement.src) {
             is InsertStatement -> src.table
-            else -> return // Only INSERT statements supported
+            is UpdateStatement -> src.table
+            is DeleteStatement -> src.table
+            else -> return // Only INSERT, UPDATE, and DELETE statements supported
         }
 
         // Find the table definition
@@ -464,6 +468,8 @@ internal class QueryCodeGenerator(
         // Get RETURNING columns
         val returningColumns = when (val src = statement.src) {
             is InsertStatement -> src.returningColumns
+            is UpdateStatement -> src.returningColumns
+            is DeleteStatement -> src.returningColumns
             else -> emptyList<String>()
         }
 
@@ -587,6 +593,8 @@ internal class QueryCodeGenerator(
         // Get the table name from the execute statement
         val tableName = when (val src = statement.src) {
             is InsertStatement -> src.table
+            is UpdateStatement -> src.table
+            is DeleteStatement -> src.table
             else -> return emptyList()
         }
 
@@ -598,6 +606,8 @@ internal class QueryCodeGenerator(
         // Get RETURNING columns
         val returningColumns = when (val src = statement.src) {
             is InsertStatement -> src.returningColumns
+            is UpdateStatement -> src.returningColumns
+            is DeleteStatement -> src.returningColumns
             else -> emptyList<String>()
         }
 
@@ -1110,7 +1120,7 @@ internal class QueryCodeGenerator(
                     }
                     b.line("} else {")
                     b.indent(by = 2) {
-                        b.line("throw IllegalStateException(\"INSERT with RETURNING returned no results, but exactly one result was expected\")")
+                        b.line("throw IllegalStateException(\"Statement with RETURNING returned no results, but exactly one result was expected\")")
                     }
                     b.line("}")
                 }
@@ -1142,7 +1152,7 @@ internal class QueryCodeGenerator(
                     }
                     b.line("} else {")
                     b.indent(by = 2) {
-                        b.line("throw IllegalStateException(\"INSERT with RETURNING returned no results\")")
+                        b.line("throw IllegalStateException(\"Statement with RETURNING returned no results\")")
                     }
                     b.line("}")
                 }
@@ -1199,7 +1209,9 @@ internal class QueryCodeGenerator(
         // Get the table name from the execute statement
         val tableName = when (val src = statement.src) {
             is InsertStatement -> src.table
-            else -> throw IllegalArgumentException("Only INSERT statements with RETURNING are supported")
+            is UpdateStatement -> src.table
+            is DeleteStatement -> src.table
+            else -> throw IllegalArgumentException("Only INSERT, UPDATE, and DELETE statements with RETURNING are supported")
         }
 
         // Find the table definition
@@ -1210,6 +1222,8 @@ internal class QueryCodeGenerator(
         // Get RETURNING columns
         val returningColumns = when (val src = statement.src) {
             is InsertStatement -> src.returningColumns
+            is UpdateStatement -> src.returningColumns
+            is DeleteStatement -> src.returningColumns
             else -> emptyList<String>()
         }
 

@@ -1,5 +1,7 @@
 package dev.goquick.sqlitenow.gradle.inspect
 
+import net.sf.jsqlparser.statement.ReturningClause
+import net.sf.jsqlparser.statement.select.SelectItem
 import java.sql.Connection
 import net.sf.jsqlparser.statement.select.WithItem
 
@@ -29,6 +31,25 @@ interface ExecuteStatement : SqlStatement {
                 }
                 ?: emptyList()
             return withSelectStatements
+        }
+
+        fun buildReturningColumns(returningClause: ReturningClause?): List<String> {
+            val hasReturningClause = returningClause != null
+            val returningColumns = if (hasReturningClause) {
+                returningClause.map { selectItem ->
+                    if (selectItem.alias != null) {
+                        throw IllegalArgumentException("RETURNING clause with aliases is currently not supported: $selectItem")
+                    }
+                    val node = selectItem.astNode
+                    if (node.jjtGetFirstToken().toString() != node.jjtGetLastToken().toString()) {
+                        throw IllegalArgumentException("RETURNING clause with expressions is currently not supported: $selectItem")
+                    }
+                    selectItem.toString()
+                }
+            } else {
+                emptyList()
+            }
+            return returningColumns
         }
     }
 }

@@ -1,5 +1,6 @@
 package dev.goquick.sqlitenow.gradle.inspect
 
+import dev.goquick.sqlitenow.gradle.inspect.ExecuteStatement.Companion.buildReturningColumns
 import dev.goquick.sqlitenow.gradle.inspect.ExecuteStatement.Companion.buildSelectStatementFromWithItemsList
 import java.sql.Connection
 import net.sf.jsqlparser.statement.delete.Delete
@@ -10,7 +11,9 @@ class DeleteStatement(
     override val namedParameters: List<String>,
     val namedParametersToColumns: Map<String, AssociatedColumn>,
     override val withSelectStatements: List<SelectStatement>,
-    override val parameterCastTypes: Map<String, String> = emptyMap()
+    override val parameterCastTypes: Map<String, String> = emptyMap(),
+    val hasReturningClause: Boolean = false,
+    val returningColumns: List<String> = emptyList()
 ) : ExecuteStatement {
 
     companion object {
@@ -24,6 +27,12 @@ class DeleteStatement(
             val withItemsList = delete.withItemsList
             val withSelectStatements = buildSelectStatementFromWithItemsList(conn, withItemsList)
 
+
+            // Check for RETURNING clause
+            val returningClause = delete.returningClause
+            val hasReturningClause = returningClause != null
+            val returningColumns = buildReturningColumns(returningClause)
+
             val processor = DeleteParametersProcessor(stmt = delete)
             return DeleteStatement(
                 sql = processor.processedSql,
@@ -32,6 +41,8 @@ class DeleteStatement(
                 namedParametersToColumns = namedParamsWithColumns,
                 withSelectStatements = withSelectStatements,
                 parameterCastTypes = processor.parameterCastTypes,
+                hasReturningClause = hasReturningClause,
+                returningColumns = returningColumns,
             )
         }
     }

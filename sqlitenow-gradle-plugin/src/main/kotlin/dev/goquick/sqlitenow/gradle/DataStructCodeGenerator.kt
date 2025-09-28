@@ -761,7 +761,9 @@ open class DataStructCodeGenerator(
         // Get the table name from the execute statement
         val tableName = when (val src = statement.src) {
             is InsertStatement -> src.table
-            else -> throw IllegalArgumentException("Only INSERT statements with RETURNING are supported")
+            is UpdateStatement -> src.table
+            is DeleteStatement -> src.table
+            else -> throw IllegalArgumentException("Only INSERT, UPDATE, and DELETE statements with RETURNING are supported")
         }
 
         // Get the RETURNING columns

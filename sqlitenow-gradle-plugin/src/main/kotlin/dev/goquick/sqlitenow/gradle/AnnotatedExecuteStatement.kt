@@ -2,6 +2,8 @@ package dev.goquick.sqlitenow.gradle
 
 import dev.goquick.sqlitenow.gradle.inspect.ExecuteStatement
 import dev.goquick.sqlitenow.gradle.inspect.InsertStatement
+import dev.goquick.sqlitenow.gradle.inspect.UpdateStatement
+import dev.goquick.sqlitenow.gradle.inspect.DeleteStatement
 
 data class AnnotatedExecuteStatement(
     override val name: String,
@@ -10,17 +12,27 @@ data class AnnotatedExecuteStatement(
 ) : AnnotatedStatement {
 
     /**
-     * Returns true if this is an INSERT statement with a RETURNING clause
+     * Returns true if this is an INSERT, UPDATE, or DELETE statement with a RETURNING clause
      */
     fun hasReturningClause(): Boolean {
-        return src is InsertStatement && src.hasReturningClause
+        return when (src) {
+            is InsertStatement -> src.hasReturningClause
+            is UpdateStatement -> src.hasReturningClause
+            is DeleteStatement -> src.hasReturningClause
+            else -> false
+        }
     }
 
     /**
      * Returns the list of columns in the RETURNING clause, or empty list if none
      */
     fun getReturningColumns(): List<String> {
-        return if (src is InsertStatement) src.returningColumns else emptyList()
+        return when (src) {
+            is InsertStatement -> src.returningColumns
+            is UpdateStatement -> src.returningColumns
+            is DeleteStatement -> src.returningColumns
+            else -> emptyList()
+        }
     }
 
     companion object {

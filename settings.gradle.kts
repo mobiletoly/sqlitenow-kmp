@@ -33,5 +33,6 @@ dependencyResolutionManagement {
 rootProject.name = "sqlitenow-kmp"
 include(":library")
 include(":library-test:composeApp")
+include(":daytempo-kmp:composeApp")
 include(":sample-kmp:composeApp")
 include(":samplesync-kmp:composeApp")

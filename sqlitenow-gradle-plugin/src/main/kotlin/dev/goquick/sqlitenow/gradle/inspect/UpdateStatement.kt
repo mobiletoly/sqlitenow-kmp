@@ -1,5 +1,6 @@
 package dev.goquick.sqlitenow.gradle.inspect
 
+import dev.goquick.sqlitenow.gradle.inspect.ExecuteStatement.Companion.buildReturningColumns
 import dev.goquick.sqlitenow.gradle.inspect.ExecuteStatement.Companion.buildSelectStatementFromWithItemsList
 import java.sql.Connection
 import net.sf.jsqlparser.expression.JdbcNamedParameter
@@ -12,7 +13,9 @@ class UpdateStatement(
     val namedParametersToColumns: Map<String, AssociatedColumn>,
     val namedParametersToColumnNames: Map<String, String>,
     override val withSelectStatements: List<SelectStatement>,
-    override val parameterCastTypes: Map<String, String> = emptyMap()
+    override val parameterCastTypes: Map<String, String> = emptyMap(),
+    val hasReturningClause: Boolean,
+    val returningColumns: List<String>
 ) : ExecuteStatement {
 
     companion object {
@@ -37,6 +40,10 @@ class UpdateStatement(
                 }
                 ?.toMap() ?: emptyMap()
 
+            val returningClause = update.returningClause
+            val hasReturningClause = returningClause != null
+            val returningColumns = buildReturningColumns(returningClause)
+
             val processor = UpdateParametersProcessor(stmt = update)
             return UpdateStatement(
                 sql = processor.processedSql,
@@ -45,7 +52,9 @@ class UpdateStatement(
                 namedParametersToColumns = namedParamsWithColumns,
                 withSelectStatements = withSelectStatements,
                 namedParametersToColumnNames = columnNamesAssociatedWithNamedParameters,
-                parameterCastTypes = processor.parameterCastTypes
+                parameterCastTypes = processor.parameterCastTypes,
+                hasReturningClause = hasReturningClause,
+                returningColumns = returningColumns,
             )
         }
     }

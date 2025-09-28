@@ -3,6 +3,8 @@ package dev.goquick.sqlitenow.gradle
 import com.squareup.kotlinpoet.*
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import dev.goquick.sqlitenow.gradle.inspect.InsertStatement
+import dev.goquick.sqlitenow.gradle.inspect.UpdateStatement
+import dev.goquick.sqlitenow.gradle.inspect.DeleteStatement
 import java.io.File
 
 /**
@@ -534,6 +536,8 @@ class DatabaseCodeGenerator(
         // Get the table name from the execute statement
         val tableName = when (val src = statement.src) {
             is InsertStatement -> src.table
+            is UpdateStatement -> src.table
+            is DeleteStatement -> src.table
             else -> return emptyList()
         }
 
@@ -545,6 +549,8 @@ class DatabaseCodeGenerator(
         // Get RETURNING columns
         val returningColumns = when (val src = statement.src) {
             is InsertStatement -> src.returningColumns
+            is UpdateStatement -> src.returningColumns
+            is DeleteStatement -> src.returningColumns
             else -> emptyList<String>()
         }
 
