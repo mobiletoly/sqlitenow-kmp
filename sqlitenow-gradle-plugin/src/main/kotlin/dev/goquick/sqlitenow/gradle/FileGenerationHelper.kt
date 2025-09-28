@@ -32,8 +32,15 @@ class FileGenerationHelper(
         }
 
         namespaces.forEach { namespace ->
-            val fileSpecBuilder = fileGenerator(namespace, packageName)
-            fileSpecBuilder.build().writeTo(outputDir)
+            try {
+                val fileSpecBuilder = fileGenerator(namespace, packageName)
+                fileSpecBuilder.build().writeTo(outputDir)
+            } catch (e: Exception) {
+                logger.error("Failed to generate code for namespace '$namespace'")
+                logger.error("Package: $packageName")
+                logger.error("Output directory: ${outputDir.absolutePath}")
+                throw RuntimeException("Code generation failed for namespace '$namespace'", e)
+            }
         }
     }
 }

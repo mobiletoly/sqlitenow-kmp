@@ -58,7 +58,7 @@ class UpdateColumnLookupTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -133,12 +133,14 @@ class UpdateColumnLookupTest {
                     "myScore" to "score",
                     "myNotes" to "notes"
                 ),
-                withSelectStatements = emptyList()
+                withSelectStatements = emptyList(),
+                hasReturningClause = false,
+                returningColumns = emptyList()
             ),
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -204,7 +206,7 @@ class UpdateColumnLookupTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -251,12 +253,14 @@ class UpdateColumnLookupTest {
                     "myAge" to "age",
                     "myScore" to "score"
                 ),
-                withSelectStatements = emptyList()
+                withSelectStatements = emptyList(),
+                hasReturningClause = false,
+                returningColumns = emptyList()
             ),
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null

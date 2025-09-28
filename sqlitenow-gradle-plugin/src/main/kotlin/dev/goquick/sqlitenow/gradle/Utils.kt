@@ -14,3 +14,7 @@ internal fun pascalize(source: String): String = source
     .split('_', '-', ' ')
     .filter { it.isNotBlank() }
     .joinToString("") { it.replaceFirstChar { c -> c.uppercase() } }
+
+internal fun String.lowercaseFirst(): String {
+    return this.replaceFirstChar { it.lowercase() }
+}

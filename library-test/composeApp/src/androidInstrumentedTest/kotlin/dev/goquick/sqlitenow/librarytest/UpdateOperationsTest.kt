@@ -1,23 +1,18 @@
 package dev.goquick.sqlitenow.librarytest
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.goquick.sqlitenow.core.util.fromSqliteDate
-import dev.goquick.sqlitenow.core.util.fromSqliteTimestamp
-import dev.goquick.sqlitenow.core.util.toSqliteDate
-import dev.goquick.sqlitenow.core.util.toSqliteTimestamp
 import dev.goquick.sqlitenow.librarytest.db.AddressType
 import dev.goquick.sqlitenow.librarytest.db.LibraryTestDatabase
-import dev.goquick.sqlitenow.librarytest.db.PersonQuery
-import dev.goquick.sqlitenow.librarytest.db.CommentQuery
+import dev.goquick.sqlitenow.librarytest.db.PersonAddResult
 import dev.goquick.sqlitenow.librarytest.db.PersonAddressQuery
-import dev.goquick.sqlitenow.librarytest.db.VersionBasedDatabaseMigrations
+import dev.goquick.sqlitenow.librarytest.db.PersonQuery
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.LocalDate
-import kotlinx.datetime.LocalDateTime
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import org.junit.After
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -33,30 +28,7 @@ class UpdateOperationsTest {
 
     @Before
     fun setup() {
-        database = LibraryTestDatabase(
-            dbName = ":memory:",
-            migration = VersionBasedDatabaseMigrations(),
-            debug = true,
-            categoryAdapters = LibraryTestDatabase.CategoryAdapters(
-                sqlValueToBirthDate = { it?.let { LocalDate.fromSqliteDate(it) } }
-            ),
-            personAdapters = LibraryTestDatabase.PersonAdapters(
-                birthDateToSqlValue = { it?.toSqliteDate() },
-                sqlValueToTags = { it?.let { Json.decodeFromString<List<String>>(it) } }
-            ),
-            commentAdapters = LibraryTestDatabase.CommentAdapters(
-                createdAtToSqlValue = { it.toSqliteTimestamp() },
-                tagsToSqlValue = { it?.let { Json.encodeToString(it) } }
-            ),
-            personCategoryAdapters = LibraryTestDatabase.PersonCategoryAdapters(
-                sqlValueToAssignedAt = { LocalDateTime.fromSqliteTimestamp(it) }
-            ),
-            personAddressAdapters = LibraryTestDatabase.PersonAddressAdapters(
-                addressTypeToSqlValue = { it.value },
-                sqlValueToAddressType = { AddressType.from(it) },
-                sqlValueToCreatedAt = { LocalDateTime.fromSqliteTimestamp(it) }
-            )
-        )
+        database = TestDatabaseHelper.createDatabase()
     }
 
     @After
@@ -258,7 +230,7 @@ class UpdateOperationsTest {
             database.open()
             
             // Insert multiple persons
-            val insertedPersons = mutableListOf<PersonQuery.Add.Result>()
+            val insertedPersons = mutableListOf<PersonAddResult>()
             for (i in 1..5) {
                 val person = database.person.add(PersonQuery.Add.Params(
                     email = "batch-update-$i@example.com",

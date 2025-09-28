@@ -17,10 +17,13 @@ class AdapterConfig(
         createTableStatements: List<AnnotatedCreateTableStatement>,
         packageName: String?
     ) : this(columnLookup, createTableStatements, emptyList(), packageName)
-    /** Resolve original base column name for a field, considering VIEW mappings. */
-    fun baseOriginalNameForField(field: AnnotatedSelectStatement.Field): String {
+    /** Resolve original base column name for a field, considering VIEW mappings and dynamic alias prefixes. */
+    fun baseOriginalNameForField(
+        field: AnnotatedSelectStatement.Field,
+        aliasPrefixes: List<String> = emptyList()
+    ): String {
         val fs = field.src
-        // Try view mapping by tableName first
+        // 1) Try view mapping by tableName first
         if (fs.tableName.isNotEmpty()) {
             columnLookup.findViewByName(fs.tableName)?.let { view ->
                 view.fields.find { it.src.fieldName.equals(fs.fieldName, ignoreCase = true) }?.let { vf ->
@@ -28,15 +31,19 @@ class AdapterConfig(
                 }
             }
         }
-        // Fallback to direct original name or alias with heuristic prefix strip
+        // 2) Use provided aliasPrefixes (from dynamic field mappings) to strip prefixes deterministically
         if (fs.originalColumnName.isNotEmpty()) {
-            val mo = Regex("^joined_[^_]+_(.*)$").matchEntire(fs.originalColumnName)
-            if (mo != null && mo.groupValues.size > 1) return mo.groupValues[1]
+            // Prefer original column name, but if the alias has a declared prefix, strip from alias to derive base
+            aliasPrefixes.firstOrNull { prefix -> field.src.fieldName.startsWith(prefix) }?.let { prefix ->
+                return field.src.fieldName.removePrefix(prefix)
+            }
             return fs.originalColumnName
         }
-        // Heuristic on alias
-        val m = Regex("^joined_[^_]+_(.*)$").matchEntire(fs.fieldName)
-        if (m != null && m.groupValues.size > 1) return m.groupValues[1]
+        // No originalColumnName; try stripping from fieldName
+        aliasPrefixes.firstOrNull { prefix -> fs.fieldName.startsWith(prefix) }?.let { prefix ->
+            return fs.fieldName.removePrefix(prefix)
+        }
+        // 3) No dynamic prefix to strip; return as-is
         return fs.fieldName
     }
     data class ParamConfig(
@@ -44,7 +51,9 @@ class AdapterConfig(
         val adapterFunctionName: String,
         val inputType: TypeName,
         val outputType: TypeName,
-        val isNullable: Boolean
+        val isNullable: Boolean,
+        // Optional hint for which namespace should provide this adapter (e.g., table behind aliasPrefix)
+        val providerNamespace: String? = null,
     )
 
     /** Collects all adapter configurations needed for a statement. */
@@ -119,6 +128,40 @@ class AdapterConfig(
         return configs
     }
 
+
+    /**
+     * Collect alias prefixes applicable for a given SELECT statement.
+     * - Includes dynamic mapping prefixes on the statement
+     * - Includes prefixes defined on referenced views
+     * - Includes all prefixes from any view as a conservative fallback (handles nested/expanded views)
+     */
+    fun collectAliasPrefixesForSelect(
+        statement: AnnotatedSelectStatement,
+    ): List<String> {
+        return buildSet {
+            // Prefixes declared directly on dynamic fields of this statement
+            statement.fields.forEach { f ->
+                if (f.annotations.isDynamicField) {
+                    f.annotations.aliasPrefix?.takeIf { it.isNotBlank() }?.let { add(it) }
+                }
+            }
+            // Prefixes declared on referenced views
+            statement.src.tableAliases.values.forEach { tableOrViewName ->
+                createViewStatements.find { it.src.viewName.equals(tableOrViewName, ignoreCase = true) }?.let { view ->
+                    view.dynamicFields.forEach { df ->
+                        df.annotations.aliasPrefix?.takeIf { it.isNotBlank() }?.let { add(it) }
+                    }
+                }
+            }
+            // Conservative fallback: prefixes from all views
+            createViewStatements.forEach { view ->
+                view.dynamicFields.forEach { df ->
+                    df.annotations.aliasPrefix?.takeIf { it.isNotBlank() }?.let { add(it) }
+                }
+            }
+        }.toList()
+    }
+
     private fun collectOutputParamConfigs(
         statement: AnnotatedSelectStatement,
         processedAdapters: MutableSet<String>
@@ -126,16 +169,37 @@ class AdapterConfig(
         val configs = mutableListOf<ParamConfig>()
         val selectFieldGenerator = SelectFieldCodeGenerator(createTableStatements, createViewStatements, packageName)
 
+        // Collect aliasPrefixes from dynamic field mappings for this statement
+        val dynamicFields = statement.fields.filter { it.annotations.isDynamicField }
+        val dynamicMappings = DynamicFieldMapper.createDynamicFieldMappings(statement.src, dynamicFields)
+        val aliasPrefixes = buildSet {
+            addAll(dynamicMappings.mapNotNull { it.aliasPrefix }.filter { it.isNotBlank() })
+            // Also collect aliasPrefixes declared on referenced views (for SELECT * FROM view)
+            statement.src.tableAliases.values.forEach { tableOrViewName ->
+                createViewStatements.find { it.src.viewName.equals(tableOrViewName, ignoreCase = true) }?.let { view ->
+                    view.dynamicFields.forEach { df ->
+                        df.annotations.aliasPrefix?.takeIf { it.isNotBlank() }?.let { add(it) }
+                    }
+                }
+            }
+            // As a conservative fallback, include all aliasPrefixes declared on any view (to support nested views)
+            createViewStatements.forEach { view ->
+                view.dynamicFields.forEach { df ->
+                    df.annotations.aliasPrefix?.takeIf { it.isNotBlank() }?.let { add(it) }
+                }
+            }
+        }.toList()
+
         statement.fields.forEach { field: AnnotatedSelectStatement.Field ->
             // Skip dynamic fields - they don't need adapters since they're not read from database
             if (field.annotations.isDynamicField) {
                 return@forEach
             }
 
-            if (hasAdapterAnnotation(field)) {
-                // Use base original column name (resolve via VIEW if needed)
-                val baseName = baseOriginalNameForField(field)
-                val columnName = PropertyNameGeneratorType.LOWER_CAMEL_CASE.convertToPropertyName(baseName)
+            if (hasAdapterAnnotation(field, aliasPrefixes)) {
+                // Use base column name to generate adapter function name (strips alias prefixes)
+                val baseColumnName = baseOriginalNameForField(field, aliasPrefixes)
+                val columnName = PropertyNameGeneratorType.LOWER_CAMEL_CASE.convertToPropertyName(baseColumnName)
                 val adapterFunctionName = getOutputAdapterFunctionName(columnName)
 
                 // Skip if already processed
@@ -146,6 +210,7 @@ class AdapterConfig(
 
                 // Create adapter configuration for output (result conversion)
                 val config = createOutputParamConfig(
+                    statement = statement,
                     field = field,
                     adapterFunctionName = adapterFunctionName,
                     propertyNameGenerator = statement.annotations.propertyNameGenerator,
@@ -178,17 +243,38 @@ class AdapterConfig(
             adapterFunctionName = adapterFunctionName,
             inputType = inputType,
             outputType = outputType,
-            isNullable = isNullable
+            isNullable = isNullable,
+            providerNamespace = null // inputs don't need cross-namespace routing for now
         )
     }
 
     /** Creates an output adapter configuration for result field conversion. */
     private fun createOutputParamConfig(
+        statement: AnnotatedSelectStatement,
         field: AnnotatedSelectStatement.Field,
         adapterFunctionName: String,
         propertyNameGenerator: PropertyNameGeneratorType,
         selectFieldGenerator: SelectFieldCodeGenerator
     ): ParamConfig {
+        // Determine preferred provider namespace by resolving the field's source table alias -> table name
+        val providerNs: String? = run {
+            val alias = field.src.tableName
+            if (alias.isNotBlank()) {
+                statement.src.tableAliases[alias] ?: alias
+            } else {
+                // Try resolving via VIEW if table name is actually a view
+                val from = statement.src.fromTable
+                val view = from?.let { columnLookup.findViewByName(it) }
+                if (view != null) {
+                    val vf = view.fields.find { it.src.fieldName.equals(field.src.fieldName, ignoreCase = true) }
+                    vf?.let { vfield ->
+                        val vAlias = vfield.src.tableName
+                        view.src.selectStatement.tableAliases[vAlias] ?: vAlias
+                    }
+                } else null
+            }
+        }
+
         // Get the property type from the field
         val property = selectFieldGenerator.generateProperty(field, propertyNameGenerator)
         val targetType = property.type
@@ -202,7 +288,8 @@ class AdapterConfig(
             adapterFunctionName = adapterFunctionName,
             inputType = inputType,
             outputType = targetType,
-            isNullable = inputNullable
+            isNullable = inputNullable,
+            providerNamespace = providerNs
         )
     }
 
@@ -210,7 +297,7 @@ class AdapterConfig(
      * Helper function to check if a field has an adapter annotation.
      * Checks both SELECT field annotations and CREATE TABLE column annotations.
      */
-    fun hasAdapterAnnotation(field: AnnotatedSelectStatement.Field): Boolean {
+    fun hasAdapterAnnotation(field: AnnotatedSelectStatement.Field, aliasPrefixes: List<String> = emptyList()): Boolean {
         // First check if the field has a direct adapter annotation in the SELECT statement
         if (field.annotations.adapter == true) {
             return true
@@ -237,10 +324,12 @@ class AdapterConfig(
                     }
                 }
             }
+
+
         }
 
         // Fallback: try to resolve by base original column name across all tables (best-effort)
-        val baseName = baseOriginalNameForField(field)
+        val baseName = baseOriginalNameForField(field, aliasPrefixes)
         createTableStatements.forEach { table ->
             table.findColumnByName(baseName)?.let { col ->
                 if (col.annotations.containsKey(AnnotationConstants.ADAPTER)) return true

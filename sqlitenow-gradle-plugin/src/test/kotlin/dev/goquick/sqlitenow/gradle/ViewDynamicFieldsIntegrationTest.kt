@@ -31,11 +31,11 @@ class ViewDynamicFieldsIntegrationTest {
                 icon TEXT NOT NULL
             ) WITHOUT ROWID;
 
-            CREATE VIEW activity_category_join_view AS
+            CREATE VIEW activity_category_for_join AS
             SELECT
-                cat.doc_id AS joined_category_doc_id,
-                cat.title AS joined_category_title,
-                cat.icon AS joined_category_icon
+                cat.doc_id AS category__doc_id,
+                cat.title AS category__title,
+                cat.icon AS category__icon
             FROM activity_category AS cat;
             """.trimIndent()
         )
@@ -44,7 +44,7 @@ class ViewDynamicFieldsIntegrationTest {
         val qCatDir = File(queriesDir, "activity_category").apply { mkdirs() }
         File(qCatDir, "selectById.sql").writeText(
             """
-            -- @@{ sharedResult=Row }
+            -- @@{ queryResult=Row }
             SELECT doc_id, title, icon FROM activity_category WHERE doc_id = :docId;
             """.trimIndent()
         )
@@ -62,11 +62,11 @@ class ViewDynamicFieldsIntegrationTest {
                    mappingType=perRow,
                    propertyType=ActivityCategoryQuery.SharedResult.Row,
                    sourceTable=cat,
-                   aliasPrefix=joined_category_,
+                   aliasPrefix=category__,
                    notNull=true } */
 
             FROM activity act
-            LEFT JOIN activity_category_join_view cat ON act.category_doc_id = cat.joined_category_doc_id
+            LEFT JOIN activity_category_for_join cat ON act.category_doc_id = cat.category__doc_id
             WHERE act.doc_id = :docId;
             """.trimIndent()
         )

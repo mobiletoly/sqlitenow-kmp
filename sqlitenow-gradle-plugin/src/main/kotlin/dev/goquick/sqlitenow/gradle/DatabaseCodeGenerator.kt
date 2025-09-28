@@ -20,12 +20,14 @@ class DatabaseCodeGenerator(
     private val databaseClassName: String,
     private val debug: Boolean = false,
 ) {
+    private val columnLookup = ColumnLookup(createTableStatements, createViewStatements)
     private val adapterConfig = AdapterConfig(
-        columnLookup = ColumnLookup(createTableStatements, createViewStatements),
+        columnLookup = columnLookup,
         createTableStatements = createTableStatements,
         packageName = packageName
     )
     private val sharedResultManager = SharedResultManager()
+    private val adapterNameResolver = AdapterParameterNameResolver()
 
     // ---------- Adapter selection helpers ----------
     private fun isCustomType(t: TypeName): Boolean {
@@ -73,7 +75,7 @@ class DatabaseCodeGenerator(
 
     private fun adapterPropertyNameFor(namespace: String): String {
         val cls = adapterClassNameFor(namespace)
-        return cls.replaceFirstChar { it.lowercase() }
+        return cls.lowercaseFirst()
     }
 
     private fun queryNamespaceName(namespace: String): String = pascalize(namespace) + "Query"
@@ -81,7 +83,7 @@ class DatabaseCodeGenerator(
         baseNameForNamespace(namespace) + "Router"
 
     private fun routerPropertyNameFor(namespace: String): String =
-        baseNameForNamespace(namespace).replaceFirstChar { it.lowercase() }
+        baseNameForNamespace(namespace).lowercaseFirst()
 
     /** Data class representing a unique adapter with its function signature. */
     data class UniqueAdapter(
@@ -120,8 +122,8 @@ class DatabaseCodeGenerator(
 
             statements.forEach { statement ->
                 // For SELECT statements with shared results, only collect adapters once per shared result
-                if (statement is AnnotatedSelectStatement && statement.annotations.sharedResult != null) {
-                    val sharedResultKey = "${namespace}.${statement.annotations.sharedResult}"
+                if (statement is AnnotatedSelectStatement && statement.annotations.queryResult != null) {
+                    val sharedResultKey = "${namespace}.${statement.annotations.queryResult}"
                     if (sharedResultKey in processedSharedResults) {
                         // Skip - we already processed adapters for this shared result
                         return@forEach
@@ -513,13 +515,18 @@ class DatabaseCodeGenerator(
         val lines = mutableListOf<String>()
         lines += "conn = ref.connection()"
         if (hasParams) lines += "params = params"
+
+        // Use the same canonicalized parameter names that query execution functions expect
+        val chosenParamNames = adapterNameResolver.chooseAdapterParamNames(statementAdapters)
+
         statementAdapters.forEach { config ->
             val (providerProp, adapterName) = resolveAdapterProvider(
                 config,
                 namespace,
                 adaptersByNamespace
             )
-            lines += "${config.adapterFunctionName} = ref.$providerProp.$adapterName"
+            val canonicalParamName = chosenParamNames[config] ?: config.adapterFunctionName
+            lines += "$canonicalParamName = ref.$providerProp.$adapterName"
         }
         return lines
     }
@@ -716,7 +723,7 @@ class DatabaseCodeGenerator(
         adaptersByNamespace: Map<String, List<UniqueAdapter>>
     ): PropertySpec {
         val className = statement.getDataClassName()
-        val propertyName = className.replaceFirstChar { it.lowercase() }
+        val propertyName = className.lowercaseFirst()
 
         // Check if statement has parameters
         val namedParameters = StatementUtils.getNamedParameters(statement)
@@ -753,16 +760,14 @@ class DatabaseCodeGenerator(
         adaptersByNamespace: Map<String, List<UniqueAdapter>>
     ): PropertySpec {
         val className = statement.getDataClassName()
-        val propertyName = className.replaceFirstChar { it.lowercase() }
+        val propertyName = className.lowercaseFirst()
 
         // Check if statement has parameters
         val namedParameters = StatementUtils.getNamedParameters(statement)
         val hasParams = namedParameters.isNotEmpty()
 
         // Get the result type for RETURNING clause
-        val resultType = ClassName(packageName, queryNamespaceName(namespace))
-            .nestedClass(className)
-            .nestedClass("Result")
+        val resultType = SharedResultTypeUtils.createResultTypeNameForExecute(packageName, namespace, statement)
 
         // Create the property type
         val propertyType = if (hasParams) {
@@ -797,7 +802,7 @@ class DatabaseCodeGenerator(
         adaptersByNamespace: Map<String, List<UniqueAdapter>>
     ): PropertySpec {
         val className = statement.getDataClassName()
-        val propertyName = className.replaceFirstChar { it.lowercase() }
+        val propertyName = className.lowercaseFirst()
 
         // Determine result type (handles shared results)
         val resultType =
@@ -1000,10 +1005,11 @@ class DatabaseCodeGenerator(
         if (hasParams) {
             b.line("{ params ->")
         }
-        b.line("object : ExecuteReturningRunners<${capitalizedNamespace}.${className}.Result> {")
+        val resultTypeString = SharedResultTypeUtils.createResultTypeStringForExecute(namespace, statement)
+        b.line("object : ExecuteReturningRunners<${resultTypeString}> {")
         b.indent(by = 2) {
             // executeReturningList method
-            b.line("override suspend fun executeReturningList(): List<${capitalizedNamespace}.${className}.Result> {")
+            b.line("override suspend fun executeReturningList(): List<${resultTypeString}> {")
             b.indent(by = 2) {
                 b.line("val result = $capitalizedNamespace.$className.executeReturningList(")
                 b.indent(by = 2) {
@@ -1021,7 +1027,7 @@ class DatabaseCodeGenerator(
             b.line("")
 
             // executeReturningOne method
-            b.line("override suspend fun executeReturningOne(): ${capitalizedNamespace}.${className}.Result {")
+            b.line("override suspend fun executeReturningOne(): ${resultTypeString} {")
             b.indent(by = 2) {
                 b.line("val result = $capitalizedNamespace.$className.executeReturningOne(")
                 b.indent(by = 2) {
@@ -1039,7 +1045,7 @@ class DatabaseCodeGenerator(
             b.line("")
 
             // executeReturningOneOrNull method
-            b.line("override suspend fun executeReturningOneOrNull(): ${capitalizedNamespace}.${className}.Result? {")
+            b.line("override suspend fun executeReturningOneOrNull(): ${resultTypeString}? {")
             b.indent(by = 2) {
                 b.line("val result = $capitalizedNamespace.$className.executeReturningOneOrNull(")
                 b.indent(by = 2) {

@@ -37,7 +37,7 @@ class SharedResultTypeUtilsTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = "All",
+                queryResult = "All",
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -51,7 +51,7 @@ class SharedResultTypeUtilsTest {
             statement = statement
         )
 
-        assertEquals("com.example.db.PersonQuery.SharedResult.All", typeName.toString())
+        assertEquals("com.example.db.All", typeName.toString())
     }
 
     @Test
@@ -72,7 +72,7 @@ class SharedResultTypeUtilsTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -86,7 +86,7 @@ class SharedResultTypeUtilsTest {
             statement = statement
         )
 
-        assertEquals("com.example.db.PersonQuery.SelectWeird.Result", typeName.toString())
+        assertEquals("com.example.db.PersonSelectWeirdResult", typeName.toString())
     }
 
     @Test
@@ -107,7 +107,7 @@ class SharedResultTypeUtilsTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = "All",
+                queryResult = "All",
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -116,7 +116,7 @@ class SharedResultTypeUtilsTest {
         )
 
         val sharedResultString = SharedResultTypeUtils.createResultTypeString("person", sharedStatement)
-        assertEquals("PersonQuery.SharedResult.All", sharedResultString)
+        assertEquals("All", sharedResultString)
 
         val regularStatement = AnnotatedSelectStatement(
             name = "SelectWeird",
@@ -133,7 +133,7 @@ class SharedResultTypeUtilsTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -142,7 +142,7 @@ class SharedResultTypeUtilsTest {
         )
 
         val regularResultString = SharedResultTypeUtils.createResultTypeString("person", regularStatement)
-        assertEquals("PersonQuery.SelectWeird.Result", regularResultString)
+        assertEquals("PersonSelectWeirdResult", regularResultString)
     }
 
     @Test

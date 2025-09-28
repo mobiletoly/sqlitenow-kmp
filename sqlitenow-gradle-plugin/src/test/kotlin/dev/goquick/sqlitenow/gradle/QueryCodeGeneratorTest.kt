@@ -114,7 +114,7 @@ class QueryCodeGeneratorTest {
         assertTrue(deleteByIdFileContent.contains("params: PersonQuery.DeleteById.Params"), "Should have DeleteById.Params parameter")
 
         // Verify return types with new structure
-        assertTrue(getByIdFileContent.contains("List<PersonQuery.GetById.Result>"), "SELECT should return List of results")
+        assertTrue(getByIdFileContent.contains("List<PersonGetByIdResult>"), "SELECT should return List of results")
         // For Unit return type, Kotlin doesn't require explicit declaration, so check for function without return type
         assertTrue(addFileContent.contains("fun PersonQuery.Add.execute(conn: SafeSQLiteConnection, params: PersonQuery.Add.Params)"),
                   "INSERT should have Unit return type (implicit)")
@@ -212,7 +212,7 @@ class QueryCodeGeneratorTest {
         val fileContent = userGetAllFile.readText()
 
         // Verify that extension function is generated without params parameter
-        assertTrue(fileContent.contains("suspend fun UserQuery.GetAll.executeAsList(conn: SafeSQLiteConnection): List<UserQuery.GetAll.Result>"),
+        assertTrue(fileContent.contains("suspend fun UserQuery.GetAll.executeAsList(conn: SafeSQLiteConnection): List<UserGetAllResult>"),
                   "Should contain GetAll.executeAsList extension function without params parameter and with suspend modifier")
         assertTrue(fileContent.contains("fun UserQuery.GetAll.bindStatementParams(statement: SQLiteStatement)"),
                   "Should contain GetAll.bindStatementParams extension function without params parameter")
@@ -648,7 +648,7 @@ class QueryCodeGeneratorTest {
                   "Should contain executeAsOneOrNull function")
 
         // Verify executeAsList implementation
-        assertTrue(fileContent.contains("val results = mutableListOf<PersonQuery.GetById.Result>()"),
+        assertTrue(fileContent.contains("val results = mutableListOf<PersonGetByIdResult>()"),
                   "executeAsList should use mutableListOf")
         assertTrue(fileContent.contains("while (statement.step())"),
                   "executeAsList should use while loop")
@@ -830,7 +830,7 @@ class QueryCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -889,11 +889,11 @@ class QueryCodeGeneratorTest {
                   "Should generate executeReturningOneOrNull function")
 
         // Check return types
-        assertTrue(returningContent.contains("): List<UserQuery.AddWithReturning.Result>"),
+        assertTrue(returningContent.contains("): List<UserAddWithReturningResult>"),
                   "executeReturningList should return List<Result>")
-        assertTrue(returningContent.contains("): UserQuery.AddWithReturning.Result ="),
+        assertTrue(returningContent.contains("): UserAddWithReturningResult ="),
                   "executeReturningOne should return Result")
-        assertTrue(returningContent.contains("): UserQuery.AddWithReturning.Result? ="),
+        assertTrue(returningContent.contains("): UserAddWithReturningResult? ="),
                   "executeReturningOneOrNull should return Result?")
 
         // Verify non-RETURNING query generates single execute function

@@ -6,7 +6,6 @@ import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterSpec
-import com.squareup.kotlinpoet.ParameterizedTypeName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
@@ -22,7 +21,7 @@ open class DataStructCodeGenerator(
     conn: Connection,
     queriesDir: File,
     packageName: String,
-    outputDir: File,
+    private val outputDir: File,
     statementExecutors: MutableList<DeferredStatementExecutor>,
     providedCreateTableStatements: List<AnnotatedCreateTableStatement>? = null
 ) {
@@ -65,6 +64,13 @@ open class DataStructCodeGenerator(
     private val stmtProcessingHelper = StatementProcessingHelper(conn, annotationResolver)
     private val sharedResultManager = SharedResultManager()
     val nsWithStatements = stmtProcessingHelper.processQueriesDirectory(queriesDir)
+
+    /**
+     * Gets all shared results from all namespaces.
+     */
+    fun getAllSharedResults(): List<SharedResultManager.SharedResult> {
+        return sharedResultManager.getSharedResultsByNamespace().values.flatten()
+    }
 
     private fun sortViewsByDependencies(viewExecutors: List<CreateViewStatementExecutor>): List<CreateViewStatementExecutor> {
         if (viewExecutors.size <= 1) return viewExecutors
@@ -131,8 +137,8 @@ open class DataStructCodeGenerator(
             onSelectStatement = { statement: AnnotatedSelectStatement ->
                 // Register shared result and track context
                 sharedResultManager.registerSharedResult(statement, namespace)
-                if (statement.annotations.sharedResult != null) {
-                    sharedResultsWithContext[statement.annotations.sharedResult] = statement
+                if (statement.annotations.queryResult != null) {
+                    sharedResultsWithContext[statement.annotations.queryResult] = statement
                 }
                 val queryObject = generateQueryObject(statement, namespace)
                 namespaceObject.addType(queryObject)
@@ -143,12 +149,22 @@ open class DataStructCodeGenerator(
             }
         )
 
-        // Generate SharedResult object if there are any shared results
-        val sharedResults = sharedResultManager.getSharedResultsByNamespace()[namespace]
-        if (!sharedResults.isNullOrEmpty()) {
-            val sharedResultObject = generateSharedResultObject(sharedResults, sharedResultsWithContext)
-            namespaceObject.addType(sharedResultObject)
-        }
+        // Generate separate result class files for SELECT statements
+        statementProcessor.processStatements(
+            onSelectStatement = { statement: AnnotatedSelectStatement ->
+                generateSeparateResultClassFile(statement, namespace, packageName)
+
+                // Generate separate Joined class file if needed
+                if (statement.hasDynamicFieldMapping()) {
+                    generateSeparateJoinedClassFile(statement, namespace, packageName)
+                }
+            },
+            onExecuteStatement = { statement: AnnotatedExecuteStatement ->
+                if (statement.hasReturningClause()) {
+                    generateSeparateResultClassFileForExecuteStatement(statement, namespace, packageName)
+                }
+            }
+        )
 
         fileSpecBuilder.addType(namespaceObject.build())
 
@@ -188,25 +204,8 @@ open class DataStructCodeGenerator(
             queryObjectBuilder.addType(paramsDataClass)
         }
 
-        // Add Result data class for SELECT statements (unless they use shared results)
-        if (statement is AnnotatedSelectStatement && !sharedResultManager.isSharedResult(statement)) {
-            val resultDataClass = generateResultDataClassForSelectStatement(statement, namespace)
-            queryObjectBuilder.addType(resultDataClass)
-        }
-
-        // Add Result data class for EXECUTE statements with RETURNING clause
-        if (statement is AnnotatedExecuteStatement && statement.hasReturningClause()) {
-            val resultDataClass = generateResultDataClassForExecuteStatement(statement, namespace)
-            queryObjectBuilder.addType(resultDataClass)
-        }
-
-        // Add Joined data class for SELECT statements with dynamic field mapping (unless they use shared results)
-        if (statement is AnnotatedSelectStatement && statement.annotations.sharedResult == null) {
-            if (statement.hasDynamicFieldMapping()) {
-                val joinedDataClass = generateJoinedDataClass(statement)
-                queryObjectBuilder.addType(joinedDataClass)
-            }
-        }
+        // Note: Result data classes are now generated in separate files
+        // No nested Result classes are added to query objects anymore
 
         return queryObjectBuilder.build()
     }
@@ -300,9 +299,10 @@ open class DataStructCodeGenerator(
 
     private fun generateResultDataClassForSelectStatement(
         statement: AnnotatedSelectStatement,
-        namespace: String
+        namespace: String,
+        className: String = "Result"
     ): TypeSpec {
-        val dataClassBuilder = TypeSpec.classBuilder("Result")
+        val dataClassBuilder = TypeSpec.classBuilder(className)
             .addModifiers(KModifier.DATA)
             .addKdoc("Data class for ${statement.name} query results.")
 
@@ -349,7 +349,7 @@ open class DataStructCodeGenerator(
         )
         addArraySafeEqualsAndHashCodeIfNeeded(
             classBuilder = dataClassBuilder,
-            className = "Result",
+            className = className,
             properties = resultCollectedProps
         )
         return dataClassBuilder.build()
@@ -418,7 +418,7 @@ open class DataStructCodeGenerator(
                         annotations = StatementAnnotationOverrides(
                             name = null,
                             propertyNameGenerator = statement.annotations.propertyNameGenerator,
-                            sharedResult = null,
+                            queryResult = null,
                             implements = statement.annotations.implements,
                             excludeOverrideFields = statement.annotations.excludeOverrideFields,
                             collectionKey = null
@@ -588,7 +588,7 @@ open class DataStructCodeGenerator(
         statement: AnnotatedSelectStatement,
     ): TypeSpec {
         // Determine the class name based on whether this is a shared result or regular result
-        val baseClassName = statement.annotations.sharedResult ?: "Result"
+        val baseClassName = statement.annotations.queryResult ?: "Result"
         return generateJoinedDataClassInternal(
             joinedClassName = "${baseClassName}_Joined",
             fields = statement.fields,
@@ -612,25 +612,35 @@ open class DataStructCodeGenerator(
         val constructorBuilder = FunSpec.constructorBuilder()
         val fieldCodeGenerator = SelectFieldCodeGenerator(createTableStatements, createViewStatements, fileGenerationHelper.packageName)
 
+        // Precompute unique names for joined properties to avoid collisions across tables
+        val joinedNameMap = JoinedPropertyNameResolver.computeNameMap(
+            fields = fields,
+            propertyNameGenerator = propertyNameGenerator,
+            selectFieldGenerator = fieldCodeGenerator
+        )
+
         // Add ALL fields from the SELECT statement (including those that would normally be mapped to dynamic fields)
         val joinedCollectedProps = mutableListOf<PropertySpec>()
 
         fields.forEach { field ->
             // Skip dynamic fields themselves, but include all regular database columns
             if (!field.annotations.isDynamicField) {
-                // Generate the property using the public method which correctly applies custom property name annotations
-                val generatedProperty = fieldCodeGenerator.generateProperty(field, propertyNameGenerator)
+                val key = JoinedPropertyNameResolver.JoinedFieldKey(field.src.tableName.orEmpty(), field.src.fieldName)
+                val uniqueName = joinedNameMap[key]
+                    ?: SelectFieldCodeGenerator(createTableStatements, createViewStatements, fileGenerationHelper.packageName)
+                        .generateProperty(field, propertyNameGenerator).name
 
-                // For joined data classes, make all fields from joined tables nullable
-                // This is critical because LEFT JOINs can result in NULL values when no matching record exists
+                // Generate the property to get the original type, then adjust nullability for JOINs
+                val generatedProperty = fieldCodeGenerator.generateProperty(field, propertyNameGenerator)
                 val adjustedType = adjustTypeForJoinNullability(generatedProperty.type, field, fields)
-                val property = PropertySpec.builder(generatedProperty.name, adjustedType)
-                    .initializer(generatedProperty.name)
+
+                val property = PropertySpec.builder(uniqueName, adjustedType)
+                    .initializer(uniqueName)
                     .build()
 
                 joinedCollectedProps.add(property)
                 dataClassBuilder.addProperty(property)
-                constructorBuilder.addParameter(generatedProperty.name, adjustedType)
+                constructorBuilder.addParameter(uniqueName, adjustedType)
             }
         }
 
@@ -664,18 +674,29 @@ open class DataStructCodeGenerator(
         allFields: List<AnnotatedSelectStatement.Field>
     ): TypeName {
         val fieldTableAlias = field.src.tableName
-        if (fieldTableAlias.isBlank()) {
+        val mainTableAlias = findMainTableAlias(allFields)
+
+        // If we have explicit table alias metadata, trust it
+        if (fieldTableAlias.isNotBlank()) {
+            // If this field comes from a joined table (not the main table), make it nullable
+            if (fieldTableAlias != mainTableAlias) {
+                return originalType.copy(nullable = true)
+            }
+            // Field is from the main table, keep original nullability
             return originalType
         }
-        // Find the main table alias (the one that appears first in the FROM clause)
-        // For queries with dynamic field mapping, we can identify this by finding the table alias
-        // that appears in non-dynamic fields first, or by checking if it's the sourceTable of any dynamic field
-        val mainTableAlias = findMainTableAlias(allFields)
-        // If this field comes from a joined table (not the main table), make it nullable
-        if (fieldTableAlias != mainTableAlias) {
+
+        // Fallback: strengthen detection for dynamic-field queries when alias metadata is missing
+        // Heuristic: if this field's visible alias matches any aliasPrefix declared on dynamic fields,
+        // then it belongs to a joined table and must be nullable in the joined row type.
+        val aliasPrefixes = allFields
+            .filter { it.annotations.isDynamicField }
+            .mapNotNull { it.annotations.aliasPrefix }
+            .filter { it.isNotBlank() }
+        val visibleName = field.src.fieldName
+        if (aliasPrefixes.any { prefix -> visibleName.startsWith(prefix) }) {
             return originalType.copy(nullable = true)
         }
-        // Field is from the main table, keep original nullability
         return originalType
     }
 
@@ -712,10 +733,14 @@ open class DataStructCodeGenerator(
         constructorBuilder: FunSpec.Builder,
         onPropertyGenerated: (PropertySpec) -> Unit
     ) {
-        // Pre-compile exclude patterns (support simple globs like joined_schedule_*)
+        // Pre-compile exclude patterns (support simple globs like schedule__*)
         val excludeRegexes: List<Regex> = excludeOverrideFields?.map { pattern -> globToRegex(pattern) } ?: emptyList()
+        val dynamicFieldSkipSet = DynamicFieldUtils.computeSkipSet(fields)
 
         fields.forEach { field ->
+            if (field.annotations.isDynamicField && dynamicFieldSkipSet.contains(field.src.fieldName)) {
+                return@forEach
+            }
             // Skip columns that are mapped to dynamic fields
             if (!mappedColumns.contains(field.src.fieldName)) {
                 val parameter = fieldCodeGenerator.generateParameter(field, propertyNameGenerator)
@@ -756,7 +781,8 @@ open class DataStructCodeGenerator(
      */
     private fun generateResultDataClassForExecuteStatement(
         statement: AnnotatedExecuteStatement,
-        namespace: String
+        namespace: String,
+        className: String = "Result"
     ): TypeSpec {
         // Get the table name from the execute statement
         val tableName = when (val src = statement.src) {
@@ -817,7 +843,7 @@ open class DataStructCodeGenerator(
                 .build()
         }
 
-        return TypeSpec.classBuilder("Result")
+        return TypeSpec.classBuilder(className)
             .addModifiers(KModifier.DATA)
             .primaryConstructor(
                 FunSpec.constructorBuilder()
@@ -831,6 +857,107 @@ open class DataStructCodeGenerator(
                     .build()
             )
             .build()
+    }
+
+    /**
+     * Generates a separate file for a SELECT statement result class.
+     */
+    private fun generateSeparateResultClassFile(
+        statement: AnnotatedSelectStatement,
+        namespace: String,
+        packageName: String
+    ) {
+        val resultClassName = if (statement.annotations.queryResult != null) {
+            // With queryResult: use exact specified name
+            statement.annotations.queryResult!!
+        } else {
+            // Without queryResult: generate name like PersonSelectSomeResult
+            val queryClassName = statement.getDataClassName()
+            "${pascalize(namespace)}${queryClassName}Result"
+        }
+
+        val resultDataClass = generateResultDataClassForSelectStatement(statement, namespace, resultClassName)
+
+        val fileSpec = FileSpec.builder(packageName, resultClassName)
+            .addFileComment("Generated result class for ${namespace}.${statement.name}")
+            .addFileComment("\nDo not modify this file manually")
+            .addAnnotation(
+                AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
+                    .addMember("%T::class", ClassName("kotlin.uuid", "ExperimentalUuidApi"))
+                    .build()
+            )
+            .addType(resultDataClass)
+            .build()
+
+        fileSpec.writeTo(outputDir)
+    }
+
+    /**
+     * Generates a separate file for an EXECUTE statement result class.
+     */
+    private fun generateSeparateResultClassFileForExecuteStatement(
+        statement: AnnotatedExecuteStatement,
+        namespace: String,
+        packageName: String
+    ) {
+        val resultClassName = if (statement.annotations.queryResult != null) {
+            // With queryResult: use exact specified name
+            statement.annotations.queryResult!!
+        } else {
+            // Without queryResult: generate name like PersonUpdateByIdResult
+            val queryClassName = statement.getDataClassName()
+            "${pascalize(namespace)}${queryClassName}Result"
+        }
+
+        val resultDataClass = generateResultDataClassForExecuteStatement(statement, namespace, resultClassName)
+
+        val fileSpec = FileSpec.builder(packageName, resultClassName)
+            .addFileComment("Generated result class for ${namespace}.${statement.name}")
+            .addFileComment("\nDo not modify this file manually")
+            .addAnnotation(
+                AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
+                    .addMember("%T::class", ClassName("kotlin.uuid", "ExperimentalUuidApi"))
+                    .build()
+            )
+            .addType(resultDataClass)
+            .build()
+
+        fileSpec.writeTo(outputDir)
+    }
+
+    /**
+     * Generates a separate file for a Joined result class (used for dynamic field mapping).
+     */
+    private fun generateSeparateJoinedClassFile(
+        statement: AnnotatedSelectStatement,
+        namespace: String,
+        packageName: String
+    ) {
+        val joinedClassName = if (statement.annotations.queryResult != null) {
+            "${statement.annotations.queryResult}_Joined"
+        } else {
+            val queryClassName = statement.getDataClassName()
+            "${pascalize(namespace)}${queryClassName}Result_Joined"
+        }
+
+        val joinedDataClass = generateJoinedDataClassInternal(
+            joinedClassName = joinedClassName,
+            fields = statement.fields,
+            propertyNameGenerator = statement.annotations.propertyNameGenerator
+        )
+
+        val fileSpec = FileSpec.builder(packageName, joinedClassName)
+            .addFileComment("Generated joined result class for ${namespace}.${statement.name}")
+            .addFileComment("\nDo not modify this file manually")
+            .addAnnotation(
+                AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
+                    .addMember("%T::class", ClassName("kotlin.uuid", "ExperimentalUuidApi"))
+                    .build()
+            )
+            .addType(joinedDataClass)
+            .build()
+
+        fileSpec.writeTo(outputDir)
     }
 }
 
@@ -934,5 +1061,3 @@ private fun addArraySafeEqualsAndHashCodeIfNeeded(
     hashFun.addStatement("return result")
     classBuilder.addFunction(hashFun.build())
 }
-
-

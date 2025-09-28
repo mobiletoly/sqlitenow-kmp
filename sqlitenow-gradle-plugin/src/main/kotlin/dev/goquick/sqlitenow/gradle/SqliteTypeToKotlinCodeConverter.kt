@@ -206,49 +206,13 @@ class SqliteTypeToKotlinCodeConverter {
          * @return List of TypeName objects representing the type arguments
          */
         private fun parseTypeArguments(typeArgumentsString: String, packageName: String? = null): List<TypeName> {
-            if (typeArgumentsString.isBlank()) {
-                return emptyList()
+            // Use GenericTypeParser for the core parsing logic
+            val typeArgumentStrings = GenericTypeParser.parseTypeArguments(typeArgumentsString)
+
+            // Convert the string results to TypeName objects
+            return typeArgumentStrings.map { argString ->
+                parseTypeString(argString, packageName)
             }
-
-            val arguments = mutableListOf<TypeName>()
-            var currentArg = StringBuilder()
-            var bracketDepth = 0
-
-            for (char in typeArgumentsString) {
-                when (char) {
-                    '<' -> {
-                        bracketDepth++
-                        currentArg.append(char)
-                    }
-                    '>' -> {
-                        bracketDepth--
-                        currentArg.append(char)
-                    }
-                    ',' -> {
-                        if (bracketDepth == 0) {
-                            // We're at the top level, this comma separates type arguments
-                            val argString = currentArg.toString().trim()
-                            if (argString.isNotEmpty()) {
-                                arguments.add(parseTypeString(argString, packageName))
-                            }
-                            currentArg.clear()
-                        } else {
-                            currentArg.append(char)
-                        }
-                    }
-                    else -> {
-                        currentArg.append(char)
-                    }
-                }
-            }
-
-            // Add the last argument
-            val lastArgString = currentArg.toString().trim()
-            if (lastArgString.isNotEmpty()) {
-                arguments.add(parseTypeString(lastArgString, packageName))
-            }
-
-            return arguments
         }
     }
 }

@@ -17,7 +17,7 @@ object AnnotationConstants {
     // Statement-level annotations
     const val NAME = "name"
     const val PROPERTY_NAME_GENERATOR = "propertyNameGenerator"
-    const val SHARED_RESULT = "sharedResult"
+    const val QUERY_RESULT = "queryResult"
     const val IMPLEMENTS = "implements"
     const val EXCLUDE_OVERRIDE_FIELDS = "excludeOverrideFields"
     const val ENABLE_SYNC = "enableSync"
@@ -35,4 +35,18 @@ object AnnotationConstants {
 
     const val MAPPING_TYPE_PER_ROW = "perRow"
     const val MAPPING_TYPE_COLLECTION = "collection"
+    const val MAPPING_TYPE_ENTITY = "entity"
+
+    enum class MappingType(val value: String) {
+        PER_ROW("perRow"),
+        COLLECTION("collection"),
+        ENTITY("entity");
+
+        companion object {
+            fun fromString(value: String?): MappingType {
+                return entries.find { it.value == value }
+                    ?: throw IllegalArgumentException("Unknown mapping type: '$value'. Valid types are: ${entries.map { it.value }}")
+            }
+        }
+    }
 }

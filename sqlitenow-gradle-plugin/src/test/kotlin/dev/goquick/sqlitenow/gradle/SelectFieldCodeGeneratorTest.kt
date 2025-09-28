@@ -170,7 +170,7 @@ class SelectFieldCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -254,7 +254,7 @@ class SelectFieldCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -273,7 +273,7 @@ class SelectFieldCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -346,7 +346,7 @@ class SelectFieldCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -491,7 +491,7 @@ class SelectFieldCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -564,7 +564,7 @@ class SelectFieldCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -634,7 +634,7 @@ class SelectFieldCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null

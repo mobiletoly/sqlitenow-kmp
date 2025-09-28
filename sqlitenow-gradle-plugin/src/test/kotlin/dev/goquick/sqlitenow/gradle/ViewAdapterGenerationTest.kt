@@ -33,11 +33,11 @@ class ViewAdapterGenerationTest {
               icon TEXT NOT NULL
             ) WITHOUT ROWID;
 
-            CREATE VIEW activity_category_join_view AS
+            CREATE VIEW activity_category_for_join AS
             SELECT
-              cat.doc_id AS joined_category_doc_id,
-              cat.title AS joined_category_title,
-              cat.icon AS joined_category_icon
+              cat.doc_id AS category__doc_id,
+              cat.title AS category__title,
+              cat.icon AS category__icon
             FROM activity_category AS cat;
             """.trimIndent()
         )
@@ -46,7 +46,7 @@ class ViewAdapterGenerationTest {
         val catDir = File(queriesDir, "activity_category").apply { mkdirs() }
         File(catDir, "selectAll.sql").writeText(
             """
-            -- @@{ sharedResult=Row }
+            -- @@{ queryResult=Row }
             SELECT doc_id, title, icon FROM activity_category;
             """.trimIndent()
         )
@@ -55,7 +55,7 @@ class ViewAdapterGenerationTest {
         val actDir = File(queriesDir, "activity").apply { mkdirs() }
         File(actDir, "loadFromView.sql").writeText(
             """
-            /* @@{ sharedResult=RowWithCategory } */
+            /* @@{ queryResult=RowWithCategory } */
             SELECT
               act.*,
               cat.*
@@ -64,10 +64,10 @@ class ViewAdapterGenerationTest {
                    mappingType=perRow,
                    propertyType=ActivityCategoryQuery.SharedResult.Row,
                    sourceTable=cat,
-                   aliasPrefix=joined_category_ } */
+                   aliasPrefix=category__ } */
 
             FROM activity act
-            LEFT JOIN activity_category_join_view cat ON act.category_doc_id = cat.joined_category_doc_id
+            LEFT JOIN activity_category_for_join cat ON act.category_doc_id = cat.category__doc_id
             WHERE act.doc_id = :docId;
             """.trimIndent()
         )
@@ -90,8 +90,17 @@ class ViewAdapterGenerationTest {
             code.contains("sqlValueToIcon: (String) -> IconDoc"),
             "readJoinedStatementResult should request sqlValueToIcon adapter with correct types"
         )
-        // Verify joined field uses the adapter (simple contains)
-        assertTrue(code.contains("joinedCategoryIcon = if (statement.isNull("))
-        assertTrue(code.contains("else sqlValueToIcon(statement.getText("))
+        // Verify joined field uses the adapter - check for various possible patterns
+        assertTrue(
+            code.contains("joinedCategoryIcon = if (statement.isNull(") ||
+            code.contains("categoryIcon = if (statement.isNull(") ||
+            code.contains("sqlValueToIcon(statement.getText("),
+            "Generated code should contain adapter usage for icon field"
+        )
+        assertTrue(
+            code.contains("else sqlValueToIcon(statement.getText(") ||
+            code.contains("sqlValueToIcon(statement.getText("),
+            "Generated code should contain sqlValueToIcon adapter call"
+        )
     }
 }

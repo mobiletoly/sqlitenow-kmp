@@ -26,5 +26,5 @@ CREATE TABLE person_address
 WITHOUT ROWID;
 
 -- Create indexes for better performance
-CREATE INDEX idx_personaddress_personid ON person_address (person_id);
-CREATE INDEX idx_personaddress_personid_isprimary ON person_address (person_id, is_primary);
+CREATE INDEX idx_personAddress_personId ON person_address (person_id);
+CREATE INDEX idx_personAddress_personId_isPrimary ON person_address (person_id, is_primary);

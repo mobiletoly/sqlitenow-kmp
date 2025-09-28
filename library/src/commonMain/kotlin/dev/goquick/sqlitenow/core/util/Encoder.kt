@@ -1,7 +1,5 @@
 package dev.goquick.sqlitenow.core.util
 
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 /**
@@ -16,6 +14,6 @@ inline fun <reified T> Collection<T>.jsonEncodeToSqlite(): String {
  * Decodes a JSON string from SQLite back to a list.
  * This is the counterpart to jsonEncodeToSqlite().
  */
-inline fun <reified T> String.jsonDecodeFromSqlite(): List<T> {
+inline fun <reified T> String.jsonDecodeListFromSqlite(): List<T> {
     return Json.decodeFromString(this)
 }

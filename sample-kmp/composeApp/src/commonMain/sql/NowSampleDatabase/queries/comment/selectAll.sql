@@ -1,4 +1,4 @@
--- @@{ sharedResult=Row }
+-- @@{ queryResult=CommentRow }
 SELECT
     id,
     person_id,

@@ -13,7 +13,6 @@ xcuserdata
 *.gpg
 
 /tmp
-/daytempo-kmp
 
 # Libraries
 *.a

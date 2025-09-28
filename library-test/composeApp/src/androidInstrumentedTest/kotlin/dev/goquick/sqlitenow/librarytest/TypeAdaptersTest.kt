@@ -33,31 +33,7 @@ class TypeAdaptersTest {
 
     @Before
     fun setup() {
-        // Create database with all required adapters
-        database = LibraryTestDatabase(
-            dbName = ":memory:",
-            migration = VersionBasedDatabaseMigrations(),
-            debug = true,
-            categoryAdapters = LibraryTestDatabase.CategoryAdapters(
-                sqlValueToBirthDate = { it?.let { LocalDate.fromSqliteDate(it) } }
-            ),
-            personAdapters = LibraryTestDatabase.PersonAdapters(
-                birthDateToSqlValue = { it?.toSqliteDate() },
-                sqlValueToTags = { it?.let { Json.decodeFromString<List<String>>(it) } }
-            ),
-            commentAdapters = LibraryTestDatabase.CommentAdapters(
-                createdAtToSqlValue = { it.toSqliteTimestamp() },
-                tagsToSqlValue = { it?.let { Json.encodeToString(it) } }
-            ),
-            personCategoryAdapters = LibraryTestDatabase.PersonCategoryAdapters(
-                sqlValueToAssignedAt = { LocalDateTime.fromSqliteTimestamp(it) }
-            ),
-            personAddressAdapters = LibraryTestDatabase.PersonAddressAdapters(
-                addressTypeToSqlValue = { it.value },
-                sqlValueToAddressType = { AddressType.from(it) },
-                sqlValueToCreatedAt = { LocalDateTime.fromSqliteTimestamp(it) }
-            )
-        )
+        database = TestDatabaseHelper.createDatabase()
     }
 
     @After

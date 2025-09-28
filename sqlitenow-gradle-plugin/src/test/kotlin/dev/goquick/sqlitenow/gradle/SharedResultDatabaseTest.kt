@@ -6,7 +6,6 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
-import java.nio.file.Files
 
 class SharedResultDatabaseTest {
 
@@ -23,7 +22,7 @@ class SharedResultDatabaseTest {
         // Create two queries that use the same sharedResult
         File(queriesDir, "selectAllPaginated.sql").writeText(
             """
-            -- @@{sharedResult=All}
+            -- @@{queryResult=All}
             -- @@{field=birth_date, adapter=custom}
             SELECT * FROM Person LIMIT :limit OFFSET :offset;
         """.trimIndent()
@@ -31,7 +30,7 @@ class SharedResultDatabaseTest {
 
         File(queriesDir, "selectAllFiltered.sql").writeText(
             """
-            -- @@{sharedResult=All}
+            -- @@{queryResult=All}
             -- @@{field=birth_date, adapter=custom}
             SELECT * FROM Person WHERE active = :active;
         """.trimIndent()
@@ -67,7 +66,7 @@ class SharedResultDatabaseTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null

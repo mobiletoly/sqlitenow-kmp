@@ -83,7 +83,7 @@ class ReturningClauseTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -105,7 +105,7 @@ class ReturningClauseTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null

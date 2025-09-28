@@ -10,7 +10,8 @@ data class AnnotatedSelectStatement(
 ) : AnnotatedStatement {
     data class Field(
         val src: SelectStatement.FieldSource,
-        val annotations: FieldAnnotationOverrides
+        val annotations: FieldAnnotationOverrides,
+        val aliasPath: List<String> = emptyList()
     )
 
     fun hasDynamicFieldMapping() = fields.any {
@@ -18,6 +19,10 @@ data class AnnotatedSelectStatement(
     }
 
     fun hasCollectionMapping() = fields.any {
-        it.annotations.isDynamicField && it.annotations.mappingType == "collection"
+        it.annotations.isDynamicField && when (AnnotationConstants.MappingType.fromString(it.annotations.mappingType)) {
+            AnnotationConstants.MappingType.COLLECTION -> true
+            AnnotationConstants.MappingType.PER_ROW,
+            AnnotationConstants.MappingType.ENTITY -> false
+        }
     }
 }

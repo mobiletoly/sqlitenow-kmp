@@ -164,7 +164,7 @@ For example, you can use `name` annotation to customize the generated class name
 | `excludeOverrideFields=fields`    | Exclude fields from override              | `excludeOverrideFields=['phone', 'birthDate']` |
 
 Notes for `excludeOverrideFields`:
-- Supports simple wildcard patterns (`*` and `?`). Example: `excludeOverrideFields=['joined_schedule_*']`.
+- Supports simple wildcard patterns (`*` and `?`). Example: `excludeOverrideFields=['schedule__*']`.
 - Patterns are matched against the generated property name, the SQL label/alias, and the original column name.
 
 ## Field-level Annotations

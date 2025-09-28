@@ -9,6 +9,7 @@ import dev.goquick.sqlitenow.librarytest.db.AddressType
 import dev.goquick.sqlitenow.librarytest.db.LibraryTestDatabase
 import dev.goquick.sqlitenow.librarytest.db.PersonQuery
 import dev.goquick.sqlitenow.librarytest.db.CommentQuery
+import dev.goquick.sqlitenow.librarytest.db.PersonAddResult
 import dev.goquick.sqlitenow.librarytest.db.PersonAddressQuery
 import dev.goquick.sqlitenow.librarytest.db.VersionBasedDatabaseMigrations
 import kotlinx.coroutines.runBlocking
@@ -33,31 +34,7 @@ class ParameterBindingTest {
 
     @Before
     fun setup() {
-        // Create database with all required adapters
-        database = LibraryTestDatabase(
-            dbName = ":memory:",
-            migration = VersionBasedDatabaseMigrations(),
-            debug = true,
-            categoryAdapters = LibraryTestDatabase.CategoryAdapters(
-                sqlValueToBirthDate = { it?.let { LocalDate.fromSqliteDate(it) } }
-            ),
-            personAdapters = LibraryTestDatabase.PersonAdapters(
-                birthDateToSqlValue = { it?.toSqliteDate() },
-                sqlValueToTags = { it?.let { Json.decodeFromString<List<String>>(it) } }
-            ),
-            commentAdapters = LibraryTestDatabase.CommentAdapters(
-                createdAtToSqlValue = { it.toSqliteTimestamp() },
-                tagsToSqlValue = { it?.let { Json.encodeToString(it) } }
-            ),
-            personCategoryAdapters = LibraryTestDatabase.PersonCategoryAdapters(
-                sqlValueToAssignedAt = { LocalDateTime.fromSqliteTimestamp(it) }
-            ),
-            personAddressAdapters = LibraryTestDatabase.PersonAddressAdapters(
-                addressTypeToSqlValue = { it.value },
-                sqlValueToAddressType = { AddressType.from(it) },
-                sqlValueToCreatedAt = { LocalDateTime.fromSqliteTimestamp(it) }
-            )
-        )
+        database = TestDatabaseHelper.createDatabase()
     }
 
     @After
@@ -360,7 +337,7 @@ class ParameterBindingTest {
             database.open()
             
             // Insert multiple persons for pagination testing
-            val persons = mutableListOf<PersonQuery.Add.Result>()
+            val persons = mutableListOf<PersonAddResult>()
             for (i in 1..10) {
                 val person = database.person.add(PersonQuery.Add.Params(
                     email = "pagination$i@example.com",

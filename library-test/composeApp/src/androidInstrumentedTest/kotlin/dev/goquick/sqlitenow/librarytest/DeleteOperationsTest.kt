@@ -9,6 +9,7 @@ import dev.goquick.sqlitenow.librarytest.db.AddressType
 import dev.goquick.sqlitenow.librarytest.db.LibraryTestDatabase
 import dev.goquick.sqlitenow.librarytest.db.PersonQuery
 import dev.goquick.sqlitenow.librarytest.db.CommentQuery
+import dev.goquick.sqlitenow.librarytest.db.PersonAddResult
 import dev.goquick.sqlitenow.librarytest.db.PersonAddressQuery
 import dev.goquick.sqlitenow.librarytest.db.VersionBasedDatabaseMigrations
 import kotlinx.coroutines.runBlocking
@@ -33,30 +34,7 @@ class DeleteOperationsTest {
 
     @Before
     fun setup() {
-        database = LibraryTestDatabase(
-            dbName = ":memory:",
-            migration = VersionBasedDatabaseMigrations(),
-            debug = true,
-            categoryAdapters = LibraryTestDatabase.CategoryAdapters(
-                sqlValueToBirthDate = { it?.let { LocalDate.fromSqliteDate(it) } }
-            ),
-            personAdapters = LibraryTestDatabase.PersonAdapters(
-                birthDateToSqlValue = { it?.toSqliteDate() },
-                sqlValueToTags = { it?.let { Json.decodeFromString<List<String>>(it) } }
-            ),
-            commentAdapters = LibraryTestDatabase.CommentAdapters(
-                createdAtToSqlValue = { it.toSqliteTimestamp() },
-                tagsToSqlValue = { it?.let { Json.encodeToString(it) } }
-            ),
-            personCategoryAdapters = LibraryTestDatabase.PersonCategoryAdapters(
-                sqlValueToAssignedAt = { LocalDateTime.fromSqliteTimestamp(it) }
-            ),
-            personAddressAdapters = LibraryTestDatabase.PersonAddressAdapters(
-                addressTypeToSqlValue = { it.value },
-                sqlValueToAddressType = { AddressType.from(it) },
-                sqlValueToCreatedAt = { LocalDateTime.fromSqliteTimestamp(it) }
-            )
-        )
+        database = TestDatabaseHelper.createDatabase()
     }
 
     @After
@@ -289,7 +267,7 @@ class DeleteOperationsTest {
             database.open()
             
             // Insert many persons
-            val insertedPersons = mutableListOf<PersonQuery.Add.Result>()
+            val insertedPersons = mutableListOf<PersonAddResult>()
             for (i in 1..20) {
                 val person = database.person.add(PersonQuery.Add.Params(
                     email = "bulk-delete-$i@example.com",
@@ -426,7 +404,7 @@ class DeleteOperationsTest {
             database.open()
             
             // Insert multiple persons
-            val insertedPersons = mutableListOf<PersonQuery.Add.Result>()
+            val insertedPersons = mutableListOf<PersonAddResult>()
             for (i in 1..10) {
                 val person = database.person.add(PersonQuery.Add.Params(
                     email = "delete-all-$i@example.com",
@@ -460,7 +438,7 @@ class DeleteOperationsTest {
             database.open()
             
             // Insert persons and collect their IDs
-            val insertedPersons = mutableListOf<PersonQuery.Add.Result>()
+            val insertedPersons = mutableListOf<PersonAddResult>()
             for (i in 1..12) {
                 val person = database.person.add(PersonQuery.Add.Params(
                     email = "complex-pattern-$i@example.com",

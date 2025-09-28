@@ -12,7 +12,7 @@ class SharedResultTest {
     fun testSharedResultManagerBasicFunctionality() {
         val sharedResultManager = SharedResultManager()
 
-        // Create a SELECT statement with sharedResult=All
+        // Create a SELECT statement with queryResult=All
         val statement1 = AnnotatedSelectStatement(
             name = "SelectAllPaginated",
             src = SelectStatement(
@@ -41,7 +41,7 @@ class SharedResultTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = "All",
+                queryResult = "All",
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -91,7 +91,7 @@ class SharedResultTest {
     fun testSharedResultStructureValidation() {
         val sharedResultManager = SharedResultManager()
 
-        // Create first statement with sharedResult=All
+        // Create first statement with queryResult=All
         val statement1 = AnnotatedSelectStatement(
             name = "SelectAllPaginated",
             src = SelectStatement(
@@ -110,7 +110,7 @@ class SharedResultTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = "All",
+                queryResult = "All",
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -127,7 +127,7 @@ class SharedResultTest {
             )
         )
 
-        // Create second statement with same sharedResult=All but different structure
+        // Create second statement with same queryResult=All but different structure
         val statement2 = AnnotatedSelectStatement(
             name = "SelectAllFiltered",
             src = SelectStatement(
@@ -146,7 +146,7 @@ class SharedResultTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = "All",
+                queryResult = "All",
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -194,7 +194,7 @@ class SharedResultTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = "All",
+                queryResult = "All",
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -217,7 +217,7 @@ class SharedResultTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = "All",
+                queryResult = "All",
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -263,7 +263,7 @@ class SharedResultTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = "PersonWithExtras",
+                queryResult = "PersonWithExtras",
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null

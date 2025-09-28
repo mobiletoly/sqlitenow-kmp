@@ -1,4 +1,4 @@
--- @@{ sharedResult=PersonWithLimitedAddressRow }
+-- @@{ queryResult=PersonWithLimitedAddressRow }
 SELECT p.id         AS person_id,
        p.first_name,
        p.last_name,
@@ -7,34 +7,34 @@ SELECT p.id         AS person_id,
        p.birth_date,
        p.created_at,
 
-       a.id         AS address_id,
-       a.person_id  AS address_person_id,
-       a.address_type,
-       a.postal_code,
-       a.country,
-       a.is_primary,
-       a.created_at AS address_created_at,
-       a.street,
-       a.city,
-       a.state,
+       a.id         AS address__id,
+       a.person_id  AS address__person_id,
+       a.address_type AS address__address_type,
+       a.postal_code AS address__postal_code,
+       a.country AS address__country,
+       a.is_primary AS address__is_primary,
+       a.created_at AS address__created_at,
+       a.street AS address__street,
+       a.city AS address__city,
+       a.state AS address__state,
 
-       c.id         AS comment_id,
-       c.person_id  AS comment_person_id,
-       c.comment    AS comment_comment,
-       c.created_at AS comment_created_at,
-       c.tags
+       c.id         AS comment__id,
+       c.person_id  AS comment__person_id,
+       c.comment    AS comment__comment,
+       c.created_at AS comment__created_at,
+       c.tags AS comment__tags
 
 /* @@{ dynamicField=address,
        mappingType=perRow,
-       propertyType=PersonAddressQuery.SharedResult.Row,
+       propertyType=PersonAddressRow,
        sourceTable=a,
-       aliasPrefix=address_ } */
+       aliasPrefix=address__ } */
 
 /* @@{ dynamicField=comment,
        mappingType=perRow,
-       propertyType=CommentQuery.SharedResult.Row,
+       propertyType=CommentRow,
        sourceTable=c,
-       aliasPrefix=comment_ } */
+       aliasPrefix=comment__ } */
 
 FROM person p
          LEFT JOIN person_address a ON p.id = a.person_id

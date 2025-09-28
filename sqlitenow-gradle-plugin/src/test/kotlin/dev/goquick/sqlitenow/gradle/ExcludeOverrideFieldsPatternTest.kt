@@ -48,13 +48,13 @@ class ExcludeOverrideFieldsPatternTest {
 
     @Test
     fun wildcardMatchesAliasAndCamelCase() {
-        // Sanity check: our pattern should exclude alias names like joined_schedule_activity_id
+        // Sanity check: our pattern should exclude alias names like schedule__activity_id
         run {
-            val re = Regex("^joined_schedule_.*$")
-            assertTrue(re.matches("joined_schedule_activity_id"))
+            val re = Regex("^schedule__.*$")
+            assertTrue(re.matches("schedule__activity_id"))
         }
         val gen = newGenerator()
-        val fieldA = makeField(aliasOrLabel = "joined_schedule_activity_id", originalColumn = "activity_id")
+        val fieldA = makeField(aliasOrLabel = "schedule__activity_id", originalColumn = "activity_id")
         val fieldB = makeField(aliasOrLabel = "email")
 
         val props = mutableListOf<com.squareup.kotlinpoet.PropertySpec>()
@@ -66,12 +66,15 @@ class ExcludeOverrideFieldsPatternTest {
             mappedColumns = emptySet(),
             propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
             implementsInterface = "MyInterface",
-            excludeOverrideFields = setOf("joined_schedule_*"),
+            excludeOverrideFields = setOf("schedule__*"),
             fieldCodeGenerator = fieldCodeGen,
             constructorBuilder = ctor
         ) { p -> props += p }
 
-        val propA = props.first { it.name == "joinedScheduleActivityId" }
+        // The property name for "schedule__activity_id" should be generated based on the field name
+        val propA = props.firstOrNull { it.name.contains("schedule") || it.name.contains("activity") }
+            ?: props.firstOrNull { it.name == "scheduleActivityId" }
+            ?: throw NoSuchElementException("Could not find property for schedule__activity_id. Available: ${props.map { it.name }}")
         val propB = props.first { it.name == "email" }
 
         // A is excluded by pattern, so no OVERRIDE

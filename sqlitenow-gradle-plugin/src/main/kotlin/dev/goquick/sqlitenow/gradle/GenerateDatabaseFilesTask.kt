@@ -18,14 +18,26 @@ import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.TaskAction
 
 fun main() {
-    val rootScrDir = "/Users/pochkin/Projects/my/sqlitenow-kmp/sample-kmp/composeApp/src/commonMain/sql"
-    val schemaDatabaseDir = "/Users/pochkin/Projects/my/sqlitenow-kmp/sample-kmp/composeApp/tmp"
+//    val rootScrDir = "/Users/pochkin/Projects/my/sqlitenow-kmp/sample-kmp/composeApp/src/commonMain/sql"
+//    val schemaDatabaseDir = "/Users/pochkin/Projects/my/sqlitenow-kmp/sample-kmp/composeApp/tmp"
+//
+//    generateDatabaseFiles(
+//        dbName = "NowSampleDatabase",
+//        sqlDir = File("$rootScrDir/NowSampleDatabase"),
+//        packageName = "dev.goquick.sqlitenow.samplekmp.db",
+//        outDir = File("/Users/pochkin/Projects/my/sqlitenow-kmp/sample-kmp/composeApp/build/generated/sqlitenow/code"),
+//        schemaDatabaseFile = File("$schemaDatabaseDir/schema.db"),
+//        debug = true,
+//    )
+
+    val rootScrDir = "/Users/pochkin/Projects/my/sqlitenow-kmp/daytempo-kmp/composeApp/src/commonMain/sql"
+    val schemaDatabaseDir = "/Users/pochkin/Projects/my/sqlitenow-kmp/daytempo-kmp/composeApp/tmp"
 
     generateDatabaseFiles(
         dbName = "NowSampleDatabase",
-        sqlDir = File("$rootScrDir/NowSampleDatabase"),
-        packageName = "dev.goquick.sqlitenow.samplekmp.db",
-        outDir = File("/Users/pochkin/Projects/my/sqlitenow-kmp/sample-kmp/composeApp/build/generated/sqlitenow/code"),
+        sqlDir = File("$rootScrDir/DayTempoDatabase"),
+        packageName = "dev.goquick.sqlitenow.daytemokmp.db",
+        outDir = File("/Users/pochkin/Projects/my/sqlitenow-kmp/daytempo-kmp/composeApp/build/generated/sqlitenow/code"),
         schemaDatabaseFile = File("$schemaDatabaseDir/schema.db"),
         debug = true,
     )

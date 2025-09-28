@@ -34,11 +34,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.sqlite.SQLiteException
-import androidx.sqlite.driver.bundled.BundledSQLiteStatement
 import dev.goquick.sqlitenow.common.resolveDatabasePath
 import dev.goquick.sqlitenow.core.util.fromSqliteDate
 import dev.goquick.sqlitenow.core.util.fromSqliteTimestamp
-import dev.goquick.sqlitenow.core.util.jsonDecodeFromSqlite
+import dev.goquick.sqlitenow.core.util.jsonDecodeListFromSqlite
 import dev.goquick.sqlitenow.core.util.jsonEncodeToSqlite
 import dev.goquick.sqlitenow.core.util.toSqliteDate
 import dev.goquick.sqlitenow.core.util.toSqliteTimestamp
@@ -46,6 +45,8 @@ import dev.goquick.sqlitenow.samplekmp.db.AddressType
 import dev.goquick.sqlitenow.samplekmp.db.NowSampleDatabase
 import dev.goquick.sqlitenow.samplekmp.db.PersonAddressQuery
 import dev.goquick.sqlitenow.samplekmp.db.PersonQuery
+import dev.goquick.sqlitenow.samplekmp.db.PersonRow
+import dev.goquick.sqlitenow.samplekmp.db.PersonWithAddressRow
 import dev.goquick.sqlitenow.samplekmp.db.VersionBasedDatabaseMigrations
 import dev.goquick.sqlitenow.samplekmp.model.PersonNote
 import kotlinx.coroutines.Dispatchers
@@ -58,10 +59,6 @@ import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import org.jetbrains.compose.ui.tooling.preview.Preview
 import kotlin.random.Random
-
-typealias PersonEntity = PersonQuery.SharedResult.Row
-typealias PersonAddressEntity = PersonAddressQuery.SharedResult.Row
-typealias PersonWithAddressesEntity = PersonQuery.SharedResult.PersonWithAddressRow
 
 private val firstNames = listOf(
     // Traditional English names
@@ -123,20 +120,16 @@ val db = NowSampleDatabase(
         sqlValueToBirthDate = {
             it?.let { LocalDate.fromSqliteDate(it) }
         },
-        sqlValueToAddressType = {
-            AddressType.from(it)
-        },
         sqlValueToCreatedAt = {
             LocalDateTime.fromSqliteTimestamp(it)
         },
         sqlValueToNotes = { it?.let { PersonNote.deserialize(it) } },
-        sqlValueToTags = {
-            it?.jsonDecodeFromSqlite() ?: emptyList()
-        }
+        sqlValueToAddressType = { AddressType.from(it) },
+        sqlValueToTags = { it?.jsonDecodeListFromSqlite() ?: emptyList() },
     ),
     commentAdapters = NowSampleDatabase.CommentAdapters(
         createdAtToSqlValue = { ts -> ts.toSqliteTimestamp() },
-        tagsToSqlValue = { tags -> tags?.jsonEncodeToSqlite() }
+        tagsToSqlValue = { tags -> tags?.jsonEncodeToSqlite() },
     ),
     personAddressAdapters = NowSampleDatabase.PersonAddressAdapters(
         addressTypeToSqlValue = { it.value },
@@ -149,7 +142,7 @@ val db = NowSampleDatabase(
 fun App() {
     val coroutineScope = rememberCoroutineScope()
     var persons by remember {
-        mutableStateOf<List<PersonEntity>>(emptyList())
+        mutableStateOf<List<PersonRow>>(emptyList())
     }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -193,7 +186,7 @@ fun App() {
             )
             .asFlow()
             .flowOn(Dispatchers.IO) // DB runs on Dispatchers.IO
-            .collect { personWithAddressList: List<PersonQuery.SharedResult.PersonWithAddressRow> ->
+            .collect { personWithAddressList: List<PersonWithAddressRow> ->
                 for (person in personWithAddressList) {
                     println("----> Person: ${person.myFirstName} ${person.myLastName} - <${person.phone}> <${person.birthDate}>")
                     for (address in person.addresses) {
@@ -354,9 +347,9 @@ fun App() {
 
 @Composable
 fun PersonCard(
-    person: PersonEntity,
-    onRandomize: (PersonEntity) -> Unit,
-    onDelete: (PersonEntity) -> Unit
+    person: PersonRow,
+    onRandomize: (PersonRow) -> Unit,
+    onDelete: (PersonRow) -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -520,7 +513,7 @@ suspend fun deletePerson(personId: Long, onError: (String) -> Unit = {}) {
     }
 }
 
-suspend fun randomizePerson(person: PersonEntity, onError: (String) -> Unit = {}) {
+suspend fun randomizePerson(person: PersonRow, onError: (String) -> Unit = {}) {
     try {
         val firstName = firstNames.random()
         val lastName = lastNames.random()

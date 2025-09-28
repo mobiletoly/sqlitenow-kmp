@@ -268,12 +268,13 @@ data class FieldAnnotationOverrides(
                 // Validate mappingType value
                 if (mappingType !in setOf(
                         AnnotationConstants.MAPPING_TYPE_PER_ROW,
-                        AnnotationConstants.MAPPING_TYPE_COLLECTION
+                        AnnotationConstants.MAPPING_TYPE_COLLECTION,
+                        AnnotationConstants.MAPPING_TYPE_ENTITY
                     )
                 ) {
                     throw IllegalArgumentException(
                         "Invalid annotation '${AnnotationConstants.MAPPING_TYPE}' value: '$mappingType'. " +
-                                "Currently supported: '${AnnotationConstants.MAPPING_TYPE_PER_ROW}', '${AnnotationConstants.MAPPING_TYPE_COLLECTION}'"
+                                "Currently supported: '${AnnotationConstants.MAPPING_TYPE_PER_ROW}', '${AnnotationConstants.MAPPING_TYPE_COLLECTION}', '${AnnotationConstants.MAPPING_TYPE_ENTITY}'"
                     )
                 }
 
@@ -336,7 +337,7 @@ enum class PropertyNameGeneratorType {
 data class StatementAnnotationOverrides(
     val name: String?,
     val propertyNameGenerator: PropertyNameGeneratorType,
-    val sharedResult: String?,
+    val queryResult: String?,
     val implements: String?,
     val excludeOverrideFields: Set<String>?,
     val collectionKey: String?,
@@ -347,7 +348,7 @@ data class StatementAnnotationOverrides(
         fun parse(annotations: Map<String, Any?>): StatementAnnotationOverrides {
             val name = annotations[AnnotationConstants.NAME] as? String
             val propertyNameGenerator = annotations[AnnotationConstants.PROPERTY_NAME_GENERATOR] as? String
-            val sharedResult = annotations[AnnotationConstants.SHARED_RESULT] as? String
+            val queryResult = annotations[AnnotationConstants.QUERY_RESULT] as? String
             val implements = annotations[AnnotationConstants.IMPLEMENTS] as? String
             val excludeOverrideFields = annotations[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS]
             val collectionKey = annotations[AnnotationConstants.COLLECTION_KEY] as? String
@@ -360,8 +361,8 @@ data class StatementAnnotationOverrides(
             if (annotations.containsKey(AnnotationConstants.PROPERTY_NAME_GENERATOR) && propertyNameGenerator?.isBlank() == true) {
                 throw IllegalArgumentException("Annotation '${AnnotationConstants.PROPERTY_NAME_GENERATOR}' cannot be blank")
             }
-            if (annotations.containsKey(AnnotationConstants.SHARED_RESULT) && sharedResult?.isBlank() == true) {
-                throw IllegalArgumentException("Annotation '${AnnotationConstants.SHARED_RESULT}' cannot be blank")
+            if (annotations.containsKey(AnnotationConstants.QUERY_RESULT) && queryResult?.isBlank() == true) {
+                throw IllegalArgumentException("Annotation '${AnnotationConstants.QUERY_RESULT}' cannot be blank")
             }
             if (annotations.containsKey(AnnotationConstants.IMPLEMENTS) && implements?.isBlank() == true) {
                 throw IllegalArgumentException("Annotation '${AnnotationConstants.IMPLEMENTS}' cannot be blank")
@@ -370,7 +371,7 @@ data class StatementAnnotationOverrides(
             return StatementAnnotationOverrides(
                 name = name,
                 propertyNameGenerator = propertyNameGenerator.parsePropertyNameGeneratorType(),
-                sharedResult = sharedResult,
+                queryResult = queryResult,
                 implements = implements,
                 excludeOverrideFields = parseExcludeOverrideFieldsFromHocon(excludeOverrideFields),
                 collectionKey = collectionKey,

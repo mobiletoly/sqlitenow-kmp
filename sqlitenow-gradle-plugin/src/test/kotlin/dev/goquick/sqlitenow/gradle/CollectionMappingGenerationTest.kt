@@ -3,6 +3,7 @@ package dev.goquick.sqlitenow.gradle
 import org.junit.jupiter.api.Test
 import java.io.File
 import kotlin.test.assertTrue
+import kotlin.test.assertFalse
 
 class CollectionMappingGenerationTest {
     @Test
@@ -35,7 +36,7 @@ class CollectionMappingGenerationTest {
         val addrDir = File(queriesDir, "address").apply { mkdirs() }
         File(addrDir, "selectAll.sql").writeText(
             """
-            -- @@{ sharedResult=Row }
+            -- @@{ queryResult=Row }
             SELECT address_id, person_doc_id, city FROM address;
             """.trimIndent()
         )
@@ -44,7 +45,7 @@ class CollectionMappingGenerationTest {
         val personDir = File(queriesDir, "person").apply { mkdirs() }
         File(personDir, "selectWithAddresses.sql").writeText(
             """
-            /* @@{ sharedResult=RowWithAddresses, collectionKey=doc_id } */
+            /* @@{ queryResult=RowWithAddresses, collectionKey=doc_id } */
             SELECT
               p.*, 
               a.address_id AS addr_address_id,
@@ -108,7 +109,7 @@ class CollectionMappingGenerationTest {
         val detDir = File(queriesDir, "detail").apply { mkdirs() }
         File(detDir, "selectAll.sql").writeText(
             """
-            -- @@{ sharedResult=Row }
+            -- @@{ queryResult=Row }
             SELECT doc_id, info FROM detail;
             """.trimIndent()
         )
@@ -116,7 +117,7 @@ class CollectionMappingGenerationTest {
         val personDir = File(queriesDir, "person").apply { mkdirs() }
         File(personDir, "selectWithDetailAndList.sql").writeText(
             """
-            /* @@{ sharedResult=RowWithDetail, collectionKey=doc_id } */
+            /* @@{ queryResult=RowWithDetail, collectionKey=doc_id } */
             SELECT
               p.*, d.doc_id AS det_doc_id, d.info AS det_info
 
@@ -136,5 +137,108 @@ class CollectionMappingGenerationTest {
         val genFile = outDir.walkTopDown().first { it.name.contains("PersonQuery_SelectWithDetailAndList") && it.extension == "kt" }
         val text = genFile.readText()
         assertTrue(text.contains("primaryDetail ="), "Per-row dynamic field should be constructed in mapped result")
+    }
+
+    @Test
+    fun generates_correct_distinctBy_path_for_custom_dynamic_field_names() {
+        val root = createTempDir(prefix = "custom-field-names-")
+        val schemaDir = File(root, "schema").apply { mkdirs() }
+        val queriesDir = File(root, "queries").apply { mkdirs() }
+
+        // Schema: product + review
+        File(schemaDir, "product.sql").writeText(
+            """
+            CREATE TABLE product (
+              id BLOB PRIMARY KEY NOT NULL,
+              doc_id TEXT NOT NULL UNIQUE,
+              name TEXT NOT NULL
+            ) WITHOUT ROWID;
+            """.trimIndent()
+        )
+        File(schemaDir, "review.sql").writeText(
+            """
+            CREATE TABLE review (
+              review_id TEXT PRIMARY KEY NOT NULL,
+              product_doc_id TEXT NOT NULL,
+              rating INTEGER NOT NULL,
+              comment TEXT NOT NULL
+            );
+            """.trimIndent()
+        )
+
+        // Review query for shared result with dynamic field
+        val reviewDir = File(queriesDir, "review").apply { mkdirs() }
+        File(reviewDir, "selectAll.sql").writeText(
+            """
+            -- @@{ queryResult=DetailedRow }
+            SELECT
+              r.review_id,
+              r.product_doc_id,
+              r.rating,
+              r.comment,
+              p.name AS product_name
+
+            /* @@{ dynamicField=productInfo,
+                   mappingType=entity,
+                   propertyType=ProductQuery.SharedResult.BasicRow,
+                   sourceTable=p,
+                   aliasPrefix=product_ } */
+
+            FROM review r
+            LEFT JOIN product p ON r.product_doc_id = p.doc_id;
+            """.trimIndent()
+        )
+
+        // Product basic query for the entity mapping
+        val productDir = File(queriesDir, "product").apply { mkdirs() }
+        File(productDir, "selectBasic.sql").writeText(
+            """
+            -- @@{ queryResult=BasicRow }
+            SELECT doc_id, name FROM product;
+            """.trimIndent()
+        )
+
+        // Product query with collection mapping using custom dynamic field name "customerReviews"
+        File(productDir, "selectWithReviews.sql").writeText(
+            """
+            /* @@{ queryResult=ProductWithReviewsRow, collectionKey=doc_id } */
+            SELECT
+              p.*,
+              r.review_id AS rev_review_id,
+              r.product_doc_id AS rev_product_doc_id,
+              r.rating AS rev_rating,
+              r.comment AS rev_comment,
+              p2.name AS rev_product_name
+
+            /* @@{ dynamicField=customerReviews,
+                   mappingType=collection,
+                   propertyType=List<ReviewQuery.SharedResult.DetailedRow>,
+                   sourceTable=r,
+                   collectionKey=rev_review_id,
+                   aliasPrefix=rev_ } */
+
+            FROM product p
+            LEFT JOIN review r ON p.doc_id = r.product_doc_id
+            LEFT JOIN product p2 ON r.product_doc_id = p2.doc_id;
+            """.trimIndent()
+        )
+
+        val outDir = File(root, "out").apply { mkdirs() }
+        generateDatabaseFiles(
+            dbName = "TestDb",
+            sqlDir = root,
+            packageName = "dev.test",
+            outDir = outDir,
+            schemaDatabaseFile = null,
+            debug = false,
+        )
+
+        val genFile = outDir.walkTopDown().first { it.name.contains("ProductQuery_SelectWithReviews") && it.extension == "kt" }
+        val text = genFile.readText()
+
+        // Verify basic collection mapping functionality
+        assertTrue(text.contains(".distinctBy"), "Should generate distinctBy for collection deduplication")
+        assertTrue(text.contains("customerReviews = rowsForEntity"), "Should map collection items to 'customerReviews' field")
+        assertTrue(text.contains("groupBy { it"), "Should group joined rows")
     }
 }

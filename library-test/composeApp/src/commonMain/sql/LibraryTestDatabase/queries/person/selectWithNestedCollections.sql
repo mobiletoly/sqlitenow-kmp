@@ -1,4 +1,4 @@
-/* @@{ sharedResult=PersonWithNestedCollectionsRow, collectionKey=person_id } */
+/* @@{ queryResult=PersonWithNestedCollectionsRow, collectionKey=person_id } */
 SELECT
     p.id AS person_id,
     p.first_name,
@@ -9,52 +9,52 @@ SELECT
     p.created_at,
     
     -- Address collection
-    a.id AS address_id,
-    a.person_id AS address_person_id,
-    a.address_type,
-    a.street,
-    a.city,
-    a.state,
-    a.postal_code,
-    a.country,
-    a.is_primary AS address_is_primary,
-    a.created_at AS address_created_at,
+    a.id AS address__id,
+    a.person_id AS address__person_id,
+    a.address_type AS address__address_type,
+    a.street AS address__street,
+    a.city AS address__city,
+    a.state AS address__state,
+    a.postal_code AS address__postal_code,
+    a.country AS address__country,
+    a.is_primary AS address__is_primary,
+    a.created_at AS address__created_at,
     
     -- Comment collection
-    c.id AS comment_id,
-    c.person_id AS comment_person_id,
-    c.comment,
-    c.created_at AS comment_created_at,
-    c.tags,
+    c.id AS comment__id,
+    c.person_id AS comment__person_id,
+    c.comment AS comment__comment,
+    c.created_at AS comment__created_at,
+    c.tags AS comment__tags,
     
     -- Category collection (through junction table)
-    cat.id AS category_id,
-    cat.name AS category_name,
-    cat.description AS category_description,
-    cat.created_at AS category_created_at
+    cat.id AS category__id,
+    cat.name AS category__name,
+    cat.description AS category__description,
+    cat.created_at AS category__created_at
 
   /* @@{ dynamicField=addresses,
          mappingType=collection,
-         propertyType=List<PersonAddressQuery.SharedResult.Row>,
+         propertyType=List<PersonAddressRow>,
          sourceTable=a,
-         collectionKey=address_id,
-         aliasPrefix=address_,
+         collectionKey=address__id,
+         aliasPrefix=address__,
          notNull=true } */
 
   /* @@{ dynamicField=comments,
          mappingType=collection,
-         propertyType=List<CommentQuery.SharedResult.Row>,
+         propertyType=List<CommentRow>,
          sourceTable=c,
-         collectionKey=comment_id,
-         aliasPrefix=comment_,
+         collectionKey=comment__id,
+         aliasPrefix=comment__,
          notNull=true } */
 
   /* @@{ dynamicField=categories,
          mappingType=collection,
-         propertyType=List<CategoryQuery.SharedResult.Row>,
+         propertyType=List<CategoryRow>,
          sourceTable=cat,
-         collectionKey=category_id,
-         aliasPrefix=category_,
+         collectionKey=category__id,
+         aliasPrefix=category__,
          notNull=true } */
 
 FROM person p

@@ -1,2 +1,2 @@
--- @@{ sharedResult=Row }
+-- @@{ queryResult=CategoryRow }
 SELECT * FROM category ORDER BY name

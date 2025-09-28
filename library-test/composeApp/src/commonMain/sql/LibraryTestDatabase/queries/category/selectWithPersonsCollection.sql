@@ -1,24 +1,24 @@
-/* @@{ sharedResult=CategoryWithPersonsRow, collectionKey=category_id } */
+/* @@{ queryResult=CategoryWithPersonsRow, collectionKey=category_id } */
 SELECT
     c.id AS category_id,
     c.name,
     c.description,
     c.created_at,
 
-    p.id AS person_id,
-    p.first_name AS person_myFirstName,
-    p.last_name AS person_myLastName,
-    p.email AS person_email,
-    p.phone AS person_phone,
-    p.birth_date AS person_birthDate,
-    p.created_at AS person_createdAt
+    p.id AS person__id,
+    p.first_name AS person__myFirstName,
+    p.last_name AS person__myLastName,
+    p.email AS person__email,
+    p.phone AS person__phone,
+    p.birth_date AS person__birthDate,
+    p.created_at AS person__createdAt
 
 /* @@{ dynamicField=persons,
        mappingType=collection,
-       propertyType=List<PersonQuery.SharedResult.Row>,
+       propertyType=List<PersonRow>,
        sourceTable=p,
-       collectionKey=person_id,
-       aliasPrefix=person_,
+       collectionKey=person__id,
+       aliasPrefix=person__,
        notNull=true } */
 
 FROM category c

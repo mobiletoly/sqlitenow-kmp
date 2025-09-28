@@ -41,7 +41,7 @@ class ViewColumnLookupTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -101,7 +101,7 @@ class ViewColumnLookupTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -154,7 +154,7 @@ class ViewColumnLookupTest {
                 annotations = StatementAnnotationOverrides(
                     name = "PersonWithAddressEntity",
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -186,7 +186,7 @@ class ViewColumnLookupTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -309,7 +309,7 @@ class ViewColumnLookupTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -356,7 +356,7 @@ class ViewColumnLookupTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -396,7 +396,7 @@ class ViewColumnLookupTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -464,7 +464,7 @@ class ViewColumnLookupTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -621,7 +621,7 @@ class ViewColumnLookupTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null

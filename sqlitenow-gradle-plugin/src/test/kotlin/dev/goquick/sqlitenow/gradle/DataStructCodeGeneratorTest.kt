@@ -181,10 +181,12 @@ class DataStructCodeGeneratorTest {
 
         // Verify that the files were created
         val userQueriesFile = File(tempDir.resolve("output").toFile(), "com/example/db/UserQuery.kt")
+        val resultFile = File(tempDir.resolve("output").toFile(), "com/example/db/UserCustomClassNameResult.kt")
 
         assertTrue(userQueriesFile.exists(), "UserQuery.kt should be created")
+        assertTrue(resultFile.exists(), "UserCustomClassNameResult.kt should be created")
 
-        // Verify file contents
+        // Verify query file contents
         val userQueriesContent = userQueriesFile.readText()
 
         assertTrue(userQueriesContent.contains("object UserQuery"), "UserQuery.kt should contain 'object UserQuery'")
@@ -193,8 +195,11 @@ class DataStructCodeGeneratorTest {
             "UserQuery.kt should contain query-specific object"
         )
         assertTrue(userQueriesContent.contains("const val SQL"), "UserQuery.kt should contain SQL constant")
-        assertTrue(userQueriesContent.contains("data class Result"), "UserQuery.kt should contain 'data class Result'")
-        assertTrue(userQueriesContent.contains("val name: String"), "UserQuery.kt should contain 'val name: String'")
+
+        // Verify result file contents
+        val resultContent = resultFile.readText()
+        assertTrue(resultContent.contains("data class UserCustomClassNameResult"), "Result file should contain 'data class UserCustomClassNameResult'")
+        assertTrue(resultContent.contains("val name: String"), "Result file should contain 'val name: String'")
     }
 
     @Test
@@ -208,16 +213,21 @@ class DataStructCodeGeneratorTest {
 
         // Verify that the files were created
         val userQueriesFile = File(tempDir.resolve("output").toFile(), "com/example/db/UserQuery.kt")
+        val resultFile = File(tempDir.resolve("output").toFile(), "com/example/db/UserTestQueryResult.kt")
 
         assertTrue(userQueriesFile.exists(), "UserQuery.kt should be created")
+        assertTrue(resultFile.exists(), "UserTestQueryResult.kt should be created")
 
-        // Verify file contents
+        // Verify query file contents
         val userQueriesContent = userQueriesFile.readText()
 
         assertTrue(userQueriesContent.contains("object UserQuery"), "UserQuery.kt should contain 'object UserQuery'")
         assertTrue(userQueriesContent.contains("object TestQuery"), "UserQuery.kt should contain query-specific object")
         assertTrue(userQueriesContent.contains("const val SQL"), "UserQuery.kt should contain SQL constant")
-        assertTrue(userQueriesContent.contains("data class Result"), "UserQuery.kt should contain 'data class Result'")
+
+        // Verify result file contents
+        val resultContent = resultFile.readText()
+        assertTrue(resultContent.contains("data class UserTestQueryResult"), "Result file should contain 'data class UserTestQueryResult'")
     }
 
     @Test
@@ -281,10 +291,12 @@ class DataStructCodeGeneratorTest {
 
         // Verify that the files were created
         val userQueriesFile = File(tempDir.resolve("output").toFile(), "com/example/db/UserQuery.kt")
+        val resultFile = File(tempDir.resolve("output").toFile(), "com/example/db/UserCustomClassNameResult.kt")
 
         assertTrue(userQueriesFile.exists(), "UserQuery.kt should be created")
+        assertTrue(resultFile.exists(), "UserCustomClassNameResult.kt should be created")
 
-        // Verify file contents
+        // Verify query file contents
         val userQueriesContent = userQueriesFile.readText()
 
         assertTrue(userQueriesContent.contains("object UserQuery"), "UserQuery.kt should contain 'object UserQuery'")
@@ -294,7 +306,6 @@ class DataStructCodeGeneratorTest {
         )
         assertTrue(userQueriesContent.contains("const val SQL"), "UserQuery.kt should contain SQL constant")
         assertTrue(userQueriesContent.contains("data class Params"), "UserQuery.kt should contain 'data class Params'")
-        assertTrue(userQueriesContent.contains("data class Result"), "UserQuery.kt should contain 'data class Result'")
 
         // Check for parameter properties (defaulting to String until proper type inference is implemented)
         assertTrue(
@@ -302,6 +313,10 @@ class DataStructCodeGeneratorTest {
             "UserQuery.kt should contain 'val userId: String'"
         )
         assertTrue(userQueriesContent.contains("val email: String"), "UserQuery.kt should contain 'val email: String'")
+
+        // Verify result file contents
+        val resultContent = resultFile.readText()
+        assertTrue(resultContent.contains("data class UserCustomClassNameResult"), "Result file should contain 'data class UserCustomClassNameResult'")
     }
 
     @Test
@@ -344,7 +359,7 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -394,7 +409,9 @@ class DataStructCodeGeneratorTest {
             columnNamesAssociatedWithNamedParameters = mapOf(
                 "firstName" to "first_name",
                 "createdAt" to "created_at"
-            )
+            ),
+            hasReturningClause = false,
+            returningColumns = emptyList()
         )
 
         val mockAnnotatedStatement = AnnotatedExecuteStatement(
@@ -403,7 +420,7 @@ class DataStructCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -461,7 +478,7 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -502,7 +519,9 @@ class DataStructCodeGeneratorTest {
             withSelectStatements = emptyList(),
             columnNamesAssociatedWithNamedParameters = mapOf(
                 "createdAt" to "created_at"
-            )
+            ),
+            hasReturningClause = false,
+            returningColumns = emptyList()
         )
 
         val mockAnnotatedStatement = AnnotatedExecuteStatement(
@@ -511,7 +530,7 @@ class DataStructCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -582,7 +601,7 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -623,7 +642,9 @@ class DataStructCodeGeneratorTest {
             withSelectStatements = emptyList(),
             columnNamesAssociatedWithNamedParameters = mapOf(
                 "createdAt" to "created_at"
-            )
+            ),
+            hasReturningClause = false,
+            returningColumns = emptyList()
         )
 
         val mockAnnotatedStatement = AnnotatedExecuteStatement(
@@ -632,7 +653,7 @@ class DataStructCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -708,7 +729,7 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -750,7 +771,9 @@ class DataStructCodeGeneratorTest {
             withSelectStatements = emptyList(),
             columnNamesAssociatedWithNamedParameters = mapOf(
                 "lastName" to "last_name"
-            )
+            ),
+            hasReturningClause = false,
+            returningColumns = emptyList()
         )
 
         val mockAnnotatedStatement = AnnotatedExecuteStatement(
@@ -759,7 +782,7 @@ class DataStructCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -823,7 +846,7 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -865,7 +888,9 @@ class DataStructCodeGeneratorTest {
             withSelectStatements = emptyList(),
             columnNamesAssociatedWithNamedParameters = mapOf(
                 "lastName" to "last_name"
-            )
+            ),
+            hasReturningClause = false,
+            returningColumns = emptyList()
         )
 
         val mockAnnotatedStatement = AnnotatedExecuteStatement(
@@ -874,7 +899,7 @@ class DataStructCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -892,9 +917,9 @@ class DataStructCodeGeneratorTest {
         // Generate the function to test adapter parameter types
         val function = queryGenerator.javaClass.getDeclaredMethod(
             "generateExecuteQueryFunction",
-            String::class.java, AnnotatedExecuteStatement::class.java
+            String::class.java, AnnotatedExecuteStatement::class.java, String::class.java
         ).apply { isAccessible = true }
-            .invoke(queryGenerator, "person", mockAnnotatedStatement)
+            .invoke(queryGenerator, "person", mockAnnotatedStatement, "execute")
 
         // The function should be generated successfully without type errors
         // This test verifies that nullable adapter parameters are correctly generated
@@ -949,7 +974,7 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -990,7 +1015,9 @@ class DataStructCodeGeneratorTest {
             withSelectStatements = emptyList(),
             columnNamesAssociatedWithNamedParameters = mapOf(
                 "createdAt" to "created_at"
-            )
+            ),
+            hasReturningClause = false,
+            returningColumns = emptyList()
         )
 
         val mockInsertAnnotatedStatement = AnnotatedExecuteStatement(
@@ -999,7 +1026,7 @@ class DataStructCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -1029,7 +1056,7 @@ class DataStructCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -1063,9 +1090,9 @@ class DataStructCodeGeneratorTest {
         // Generate functions to verify parameter naming
         val insertFunction = queryGenerator.javaClass.getDeclaredMethod(
             "generateExecuteQueryFunction",
-            String::class.java, AnnotatedExecuteStatement::class.java
+            String::class.java, AnnotatedExecuteStatement::class.java, String::class.java
         ).apply { isAccessible = true }
-            .invoke(queryGenerator, "person", mockInsertAnnotatedStatement)
+            .invoke(queryGenerator, "person", mockInsertAnnotatedStatement, "execute")
 
         val selectFunction = queryGenerator.javaClass.getDeclaredMethod(
             "generateSelectQueryFunction",
@@ -1127,7 +1154,7 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -1195,7 +1222,7 @@ class DataStructCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -1296,7 +1323,7 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -1384,7 +1411,7 @@ class DataStructCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -1489,7 +1516,7 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -1564,7 +1591,7 @@ class DataStructCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -1633,7 +1660,7 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -1700,7 +1727,7 @@ class DataStructCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -1800,7 +1827,7 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -1864,7 +1891,9 @@ class DataStructCodeGeneratorTest {
                 "email" to "email",
                 "phone" to "phone",
                 "birthDate" to "birth_date"
-            )
+            ),
+            hasReturningClause = false,
+            returningColumns = emptyList()
         )
 
         val mockAnnotatedStatement = AnnotatedExecuteStatement(
@@ -1873,7 +1902,7 @@ class DataStructCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -1891,9 +1920,9 @@ class DataStructCodeGeneratorTest {
         // Generate the function and check the generated code
         val function = queryGenerator.javaClass.getDeclaredMethod(
             "generateExecuteQueryFunction",
-            String::class.java, AnnotatedExecuteStatement::class.java
+            String::class.java, AnnotatedExecuteStatement::class.java, String::class.java
         ).apply { isAccessible = true }
-            .invoke(queryGenerator, "person", mockAnnotatedStatement) as FunSpec
+            .invoke(queryGenerator, "person", mockAnnotatedStatement, "execute") as FunSpec
 
         val generatedCode = function.toString()
 
@@ -1970,7 +1999,7 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -2029,7 +2058,7 @@ class DataStructCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -2126,7 +2155,7 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -2199,7 +2228,7 @@ class DataStructCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -2301,7 +2330,7 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -2358,7 +2387,7 @@ class DataStructCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -2491,7 +2520,7 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -2632,12 +2661,14 @@ class DataStructCodeGeneratorTest {
                     "birthDate" to "birth_date",
                     "myCreatedAt" to "created_at",
                     "notes" to "notes"
-                )
+                ),
+                hasReturningClause = false,
+                returningColumns = emptyList()
             ),
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -2761,7 +2792,7 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -2868,12 +2899,14 @@ class DataStructCodeGeneratorTest {
                     "firstName" to "first_name",
                     "lastName" to "last_name",
                     "createdAt" to "created_at"
-                )
+                ),
+                hasReturningClause = false,
+                returningColumns = emptyList()
             ),
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -2973,7 +3006,7 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -3087,12 +3120,14 @@ class DataStructCodeGeneratorTest {
                     "firstName" to "first_name",
                     "lastName" to "last_name",
                     "createdAt" to "created_at"
-                )
+                ),
+                hasReturningClause = false,
+                returningColumns = emptyList()
             ),
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -3234,7 +3269,7 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -3361,12 +3396,14 @@ class DataStructCodeGeneratorTest {
                     "birthDate" to "birth_date",
                     "myCreatedAt" to "created_at",
                     "notes" to "notes"
-                )
+                ),
+                hasReturningClause = false,
+                returningColumns = emptyList()
             ),
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -3471,7 +3508,7 @@ class DataStructCodeGeneratorTest {
                 annotations = StatementAnnotationOverrides(
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    sharedResult = null,
+                    queryResult = null,
                     implements = null,
                     excludeOverrideFields = null,
                     collectionKey = null
@@ -3540,12 +3577,14 @@ class DataStructCodeGeneratorTest {
                     "newAge" to "age"
                     // personId is from WHERE clause, not SET clause
                 ),
-                withSelectStatements = emptyList()
+                withSelectStatements = emptyList(),
+                hasReturningClause = false,
+                returningColumns = emptyList()
             ),
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -3607,7 +3646,7 @@ class DataStructCodeGeneratorTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = null,
+                queryResult = null,
                 implements = null,
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -3681,61 +3720,8 @@ class DataStructCodeGeneratorTest {
     }
 
     @Test
-    @DisplayName("Test shared result data class generation with dynamic fields")
-    fun testSharedResultWithDynamicFieldsCodeGeneration() {
-        // Create a statement with both regular and dynamic fields
-        val statement = AnnotatedSelectStatement(
-            name = "SelectWithDynamicField",
-            src = SelectStatement(
-                sql = "SELECT id, name FROM Person",
-                fromTable = "person",
-                joinTables = emptyList(),
-                namedParameters = emptyList(),
-                namedParametersToColumns = emptyMap(),
-                offsetNamedParam = null,
-                limitNamedParam = null,
-                fields = listOf(
-                    SelectStatement.FieldSource("id", "person", "id", "INTEGER"),
-                    SelectStatement.FieldSource("name", "person", "name", "TEXT")
-                )
-            ),
-            annotations = StatementAnnotationOverrides(
-                name = null,
-                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = "PersonWithExtras",
-                implements = null,
-                excludeOverrideFields = null,
-                collectionKey = null
-            ),
-            fields = listOf(
-                // Regular database fields
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("id", "person", "id", "INTEGER"),
-                    annotations = FieldAnnotationOverrides.parse(emptyMap())
-                ),
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("name", "person", "name", "TEXT"),
-                    annotations = FieldAnnotationOverrides.parse(emptyMap())
-                ),
-                // Dynamic field
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("addresses", "", "addresses", "DYNAMIC"),
-                    annotations = FieldAnnotationOverrides.parse(
-                        mapOf(
-                            AnnotationConstants.IS_DYNAMIC_FIELD to true,
-                            AnnotationConstants.PROPERTY_TYPE to "List<String>",
-                            AnnotationConstants.DEFAULT_VALUE to "listOf()"
-                        )
-                    )
-                )
-            )
-        )
-
-        // Create shared result manager and register the statement
-        val testSharedResultManager = SharedResultManager()
-        val sharedResult = testSharedResultManager.registerSharedResult(statement, "person")
-        assertNotNull(sharedResult)
-
+    @DisplayName("Test shared result data class generation with queryResult annotation")
+    fun testSharedResultWithQueryResultAnnotation() {
         // Create minimal create table statements for the test
         val createTableStatements = listOf(
             AnnotatedCreateTableStatement(
@@ -3773,50 +3759,52 @@ class DataStructCodeGeneratorTest {
         """.trimIndent()
         )
 
+        // Create queries directory structure
+        val queriesDir = tempDir.resolve("queries").toFile()
+        queriesDir.mkdirs()
+        val personDir = File(queriesDir, "person")
+        personDir.mkdirs()
+
+        // Create SQL file with queryResult annotation
+        val sqlContent = """
+            -- @@{queryResult=PersonWithExtras}
+            SELECT id, name FROM person;
+        """.trimIndent()
+        File(personDir, "selectWithExtras.sql").writeText(sqlContent)
+
         // Create data structure generator using the helper function
         val dataStructGenerator = createDataStructCodeGeneratorWithMockExecutors(
             conn = conn,
-            queriesDir = tempDir.resolve("queries").toFile(),
+            queriesDir = queriesDir,
             createTableStatements = createTableStatements,
             packageName = "com.example.db",
             outputDir = tempDir.resolve("output").toFile()
         )
 
-        // Manually set the shared results using reflection to access the SharedResultManager
-        val sharedResultManagerField = dataStructGenerator.javaClass.getDeclaredField("sharedResultManager")
-        sharedResultManagerField.isAccessible = true
-        val sharedResultManager = sharedResultManagerField.get(dataStructGenerator) as SharedResultManager
+        // Generate the code (this will create separate result files)
+        dataStructGenerator.generateCode()
 
-        // Register the shared result manually
-        sharedResultManager.registerSharedResult(statement, "person")
+        // Verify the separate result file was created
+        val resultFile = File(tempDir.resolve("output").toFile(), "com/example/db/PersonWithExtras.kt")
+        assertTrue(resultFile.exists(), "PersonWithExtras.kt should be created")
 
-        // Generate the shared result data class
-        val generatedFileSpec = dataStructGenerator.generateNamespaceDataStructuresCode("person", "com.example.db")
-        val generatedCode = generatedFileSpec.build().toString()
+        // Read the result file content
+        val resultContent = resultFile.readText()
 
         // Verify the shared result data class is generated correctly
         assertTrue(
-            generatedCode.contains("data class PersonWithExtras"),
+            resultContent.contains("data class PersonWithExtras"),
             "Should generate PersonWithExtras data class"
         )
 
         // Verify regular fields are included
         assertTrue(
-            generatedCode.contains("val id: Long"),
+            resultContent.contains("val id: Long"),
             "Should include regular id field"
         )
         assertTrue(
-            generatedCode.contains("val name: String"),
+            resultContent.contains("val name: String"),
             "Should include regular name field"
         )
-
-        // Verify dynamic field is included with default value
-        assertTrue(
-            generatedCode.contains("val addresses: List<String> = listOf()"),
-            "Should include dynamic field with default value"
-        )
-
-        println("Generated code:")
-        println(generatedCode)
     }
 }

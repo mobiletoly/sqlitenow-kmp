@@ -9,6 +9,7 @@ import dev.goquick.sqlitenow.librarytest.db.AddressType
 import dev.goquick.sqlitenow.librarytest.db.LibraryTestDatabase
 import dev.goquick.sqlitenow.librarytest.db.PersonQuery
 import dev.goquick.sqlitenow.librarytest.db.CommentQuery
+import dev.goquick.sqlitenow.librarytest.db.PersonAddResult
 import dev.goquick.sqlitenow.librarytest.db.PersonAddressQuery
 import dev.goquick.sqlitenow.librarytest.db.VersionBasedDatabaseMigrations
 import kotlinx.coroutines.runBlocking
@@ -33,30 +34,7 @@ class InsertOperationsTest {
 
     @Before
     fun setup() {
-        database = LibraryTestDatabase(
-            dbName = ":memory:",
-            migration = VersionBasedDatabaseMigrations(),
-            debug = true,
-            categoryAdapters = LibraryTestDatabase.CategoryAdapters(
-                sqlValueToBirthDate = { it?.let { LocalDate.fromSqliteDate(it) } }
-            ),
-            personAdapters = LibraryTestDatabase.PersonAdapters(
-                birthDateToSqlValue = { it?.toSqliteDate() },
-                sqlValueToTags = { it?.let { Json.decodeFromString<List<String>>(it) } }
-            ),
-            commentAdapters = LibraryTestDatabase.CommentAdapters(
-                createdAtToSqlValue = { it.toSqliteTimestamp() },
-                tagsToSqlValue = { it?.let { Json.encodeToString(it) } }
-            ),
-            personCategoryAdapters = LibraryTestDatabase.PersonCategoryAdapters(
-                sqlValueToAssignedAt = { LocalDateTime.fromSqliteTimestamp(it) }
-            ),
-            personAddressAdapters = LibraryTestDatabase.PersonAddressAdapters(
-                addressTypeToSqlValue = { it.value },
-                sqlValueToAddressType = { AddressType.from(it) },
-                sqlValueToCreatedAt = { LocalDateTime.fromSqliteTimestamp(it) }
-            )
-        )
+        database = TestDatabaseHelper.createDatabase()
     }
 
     @After
@@ -165,7 +143,7 @@ class InsertOperationsTest {
             database.open()
             
             // Insert multiple persons in sequence
-            val insertedPersons = mutableListOf<PersonQuery.Add.Result>()
+            val insertedPersons = mutableListOf<PersonAddResult>()
             
             for (i in 1..5) {
                 val params = PersonQuery.Add.Params(
@@ -274,7 +252,7 @@ class InsertOperationsTest {
                 null // Null date
             )
             
-            val insertedPersons = mutableListOf<PersonQuery.Add.Result>()
+            val insertedPersons = mutableListOf<PersonAddResult>()
             
             edgeCaseDates.forEachIndexed { index, date ->
                 val params = PersonQuery.Add.Params(

@@ -28,41 +28,84 @@ object SharedResultTypeUtils {
     }
 
     /**
-     * Creates a TypeName for either a shared result or regular result class.
+     * Creates a TypeName for either a queryResult or regular result class.
      * @param packageName The package name for the generated code
      * @param namespace The namespace (e.g., "person")
-     * @param statement The SELECT statement to check for shared result annotation
+     * @param statement The SELECT statement to check for queryResult annotation
      */
     fun createResultTypeName(
         packageName: String,
         namespace: String,
         statement: AnnotatedSelectStatement
     ): ClassName {
-        return if (statement.annotations.sharedResult != null) {
-            createSharedResultTypeName(packageName, namespace, statement.annotations.sharedResult!!)
+        return if (statement.annotations.queryResult != null) {
+            // With queryResult: generate top-level class with exact specified name
+            ClassName(packageName, statement.annotations.queryResult!!)
         } else {
+            // Without queryResult: generate top-level class like PersonSelectSomeResult
             val className = statement.getDataClassName()
-            ClassName(packageName, "${pascalize(namespace)}Query")
-                .nestedClass(className)
-                .nestedClass("Result")
+            val resultClassName = "${pascalize(namespace)}${className}Result"
+            ClassName(packageName, resultClassName)
         }
     }
 
     /**
      * Creates a string representation of the result type for code generation.
      * @param namespace The namespace (e.g., "person")
-     * @param statement The SELECT statement to check for shared result annotation
+     * @param statement The SELECT statement to check for queryResult annotation
      */
     fun createResultTypeString(
         namespace: String,
         statement: AnnotatedSelectStatement
     ): String {
-        val capitalizedNamespace = "${pascalize(namespace)}Query"
-        return if (statement.annotations.sharedResult != null) {
-            "$capitalizedNamespace.$SHARED_RESULT_OBJECT_NAME.${statement.annotations.sharedResult}"
+        return if (statement.annotations.queryResult != null) {
+            // With queryResult: use exact specified name
+            statement.annotations.queryResult!!
         } else {
+            // Without queryResult: generate name like PersonSelectSomeResult
             val className = statement.getDataClassName()
-            "$capitalizedNamespace.$className.Result"
+            "${pascalize(namespace)}${className}Result"
+        }
+    }
+
+    /**
+     * Creates a TypeName for EXECUTE statement result classes.
+     * @param packageName The package name for the generated code
+     * @param namespace The namespace (e.g., "person")
+     * @param statement The EXECUTE statement to check for queryResult annotation
+     */
+    fun createResultTypeNameForExecute(
+        packageName: String,
+        namespace: String,
+        statement: AnnotatedExecuteStatement
+    ): ClassName {
+        return if (statement.annotations.queryResult != null) {
+            // With queryResult: generate top-level class with exact specified name
+            ClassName(packageName, statement.annotations.queryResult!!)
+        } else {
+            // Without queryResult: generate top-level class like PersonAddResult
+            val className = statement.getDataClassName()
+            val resultClassName = "${pascalize(namespace)}${className}Result"
+            ClassName(packageName, resultClassName)
+        }
+    }
+
+    /**
+     * Creates a string representation of the result type name for EXECUTE statements.
+     * @param namespace The namespace (e.g., "person")
+     * @param statement The EXECUTE statement to check for queryResult annotation
+     */
+    fun createResultTypeStringForExecute(
+        namespace: String,
+        statement: AnnotatedExecuteStatement
+    ): String {
+        return if (statement.annotations.queryResult != null) {
+            // With queryResult: generate top-level class with exact specified name
+            statement.annotations.queryResult!!
+        } else {
+            // Without queryResult: generate top-level class like PersonAddResult
+            val className = statement.getDataClassName()
+            "${pascalize(namespace)}${className}Result"
         }
     }
 }
@@ -107,7 +150,7 @@ class SharedResultManager {
         statement: AnnotatedSelectStatement,
         namespace: String
     ): SharedResult? {
-        val sharedResultName = statement.annotations.sharedResult ?: return null
+        val sharedResultName = statement.annotations.queryResult ?: return null
         
         val sharedResultKey = "${namespace}.${sharedResultName}"
         val structureKey = createStructureKey(statement.fields)
@@ -284,14 +327,14 @@ class SharedResultManager {
      * Checks if a SELECT statement uses a shared result.
      */
     fun isSharedResult(statement: AnnotatedSelectStatement): Boolean {
-        return statement.annotations.sharedResult != null
+        return statement.annotations.queryResult != null
     }
     
     /**
      * Gets the shared result for a SELECT statement, if it uses one.
      */
     fun getSharedResult(statement: AnnotatedSelectStatement, namespace: String): SharedResult? {
-        val sharedResultName = statement.annotations.sharedResult ?: return null
+        val sharedResultName = statement.annotations.queryResult ?: return null
         val sharedResultKey = "${namespace}.${sharedResultName}"
         return sharedResults[sharedResultKey]
     }

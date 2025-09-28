@@ -15,11 +15,10 @@ class DynamicFieldMapper {
         val fieldName: String,
         val sourceTableAlias: String,
         val aliasPrefix: String?,
-        val mappingType: String,
+        val mappingType: AnnotationConstants.MappingType,
         val propertyType: String,
         val columns: List<SelectStatement.FieldSource>,
-        val groupByColumn: String? = null,  // For collection mapping
-        val isCollection: Boolean = mappingType == AnnotationConstants.MAPPING_TYPE_COLLECTION
+        val groupByColumn: String? = null  // For collection mapping
     )
 
     companion object {
@@ -47,20 +46,23 @@ class DynamicFieldMapper {
             val allowedPrefixes = fieldsWithMappingType.mapNotNull { it.annotations.aliasPrefix }
 
             // Determine relevant aliases for dynamic mapping (source tables from dynamic fields)
-            val relevantAliases = fieldsWithMappingType.mapNotNull { it.annotations.sourceTable }.toSet()
+            val relevantAliases =
+                fieldsWithMappingType.mapNotNull { it.annotations.sourceTable }.toSet()
 
             // Check only the fields that are relevant for dynamic mapping
             selectStatement.fields.forEach { fieldSource ->
                 val tableName = fieldSource.tableName
 
                 // Only validate fields that belong to relevant aliases or match aliasPrefix patterns
-                val shouldValidate = relevantAliases.contains(tableName) || allowedPrefixes.any { prefix ->
-                    prefix.isNotBlank() && fieldSource.fieldName.startsWith(prefix)
-                }
+                val shouldValidate =
+                    relevantAliases.contains(tableName) || allowedPrefixes.any { prefix ->
+                        prefix.isNotBlank() && fieldSource.fieldName.startsWith(prefix)
+                    }
                 if (!shouldValidate) return@forEach
 
                 // Check if the table name corresponds to a known alias mapping
-                val isValidTable = tableAliases.containsValue(tableName) || tableAliases.containsKey(tableName)
+                val isValidTable =
+                    tableAliases.containsValue(tableName) || tableAliases.containsKey(tableName)
 
                 // VIEW/star-friendly fallback: accept fields that match declared aliasPrefix
                 val matchesPrefix = allowedPrefixes.any { prefix ->
@@ -71,7 +73,11 @@ class DynamicFieldMapper {
                     throw IllegalArgumentException(
                         "When using mappingType annotation, relevant SELECT columns should use alias.column or declared prefix. " +
                                 "Found column '${fieldSource.fieldName}' from table '${tableName}' which doesn't correspond to a recognized table alias. " +
-                                "Available aliases: ${tableAliases.keys.joinToString(", ")} -> ${tableAliases.values.joinToString(", ")}"
+                                "Available aliases: ${tableAliases.keys.joinToString(", ")} -> ${
+                                    tableAliases.values.joinToString(
+                                        ", "
+                                    )
+                                }"
                     )
                 }
             }
@@ -92,7 +98,10 @@ class DynamicFieldMapper {
                     // e.g., for JOIN condition "p.id = a.person_id", find field with table "p" and column "id"
                     val matchingField = selectStatement.fields.find { field ->
                         field.tableName.equals(joinCondition.leftTable, ignoreCase = true) &&
-                        field.originalColumnName.equals(joinCondition.leftColumn, ignoreCase = true)
+                                field.originalColumnName.equals(
+                                    joinCondition.leftColumn,
+                                    ignoreCase = true
+                                )
                     }
 
                     // Return the field name (which might be aliased, e.g., "person_id" from "p.id AS person_id")
@@ -119,34 +128,52 @@ class DynamicFieldMapper {
             fieldsWithMappingType.forEach { dynamicField ->
                 val sourceTableAlias = dynamicField.annotations.sourceTable
                 val aliasPrefix = dynamicField.annotations.aliasPrefix
-                val mappingType = dynamicField.annotations.mappingType!!
+                val mappingType =
+                    AnnotationConstants.MappingType.fromString(dynamicField.annotations.mappingType!!)
                 val propertyType = dynamicField.annotations.propertyType!!
 
                 if (sourceTableAlias != null) {
-                    // Try 1: by underlying table name
-                    val targetTableName = selectStatement.tableAliases[sourceTableAlias]
                     var columns: List<SelectStatement.FieldSource> = emptyList()
-                    if (targetTableName != null) {
-                        columns = selectStatement.fields.filter { f ->
-                            f.tableName.equals(targetTableName, ignoreCase = true)
-                        }
-                    } else {
-                        // Try 2: assume alias equals actual table name
-                        columns = selectStatement.fields.filter { f ->
-                            f.tableName.equals(sourceTableAlias, ignoreCase = true)
-                        }
-                    }
-                    // Try 3: VIEW/star-friendly fallback using aliasPrefix
-                    if (columns.isEmpty() && !aliasPrefix.isNullOrBlank()) {
+
+                    // For entity mapping, prioritize aliased fields if aliasPrefix is provided
+                    if (mappingType == AnnotationConstants.MappingType.ENTITY && !aliasPrefix.isNullOrBlank()) {
                         columns = selectStatement.fields.filter { f ->
                             f.fieldName.startsWith(aliasPrefix)
                         }
                     }
 
+                    // If no aliased fields found, or not entity mapping, try table-based matching
+                    if (columns.isEmpty()) {
+                        // Try 1: by underlying table name
+                        val targetTableName = selectStatement.tableAliases[sourceTableAlias]
+                        if (targetTableName != null) {
+                            columns = selectStatement.fields.filter { f ->
+                                f.tableName.equals(targetTableName, ignoreCase = true)
+                            }
+                        } else {
+                            // Try 2: assume alias equals actual table name
+                            columns = selectStatement.fields.filter { f ->
+                                f.tableName.equals(sourceTableAlias, ignoreCase = true)
+                            }
+                        }
+                        // Try 3: VIEW/star-friendly fallback using aliasPrefix
+                        if (columns.isEmpty() && !aliasPrefix.isNullOrBlank()) {
+                            columns = selectStatement.fields.filter { f ->
+                                f.fieldName.startsWith(aliasPrefix)
+                            }
+                        }
+                    }
+
                     if (columns.isNotEmpty()) {
-                        val groupByColumn = if (mappingType == AnnotationConstants.MAPPING_TYPE_COLLECTION) {
-                            extractGroupingColumn(selectStatement, sourceTableAlias)
-                        } else null
+                        val groupByColumn = when (mappingType) {
+                            AnnotationConstants.MappingType.COLLECTION -> extractGroupingColumn(
+                                selectStatement,
+                                sourceTableAlias
+                            )
+
+                            AnnotationConstants.MappingType.PER_ROW,
+                            AnnotationConstants.MappingType.ENTITY -> null
+                        }
 
                         mappings.add(
                             DynamicFieldMapping(
@@ -191,7 +218,8 @@ class DynamicFieldMapper {
                     if (targetTableName != null) {
                         fields.forEach { field ->
                             if (!field.annotations.isDynamicField &&
-                                field.src.tableName.equals(targetTableName, ignoreCase = true)) {
+                                field.src.tableName.equals(targetTableName, ignoreCase = true)
+                            ) {
                                 mappedColumns.add(field.src.fieldName)
                                 matched = true
                             }
@@ -200,7 +228,8 @@ class DynamicFieldMapper {
                         // Method 2: assume sourceTableAlias is the actual table name
                         fields.forEach { field ->
                             if (!field.annotations.isDynamicField &&
-                                field.src.tableName.equals(sourceTableAlias, ignoreCase = true)) {
+                                field.src.tableName.equals(sourceTableAlias, ignoreCase = true)
+                            ) {
                                 mappedColumns.add(field.src.fieldName)
                                 matched = true
                             }
@@ -210,7 +239,8 @@ class DynamicFieldMapper {
                     if (!matched && !aliasPrefix.isNullOrBlank()) {
                         fields.forEach { field ->
                             if (!field.annotations.isDynamicField &&
-                                field.src.fieldName.startsWith(aliasPrefix)) {
+                                field.src.fieldName.startsWith(aliasPrefix)
+                            ) {
                                 mappedColumns.add(field.src.fieldName)
                             }
                         }

@@ -6,8 +6,10 @@ import dev.goquick.sqlitenow.core.util.fromSqliteTimestamp
 import dev.goquick.sqlitenow.core.util.toSqliteDate
 import dev.goquick.sqlitenow.core.util.toSqliteTimestamp
 import dev.goquick.sqlitenow.librarytest.db.AddressType
+import dev.goquick.sqlitenow.librarytest.db.CategoryAddResult
 import dev.goquick.sqlitenow.librarytest.db.CategoryQuery
 import dev.goquick.sqlitenow.librarytest.db.LibraryTestDatabase
+import dev.goquick.sqlitenow.librarytest.db.PersonAddResult
 import dev.goquick.sqlitenow.librarytest.db.PersonAddressQuery
 import dev.goquick.sqlitenow.librarytest.db.PersonCategoryQuery
 import dev.goquick.sqlitenow.librarytest.db.PersonQuery
@@ -33,31 +35,7 @@ class CreateViewCollectionTest {
     @Before
     fun setup() {
         runBlocking {
-            // Create database with all required adapters
-            database = LibraryTestDatabase(
-                dbName = ":memory:",
-                migration = VersionBasedDatabaseMigrations(),
-                debug = true,
-                categoryAdapters = LibraryTestDatabase.CategoryAdapters(
-                    sqlValueToBirthDate = { it?.let { LocalDate.fromSqliteDate(it) } }
-                ),
-                personAdapters = LibraryTestDatabase.PersonAdapters(
-                    birthDateToSqlValue = { it?.toSqliteDate() },
-                    sqlValueToTags = { it?.let { Json.decodeFromString<List<String>>(it) } }
-                ),
-                commentAdapters = LibraryTestDatabase.CommentAdapters(
-                    createdAtToSqlValue = { it.toSqliteTimestamp() },
-                    tagsToSqlValue = { it?.let { Json.encodeToString(it) } }
-                ),
-                personCategoryAdapters = LibraryTestDatabase.PersonCategoryAdapters(
-                    sqlValueToAssignedAt = { LocalDateTime.fromSqliteTimestamp(it) }
-                ),
-                personAddressAdapters = LibraryTestDatabase.PersonAddressAdapters(
-                    addressTypeToSqlValue = { it.value },
-                    sqlValueToAddressType = { AddressType.from(it) },
-                    sqlValueToCreatedAt = { LocalDateTime.fromSqliteTimestamp(it) }
-                )
-            )
+            database = TestDatabaseHelper.createDatabase()
             database.open()
         }
     }
@@ -234,8 +212,8 @@ class CreateViewCollectionTest {
     @Test
     fun testViewPerformanceWithLargeDataset() = runBlocking {
         // Create multiple persons with categories and addresses to test view performance
-        val persons = mutableListOf<PersonQuery.Add.Result>()
-        val categories = mutableListOf<CategoryQuery.Add.Result>()
+        val persons = mutableListOf<PersonAddResult>()
+        val categories = mutableListOf<CategoryAddResult>()
 
         // Create 5 persons
         repeat(5) { i ->

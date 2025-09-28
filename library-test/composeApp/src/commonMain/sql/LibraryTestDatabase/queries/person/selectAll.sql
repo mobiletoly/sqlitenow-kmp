@@ -1,4 +1,4 @@
--- @@{ sharedResult=Row }
+-- @@{ queryResult=PersonRow }
 SELECT
     *
 FROM person

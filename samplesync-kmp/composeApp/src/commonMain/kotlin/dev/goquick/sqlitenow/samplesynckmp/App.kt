@@ -40,7 +40,7 @@ import dev.goquick.sqlitenow.common.platform
 import dev.goquick.sqlitenow.common.resolveDatabasePath
 import dev.goquick.sqlitenow.core.util.fromSqliteDate
 import dev.goquick.sqlitenow.core.util.fromSqliteTimestamp
-import dev.goquick.sqlitenow.core.util.jsonDecodeFromSqlite
+import dev.goquick.sqlitenow.core.util.jsonDecodeListFromSqlite
 import dev.goquick.sqlitenow.core.util.jsonEncodeToSqlite
 import dev.goquick.sqlitenow.core.util.toSqliteDate
 import dev.goquick.sqlitenow.core.util.toSqliteTimestamp
@@ -48,9 +48,11 @@ import dev.goquick.sqlitenow.oversqlite.OversqliteClient
 import dev.goquick.sqlitenow.oversqlite.ServerWinsResolver
 import dev.goquick.sqlitenow.samplesynckmp.db.AddressType
 import dev.goquick.sqlitenow.samplesynckmp.db.CommentQuery
+import dev.goquick.sqlitenow.samplesynckmp.db.CommentRow
 import dev.goquick.sqlitenow.samplesynckmp.db.NowSampleSyncDatabase
 import dev.goquick.sqlitenow.samplesynckmp.db.PersonAddressQuery
 import dev.goquick.sqlitenow.samplesynckmp.db.PersonQuery
+import dev.goquick.sqlitenow.samplesynckmp.db.PersonRow
 import dev.goquick.sqlitenow.samplesynckmp.db.VersionBasedDatabaseMigrations
 import dev.goquick.sqlitenow.samplesynckmp.model.PersonNote
 import io.ktor.client.HttpClient
@@ -81,11 +83,6 @@ import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
-
-typealias PersonEntity = PersonQuery.SharedResult.Row
-
-typealias PersonAddressEntity = PersonAddressQuery.SharedResult.Row
-typealias PersonWithAddressesEntity = PersonQuery.SharedResult.PersonWithAddressRow
 
 private val firstNames = listOf(
     // Traditional English names
@@ -220,27 +217,18 @@ private val lastNames = listOf(
 )
 
 private val domains = listOf("gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "example.com")
-typealias CommentEntity = CommentQuery.SharedResult.Row
 
 val db = NowSampleSyncDatabase(
     resolveDatabasePath("test05.db"),
     personAdapters = NowSampleSyncDatabase.PersonAdapters(
-//        notesToSqlValue = { it?.let { PersonNote.serialize(it) } },
         birthDateToSqlValue = {
             it?.toSqliteDate()
         },
         sqlValueToBirthDate = {
             it?.let { LocalDate.fromSqliteDate(it) }
         },
-        sqlValueToAddressType = {
-            AddressType.from(it)
-        },
-        sqlValueToCreatedAt = {
-            LocalDateTime.fromSqliteTimestamp(it)
-        },
-//        sqlValueToNotes = { it?.let { PersonNote.deserialize(it) } },
         sqlValueToTags = {
-            it?.jsonDecodeFromSqlite() ?: emptyList()
+            it?.jsonDecodeListFromSqlite() ?: emptyList()
         },
     ),
     commentAdapters = NowSampleSyncDatabase.CommentAdapters(
@@ -249,6 +237,8 @@ val db = NowSampleSyncDatabase(
     ),
     personAddressAdapters = NowSampleSyncDatabase.PersonAddressAdapters(
         addressTypeToSqlValue = { it.value },
+        sqlValueToAddressType = { AddressType.from(it) },
+        sqlValueToCreatedAt = { LocalDateTime.fromSqliteTimestamp(it) }
     ),
     migration = VersionBasedDatabaseMigrations()
 )
@@ -317,7 +307,7 @@ private suspend fun setupSyncClient(
 fun App() {
     val coroutineScope = rememberCoroutineScope()
     var persons by remember {
-        mutableStateOf<List<PersonEntity>>(emptyList())
+        mutableStateOf<List<PersonRow>>(emptyList())
     }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -715,9 +705,9 @@ fun App() {
 
 @Composable
 fun PersonCard(
-    person: PersonEntity,
-    onRandomize: (PersonEntity) -> Unit,
-    onDelete: (PersonEntity) -> Unit,
+    person: PersonRow,
+    onRandomize: (PersonRow) -> Unit,
+    onDelete: (PersonRow) -> Unit,
     onAddAddress: (ByteArray) -> Unit = {},
     onAddComment: (ByteArray) -> Unit = {},
     commentsRefreshTrigger: MutableSharedFlow<Unit>? = null,
@@ -803,7 +793,7 @@ fun PersonCard(
 
                 // Comments list (if any) - now reactive to database changes and refresh triggers
                 var comments by remember(person.id.toList()) {
-                    mutableStateOf<List<CommentEntity>>(
+                    mutableStateOf<List<CommentRow>>(
                         emptyList()
                     )
                 }
@@ -1040,7 +1030,7 @@ suspend fun deletePerson(personId: ByteArray, onError: (String) -> Unit = {}) {
     }
 }
 
-suspend fun randomizePerson(person: PersonEntity, onError: (String) -> Unit = {}) {
+suspend fun randomizePerson(person: PersonRow, onError: (String) -> Unit = {}) {
     try {
         val firstName = firstNames.random()
         val lastName = lastNames.random()
@@ -1202,9 +1192,9 @@ private fun ActionButtonsRow(
 
 @Composable
 private fun PersonsList(
-    persons: List<PersonEntity>,
-    onRandomize: (PersonEntity) -> Unit,
-    onDelete: (PersonEntity) -> Unit,
+    persons: List<PersonRow>,
+    onRandomize: (PersonRow) -> Unit,
+    onDelete: (PersonRow) -> Unit,
     onAddAddress: (ByteArray) -> Unit,
     onAddComment: (ByteArray) -> Unit,
     commentsRefreshTrigger: MutableSharedFlow<Unit>? = null,

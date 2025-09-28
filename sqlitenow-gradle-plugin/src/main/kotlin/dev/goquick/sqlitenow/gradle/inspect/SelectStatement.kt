@@ -140,20 +140,31 @@ class SelectStatement(
                         val metaData = rs.metaData
                         val columnCount = metaData.columnCount
 
+                        // First pass: collect all field information
+                        val allFieldInfo = mutableListOf<FieldInfo>()
                         for (i in 1..columnCount) {
                             val fieldName = metaData.getColumnLabel(i)
                             val sqlType = metaData.getColumnTypeName(i)
                             val tableName = metaData.getTableName(i)
                             val columnName = metaData.getColumnName(i)
+                            val nullable = metaData.isNullable(i)
 
-                            val originalColumnName = findFieldOriginalColumn(select, fieldName) ?: columnName
+                            allFieldInfo.add(FieldInfo(fieldName, tableName, columnName, sqlType, nullable))
+                        }
+
+                        // Second pass: deduplicate fields that represent the same underlying table.column
+                        val deduplicatedFields = deduplicateFields(allFieldInfo)
+
+                        // Third pass: create FieldSource objects
+                        deduplicatedFields.forEach { fieldInfo ->
+                            val originalColumnName = findFieldOriginalColumn(select, cleanSqliteColumnDisambiguation(fieldInfo.fieldName)) ?: fieldInfo.columnName
 
                             fieldSources.add(
                                 FieldSource(
-                                    fieldName = fieldName,
-                                    tableName = tableName,
+                                    fieldName = fieldInfo.fieldName,
+                                    tableName = fieldInfo.tableName,
                                     originalColumnName = originalColumnName,
-                                    dataType = sqlType
+                                    dataType = fieldInfo.sqlType
                                 )
                             )
                         }
@@ -183,6 +194,68 @@ class SelectStatement(
                 }
             }
             return null
+        }
+
+        private data class FieldInfo(
+            val fieldName: String,
+            val tableName: String,
+            val columnName: String,
+            val sqlType: String,
+            val nullable: Int
+        )
+
+        private fun deduplicateFields(allFields: List<FieldInfo>): List<FieldInfo> {
+            // Group fields by their underlying table.column (after cleaning SQLite disambiguation)
+            val fieldGroups = allFields.groupBy { field ->
+                val cleanFieldName = cleanSqliteColumnDisambiguation(field.fieldName)
+                val cleanColumnName = cleanSqliteColumnDisambiguation(field.columnName)
+                val tableColumnKey = "${field.tableName}.$cleanColumnName"
+                tableColumnKey
+            }
+
+            val result = mutableListOf<FieldInfo>()
+            fieldGroups.forEach { (tableColumn, fieldsInGroup) ->
+                if (fieldsInGroup.size == 1) {
+                    // Only one field for this table.column, keep as-is
+                    result.add(fieldsInGroup.first())
+                } else {
+                    // Multiple fields for same table.column, deduplicate to the first one without SQLite disambiguation
+                    val fieldWithoutDisambiguation = fieldsInGroup.find { field ->
+                        !field.fieldName.contains(':') && !field.columnName.contains(':')
+                    }
+
+                    if (fieldWithoutDisambiguation != null) {
+                        // Use the field without SQLite disambiguation
+                        result.add(fieldWithoutDisambiguation)
+                    } else {
+                        // All fields have disambiguation, keep the first one but clean it
+                        val firstField = fieldsInGroup.first()
+                        val cleanedField = FieldInfo(
+                            fieldName = cleanSqliteColumnDisambiguation(firstField.fieldName),
+                            tableName = firstField.tableName,
+                            columnName = cleanSqliteColumnDisambiguation(firstField.columnName),
+                            sqlType = firstField.sqlType,
+                            nullable = firstField.nullable
+                        )
+                        result.add(cleanedField)
+                        val removedFields = fieldsInGroup.drop(1)
+                    }
+                }
+            }
+            return result
+        }
+
+        private fun cleanSqliteColumnDisambiguation(columnName: String): String {
+            // SQLite adds suffixes in the format ":number" for duplicate columns
+            val colonIndex = columnName.lastIndexOf(':')
+            if (colonIndex > 0) {
+                val suffix = columnName.substring(colonIndex + 1)
+                // Check if the suffix is a number (SQLite's disambiguation pattern)
+                if (suffix.all { it.isDigit() }) {
+                    return columnName.substring(0, colonIndex)
+                }
+            }
+            return columnName
         }
 
         private fun rewriteLimitOffset(sql: String): String =

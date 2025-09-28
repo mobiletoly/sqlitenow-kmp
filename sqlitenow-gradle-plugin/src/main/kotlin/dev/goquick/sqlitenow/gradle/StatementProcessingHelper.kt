@@ -37,8 +37,14 @@ class StatementProcessingHelper(
                 try {
                     processQueryFile(file)
                 } catch (e: Exception) {
-                    logger.error("*** Failed to process query file: ${file.absolutePath}")
-                    throw e
+                    logger.error("*** FAILED TO PROCESS SQL FILE ***")
+                    logger.error("File: ${file.absolutePath}")
+                    logger.error("Namespace: $namespace")
+                    logger.error("Error: ${e.message}")
+                    if (e.cause != null) {
+                        logger.error("Caused by: ${e.cause?.message}")
+                    }
+                    throw RuntimeException("Failed to process SQL file '${file.name}' in namespace '$namespace'", e)
                 }
             }
         }.toMap()
@@ -73,14 +79,13 @@ class StatementProcessingHelper(
                 }
             }
         } catch (e: Exception) {
-            logger.error(
-                """|
-                |Failed to process statement:
-                |${sqlStatement.topComments.joinToString("\n")}
-                |${sqlStatement.sql}
-                |""".trimMargin()
-            )
-            throw e
+            logger.error("Failed to process SQL statement in file: ${file.absolutePath}")
+            logger.error("Statement name: $stmtName")
+            logger.error("SQL content:")
+            logger.error("${sqlStatement.topComments.joinToString("\n")}")
+            logger.error("${sqlStatement.sql}")
+            logger.error("Parse error: ${e.message}")
+            throw RuntimeException("Failed to parse SQL statement '$stmtName' in file '${file.name}'", e)
         }
     }
 
@@ -171,9 +176,11 @@ class StatementProcessingHelper(
                     dataType = "DYNAMIC" // Special type for dynamic fields
                 )
                 val fieldAnnotationOverrides = FieldAnnotationOverrides.parse(annotations)
+                val aliasPath = computeAliasPathForSelectField(stmt, fieldAnnotationOverrides.sourceTable)
                 val dynamicField = AnnotatedSelectStatement.Field(
                     src = dummyFieldSource,
-                    annotations = fieldAnnotationOverrides
+                    annotations = fieldAnnotationOverrides,
+                    aliasPath = aliasPath
                 )
                 dynamicFields.add(dynamicField)
                 fields.add(dynamicField)
@@ -196,7 +203,7 @@ class StatementProcessingHelper(
                         )
                     }
                     // Collect dynamic fields declared on this view and any underlying views it references
-                    val inheritedDynamicFields = collectTransitiveDynamicFields(view, annotationResolver)
+                    val inheritedDynamicFields = collectTransitiveDynamicFields(view, annotationResolver, emptyList())
                     // For each dynamic field, inject into this SELECT unless overridden
                     inheritedDynamicFields.forEach { df ->
                         if (!declaredDynamicNames.contains(df.name)) {
@@ -210,9 +217,11 @@ class StatementProcessingHelper(
                                 originalColumnName = df.name,
                                 dataType = "DYNAMIC"
                             )
+                            val aliasPrefix = computeAliasPathForAlias(stmt, alias)
                             val dynField = AnnotatedSelectStatement.Field(
                                 src = dummyFieldSource,
-                                annotations = adapted
+                                annotations = adapted,
+                                aliasPath = mergeAliasPaths(aliasPrefix, df.aliasPath)
                             )
                             dynamicFields.add(dynField)
                             fields.add(dynField)
@@ -236,19 +245,106 @@ class StatementProcessingHelper(
         )
     }
 
+    private data class DynamicFieldDescriptor(
+        val name: String,
+        val annotations: FieldAnnotationOverrides,
+        val aliasPath: List<String>
+    )
+
+    private fun computeAliasPathForSelectField(
+        selectStatement: SelectStatement,
+        sourceAlias: String?
+    ): List<String> {
+        if (sourceAlias.isNullOrBlank()) {
+            val primaryAlias = selectStatement.tableAliases.keys.firstOrNull()
+                ?: selectStatement.fromTable
+            return primaryAlias?.let { listOf(it) } ?: emptyList()
+        }
+
+        val aliasPath = computeAliasPathForAlias(selectStatement, sourceAlias)
+        if (aliasPath.isNotEmpty()) {
+            return aliasPath
+        }
+
+        // Fallback for source aliases not present on the select statement (e.g. nested view aliases)
+        val primaryAlias = selectStatement.tableAliases.keys.firstOrNull()
+            ?: selectStatement.fromTable
+        return buildList {
+            if (!primaryAlias.isNullOrBlank()) {
+                add(primaryAlias)
+            }
+            if (isEmpty() || last() != sourceAlias) {
+                add(sourceAlias)
+            }
+        }
+    }
+
+    private fun computeAliasPathForAlias(
+        selectStatement: SelectStatement,
+        alias: String
+    ): List<String> {
+        if (alias.isBlank()) return emptyList()
+
+        val tableAliases = selectStatement.tableAliases
+        val primaryAlias = tableAliases.keys.firstOrNull()
+            ?: selectStatement.fromTable
+
+        val containsAlias = tableAliases.containsKey(alias)
+        if (!containsAlias) {
+            return buildList {
+                if (!primaryAlias.isNullOrBlank()) {
+                    add(primaryAlias)
+                }
+                if (isEmpty() || last() != alias) {
+                    add(alias)
+                }
+            }
+        }
+
+        return buildList {
+            if (!primaryAlias.isNullOrBlank()) {
+                add(primaryAlias)
+            }
+            if (primaryAlias != alias) {
+                add(alias)
+            }
+        }
+    }
+
+    private fun mergeAliasPaths(prefix: List<String>, suffix: List<String>): List<String> {
+        if (prefix.isEmpty()) return suffix
+        if (suffix.isEmpty()) return prefix
+
+        val merged = prefix.toMutableList()
+        suffix.forEach { alias ->
+            if (merged.isEmpty() || merged.last() != alias) {
+                merged += alias
+            }
+        }
+        return merged
+    }
+
     /** Recursively collect dynamic fields from a view and its referenced views. */
     private fun collectTransitiveDynamicFields(
         view: AnnotatedCreateViewStatement,
-        resolver: FieldAnnotationResolver
-    ): List<AnnotatedCreateViewStatement.DynamicField> {
-        val result = mutableListOf<AnnotatedCreateViewStatement.DynamicField>()
+        resolver: FieldAnnotationResolver,
+        aliasPath: List<String>
+    ): List<DynamicFieldDescriptor> {
+        val result = mutableListOf<DynamicFieldDescriptor>()
         // Add direct dynamic fields
-        result.addAll(view.dynamicFields)
+        view.dynamicFields.forEach { df ->
+            val path = if (!df.annotations.sourceTable.isNullOrBlank()) {
+                aliasPath + df.annotations.sourceTable
+            } else {
+                aliasPath
+            }
+            result += DynamicFieldDescriptor(df.name, df.annotations, path)
+        }
         // Recurse into any referenced views from this view's SELECT
-        view.src.selectStatement.tableAliases.forEach { (_, name) ->
+        view.src.selectStatement.tableAliases.forEach { (childAlias, name) ->
             val child = resolver.findView(name)
             if (child != null) {
-                result.addAll(collectTransitiveDynamicFields(child, resolver))
+                result.addAll(collectTransitiveDynamicFields(child, resolver, aliasPath + childAlias))
             }
         }
         return result

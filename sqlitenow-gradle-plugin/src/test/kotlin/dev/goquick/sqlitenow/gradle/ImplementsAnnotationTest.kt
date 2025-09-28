@@ -11,13 +11,13 @@ class ImplementsAnnotationTest {
     @DisplayName("Test implements annotation parsing")
     fun testImplementsAnnotationParsing() {
         val annotations = mapOf(
-            AnnotationConstants.SHARED_RESULT to "All",
+            AnnotationConstants.QUERY_RESULT to "All",
             AnnotationConstants.IMPLEMENTS to "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields"
         )
         
         val parsed = StatementAnnotationOverrides.parse(annotations)
         
-        assertEquals("All", parsed.sharedResult)
+        assertEquals("All", parsed.queryResult)
         assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", parsed.implements)
     }
 
@@ -25,12 +25,12 @@ class ImplementsAnnotationTest {
     @DisplayName("Test extractAnnotations function with implements")
     fun testExtractAnnotationsWithImplements() {
         val comments = listOf(
-            "-- @@{sharedResult=All, implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields}"
+            "-- @@{queryResult=All, implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields}"
         )
 
         val extracted = extractAnnotations(comments)
 
-        assertEquals("All", extracted[AnnotationConstants.SHARED_RESULT])
+        assertEquals("All", extracted[AnnotationConstants.QUERY_RESULT])
         assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", extracted[AnnotationConstants.IMPLEMENTS])
     }
 
@@ -39,7 +39,7 @@ class ImplementsAnnotationTest {
     fun testFullAnnotationPipeline() {
         // Test the exact comment format you're using
         val comments = listOf(
-            "-- @@{sharedResult=All, implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields}"
+            "-- @@{queryResult=All, implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields}"
         )
 
         // Step 1: Extract annotations
@@ -49,7 +49,7 @@ class ImplementsAnnotationTest {
         val parsed = StatementAnnotationOverrides.parse(extracted)
 
         // Verify both annotations are present
-        assertEquals("All", parsed.sharedResult)
+        assertEquals("All", parsed.queryResult)
         assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", parsed.implements)
 
         // Step 3: Test SharedResultManager
@@ -100,7 +100,7 @@ class ImplementsAnnotationTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = "All",
+                queryResult = "All",
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -124,7 +124,7 @@ class ImplementsAnnotationTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = "All",
+                queryResult = "All",
                 implements = null,  // Conflicting - missing implements
                 excludeOverrideFields = null,
                 collectionKey = null
@@ -153,14 +153,14 @@ class ImplementsAnnotationTest {
     @DisplayName("Test excludeOverrideFields annotation parsing")
     fun testExcludeOverrideFieldsAnnotation() {
         val annotations = mapOf(
-            AnnotationConstants.SHARED_RESULT to "All",
+            AnnotationConstants.QUERY_RESULT to "All",
             AnnotationConstants.IMPLEMENTS to "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
             AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS to listOf("phone", "birthDate", "age", "score", "createdAt", "notes")
         )
 
         val parsed = StatementAnnotationOverrides.parse(annotations)
 
-        assertEquals("All", parsed.sharedResult)
+        assertEquals("All", parsed.queryResult)
         assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", parsed.implements)
         assertEquals(setOf("phone", "birthDate", "age", "score", "createdAt", "notes"), parsed.excludeOverrideFields)
     }
@@ -169,12 +169,12 @@ class ImplementsAnnotationTest {
     @DisplayName("Test extractAnnotations with excludeOverrideFields")
     fun testExtractAnnotationsWithExcludeOverrideFields() {
         val comments = listOf(
-            "-- @@{sharedResult=All, implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields, excludeOverrideFields=[phone,birthDate,age,score,createdAt,notes]}"
+            "-- @@{queryResult=All, implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields, excludeOverrideFields=[phone,birthDate,age,score,createdAt,notes]}"
         )
 
         val extracted = extractAnnotations(comments)
 
-        assertEquals("All", extracted[AnnotationConstants.SHARED_RESULT])
+        assertEquals("All", extracted[AnnotationConstants.QUERY_RESULT])
         assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", extracted[AnnotationConstants.IMPLEMENTS])
         assertEquals(listOf("phone", "birthDate", "age", "score", "createdAt", "notes"), extracted[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS])
 
@@ -186,14 +186,14 @@ class ImplementsAnnotationTest {
     @DisplayName("Test excludeOverrideFields with bracket syntax")
     fun testExcludeOverrideFieldsWithBrackets() {
         val annotations = mapOf(
-            AnnotationConstants.SHARED_RESULT to "All",
+            AnnotationConstants.QUERY_RESULT to "All",
             AnnotationConstants.IMPLEMENTS to "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
             AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS to listOf("phone", "birthDate", "age", "score", "createdAt", "notes")
         )
 
         val parsed = StatementAnnotationOverrides.parse(annotations)
 
-        assertEquals("All", parsed.sharedResult)
+        assertEquals("All", parsed.queryResult)
         assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", parsed.implements)
         assertEquals(setOf("phone", "birthDate", "age", "score", "createdAt", "notes"), parsed.excludeOverrideFields)
     }
@@ -310,12 +310,12 @@ class ImplementsAnnotationTest {
     @DisplayName("Test extractAnnotations with bracket syntax")
     fun testExtractAnnotationsWithBracketSyntax() {
         val comments = listOf(
-            "-- @@{sharedResult=All, implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields, excludeOverrideFields=[phone,birthDate]}"
+            "-- @@{queryResult=All, implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields, excludeOverrideFields=[phone,birthDate]}"
         )
 
         val extracted = extractAnnotations(comments)
 
-        assertEquals("All", extracted[AnnotationConstants.SHARED_RESULT])
+        assertEquals("All", extracted[AnnotationConstants.QUERY_RESULT])
         assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", extracted[AnnotationConstants.IMPLEMENTS])
         assertEquals(listOf("phone", "birthDate"), extracted[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS])
 
@@ -327,12 +327,12 @@ class ImplementsAnnotationTest {
     @DisplayName("Test extractAnnotations with spaces in brackets - THE FAILING CASE")
     fun testExtractAnnotationsWithSpacesInBrackets() {
         val comments = listOf(
-            "-- @@{sharedResult=All, implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields, excludeOverrideFields=[phone, birthDate]}"
+            "-- @@{queryResult=All, implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields, excludeOverrideFields=[phone, birthDate]}"
         )
 
         val extracted = extractAnnotations(comments)
 
-        assertEquals("All", extracted[AnnotationConstants.SHARED_RESULT])
+        assertEquals("All", extracted[AnnotationConstants.QUERY_RESULT])
         assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", extracted[AnnotationConstants.IMPLEMENTS])
         assertEquals(listOf("phone", "birthDate"), extracted[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS])
 
@@ -344,12 +344,12 @@ class ImplementsAnnotationTest {
     @DisplayName("Test extractAnnotations with multiple lines and spaces")
     fun testExtractAnnotationsMultipleLinesWithSpaces() {
         val comments = listOf(
-            "-- @@{sharedResult=All, implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields, excludeOverrideFields=[ phone , birthDate ]}"
+            "-- @@{queryResult=All, implements=dev.goquick.sqlitenow.samplekmp.PersonEssentialFields, excludeOverrideFields=[ phone , birthDate ]}"
         )
 
         val extracted = extractAnnotations(comments)
 
-        assertEquals("All", extracted[AnnotationConstants.SHARED_RESULT])
+        assertEquals("All", extracted[AnnotationConstants.QUERY_RESULT])
         assertEquals("dev.goquick.sqlitenow.samplekmp.PersonEssentialFields", extracted[AnnotationConstants.IMPLEMENTS])
         assertEquals(listOf("phone", "birthDate"), extracted[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS])
 
@@ -380,7 +380,7 @@ class ImplementsAnnotationTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = "All",
+                queryResult = "All",
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
                 excludeOverrideFields = setOf("phone", "birthDate"), // Specified here
                 collectionKey = null
@@ -404,7 +404,7 @@ class ImplementsAnnotationTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = "All", // Same shared result
+                queryResult = "All", // Same shared result
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
                 excludeOverrideFields = null, // NOT specified - should inherit
                 collectionKey = null
@@ -458,7 +458,7 @@ class ImplementsAnnotationTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = "All",
+                queryResult = "All",
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
                 excludeOverrideFields = null, // NOT specified
                 collectionKey = null
@@ -482,7 +482,7 @@ class ImplementsAnnotationTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = "All", // Same shared result
+                queryResult = "All", // Same shared result
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
                 excludeOverrideFields = setOf("phone"), // Specified here
                 collectionKey = null
@@ -570,7 +570,7 @@ class ImplementsAnnotationTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = "Person",
+                queryResult = "Person",
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
                 excludeOverrideFields = setOf("phone", "birthDate", "age", "score", "createdAt", "notes", "totalPersonCount"),
                 collectionKey = null
@@ -594,7 +594,7 @@ class ImplementsAnnotationTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = "Person", // Same shared result
+                queryResult = "Person", // Same shared result
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
                 excludeOverrideFields = null, // Should inherit
                 collectionKey = null
@@ -706,7 +706,7 @@ class ImplementsAnnotationTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = "Person",
+                queryResult = "Person",
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
                 excludeOverrideFields = setOf("phone", "birthDate", "age", "score", "createdAt", "notes", "totalPersonCount"),
                 collectionKey = null
@@ -730,7 +730,7 @@ class ImplementsAnnotationTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = "Person", // Same shared result
+                queryResult = "Person", // Same shared result
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
                 excludeOverrideFields = null, // Should inherit
                 collectionKey = null
@@ -806,7 +806,7 @@ class ImplementsAnnotationTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = "Person",
+                queryResult = "Person",
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
                 excludeOverrideFields = setOf("phone", "birthDate", "age", "score", "createdAt", "notes", "totalPersonCount"),
                 collectionKey = null
@@ -830,7 +830,7 @@ class ImplementsAnnotationTest {
             annotations = StatementAnnotationOverrides(
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                sharedResult = "Person", // Same shared result
+                queryResult = "Person", // Same shared result
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
                 excludeOverrideFields = null, // Should inherit
                 collectionKey = null
