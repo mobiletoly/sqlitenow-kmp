@@ -72,6 +72,23 @@ open class DataStructCodeGenerator(
         return sharedResultManager.getSharedResultsByNamespace().values.flatten()
     }
 
+    /**
+     * Finds a SELECT statement that generates a queryResult with the given name.
+     * Returns null when no matching statement is registered.
+     */
+    fun findSelectStatementByResultName(resultName: String): AnnotatedSelectStatement? {
+        if (resultName.isBlank()) return null
+        val targetSimpleName = resultName.substringAfterLast('.')
+
+        nsWithStatements.forEach { (_, statements) ->
+            statements.filterIsInstance<AnnotatedSelectStatement>().firstOrNull { statement ->
+                val queryResultName = statement.annotations.queryResult
+                queryResultName != null && queryResultName.substringAfterLast('.') == targetSimpleName
+            }?.let { return it }
+        }
+        return null
+    }
+
     private fun sortViewsByDependencies(viewExecutors: List<CreateViewStatementExecutor>): List<CreateViewStatementExecutor> {
         if (viewExecutors.size <= 1) return viewExecutors
         val nameToExec = viewExecutors.associateBy { it.viewName() }
@@ -262,16 +279,13 @@ open class DataStructCodeGenerator(
         val constructorBuilder = FunSpec.constructorBuilder()
         val fieldCodeGenerator = SelectFieldCodeGenerator(createTableStatements, createViewStatements, fileGenerationHelper.packageName)
 
-        val mappedColumns = if (sourceStatement != null) {
-            DynamicFieldMapper.getMappedColumns(sharedResult.fields, sourceStatement.src.tableAliases)
-        } else {
-            emptySet()
-        }
+        val mappingPlan = ResultMappingPlanner.create(sourceStatement?.src, sharedResult.fields)
 
         val sharedCollectedProps = mutableListOf<PropertySpec>()
         generatePropertiesWithInterfaceSupport(
             fields = sharedResult.fields,
-            mappedColumns = mappedColumns,
+            mappedColumns = mappingPlan.mappedColumns,
+            dynamicFieldSkipSet = mappingPlan.skippedDynamicFieldNames,
             propertyNameGenerator = sharedResult.propertyNameGenerator,
             implementsInterface = sharedResult.implements,
             excludeOverrideFields = sharedResult.excludeOverrideFields,
@@ -324,12 +338,13 @@ open class DataStructCodeGenerator(
         // already handles searching across all tables when needed.
         val fieldCodeGenerator = SelectFieldCodeGenerator(createTableStatements, createViewStatements, fileGenerationHelper.packageName)
         val propertyNameGeneratorType = statement.annotations.propertyNameGenerator
-        val mappedColumns = DynamicFieldMapper.getMappedColumns(statement.fields, statement.src.tableAliases)
+        val mappingPlan = statement.mappingPlan
         val effectiveExcludeOverrideFields = sharedResultManager.getEffectiveExcludeOverrideFields(statement, namespace)
         val resultCollectedProps = mutableListOf<PropertySpec>()
         generatePropertiesWithInterfaceSupport(
             fields = statement.fields,
-            mappedColumns = mappedColumns,
+            mappedColumns = mappingPlan.mappedColumns,
+            dynamicFieldSkipSet = mappingPlan.skippedDynamicFieldNames,
             propertyNameGenerator = propertyNameGeneratorType,
             implementsInterface = statement.annotations.implements,
             excludeOverrideFields = effectiveExcludeOverrideFields,
@@ -726,6 +741,7 @@ open class DataStructCodeGenerator(
     fun generatePropertiesWithInterfaceSupport(
         fields: List<AnnotatedSelectStatement.Field>,
         mappedColumns: Set<String>,
+        dynamicFieldSkipSet: Set<String>,
         propertyNameGenerator: PropertyNameGeneratorType,
         implementsInterface: String?,
         excludeOverrideFields: Set<String>?,
@@ -734,15 +750,21 @@ open class DataStructCodeGenerator(
         onPropertyGenerated: (PropertySpec) -> Unit
     ) {
         // Pre-compile exclude patterns (support simple globs like schedule__*)
-        val excludeRegexes: List<Regex> = excludeOverrideFields?.map { pattern -> globToRegex(pattern) } ?: emptyList()
-        val dynamicFieldSkipSet = DynamicFieldUtils.computeSkipSet(fields)
+       val excludeRegexes: List<Regex> = excludeOverrideFields?.map { pattern -> globToRegex(pattern) } ?: emptyList()
+        val aliasPrefixes = fields
+            .filter { it.annotations.isDynamicField }
+            .mapNotNull { it.annotations.aliasPrefix }
+            .filter { it.isNotBlank() }
 
-        fields.forEach { field ->
+       fields.forEach { field ->
             if (field.annotations.isDynamicField && dynamicFieldSkipSet.contains(field.src.fieldName)) {
                 return@forEach
             }
             // Skip columns that are mapped to dynamic fields
             if (!mappedColumns.contains(field.src.fieldName)) {
+                if (!field.annotations.isDynamicField && aliasPrefixes.any { DynamicFieldUtils.isNestedAlias(field.src.fieldName, it) }) {
+                    return@forEach
+                }
                 val parameter = fieldCodeGenerator.generateParameter(field, propertyNameGenerator)
                 constructorBuilder.addParameter(parameter)
 

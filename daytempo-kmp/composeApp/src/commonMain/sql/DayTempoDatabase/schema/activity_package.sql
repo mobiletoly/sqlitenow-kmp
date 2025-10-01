@@ -46,7 +46,11 @@ FROM activity_package AS pkg;
 CREATE VIEW activity_package_detailed_view AS
 SELECT
     pkg.*,
-    cat.*
+
+    cat.id AS joined__package__category__id,
+    cat.doc_id AS joined__package__category__doc_id,
+    cat.title AS joined__package__category__title,
+    cat.icon AS joined__package__category__icon
 
   /* @@{ dynamicField=main,
          mappingType=entity,
@@ -59,11 +63,11 @@ SELECT
          mappingType=perRow,
          propertyType=ActivityCategoryDoc,
          sourceTable=cat,
-         aliasPrefix=category__
+         aliasPrefix=joined__package__category__
          notNull=true } */
 
 FROM activity_package_to_join pkg
-    LEFT JOIN activity_category_to_join cat ON pkg.package__category_doc_id = cat.category__doc_id;
+    LEFT JOIN activity_category cat ON pkg.package__category_doc_id = cat.doc_id;
 
 
 -- Activity package with activities

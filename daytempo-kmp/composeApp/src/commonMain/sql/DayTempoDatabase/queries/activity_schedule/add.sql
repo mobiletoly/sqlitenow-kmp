@@ -1,5 +1,5 @@
 INSERT INTO activity_schedule (
-    activity_doc_id,
+    activity_id,
     mandatory_to_setup,
     repeat,
     allowed_repeat_modes,
@@ -40,7 +40,7 @@ INSERT INTO activity_schedule (
     time_points,
     time_range
 ) VALUES (
-    :activityDocId,
+    :activityId,
     :mandatoryToSetup,
     :repeat,
     :allowedRepeatModes,

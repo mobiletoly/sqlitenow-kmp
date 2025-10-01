@@ -23,3 +23,5 @@ xcuserdata
 *.dylib
 *.dll
 SessionExtension.framework
+
+AGENTS.md

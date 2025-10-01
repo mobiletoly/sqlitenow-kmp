@@ -30,49 +30,50 @@ object JoinedPropertyNameResolver {
 
     materialFields.forEach { field ->
       val baseName = selectFieldGenerator.generateProperty(field, propertyNameGenerator).name
-      val key = JoinedFieldKey(field.src.tableName.orEmpty(), field.src.fieldName)
+      val tableAlias = field.src.tableName.orEmpty()
+      val key = JoinedFieldKey(tableAlias, field.src.fieldName)
 
-      var candidate = baseName
-      if (candidate in used) {
-        val suffix = disambiguationSuffix(field, fields)
-        candidate = if (suffix.isNotBlank()) baseName + suffix else baseName
-        var i = 2
-        while (candidate in used) {
-          candidate = if (suffix.isNotBlank()) baseName + suffix + i else baseName + i
-          i++
-        }
-      }
+      val candidate = createUniqueName(baseName, tableAlias, used)
 
       result[key] = candidate
       used += candidate
+
+      val originalName = field.src.originalColumnName
+      if (!originalName.isNullOrBlank()) {
+        val originalKey = JoinedFieldKey(tableAlias, originalName)
+        result.putIfAbsent(originalKey, candidate)
+      }
     }
     return result
   }
 
-  /**
-   * Create a readable suffix from the source table alias or dynamic aliasPrefix.
-   * Example: table alias "activity_category" -> "ActivityCategory".
-   */
-  private fun disambiguationSuffix(
-    field: AnnotatedSelectStatement.Field,
-    allFields: List<AnnotatedSelectStatement.Field>
+  private fun createUniqueName(
+    baseName: String,
+    tableAlias: String,
+    used: MutableSet<String>
   ): String {
-    val alias = field.src.tableName
-    if (!alias.isNullOrBlank()) {
-      return pascalize(alias)
+    if (baseName !in used) return baseName
+
+    val aliasSuffix = tableAlias.takeIf { it.isNotBlank() }?.let { "_" + sanitizeAliasPart(it) } ?: ""
+    var candidate = if (aliasSuffix.isNotBlank()) baseName + aliasSuffix else baseName
+    var index = 2
+    while (candidate in used) {
+      candidate = if (aliasSuffix.isNotBlank()) baseName + aliasSuffix + index else baseName + index
+      index++
     }
-    // Fallback: try to infer from aliasPrefix used for dynamic fields
-    val aliasPrefixes = allFields
-      .filter { it.annotations.isDynamicField }
-      .mapNotNull { it.annotations.aliasPrefix }
-      .filter { it.isNotBlank() }
-    val visibleName = field.src.fieldName
-    val matched = aliasPrefixes.firstOrNull { visibleName.startsWith(it) }
-    if (matched != null) {
-      val trimmed = if (matched.endsWith("_")) matched.dropLast(1) else matched
-      return pascalize(trimmed)
+    return candidate
+  }
+
+  private fun sanitizeAliasPart(raw: String): String {
+    val cleaned = raw
+      .lowercase()
+      .map { ch -> if (ch.isLetterOrDigit()) ch else '_' }
+      .joinToString(separator = "")
+    var result = cleaned.trim('_')
+    if (result.isEmpty()) {
+      result = "source"
     }
-    return ""
+    // Collapse consecutive underscores for readability
+    return result.replace(Regex("_+"), "_")
   }
 }
-

@@ -27,9 +27,6 @@ object DynamicFieldUtils {
 
         return fields.asSequence()
             .filter { it.annotations.isDynamicField && it.annotations.mappingType != null }
-            .filter { field ->
-                AnnotationConstants.MappingType.fromString(field.annotations.mappingType) != AnnotationConstants.MappingType.COLLECTION
-            }
             .filter { field -> field.aliasPath.isNotEmpty() }
             .mapNotNull { field ->
                 val aliasPathLower = field.aliasPath.map { it.lowercase() }
@@ -47,5 +44,14 @@ object DynamicFieldUtils {
             if (this[idx] != prefix[idx]) return false
         }
         return true
+    }
+
+    fun isNestedAlias(fieldName: String, aliasPrefix: String?): Boolean {
+        if (aliasPrefix.isNullOrBlank()) return false
+        if (fieldName.startsWith(aliasPrefix)) return false
+        val idx = fieldName.indexOf(aliasPrefix)
+        if (idx <= 0) return false
+        val preceding = fieldName.getOrNull(idx - 1)
+        return preceding == '_'
     }
 }

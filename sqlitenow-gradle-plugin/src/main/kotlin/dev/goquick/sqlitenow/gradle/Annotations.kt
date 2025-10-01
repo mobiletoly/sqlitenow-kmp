@@ -323,15 +323,27 @@ enum class PropertyNameGeneratorType {
      * This centralizes the property name conversion logic to avoid duplication.
      */
     fun convertToPropertyName(name: String): String {
+        val normalized = name.stripSqliteDisambiguatorSuffix()
         return when (this) {
-            PLAIN -> name
+            PLAIN -> normalized
             LOWER_CAMEL_CASE -> {
-                name.split('_').mapIndexed { index, part ->
+                normalized.split('_').mapIndexed { index, part ->
                     if (index == 0) part else part.capitalized()
                 }.joinToString("")
             }
         }
     }
+}
+
+private fun String.stripSqliteDisambiguatorSuffix(): String {
+    val colonIndex = lastIndexOf(':')
+    if (colonIndex > 0) {
+        val suffix = substring(colonIndex + 1)
+        if (suffix.isNotEmpty() && suffix.all(Char::isDigit)) {
+            return substring(0, colonIndex)
+        }
+    }
+    return this
 }
 
 data class StatementAnnotationOverrides(

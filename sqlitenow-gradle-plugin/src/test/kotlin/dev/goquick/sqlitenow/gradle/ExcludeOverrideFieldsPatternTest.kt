@@ -61,9 +61,13 @@ class ExcludeOverrideFieldsPatternTest {
         val ctor = com.squareup.kotlinpoet.FunSpec.constructorBuilder()
         val fieldCodeGen = SelectFieldCodeGenerator()
 
+        val fields = listOf(fieldA, fieldB)
+        val skipSet = DynamicFieldUtils.computeSkipSet(fields)
+
         gen.generatePropertiesWithInterfaceSupport(
-            fields = listOf(fieldA, fieldB),
+            fields = fields,
             mappedColumns = emptySet(),
+            dynamicFieldSkipSet = skipSet,
             propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
             implementsInterface = "MyInterface",
             excludeOverrideFields = setOf("schedule__*"),
@@ -92,9 +96,13 @@ class ExcludeOverrideFieldsPatternTest {
         val ctor = com.squareup.kotlinpoet.FunSpec.constructorBuilder()
         val fieldCodeGen = SelectFieldCodeGenerator()
 
+        val fields = listOf(field)
+        val skipSet = DynamicFieldUtils.computeSkipSet(fields)
+
         gen.generatePropertiesWithInterfaceSupport(
-            fields = listOf(field),
+            fields = fields,
             mappedColumns = emptySet(),
+            dynamicFieldSkipSet = skipSet,
             propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
             implementsInterface = "MyInterface",
             excludeOverrideFields = setOf("joinedSchedule*"),
@@ -115,9 +123,13 @@ class ExcludeOverrideFieldsPatternTest {
         val ctor = com.squareup.kotlinpoet.FunSpec.constructorBuilder()
         val fieldCodeGen = SelectFieldCodeGenerator()
 
+        val fields = listOf(field)
+        val skipSet = DynamicFieldUtils.computeSkipSet(fields)
+
         gen.generatePropertiesWithInterfaceSupport(
-            fields = listOf(field),
+            fields = fields,
             mappedColumns = emptySet(),
+            dynamicFieldSkipSet = skipSet,
             propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
             implementsInterface = "MyInterface",
             excludeOverrideFields = setOf("id"),

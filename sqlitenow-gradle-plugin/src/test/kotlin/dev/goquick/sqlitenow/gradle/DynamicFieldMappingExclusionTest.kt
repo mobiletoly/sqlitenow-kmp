@@ -92,6 +92,7 @@ class DynamicFieldMappingExclusionTest {
 
         val tableAliases = mapOf("pkg" to "packages")
         val mapped = DynamicFieldMapper.getMappedColumns(fields, tableAliases)
+        val skipSet = DynamicFieldUtils.computeSkipSet(fields)
         assertTrue(mapped.contains("joined_package_doc_id"))
         assertTrue(mapped.contains("joined_package_title"))
 
@@ -100,6 +101,7 @@ class DynamicFieldMappingExclusionTest {
         gen.generatePropertiesWithInterfaceSupport(
             fields = fields,
             mappedColumns = mapped,
+            dynamicFieldSkipSet = skipSet,
             propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
             implementsInterface = null,
             excludeOverrideFields = null,
@@ -135,12 +137,14 @@ class DynamicFieldMappingExclusionTest {
 
         val tableAliases = mapOf("pkg" to "packages")
         val mapped = DynamicFieldMapper.getMappedColumns(fields, tableAliases)
+        val skipSet = DynamicFieldUtils.computeSkipSet(fields)
 
         val ctor = FunSpec.constructorBuilder()
         val props = mutableListOf<PropertySpec>()
         gen.generatePropertiesWithInterfaceSupport(
             fields = fields,
             mappedColumns = mapped,
+            dynamicFieldSkipSet = skipSet,
             propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
             implementsInterface = null,
             excludeOverrideFields = null,
@@ -155,4 +159,3 @@ class DynamicFieldMappingExclusionTest {
         assertContains(names, "id")
     }
 }
-

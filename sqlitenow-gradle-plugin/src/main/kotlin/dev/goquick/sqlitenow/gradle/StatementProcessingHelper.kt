@@ -156,10 +156,14 @@ class StatementProcessingHelper(
                 stmt,
                 annotationResolver
             )
+            val aliasPath = column.tableName.takeIf { it.isNotBlank() }?.let { alias ->
+                computeAliasPathForAlias(stmt, alias)
+            } ?: emptyList()
             fields.add(
                 AnnotatedSelectStatement.Field(
                     src = column,
-                    annotations = annotations
+                    annotations = annotations,
+                    aliasPath = aliasPath
                 )
             )
         }
@@ -228,6 +232,25 @@ class StatementProcessingHelper(
                             declaredDynamicNames.add(df.name)
                         }
                     }
+                }
+            }
+        }
+
+        // Enrich regular fields with alias path information inferred from dynamic mappings
+        val aliasPathHints = DynamicFieldMapper.createDynamicFieldMappings(stmt, fields)
+            .flatMap { mapping ->
+                mapping.columns.map { column -> column.fieldName to mapping.aliasPath }
+            }
+            .groupBy({ it.first }, { it.second })
+            .mapValues { entry -> entry.value.toMutableList() }
+
+        fields.forEachIndexed { index, field ->
+            if (!field.annotations.isDynamicField && field.aliasPath.isEmpty()) {
+                val queue = aliasPathHints[field.src.fieldName]
+                val hint = queue?.firstOrNull()
+                if (hint != null && hint.isNotEmpty()) {
+                    fields[index] = field.copy(aliasPath = hint)
+                    queue.removeAt(0)
                 }
             }
         }

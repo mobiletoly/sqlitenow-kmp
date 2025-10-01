@@ -133,51 +133,36 @@ class SelectFieldCodeGenerator(
      * @return The column if found, null otherwise
      */
     private fun findColumnForField(field: AnnotatedSelectStatement.Field): AnnotatedCreateTableStatement.Column? {
-        val tableName = field.src.tableName
-        val fieldName = field.src.fieldName
-        val originalColumnName = field.src.originalColumnName
+        val aliasPrefix = field.annotations.aliasPrefix
+        val sourceAlias = field.annotations.sourceTable
+        val candidates = buildNameCandidatesFromAliasPrefix(field)
 
-        // First try to find the column in the specified table
-        if (tableName.isNotBlank()) {
-            // 1) Direct table lookup
-            val table = tableMap[tableName.lowercase()]
-            if (table != null) {
-                val column = findColumnInTable(table, originalColumnName, fieldName)
-                if (column != null) return column
+        field.src.tableName.takeIf { it.isNotBlank() }?.let { tableName ->
+            tableMap[tableName.lowercase()]?.let { table ->
+                lookupColumnUsingCandidates(table, field, candidates)?.let { return it }
             }
 
-            // 2) View lookup: if tableName matches a view, map to its underlying table/column
-            val view = createViewStatements.find { it.src.viewName.equals(tableName, ignoreCase = true) }
-            if (view != null) {
-                // Find view field by alias
-                val vf = view.fields.find { it.src.fieldName.equals(fieldName, ignoreCase = true) }
-                if (vf != null) {
-                    val underlyingTable = tableMap[vf.src.tableName.lowercase()]
-                    if (underlyingTable != null) {
-                        val col = findColumnInTable(underlyingTable, vf.src.originalColumnName, fieldName)
-                        if (col != null) return col
+            findViewByName(tableName)?.let { view ->
+                val viewField = findMatchingViewField(view, field, aliasPrefix, sourceAlias)
+                if (viewField != null) {
+                    tableMap[viewField.src.tableName.lowercase()]?.let { underlying ->
+                        val viewCandidates = buildNameCandidates(viewField.src.originalColumnName, field.src.fieldName, viewField.src.originalColumnName)
+                        lookupColumnUsingCandidates(underlying, field, viewCandidates, viewField.src.originalColumnName)?.let { return it }
                     }
                 }
             }
         }
 
-        // 3) Fallback: check all tables
-        // This is important for fields that come from joined tables
-        for (table in tableMap.values) {
-            val column = findColumnInTable(table, originalColumnName, fieldName)
-            if (column != null) {
-                return column
-            }
+        tableMap.values.forEach { table ->
+            lookupColumnUsingCandidates(table, field, candidates)?.let { return it }
         }
 
-        // 4) Fallback: try to resolve via any view exposing this alias and map to underlying table
-        for (view in createViewStatements) {
-            val vf = view.fields.find { it.src.fieldName.equals(fieldName, ignoreCase = true) }
-            if (vf != null) {
-                val underlyingTable = tableMap[vf.src.tableName.lowercase()]
-                if (underlyingTable != null) {
-                    val col = findColumnInTable(underlyingTable, vf.src.originalColumnName, fieldName)
-                    if (col != null) return col
+        createViewStatements.forEach { view ->
+            val viewField = findMatchingViewField(view, field, aliasPrefix, sourceAlias)
+            if (viewField != null) {
+                tableMap[viewField.src.tableName.lowercase()]?.let { table ->
+                    val viewCandidates = buildNameCandidates(viewField.src.originalColumnName, field.src.fieldName, viewField.src.originalColumnName)
+                    lookupColumnUsingCandidates(table, field, viewCandidates, viewField.src.originalColumnName)?.let { return it }
                 }
             }
         }
@@ -273,14 +258,111 @@ class SelectFieldCodeGenerator(
         originalColumnName: String,
         fieldName: String
     ): AnnotatedCreateTableStatement.Column? {
-        // Try to find the column by original column name first (for aliased columns)
-        var column = table.findColumnByName(originalColumnName)
+        val candidates = buildColumnNameCandidates(originalColumnName, fieldName)
+        return lookupColumnUsingCandidates(table, null, candidates)
+    }
 
-        // If not found by original column name, try the field name
-        if (column == null) {
-            column = table.findColumnByName(fieldName)
+    private fun lookupColumnUsingCandidates(
+        table: AnnotatedCreateTableStatement,
+        field: AnnotatedSelectStatement.Field?,
+        candidates: LinkedHashSet<String>,
+        preferredName: String? = null
+    ): AnnotatedCreateTableStatement.Column? {
+        val searchOrder = LinkedHashSet<String>()
+        preferredName?.takeIf { it.isNotBlank() }?.let { searchOrder += it }
+        searchOrder += candidates
+
+        searchOrder.forEach { candidate ->
+            table.findColumnByName(candidate)?.let { return it }
         }
 
-        return column
+        val lowercaseCandidates = searchOrder.map { it.lowercase() }.toSet()
+        table.columns.firstOrNull { column ->
+            lowercaseCandidates.contains(column.src.name.lowercase())
+        }?.let { return it }
+
+        field?.annotations?.propertyName?.takeIf { it.isNotBlank() }?.let { propertyName ->
+            table.columns.firstOrNull { column ->
+                column.src.name.equals(propertyName, ignoreCase = true)
+            }?.let { return it }
+        }
+
+        return null
+    }
+
+    private fun buildColumnNameCandidates(vararg names: String): LinkedHashSet<String> {
+        val candidates = LinkedHashSet<String>()
+        names.forEach { name ->
+            if (name.isBlank()) return@forEach
+            val trimmed = name.trim()
+            addNameVariants(trimmed, candidates)
+        }
+        val lowercase = candidates.mapNotNull { value ->
+            value.takeIf { it.any(Char::isUpperCase) }?.lowercase()
+        }
+        candidates.addAll(lowercase)
+        return candidates
+    }
+
+    private fun addNameVariants(name: String, sink: MutableSet<String>) {
+        if (name.isBlank()) return
+        sink += name
+
+        val withoutSuffix = name.substringBefore(':')
+        if (withoutSuffix.isNotBlank()) sink += withoutSuffix
+
+        val afterDot = withoutSuffix.substringAfterLast('.', withoutSuffix)
+        if (afterDot.isNotBlank()) sink += afterDot
+
+        val segments = afterDot.split('_').filter { it.isNotBlank() }
+        if (segments.size > 1) {
+            segments.indices.forEach { index ->
+                sink += segments.drop(index).joinToString("_")
+            }
+        }
+    }
+
+    private fun buildNameCandidatesFromAliasPrefix(field: AnnotatedSelectStatement.Field): LinkedHashSet<String> {
+       val result = buildColumnNameCandidates(field.src.originalColumnName, field.src.fieldName)
+       val aliasPrefix = field.annotations.aliasPrefix
+       if (!aliasPrefix.isNullOrBlank()) {
+           field.src.fieldName.removePrefixOrNull(aliasPrefix)?.let { result += it }
+           field.src.originalColumnName.removePrefixOrNull(aliasPrefix)?.let { result += it }
+       }
+       field.annotations.sourceTable?.takeIf { it.isNotBlank() }?.let { result += it }
+       field.aliasPath.forEach { segment ->
+           if (segment.isNotBlank()) result += segment
+       }
+       field.annotations.propertyName?.takeIf { it.isNotBlank() }?.let { result += it }
+       return result
+   }
+
+    private fun buildNameCandidates(vararg names: String): LinkedHashSet<String> = buildColumnNameCandidates(*names)
+
+    private fun findViewByName(name: String): AnnotatedCreateViewStatement? {
+        return createViewStatements.firstOrNull {
+            it.src.viewName.equals(name, ignoreCase = true) || it.name.equals(name, ignoreCase = true)
+        }
+    }
+
+    private fun findMatchingViewField(
+        view: AnnotatedCreateViewStatement,
+        field: AnnotatedSelectStatement.Field,
+        aliasPrefix: String?,
+        sourceAlias: String?
+    ): AnnotatedCreateViewStatement.Field? {
+        val candidates = buildNameCandidatesFromAliasPrefix(field)
+        return view.fields.firstOrNull { viewField ->
+            val aliasMatches = sourceAlias.isNullOrBlank() || viewField.src.tableName.equals(sourceAlias, ignoreCase = true)
+            val prefixMatches = aliasPrefix.isNullOrBlank() || viewField.annotations.aliasPrefix?.equals(aliasPrefix, ignoreCase = true) == true
+            (aliasMatches || prefixMatches) && candidates.any { candidate ->
+                viewField.src.fieldName.equals(candidate, ignoreCase = true) ||
+                    viewField.src.originalColumnName.equals(candidate, ignoreCase = true)
+            }
+        }
+    }
+
+    private fun String.removePrefixOrNull(prefix: String): String? {
+        return if (this.startsWith(prefix)) this.removePrefix(prefix).takeIf { it.isNotBlank() } else null
     }
 }

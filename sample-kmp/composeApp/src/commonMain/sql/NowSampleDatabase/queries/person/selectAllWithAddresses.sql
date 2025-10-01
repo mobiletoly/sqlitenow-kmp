@@ -1,13 +1,13 @@
 /* @@{
     queryResult=PersonWithAddressRow,
-    collectionKey=person_id } */
-SELECT p.id         AS person_id,
-       p.first_name,
-       p.last_name,
-       p.email,
-       p.phone,
-       p.birth_date,
-       p.created_at,
+    collectionKey=person__id } */
+SELECT p.id         AS person__id,
+       p.first_name AS person__first_name,
+       p.last_name AS person__last_name,
+       p.email AS person__email,
+       p.phone AS person__phone,
+       p.birth_date AS person__birth_date,
+       p.created_at AS person__created_at,
 
        a.id         AS address__id,
        a.person_id  AS address__person_id,

@@ -152,17 +152,23 @@ class SelectStatement(
                             allFieldInfo.add(FieldInfo(fieldName, tableName, columnName, sqlType, nullable))
                         }
 
+                        // Fail fast if SQLite had to auto-disambiguate duplicate column aliases
+                        validateUniqueColumnLabels(allFieldInfo, select)
+
                         // Second pass: deduplicate fields that represent the same underlying table.column
                         val deduplicatedFields = deduplicateFields(allFieldInfo)
 
                         // Third pass: create FieldSource objects
                         deduplicatedFields.forEach { fieldInfo ->
-                            val originalColumnName = findFieldOriginalColumn(select, cleanSqliteColumnDisambiguation(fieldInfo.fieldName)) ?: fieldInfo.columnName
+                        val lookupFieldName = cleanSqliteColumnDisambiguation(fieldInfo.fieldName)
+                        val cleanColumnName = cleanSqliteColumnDisambiguation(fieldInfo.columnName)
+                        val originalColumnName = findFieldOriginalColumn(select, lookupFieldName)
+                            ?: fieldInfo.fieldName
 
-                            fieldSources.add(
-                                FieldSource(
-                                    fieldName = fieldInfo.fieldName,
-                                    tableName = fieldInfo.tableName,
+                        fieldSources.add(
+                            FieldSource(
+                                fieldName = fieldInfo.fieldName,
+                                tableName = fieldInfo.tableName,
                                     originalColumnName = originalColumnName,
                                     dataType = fieldInfo.sqlType
                                 )
@@ -171,6 +177,9 @@ class SelectStatement(
                     }
                 }
             } catch (e: Exception) {
+                if (e is IllegalArgumentException) {
+                    throw e
+                }
                 e.printStackTrace()
                 throw RuntimeException("Failed to extract field sources from SELECT statement: $sql", e)
             }
@@ -205,43 +214,25 @@ class SelectStatement(
         )
 
         private fun deduplicateFields(allFields: List<FieldInfo>): List<FieldInfo> {
-            // Group fields by their underlying table.column (after cleaning SQLite disambiguation)
-            val fieldGroups = allFields.groupBy { field ->
-                val cleanFieldName = cleanSqliteColumnDisambiguation(field.fieldName)
-                val cleanColumnName = cleanSqliteColumnDisambiguation(field.columnName)
-                val tableColumnKey = "${field.tableName}.$cleanColumnName"
-                tableColumnKey
-            }
+            if (allFields.isEmpty()) return emptyList()
 
             val result = mutableListOf<FieldInfo>()
-            fieldGroups.forEach { (tableColumn, fieldsInGroup) ->
-                if (fieldsInGroup.size == 1) {
-                    // Only one field for this table.column, keep as-is
-                    result.add(fieldsInGroup.first())
-                } else {
-                    // Multiple fields for same table.column, deduplicate to the first one without SQLite disambiguation
-                    val fieldWithoutDisambiguation = fieldsInGroup.find { field ->
-                        !field.fieldName.contains(':') && !field.columnName.contains(':')
-                    }
+            val seenWithoutDisambiguator = LinkedHashSet<String>()
 
-                    if (fieldWithoutDisambiguation != null) {
-                        // Use the field without SQLite disambiguation
-                        result.add(fieldWithoutDisambiguation)
-                    } else {
-                        // All fields have disambiguation, keep the first one but clean it
-                        val firstField = fieldsInGroup.first()
-                        val cleanedField = FieldInfo(
-                            fieldName = cleanSqliteColumnDisambiguation(firstField.fieldName),
-                            tableName = firstField.tableName,
-                            columnName = cleanSqliteColumnDisambiguation(firstField.columnName),
-                            sqlType = firstField.sqlType,
-                            nullable = firstField.nullable
-                        )
-                        result.add(cleanedField)
-                        val removedFields = fieldsInGroup.drop(1)
+            allFields.forEach { field ->
+                val hasSqliteDisambiguator = field.fieldName.contains(':') || field.columnName.contains(':')
+                if (hasSqliteDisambiguator) {
+                    // Preserve SQLite-generated aliases (e.g., category__id:1) exactly as they appear so
+                    // downstream consumers can distinguish columns that originate from different alias paths.
+                    result.add(field)
+                } else {
+                    val key = "${field.tableName}.${field.columnName.ifBlank { field.fieldName }}"
+                    if (seenWithoutDisambiguator.add(key)) {
+                        result.add(field)
                     }
                 }
             }
+
             return result
         }
 
@@ -256,6 +247,36 @@ class SelectStatement(
                 }
             }
             return columnName
+        }
+
+        private fun validateUniqueColumnLabels(fields: List<FieldInfo>, select: PlainSelect) {
+            if (fields.isEmpty()) return
+
+            val collisions = mutableMapOf<String, MutableList<FieldInfo>>()
+            fields.forEach { field ->
+                val normalized = cleanSqliteColumnDisambiguation(field.fieldName).trim()
+                collisions.getOrPut(normalized) { mutableListOf() }.add(field)
+            }
+
+            val duplicates = collisions.filterValues { it.size > 1 }
+            if (duplicates.isEmpty()) return
+
+            val message = buildString {
+                appendLine("Duplicate column aliases detected in SELECT statement.")
+                appendLine("SQLite emitted auto-disambiguated names (e.g. :1/:2). Please give each column a unique alias using AS.")
+                duplicates.forEach { (alias, entries) ->
+                    appendLine("  Alias '$alias' appears ${entries.size} times:")
+                    entries.forEach { entry ->
+                        val original = entry.fieldName
+                        val table = entry.tableName.ifBlank { "<unknown>" }
+                        appendLine("    - table=$table alias=$original")
+                    }
+                }
+                append("SQL: ")
+                append(select.toString())
+            }
+
+            throw IllegalArgumentException(message)
         }
 
         private fun rewriteLimitOffset(sql: String): String =

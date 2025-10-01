@@ -73,7 +73,8 @@ CREATE INDEX idx_activity_categoryDocId ON activity(category_doc_id);
 CREATE INDEX idx_activity_monthlyGlanceView ON activity(monthly_glance_view);
 CREATE INDEX idx_activity_requiredUnlockCode ON activity(required_unlock_code);
 
-CREATE VIEW activity_for_join AS
+-- Activity with with category and schedule
+CREATE VIEW activity_detailed_view AS
 SELECT
     act.id AS act__id,
     act.doc_id AS act__doc_id,
@@ -97,15 +98,14 @@ SELECT
     act.required_unlock_code AS act__required_unlock_code,
     act.priority AS act__priority,
     act.unlocked_days AS act__unlocked_days,
-    act.reporting AS act__reporting
-FROM activity AS act;
+    act.reporting AS act__reporting,
 
--- Activity with with category and schedule
-CREATE VIEW activity_detailed_view AS
-SELECT
-    act.*,
-    cat.*,
-    sch.*
+    sch.*,
+
+    cat.id AS joined__act__category__id,
+    cat.doc_id AS joined__act__category__doc_id,
+    cat.title AS joined__act__category__title,
+    cat.icon AS joined__act__category__icon
 
   /* @@{ dynamicField=main,
          mappingType=entity,
@@ -118,7 +118,7 @@ SELECT
          mappingType=perRow,
          propertyType=ActivityCategoryDoc,
          sourceTable=cat,
-         aliasPrefix=category__
+         aliasPrefix=joined__act__category__
          notNull=true } */
 
   /* @@{ dynamicField=schedule,
@@ -128,9 +128,9 @@ SELECT
          aliasPrefix=schedule__
          notNull=true } */
 
-FROM activity_for_join act
-    LEFT JOIN activity_category_to_join cat ON act.act__category_doc_id = cat.category__doc_id
-    LEFT JOIN activity_schedule_to_join sch ON act.act__id = sch.schedule__activity_id;
+FROM activity act
+    LEFT JOIN activity_category cat ON act.category_doc_id = cat.doc_id
+    LEFT JOIN activity_schedule_to_join sch ON act.id = sch.schedule__activity_id;
 
 -- Activity with program items
 -- @@{ collectionKey=act__doc_id }

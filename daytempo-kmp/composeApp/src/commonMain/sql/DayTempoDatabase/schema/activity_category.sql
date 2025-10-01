@@ -9,11 +9,3 @@ CREATE TABLE activity_category (
     -- @@{ field=icon, propertyType=com.pluralfusion.daytempo.domain.model.ActivityIconDoc }
     icon TEXT NOT NULL
 ) WITHOUT ROWID;
-
-CREATE VIEW activity_category_to_join AS
-SELECT
-    cat.id AS category__id,
-    cat.doc_id AS category__doc_id,
-    cat.title AS category__title,
-    cat.icon AS category__icon
-FROM activity_category AS cat;

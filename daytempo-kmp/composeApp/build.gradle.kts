@@ -50,6 +50,7 @@ kotlin {
         // Android instrumentation tests (device/emulator). Keep it minimal; used to compile generated code.
         androidInstrumentedTest.dependencies {
             implementation(libs.androidx.junit)
+            implementation(libs.androidx.test.runner)
         }
     }
 }

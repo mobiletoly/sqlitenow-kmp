@@ -14,6 +14,10 @@ data class AnnotatedSelectStatement(
         val aliasPath: List<String> = emptyList()
     )
 
+    val mappingPlan: ResultMappingPlan by lazy(LazyThreadSafetyMode.NONE) {
+        ResultMappingPlanner.create(src, fields)
+    }
+
     fun hasDynamicFieldMapping() = fields.any {
         it.annotations.isDynamicField && it.annotations.mappingType != null
     }

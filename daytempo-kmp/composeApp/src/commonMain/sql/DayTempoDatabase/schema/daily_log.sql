@@ -12,17 +12,8 @@ CREATE TABLE daily_log (
 
     group_doc_id TEXT,
 
-    -- @@{ field=days_since_epoch, propertyType=kotlin.Int }
-    days_since_epoch INTEGER NOT NULL,
-
-    -- @@{ field=year, propertyType=kotlin.Int }
-    year INTEGER NOT NULL,
-
-    -- @@{ field=month, propertyType=kotlin.Int }
-    month INTEGER NOT NULL,
-
-    -- @@{ field=day, propertyType=kotlin.Int }
-    day INTEGER NOT NULL,
+    -- @@{ field=date, propertyType=kotlinx.datetime.LocalDate }
+    date INTEGER NOT NULL,
 
     -- @@{ field=applied_week_ind, propertyType=kotlin.Int }
     applied_week_ind INTEGER NOT NULL,
@@ -88,12 +79,11 @@ CREATE TABLE daily_log (
 
 CREATE INDEX idx_dailyLog_activityDocId ON daily_log(activity_doc_id);
 CREATE INDEX idx_dailyLog_programItemDocId ON daily_log(program_item_doc_id);
-CREATE INDEX idx_dailyLog_date ON daily_log(year, month, day);
-CREATE INDEX idx_dailyLog_daysSinceEpoch ON daily_log(days_since_epoch);
+CREATE INDEX idx_dailyLog_date ON daily_log(date);
 CREATE INDEX idx_dailyLog_parentDailyLogDocId ON daily_log(parent_daily_log_doc_id);
 CREATE INDEX idx_dailyLog_groupDocId ON daily_log(group_doc_id);
 CREATE INDEX idx_dailyLog_confirmed ON daily_log(confirmed);
-CREATE INDEX idx_dailyLog_activityDateRange ON daily_log(activity_doc_id, days_since_epoch);
+CREATE INDEX idx_dailyLog_activityDateRange ON daily_log(activity_doc_id, date);
 
 CREATE VIEW daily_log_for_join AS
 SELECT
@@ -104,10 +94,7 @@ SELECT
     activity_doc_id AS dl__activity_doc_id,
     program_item_doc_id AS dl__program_item_doc_id,
     confirmed AS dl__confirmed,
-    days_since_epoch AS dl__days_since_epoch,
-    year AS dl__year,
-    month AS dl__month,
-    day AS dl__day,
+    date AS dl__date,
     applied_week_ind AS dl__applied_week_ind,
     applied_day_ind AS dl__applied_day_ind,
     counter AS dl__counter,
@@ -139,10 +126,9 @@ CREATE VIEW daily_log_detailed_view AS
 SELECT
     dl.*,
     act.*,
-    cat.*,
     pi.*
 
-  /* @@{ dynamicField=dailyLog,
+  /* @@{ dynamicField=main,
          mappingType=entity,
          propertyType=DailyLogDoc,
          sourceTable=dl,
@@ -150,17 +136,10 @@ SELECT
          notNull=true } */
 
   /* @@{ dynamicField=activity,
-         mappingType=entity,
-         propertyType=ActivityDoc,
+         mappingType=perRow,
+         propertyType=ActivityDetailedDoc,
          sourceTable=act,
          aliasPrefix=act__,
-         notNull=true } */
-
-   /* @@{ dynamicField=category,
-         mappingType=perRow,
-         propertyType=ActivityCategoryDoc,
-         sourceTable=cat,
-         aliasPrefix=category__
          notNull=true } */
 
     /* @@{ dynamicField=programItem,
@@ -171,6 +150,5 @@ SELECT
          notNull=true } */
 
 FROM daily_log_for_join dl
-    LEFT JOIN activity_for_join act ON dl.dl__activity_doc_id = act.act__doc_id
-    LEFT JOIN activity_category_to_join cat ON act.act__category_doc_id = cat.category__doc_id
+    LEFT JOIN activity_detailed_view act ON dl.dl__activity_doc_id = act.act__doc_id
     LEFT JOIN program_item_to_join pi ON dl.dl__program_item_doc_id = pi.pi__doc_id;

@@ -188,7 +188,7 @@ fun App() {
             .flowOn(Dispatchers.IO) // DB runs on Dispatchers.IO
             .collect { personWithAddressList: List<PersonWithAddressRow> ->
                 for (person in personWithAddressList) {
-                    println("----> Person: ${person.myFirstName} ${person.myLastName} - <${person.phone}> <${person.birthDate}>")
+                    println("----> Person: ${person.myFirstName} ${person.myLastName} - <${person.personPhone}> <${person.personBirthDate}>")
                     for (address in person.addresses) {
                         println("    ----> Address: $address")
                     }
