@@ -1,6 +1,10 @@
 package dev.goquick.sqlitenow.gradle
 
-import dev.goquick.sqlitenow.gradle.SqliteTypeToKotlinCodeConverter.Companion.KOTLIN_STDLIB_TYPES
+import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter.Companion.KOTLIN_STDLIB_TYPES
+import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
+import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.processing.extractAnnotations
+import dev.goquick.sqlitenow.gradle.processing.extractFieldAssociatedAnnotations
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import kotlin.test.assertEquals
@@ -247,9 +251,11 @@ class AnnotationsTest {
             AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDate"
         )
 
-        val fieldAnnotations = extractFieldAssociatedAnnotations(listOf(
-            "-- @@{field=birth_date, propertyType=kotlinx.datetime.LocalDate}"
-        ))
+        val fieldAnnotations = extractFieldAssociatedAnnotations(
+            listOf(
+                "-- @@{field=birth_date, propertyType=kotlinx.datetime.LocalDate}"
+            )
+        )
 
         val birthDateAnnotations = fieldAnnotations["birth_date"]
         assertEquals(true, birthDateAnnotations != null, "birth_date annotations should exist")
@@ -265,9 +271,11 @@ class AnnotationsTest {
     fun `test CREATE TABLE scenario - built-in type without explicit adapter`() {
         // This simulates: @@{field=name, propertyType=kotlin.String}
         // Should automatically infer adapter=false for built-in type
-        val fieldAnnotations = extractFieldAssociatedAnnotations(listOf(
-            "-- @@{field=name, propertyType=kotlin.String}"
-        ))
+        val fieldAnnotations = extractFieldAssociatedAnnotations(
+            listOf(
+                "-- @@{field=name, propertyType=kotlin.String}"
+            )
+        )
 
         val nameAnnotations = fieldAnnotations["name"]
         assertEquals(true, nameAnnotations != null, "name annotations should exist")
@@ -283,9 +291,11 @@ class AnnotationsTest {
     fun `test adapter key added to raw annotations map for custom types`() {
         // This tests that the ADAPTER key is actually added to the raw annotations map
         // which is what AdapterConfig.hasAdapterAnnotation() checks
-        val fieldAnnotations = extractFieldAssociatedAnnotations(listOf(
-            "-- @@{field=birth_date, propertyType=kotlinx.datetime.LocalDate}"
-        ))
+        val fieldAnnotations = extractFieldAssociatedAnnotations(
+            listOf(
+                "-- @@{field=birth_date, propertyType=kotlinx.datetime.LocalDate}"
+            )
+        )
 
         val birthDateAnnotations = fieldAnnotations["birth_date"]
         assertEquals(true, birthDateAnnotations != null, "birth_date annotations should exist")
@@ -301,9 +311,11 @@ class AnnotationsTest {
     @Test
     fun `test adapter key NOT added to raw annotations map for built-in types`() {
         // This tests that the ADAPTER key is NOT added for built-in types
-        val fieldAnnotations = extractFieldAssociatedAnnotations(listOf(
-            "-- @@{field=name, propertyType=kotlin.String}"
-        ))
+        val fieldAnnotations = extractFieldAssociatedAnnotations(
+            listOf(
+                "-- @@{field=name, propertyType=kotlin.String}"
+            )
+        )
 
         val nameAnnotations = fieldAnnotations["name"]
         assertEquals(true, nameAnnotations != null, "name annotations should exist")
@@ -317,9 +329,11 @@ class AnnotationsTest {
     @Test
     fun `test new adapter system - adapter=default with built-in type`() {
         // adapter=default + built-in type → no custom adapter
-        val fieldAnnotations = extractFieldAssociatedAnnotations(listOf(
-            "-- @@{field=name, adapter=default, propertyType=kotlin.String}"
-        ))
+        val fieldAnnotations = extractFieldAssociatedAnnotations(
+            listOf(
+                "-- @@{field=name, adapter=default, propertyType=kotlin.String}"
+            )
+        )
 
         val nameAnnotations = fieldAnnotations["name"]
         assertEquals(false, nameAnnotations!!.containsKey(AnnotationConstants.ADAPTER),
@@ -332,9 +346,11 @@ class AnnotationsTest {
     @Test
     fun `test new adapter system - adapter=default with custom type`() {
         // adapter=default + custom type → custom adapter (same as adapter=custom)
-        val fieldAnnotations = extractFieldAssociatedAnnotations(listOf(
-            "-- @@{field=birth_date, adapter=default, propertyType=kotlinx.datetime.LocalDate}"
-        ))
+        val fieldAnnotations = extractFieldAssociatedAnnotations(
+            listOf(
+                "-- @@{field=birth_date, adapter=default, propertyType=kotlinx.datetime.LocalDate}"
+            )
+        )
 
         val birthDateAnnotations = fieldAnnotations["birth_date"]
         assertEquals(true, birthDateAnnotations!!.containsKey(AnnotationConstants.ADAPTER),
@@ -375,16 +391,20 @@ class AnnotationsTest {
     @Test
     fun `test new adapter system - no adapter specified defaults to adapter=default`() {
         // No adapter specified → same as adapter=default
-        val fieldAnnotations1 = extractFieldAssociatedAnnotations(listOf(
-            "-- @@{field=name, propertyType=kotlin.String}"  // built-in type
-        ))
+        val fieldAnnotations1 = extractFieldAssociatedAnnotations(
+            listOf(
+                "-- @@{field=name, propertyType=kotlin.String}"  // built-in type
+            )
+        )
         val nameAnnotations = fieldAnnotations1["name"]
         assertEquals(false, nameAnnotations!!.containsKey(AnnotationConstants.ADAPTER),
             "no adapter + built-in type should not generate custom adapter")
 
-        val fieldAnnotations2 = extractFieldAssociatedAnnotations(listOf(
-            "-- @@{field=birth_date, propertyType=kotlinx.datetime.LocalDate}"  // custom type
-        ))
+        val fieldAnnotations2 = extractFieldAssociatedAnnotations(
+            listOf(
+                "-- @@{field=birth_date, propertyType=kotlinx.datetime.LocalDate}"  // custom type
+            )
+        )
         val birthDateAnnotations = fieldAnnotations2["birth_date"]
         assertEquals(true, birthDateAnnotations!!.containsKey(AnnotationConstants.ADAPTER),
             "no adapter + custom type should generate custom adapter")
@@ -394,9 +414,11 @@ class AnnotationsTest {
     @Test
     fun `test new adapter system - adapter=default with no propertyType`() {
         // adapter=default + no propertyType → no custom adapter
-        val fieldAnnotations = extractFieldAssociatedAnnotations(listOf(
-            "-- @@{field=data, adapter=default}"
-        ))
+        val fieldAnnotations = extractFieldAssociatedAnnotations(
+            listOf(
+                "-- @@{field=data, adapter=default}"
+            )
+        )
 
         val dataAnnotations = fieldAnnotations["data"]
         assertEquals(false, dataAnnotations!!.containsKey(AnnotationConstants.ADAPTER),
@@ -409,9 +431,11 @@ class AnnotationsTest {
     @Test
     fun `test adapter validation - invalid value throws exception`() {
         try {
-            extractFieldAssociatedAnnotations(listOf(
-                "-- @@{field=test, adapter=invalid}"
-            ))
+            extractFieldAssociatedAnnotations(
+                listOf(
+                    "-- @@{field=test, adapter=invalid}"
+                )
+            )
             assertEquals(true, false, "Should have thrown exception for invalid adapter value")
         } catch (e: IllegalArgumentException) {
             assertTrue(true)
@@ -437,9 +461,11 @@ class AnnotationsTest {
         // Test all scenarios when no adapter is specified (should behave as adapter=default)
 
         // Case 1: No adapter + no propertyType → no adapter
-        val fieldAnnotations1 = extractFieldAssociatedAnnotations(listOf(
-            "-- @@{field=data}"
-        ))
+        val fieldAnnotations1 = extractFieldAssociatedAnnotations(
+            listOf(
+                "-- @@{field=data}"
+            )
+        )
         val dataAnnotations = fieldAnnotations1["data"]
         assertEquals(false, dataAnnotations!!.containsKey(AnnotationConstants.ADAPTER),
             "No adapter + no propertyType should not generate adapter")
@@ -450,9 +476,11 @@ class AnnotationsTest {
         // Case 2: No adapter + built-in type → no adapter (uses default conversion)
         val builtInTypes = listOf("kotlin.String", "Int", "Long", "Double", "Boolean")
         builtInTypes.forEach { type ->
-            val fieldAnnotations = extractFieldAssociatedAnnotations(listOf(
-                "-- @@{field=test_field, propertyType=$type}"
-            ))
+            val fieldAnnotations = extractFieldAssociatedAnnotations(
+                listOf(
+                    "-- @@{field=test_field, propertyType=$type}"
+                )
+            )
             val annotations = fieldAnnotations["test_field"]
             assertEquals(false, annotations!!.containsKey(AnnotationConstants.ADAPTER),
                 "No adapter + built-in type $type should not generate adapter")
@@ -470,9 +498,11 @@ class AnnotationsTest {
             "MyCustomClass"
         )
         customTypes.forEach { type ->
-            val fieldAnnotations = extractFieldAssociatedAnnotations(listOf(
-                "-- @@{field=test_field, propertyType=$type}"
-            ))
+            val fieldAnnotations = extractFieldAssociatedAnnotations(
+                listOf(
+                    "-- @@{field=test_field, propertyType=$type}"
+                )
+            )
             val annotations = fieldAnnotations["test_field"]
             assertEquals(true, annotations!!.containsKey(AnnotationConstants.ADAPTER),
                 "No adapter + custom type $type should generate custom adapter")
@@ -487,9 +517,11 @@ class AnnotationsTest {
     @Test
     fun `test new notNull annotation system`() {
         // Test notNull=true (enforce non-nullable)
-        val fieldAnnotations1 = extractFieldAssociatedAnnotations(listOf(
-            "-- @@{field=name, notNull=true}"
-        ))
+        val fieldAnnotations1 = extractFieldAssociatedAnnotations(
+            listOf(
+                "-- @@{field=name, notNull=true}"
+            )
+        )
         val nameAnnotations = fieldAnnotations1["name"]
         assertEquals(true, nameAnnotations!!.containsKey(AnnotationConstants.NOT_NULL))
         assertEquals(true, nameAnnotations[AnnotationConstants.NOT_NULL]) // HOCON parses as string
@@ -498,9 +530,11 @@ class AnnotationsTest {
         assertEquals(true, parsed1.notNull, "notNull=true should be parsed correctly")
 
         // Test notNull=false (enforce nullable)
-        val fieldAnnotations2 = extractFieldAssociatedAnnotations(listOf(
-            "-- @@{field=age, notNull=false}"
-        ))
+        val fieldAnnotations2 = extractFieldAssociatedAnnotations(
+            listOf(
+                "-- @@{field=age, notNull=false}"
+            )
+        )
         val ageAnnotations = fieldAnnotations2["age"]
         assertEquals(true, ageAnnotations!!.containsKey(AnnotationConstants.NOT_NULL))
         assertEquals(false, ageAnnotations[AnnotationConstants.NOT_NULL]) // HOCON parses as string
@@ -509,9 +543,11 @@ class AnnotationsTest {
         assertEquals(false, parsed2.notNull, "notNull=false should be parsed correctly")
 
         // Test notNull not specified (inherit from table structure)
-        val fieldAnnotations3 = extractFieldAssociatedAnnotations(listOf(
-            "-- @@{field=email, propertyType=kotlin.String}"
-        ))
+        val fieldAnnotations3 = extractFieldAssociatedAnnotations(
+            listOf(
+                "-- @@{field=email, propertyType=kotlin.String}"
+            )
+        )
         val emailAnnotations = fieldAnnotations3["email"]
         assertEquals(false, emailAnnotations!!.containsKey(AnnotationConstants.NOT_NULL))
 
@@ -546,9 +582,11 @@ class AnnotationsTest {
     fun `test field annotation is required`() {
         // Test that annotation blocks without 'field' annotation throw an exception
         try {
-            extractFieldAssociatedAnnotations(listOf(
-                "-- @@{propertyType=kotlin.String, adapter=custom}" // Missing field annotation
-            ))
+            extractFieldAssociatedAnnotations(
+                listOf(
+                    "-- @@{propertyType=kotlin.String, adapter=custom}" // Missing field annotation
+                )
+            )
             assertEquals(true, false, "Should have thrown exception for missing field annotation")
         } catch (e: IllegalArgumentException) {
             assertEquals(true, e.message?.contains("must contain either a 'field' or 'dynamicField' annotation with a non-empty value"),
@@ -560,9 +598,11 @@ class AnnotationsTest {
     fun `test field annotation with empty value throws exception`() {
         // Test that field annotation with empty string value throws an exception
         try {
-            extractFieldAssociatedAnnotations(listOf(
-                "-- @@{field=\"\", propertyType=kotlin.String}" // Empty field name
-            ))
+            extractFieldAssociatedAnnotations(
+                listOf(
+                    "-- @@{field=\"\", propertyType=kotlin.String}" // Empty field name
+                )
+            )
             assertEquals(true, false, "Should have thrown exception for empty field name")
         } catch (e: IllegalArgumentException) {
             assertEquals(true, e.message?.contains("must contain either a 'field' or 'dynamicField' annotation with a non-empty value"),

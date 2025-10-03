@@ -1,8 +1,11 @@
 package dev.goquick.sqlitenow.gradle
 
-import dev.goquick.sqlitenow.gradle.SqliteTypeToKotlinCodeConverter
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.asTypeName
+import dev.goquick.sqlitenow.gradle.context.AdapterConfig
+import dev.goquick.sqlitenow.gradle.context.ColumnLookup
+import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
+import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue

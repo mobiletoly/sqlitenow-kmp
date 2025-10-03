@@ -1,6 +1,12 @@
 package dev.goquick.sqlitenow.gradle
 
-import dev.goquick.sqlitenow.gradle.inspect.CreateTableStatement
+import dev.goquick.sqlitenow.gradle.database.DatabaseCodeGenerator
+import dev.goquick.sqlitenow.gradle.sqlinspect.CreateTableStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedStatement
+import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
+import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
+import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.DisplayName
@@ -59,7 +65,14 @@ class SharedResultDatabaseTest {
                     columns = listOf(
                         CreateTableStatement.Column("id", "INTEGER", false, true, false, false),
                         CreateTableStatement.Column("name", "TEXT", true, false, false, false),
-                        CreateTableStatement.Column("birth_date", "TEXT", false, false, false, false),
+                        CreateTableStatement.Column(
+                            "birth_date",
+                            "TEXT",
+                            false,
+                            false,
+                            false,
+                            false
+                        ),
                         CreateTableStatement.Column("active", "INTEGER", false, false, false, false)
                     )
                 ),
@@ -73,19 +86,47 @@ class SharedResultDatabaseTest {
                 ),
                 columns = listOf(
                     AnnotatedCreateTableStatement.Column(
-                        src = CreateTableStatement.Column("id", "INTEGER", false, true, false, false),
+                        src = CreateTableStatement.Column(
+                            "id",
+                            "INTEGER",
+                            false,
+                            true,
+                            false,
+                            false
+                        ),
                         annotations = emptyMap()
                     ),
                     AnnotatedCreateTableStatement.Column(
-                        src = CreateTableStatement.Column("name", "TEXT", true, false, false, false),
+                        src = CreateTableStatement.Column(
+                            "name",
+                            "TEXT",
+                            true,
+                            false,
+                            false,
+                            false
+                        ),
                         annotations = emptyMap()
                     ),
                     AnnotatedCreateTableStatement.Column(
-                        src = CreateTableStatement.Column("birth_date", "TEXT", false, false, false, false),
+                        src = CreateTableStatement.Column(
+                            "birth_date",
+                            "TEXT",
+                            false,
+                            false,
+                            false,
+                            false
+                        ),
                         annotations = mapOf(AnnotationConstants.ADAPTER to "custom")
                     ),
                     AnnotatedCreateTableStatement.Column(
-                        src = CreateTableStatement.Column("active", "INTEGER", false, false, false, false),
+                        src = CreateTableStatement.Column(
+                            "active",
+                            "INTEGER",
+                            false,
+                            false,
+                            false,
+                            false
+                        ),
                         annotations = emptyMap()
                     )
                 )

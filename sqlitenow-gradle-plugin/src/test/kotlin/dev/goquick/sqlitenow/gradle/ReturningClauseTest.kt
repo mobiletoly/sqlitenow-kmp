@@ -1,6 +1,9 @@
 package dev.goquick.sqlitenow.gradle
 
-import dev.goquick.sqlitenow.gradle.inspect.InsertStatement
+import dev.goquick.sqlitenow.gradle.sqlinspect.InsertStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
+import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
+import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
 import net.sf.jsqlparser.parser.CCJSqlParserUtil
 import net.sf.jsqlparser.statement.insert.Insert
 import org.junit.jupiter.api.DisplayName

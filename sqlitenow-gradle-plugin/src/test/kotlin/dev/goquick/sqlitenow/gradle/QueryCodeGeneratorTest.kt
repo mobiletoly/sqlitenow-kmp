@@ -1,6 +1,13 @@
 package dev.goquick.sqlitenow.gradle
 
-import dev.goquick.sqlitenow.gradle.inspect.CreateTableStatement
+import dev.goquick.sqlitenow.gradle.generator.query.QueryCodeGenerator
+import dev.goquick.sqlitenow.gradle.sqlinspect.CreateTableStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
+import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
+import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
+import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter
 import java.io.File
 import java.nio.file.Path
 import org.junit.jupiter.api.BeforeEach
@@ -24,6 +31,119 @@ class QueryCodeGeneratorTest {
         outputDir = File(tempDir.toFile(), "output")
         queriesDir = File(tempDir.toFile(), "queries")
         queriesDir.mkdirs()
+    }
+
+    @Test
+    @DisplayName("Select execute functions expose result adapters when propertyType mapping is used")
+    fun testSelectExecuteFunctionsExposeResultAdapters() {
+        val personDir = File(queriesDir, "personAdapters")
+        personDir.mkdirs()
+
+        File(personDir, "selectWithAdapters.sql").writeText(
+            """
+            -- @@{name=SelectWithAdapters}
+            SELECT id, birth_date, created_at
+            FROM person
+            WHERE id = :personId;
+            """.trimIndent()
+        )
+
+        val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
+
+        val idColumn = CreateTableStatement.Column(
+            name = "id",
+            dataType = "INTEGER",
+            notNull = true,
+            primaryKey = true,
+            autoIncrement = false,
+            unique = true
+        )
+        val birthDateColumn = CreateTableStatement.Column(
+            name = "birth_date",
+            dataType = "TEXT",
+            notNull = false,
+            primaryKey = false,
+            autoIncrement = false,
+            unique = false
+        )
+        val createdAtColumn = CreateTableStatement.Column(
+            name = "created_at",
+            dataType = "TEXT",
+            notNull = true,
+            primaryKey = false,
+            autoIncrement = false,
+            unique = false
+        )
+
+        val personTableStatement = AnnotatedCreateTableStatement(
+            name = "Person",
+            src = CreateTableStatement(
+                sql = "CREATE TABLE person(id INTEGER PRIMARY KEY, birth_date TEXT, created_at TEXT NOT NULL);",
+                tableName = "person",
+                columns = listOf(idColumn, birthDateColumn, createdAtColumn)
+            ),
+            annotations = StatementAnnotationOverrides(
+                name = null,
+                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
+                queryResult = null,
+                implements = null,
+                excludeOverrideFields = null,
+                collectionKey = null
+            ),
+            columns = listOf(
+                AnnotatedCreateTableStatement.Column(
+                    src = idColumn,
+                    annotations = emptyMap()
+                ),
+                AnnotatedCreateTableStatement.Column(
+                    src = birthDateColumn,
+                    annotations = mapOf(
+                        AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDate",
+                        AnnotationConstants.ADAPTER to AnnotationConstants.ADAPTER_CUSTOM
+                    )
+                ),
+                AnnotatedCreateTableStatement.Column(
+                    src = createdAtColumn,
+                    annotations = mapOf(
+                        AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDateTime",
+                        AnnotationConstants.ADAPTER to AnnotationConstants.ADAPTER_CUSTOM
+                    )
+                )
+            )
+        )
+
+        val dataStructGenerator = createDataStructCodeGeneratorWithMockExecutors(
+            conn = conn,
+            queriesDir = queriesDir,
+            createTableStatements = listOf(personTableStatement),
+            packageName = "com.example.db",
+            outputDir = outputDir
+        )
+
+        val queryGenerator = QueryCodeGenerator(
+            generatorContext = dataStructGenerator.generatorContext,
+            dataStructCodeGenerator = dataStructGenerator
+        )
+
+        queryGenerator.generateCode()
+
+        val generatedFile = File(outputDir, "com/example/db/PersonAdaptersQuery_SelectWithAdapters.kt")
+        assertTrue(generatedFile.exists(), "Generated query file should exist")
+        val content = generatedFile.readText()
+
+        assertTrue(
+            content.contains("sqlValueToBirthDate: (String?) -> LocalDate?"),
+            "execute functions should expose sqlValueToBirthDate adapter parameter"
+        )
+        assertTrue(
+            content.contains("sqlValueToCreatedAt: (String) -> LocalDateTime"),
+            "execute functions should expose sqlValueToCreatedAt adapter parameter"
+        )
+
+        assertTrue(
+            content.contains("PersonAdaptersQuery.SelectWithAdapters.readStatementResult(statement, sqlValueToBirthDate, sqlValueToCreatedAt)"),
+            "readStatementResult invocation should pass both adapters"
+        )
     }
 
     @Test
@@ -72,9 +192,8 @@ class QueryCodeGeneratorTest {
 
         // Create QueryCodeGenerator
         val queryGenerator = QueryCodeGenerator(
-            dataStructCodeGenerator = dataStructGenerator,
-            packageName = "com.example.db",
-            outputDir = outputDir
+            generatorContext = dataStructGenerator.generatorContext,
+            dataStructCodeGenerator = dataStructGenerator
         )
 
         // Generate the query code
@@ -195,10 +314,8 @@ class QueryCodeGeneratorTest {
 
         // Create QueryCodeGenerator
         val queryGenerator = QueryCodeGenerator(
-            
-            dataStructCodeGenerator = dataStructGenerator,
-            packageName = "com.example.db",
-            outputDir = outputDir
+            generatorContext = dataStructGenerator.generatorContext,
+            dataStructCodeGenerator = dataStructGenerator
         )
 
         // Generate the query code
@@ -471,10 +588,8 @@ class QueryCodeGeneratorTest {
 
         // Create QueryCodeGenerator
         val queryGenerator = QueryCodeGenerator(
-            
-            dataStructCodeGenerator = dataStructGenerator,
-            packageName = "com.example.db",
-            outputDir = outputDir
+            generatorContext = dataStructGenerator.generatorContext,
+            dataStructCodeGenerator = dataStructGenerator
         )
 
         // Generate the query code
@@ -554,10 +669,8 @@ class QueryCodeGeneratorTest {
 
         // Create QueryCodeGenerator
         val queryGenerator = QueryCodeGenerator(
-            
-            dataStructCodeGenerator = dataStructGenerator,
-            packageName = "com.example.db",
-            outputDir = outputDir
+            generatorContext = dataStructGenerator.generatorContext,
+            dataStructCodeGenerator = dataStructGenerator
         )
 
         // Generate the query code
@@ -623,10 +736,8 @@ class QueryCodeGeneratorTest {
 
         // Create QueryCodeGenerator
         val queryGenerator = QueryCodeGenerator(
-            
-            dataStructCodeGenerator = dataStructGenerator,
-            packageName = "com.example.db",
-            outputDir = outputDir
+            generatorContext = dataStructGenerator.generatorContext,
+            dataStructCodeGenerator = dataStructGenerator
         )
 
         // Generate the query code
@@ -849,7 +960,14 @@ class QueryCodeGeneratorTest {
                     annotations = emptyMap()
                 ),
                 AnnotatedCreateTableStatement.Column(
-                    src = CreateTableStatement.Column("created_at", "TEXT", false, false, false, false),
+                    src = CreateTableStatement.Column(
+                        "created_at",
+                        "TEXT",
+                        false,
+                        false,
+                        false,
+                        false
+                    ),
                     annotations = emptyMap()
                 )
             )
@@ -866,9 +984,8 @@ class QueryCodeGeneratorTest {
 
         // Create QueryCodeGenerator
         val queryGenerator = QueryCodeGenerator(
-            dataStructCodeGenerator = dataStructGenerator,
-            packageName = "com.test.db",
-            outputDir = outputDir
+            generatorContext = dataStructGenerator.generatorContext,
+            dataStructCodeGenerator = dataStructGenerator
         )
 
         // Generate the query code

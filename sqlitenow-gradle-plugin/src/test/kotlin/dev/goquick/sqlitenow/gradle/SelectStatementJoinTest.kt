@@ -1,6 +1,11 @@
 package dev.goquick.sqlitenow.gradle
 
-import dev.goquick.sqlitenow.gradle.inspect.SelectStatement
+import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
+import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
+import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
+import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -332,9 +337,11 @@ class SelectStatementJoinTest {
                 ),
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource("street", "a", "street", "TEXT"),
-                    annotations = FieldAnnotationOverrides.parse(mapOf(
-                        AnnotationConstants.NOT_NULL to true
-                    ))
+                    annotations = FieldAnnotationOverrides.parse(
+                        mapOf(
+                            AnnotationConstants.NOT_NULL to true
+                        )
+                    )
                 )
             )
         )

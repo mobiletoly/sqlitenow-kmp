@@ -1,6 +1,11 @@
 package dev.goquick.sqlitenow.gradle
 
-import dev.goquick.sqlitenow.gradle.inspect.SelectStatement
+import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
+import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
+import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
+import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -126,13 +131,15 @@ class SelectStatementCollectionKeyTest {
                 ),
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource("address_id", "a", "id", "INTEGER"),
-                    annotations = FieldAnnotationOverrides.parse(mapOf(
-                        AnnotationConstants.IS_DYNAMIC_FIELD to true,
-                        AnnotationConstants.PROPERTY_TYPE to "List<Address>",
-                        AnnotationConstants.MAPPING_TYPE to "collection",
-                        AnnotationConstants.SOURCE_TABLE to "a",
-                        AnnotationConstants.COLLECTION_KEY to "address_id"
-                    ))
+                    annotations = FieldAnnotationOverrides.parse(
+                        mapOf(
+                            AnnotationConstants.IS_DYNAMIC_FIELD to true,
+                            AnnotationConstants.PROPERTY_TYPE to "List<Address>",
+                            AnnotationConstants.MAPPING_TYPE to "collection",
+                            AnnotationConstants.SOURCE_TABLE to "a",
+                            AnnotationConstants.COLLECTION_KEY to "address_id"
+                        )
+                    )
                 )
             )
         )
@@ -181,13 +188,15 @@ class SelectStatementCollectionKeyTest {
                 ),
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource("address_id", "a", "id", "INTEGER"),
-                    annotations = FieldAnnotationOverrides.parse(mapOf(
-                        AnnotationConstants.IS_DYNAMIC_FIELD to true,
-                        AnnotationConstants.PROPERTY_TYPE to "List<Address>",
-                        AnnotationConstants.MAPPING_TYPE to "collection",
-                        AnnotationConstants.SOURCE_TABLE to "a",
-                        AnnotationConstants.COLLECTION_KEY to "a.id"
-                    ))
+                    annotations = FieldAnnotationOverrides.parse(
+                        mapOf(
+                            AnnotationConstants.IS_DYNAMIC_FIELD to true,
+                            AnnotationConstants.PROPERTY_TYPE to "List<Address>",
+                            AnnotationConstants.MAPPING_TYPE to "collection",
+                            AnnotationConstants.SOURCE_TABLE to "a",
+                            AnnotationConstants.COLLECTION_KEY to "a.id"
+                        )
+                    )
                 )
             )
         )
@@ -235,14 +244,16 @@ class SelectStatementCollectionKeyTest {
                 ),
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource("address_id", "a", "id", "INTEGER"),
-                    annotations = FieldAnnotationOverrides.parse(mapOf(
-                        AnnotationConstants.IS_DYNAMIC_FIELD to true,
-                        AnnotationConstants.PROPERTY_TYPE to "List<Address>",
-                        AnnotationConstants.MAPPING_TYPE to "collection",
-                        AnnotationConstants.SOURCE_TABLE to "a",
-                        AnnotationConstants.COLLECTION_KEY to "address_id",
-                        AnnotationConstants.ALIAS_PREFIX to "address_"
-                    ))
+                    annotations = FieldAnnotationOverrides.parse(
+                        mapOf(
+                            AnnotationConstants.IS_DYNAMIC_FIELD to true,
+                            AnnotationConstants.PROPERTY_TYPE to "List<Address>",
+                            AnnotationConstants.MAPPING_TYPE to "collection",
+                            AnnotationConstants.SOURCE_TABLE to "a",
+                            AnnotationConstants.COLLECTION_KEY to "address_id",
+                            AnnotationConstants.ALIAS_PREFIX to "address_"
+                        )
+                    )
                 )
             )
         )

@@ -55,5 +55,11 @@ The notes below capture the current mental model so the next agent can resume qu
 - For investigations in the complex `daytempo-kmp` sample:
   - Regenerate DB code: `./gradlew :daytempo-kmp:composeApp:generateDayTempoDatabase`
   - Verify compilation: `./gradlew :daytempo-kmp:composeApp:compileDebugUnitTestSources`
+- During incremental refactors, run the full verification loop after **each** meaningful change:
+  - `./gradlew :sqlitenow-gradle-plugin:test`
+  - `./gradlew :library-test:composeApp:generateLibraryTestDatabase`
+  - `./gradlew :library-test:composeApp:connectedAndroidTest`
+  - `./gradlew :daytempo-kmp:composeApp:generateDayTempoDatabase`
+  - `./gradlew :daytempo-kmp:composeApp:connectedAndroidTest`
 
 Keep this document updated when plugin behavior, verification steps, or expected SQL layout changes.

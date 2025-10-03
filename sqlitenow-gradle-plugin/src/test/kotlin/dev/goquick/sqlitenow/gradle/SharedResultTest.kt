@@ -1,6 +1,12 @@
 package dev.goquick.sqlitenow.gradle
 
-import dev.goquick.sqlitenow.gradle.inspect.SelectStatement
+import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
+import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
+import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
+import dev.goquick.sqlitenow.gradle.processing.SharedResultManager
+import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.DisplayName
@@ -140,7 +146,12 @@ class SharedResultTest {
                 limitNamedParam = null,
                 fields = listOf(
                     SelectStatement.FieldSource("id", "person", "id", "INTEGER"),
-                    SelectStatement.FieldSource("email", "person", "email", "TEXT") // Different field!
+                    SelectStatement.FieldSource(
+                        "email",
+                        "person",
+                        "email",
+                        "TEXT"
+                    ) // Different field!
                 )
             ),
             annotations = StatementAnnotationOverrides(

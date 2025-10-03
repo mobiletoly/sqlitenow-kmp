@@ -1,12 +1,23 @@
 package dev.goquick.sqlitenow.gradle
 
-import com.squareup.kotlinpoet.FunSpec
-import dev.goquick.sqlitenow.gradle.inspect.AssociatedColumn
-import dev.goquick.sqlitenow.gradle.inspect.CreateTableStatement
-import dev.goquick.sqlitenow.gradle.inspect.DeleteStatement
-import dev.goquick.sqlitenow.gradle.inspect.InsertStatement
-import dev.goquick.sqlitenow.gradle.inspect.SelectStatement
-import dev.goquick.sqlitenow.gradle.inspect.UpdateStatement
+import dev.goquick.sqlitenow.gradle.context.ColumnLookup
+import dev.goquick.sqlitenow.gradle.generator.data.DataStructCodeGenerator
+import dev.goquick.sqlitenow.gradle.generator.query.QueryCodeGenerator
+import dev.goquick.sqlitenow.gradle.sqlinspect.AssociatedColumn
+import dev.goquick.sqlitenow.gradle.sqlinspect.CreateTableStatement
+import dev.goquick.sqlitenow.gradle.sqlinspect.DeleteStatement
+import dev.goquick.sqlitenow.gradle.sqlinspect.InsertStatement
+import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
+import dev.goquick.sqlitenow.gradle.sqlinspect.UpdateStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedStatement
+import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
+import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
+import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.sqlinspect.DeferredStatementExecutor
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
@@ -15,7 +26,6 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import java.sql.Connection
 
@@ -539,10 +549,8 @@ class DataStructCodeGeneratorTest {
 
         // Create QueryCodeGenerator to test adapter parameter generation
         val queryGenerator = QueryCodeGenerator(
-
-            dataStructCodeGenerator = dataStructGenerator,
-            packageName = "com.example.db",
-            outputDir = tempDir.resolve("output").toFile()
+            generatorContext = dataStructGenerator.generatorContext,
+            dataStructCodeGenerator = dataStructGenerator
         )
 
         // Test that the parameter type is correctly inferred as LocalDateTime (not Long)
@@ -662,10 +670,8 @@ class DataStructCodeGeneratorTest {
 
         // Create QueryCodeGenerator to test nullable adapter logic
         val queryGenerator = QueryCodeGenerator(
-
-            dataStructCodeGenerator = dataStructGenerator,
-            packageName = "com.example.db",
-            outputDir = tempDir.resolve("output").toFile()
+            generatorContext = dataStructGenerator.generatorContext,
+            dataStructCodeGenerator = dataStructGenerator
         )
 
         // Test that the parameter type is correctly inferred as nullable LocalDateTime
@@ -908,18 +914,16 @@ class DataStructCodeGeneratorTest {
 
         // Create QueryCodeGenerator and generate the function
         val queryGenerator = QueryCodeGenerator(
-
-            dataStructCodeGenerator = dataStructGenerator,
-            packageName = "com.example.db",
-            outputDir = tempDir.resolve("output").toFile()
+            generatorContext = dataStructGenerator.generatorContext,
+            dataStructCodeGenerator = dataStructGenerator
         )
 
         // Generate the function to test adapter parameter types
-        val function = queryGenerator.javaClass.getDeclaredMethod(
-            "generateExecuteQueryFunction",
-            String::class.java, AnnotatedExecuteStatement::class.java, String::class.java
-        ).apply { isAccessible = true }
-            .invoke(queryGenerator, "person", mockAnnotatedStatement, "execute")
+        val function = queryGenerator.invokeExecuteQueryFun(
+            namespace = "person",
+            statement = mockAnnotatedStatement,
+            functionName = "execute",
+        )
 
         // The function should be generated successfully without type errors
         // This test verifies that nullable adapter parameters are correctly generated
@@ -1081,24 +1085,22 @@ class DataStructCodeGeneratorTest {
 
         // Create QueryCodeGenerator to test parameter naming
         val queryGenerator = QueryCodeGenerator(
-
-            dataStructCodeGenerator = dataStructGenerator,
-            packageName = "com.example.db",
-            outputDir = tempDir.resolve("output").toFile()
+            generatorContext = dataStructGenerator.generatorContext,
+            dataStructCodeGenerator = dataStructGenerator
         )
 
         // Generate functions to verify parameter naming
-        val insertFunction = queryGenerator.javaClass.getDeclaredMethod(
-            "generateExecuteQueryFunction",
-            String::class.java, AnnotatedExecuteStatement::class.java, String::class.java
-        ).apply { isAccessible = true }
-            .invoke(queryGenerator, "person", mockInsertAnnotatedStatement, "execute")
+        val insertFunction = queryGenerator.invokeExecuteQueryFun(
+            namespace = "person",
+            statement = mockInsertAnnotatedStatement,
+            functionName = "execute",
+        )
 
-        val selectFunction = queryGenerator.javaClass.getDeclaredMethod(
-            "generateSelectQueryFunction",
-            String::class.java, AnnotatedSelectStatement::class.java, String::class.java
-        ).apply { isAccessible = true }
-            .invoke(queryGenerator, "person", mockSelectStatement, "executeAsList")
+        val selectFunction = queryGenerator.invokeSelectQueryFun(
+            namespace = "person",
+            statement = mockSelectStatement,
+            functionName = "executeAsList",
+        )
 
         // The functions should be generated successfully with correct parameter names:
         // INSERT: createdAtToSqlColumn: (LocalDateTime) -> Long
@@ -1189,10 +1191,8 @@ class DataStructCodeGeneratorTest {
 
         // Create QueryCodeGenerator to test deduplication
         val queryGenerator = QueryCodeGenerator(
-
-            dataStructCodeGenerator = dataStructGenerator,
-            packageName = "com.example.db",
-            outputDir = tempDir.resolve("output").toFile()
+            generatorContext = dataStructGenerator.generatorContext,
+            dataStructCodeGenerator = dataStructGenerator
         )
 
         // Test that duplicate parameters in SQL don't create duplicate adapter functions
@@ -1211,7 +1211,11 @@ class DataStructCodeGeneratorTest {
                         dataType = "TEXT"
                     )
                 ),
-                namedParameters = listOf("birth_date", "birth_date", "age"),  // Duplicate birth_date
+                namedParameters = listOf(
+                    "birth_date",
+                    "birth_date",
+                    "age"
+                ),  // Duplicate birth_date
                 namedParametersToColumns = mapOf(
                     "birth_date" to AssociatedColumn.Default("birth_date"),
                     "age" to AssociatedColumn.Default("age")
@@ -1246,11 +1250,11 @@ class DataStructCodeGeneratorTest {
         )
 
         // Generate the function - this should not fail due to duplicate parameters
-        val selectFunction = queryGenerator.javaClass.getDeclaredMethod(
-            "generateSelectQueryFunction",
-            String::class.java, AnnotatedSelectStatement::class.java, String::class.java
-        ).apply { isAccessible = true }
-            .invoke(queryGenerator, "person", mockSelectStatement, "executeAsList")
+        val selectFunction = queryGenerator.invokeSelectQueryFun(
+            namespace = "person",
+            statement = mockSelectStatement,
+            functionName = "executeAsList",
+        )
 
         // The function should be generated successfully without duplicate adapter parameters
         // Expected: only one birthDateToSqlColumn parameter, not two
@@ -1695,10 +1699,8 @@ class DataStructCodeGeneratorTest {
 
         // Create QueryCodeGenerator to test binding deduplication
         val queryGenerator = QueryCodeGenerator(
-
-            dataStructCodeGenerator = dataStructGenerator,
-            packageName = "com.example.db",
-            outputDir = tempDir.resolve("output").toFile()
+            generatorContext = dataStructGenerator.generatorContext,
+            dataStructCodeGenerator = dataStructGenerator
         )
 
         // Test that duplicate parameters in SQL don't create duplicate binding code
@@ -1716,7 +1718,11 @@ class DataStructCodeGeneratorTest {
                         dataType = "TEXT"
                     )
                 ),
-                namedParameters = listOf("birth_date", "birth_date", "age"),  // Duplicate birth_date
+                namedParameters = listOf(
+                    "birth_date",
+                    "birth_date",
+                    "age"
+                ),  // Duplicate birth_date
                 namedParametersToColumns = mapOf(
                     "birth_date" to AssociatedColumn.Default("birth_date"),
                     "age" to AssociatedColumn.Default("age")
@@ -1751,11 +1757,11 @@ class DataStructCodeGeneratorTest {
         )
 
         // Generate the function - this should not fail due to duplicate binding variables
-        val selectFunction = queryGenerator.javaClass.getDeclaredMethod(
-            "generateSelectQueryFunction",
-            String::class.java, AnnotatedSelectStatement::class.java, String::class.java
-        ).apply { isAccessible = true }
-            .invoke(queryGenerator, "person", mockSelectStatement, "executeAsList")
+        val selectFunction = queryGenerator.invokeSelectQueryFun(
+            namespace = "person",
+            statement = mockSelectStatement,
+            functionName = "executeAsList",
+        )
 
         // The function should be generated successfully without duplicate binding variables
         // Expected: only one "val birthDate = birthDateToSqlColumn(params.birthDate)" statement
@@ -1911,18 +1917,16 @@ class DataStructCodeGeneratorTest {
 
         // Create QueryCodeGenerator to test null-checking logic
         val queryGenerator = QueryCodeGenerator(
-
-            dataStructCodeGenerator = dataStructGenerator,
-            packageName = "com.example.db",
-            outputDir = tempDir.resolve("output").toFile()
+            generatorContext = dataStructGenerator.generatorContext,
+            dataStructCodeGenerator = dataStructGenerator
         )
 
         // Generate the function and check the generated code
-        val function = queryGenerator.javaClass.getDeclaredMethod(
-            "generateExecuteQueryFunction",
-            String::class.java, AnnotatedExecuteStatement::class.java, String::class.java
-        ).apply { isAccessible = true }
-            .invoke(queryGenerator, "person", mockAnnotatedStatement, "execute") as FunSpec
+        val function = queryGenerator.invokeExecuteQueryFun(
+            namespace = "person",
+            statement = mockAnnotatedStatement,
+            functionName = "execute",
+        )
 
         val generatedCode = function.toString()
 
@@ -3333,7 +3337,8 @@ class DataStructCodeGeneratorTest {
                             primaryKey = false,
                             autoIncrement = false,
                             unique = false
-                        ), annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDate")
+                        ),
+                        annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDate")
                     ),
                     AnnotatedCreateTableStatement.Column(
                         src = CreateTableStatement.Column(
@@ -3343,7 +3348,8 @@ class DataStructCodeGeneratorTest {
                             primaryKey = false,
                             autoIncrement = false,
                             unique = false
-                        ), annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDateTime")
+                        ),
+                        annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDateTime")
                     ),
                     AnnotatedCreateTableStatement.Column(
                         src = CreateTableStatement.Column(
@@ -3807,4 +3813,36 @@ class DataStructCodeGeneratorTest {
             "Should include regular name field"
         )
     }
+}
+
+private fun QueryCodeGenerator.invokeExecuteQueryFun(
+    namespace: String,
+    statement: AnnotatedExecuteStatement,
+    functionName: String,
+): com.squareup.kotlinpoet.FunSpec {
+    val field = javaClass.getDeclaredField("queryExecuteEmitter").apply { isAccessible = true }
+    val emitter = field.get(this)
+    val method = emitter.javaClass.getDeclaredMethod(
+        "generateExecuteQueryFunction",
+        String::class.java,
+        AnnotatedExecuteStatement::class.java,
+        String::class.java,
+    ).apply { isAccessible = true }
+    return method.invoke(emitter, namespace, statement, functionName) as com.squareup.kotlinpoet.FunSpec
+}
+
+private fun QueryCodeGenerator.invokeSelectQueryFun(
+    namespace: String,
+    statement: AnnotatedSelectStatement,
+    functionName: String,
+): com.squareup.kotlinpoet.FunSpec {
+    val field = javaClass.getDeclaredField("queryExecuteEmitter").apply { isAccessible = true }
+    val emitter = field.get(this)
+    val method = emitter.javaClass.getDeclaredMethod(
+        "generateSelectQueryFunction",
+        String::class.java,
+        AnnotatedSelectStatement::class.java,
+        String::class.java,
+    ).apply { isAccessible = true }
+    return method.invoke(emitter, namespace, statement, functionName) as com.squareup.kotlinpoet.FunSpec
 }

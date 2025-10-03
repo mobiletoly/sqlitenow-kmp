@@ -1,5 +1,8 @@
 package dev.goquick.sqlitenow.gradle
 
+import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
+import dev.goquick.sqlitenow.gradle.processing.StatementProcessingHelper
+import dev.goquick.sqlitenow.gradle.sqlinspect.UpdateStatement
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import java.io.File
@@ -45,7 +48,7 @@ class UpdateStatementTest {
         assertTrue(updateStatement is AnnotatedExecuteStatement, "Should be an AnnotatedExecuteStatement")
 
         val executeStatement = updateStatement as AnnotatedExecuteStatement
-        assertTrue(executeStatement.src is dev.goquick.sqlitenow.gradle.inspect.UpdateStatement,
+        assertTrue(executeStatement.src is UpdateStatement,
             "Should be an UpdateStatement")
 
         // Clean up

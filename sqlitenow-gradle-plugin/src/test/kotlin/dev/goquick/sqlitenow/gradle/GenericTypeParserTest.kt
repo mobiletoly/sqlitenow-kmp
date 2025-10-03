@@ -1,5 +1,6 @@
 package dev.goquick.sqlitenow.gradle
 
+import dev.goquick.sqlitenow.gradle.util.GenericTypeParser
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

@@ -1,5 +1,9 @@
 package dev.goquick.sqlitenow.gradle
 
+import dev.goquick.sqlitenow.gradle.database.MigratorCodeGenerator
+import dev.goquick.sqlitenow.gradle.database.MigrationInspector
+import dev.goquick.sqlitenow.gradle.sqlinspect.SQLBatchInspector
+import dev.goquick.sqlitenow.gradle.sqlinspect.SchemaInspector
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File

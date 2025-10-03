@@ -1,6 +1,6 @@
 package dev.goquick.sqlitenow.gradle
 
-import dev.goquick.sqlitenow.gradle.inspect.SelectStatement
+import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
 import net.sf.jsqlparser.parser.CCJSqlParserUtil
 import net.sf.jsqlparser.statement.select.PlainSelect
 import org.junit.jupiter.api.Test

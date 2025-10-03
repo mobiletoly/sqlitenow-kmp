@@ -1,6 +1,6 @@
 package dev.goquick.sqlitenow.gradle
 
-import dev.goquick.sqlitenow.gradle.inspect.NamedParametersProcessor
+import dev.goquick.sqlitenow.gradle.sqlinspect.NamedParametersProcessor
 import net.sf.jsqlparser.parser.CCJSqlParserUtil
 import net.sf.jsqlparser.statement.insert.Insert
 import org.junit.jupiter.api.Test

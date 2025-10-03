@@ -1,6 +1,11 @@
 package dev.goquick.sqlitenow.gradle
 
-import dev.goquick.sqlitenow.gradle.inspect.SelectStatement
+import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
+import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
+import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
+import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import kotlin.test.assertEquals
@@ -46,12 +51,14 @@ class SelectStatementDynamicFieldTest {
                 ),
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource("address_id", "a", "id", "INTEGER"),
-                    annotations = FieldAnnotationOverrides.parse(mapOf(
-                        AnnotationConstants.IS_DYNAMIC_FIELD to true,
-                        AnnotationConstants.PROPERTY_TYPE to "Address",
-                        AnnotationConstants.MAPPING_TYPE to "perRow",
-                        AnnotationConstants.SOURCE_TABLE to "a"
-                    ))
+                    annotations = FieldAnnotationOverrides.parse(
+                        mapOf(
+                            AnnotationConstants.IS_DYNAMIC_FIELD to true,
+                            AnnotationConstants.PROPERTY_TYPE to "Address",
+                            AnnotationConstants.MAPPING_TYPE to "perRow",
+                            AnnotationConstants.SOURCE_TABLE to "a"
+                        )
+                    )
                 )
             )
         )
@@ -102,13 +109,15 @@ class SelectStatementDynamicFieldTest {
                 ),
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource("address_id", "a", "id", "INTEGER"),
-                    annotations = FieldAnnotationOverrides.parse(mapOf(
-                        AnnotationConstants.IS_DYNAMIC_FIELD to true,
-                        AnnotationConstants.PROPERTY_TYPE to "List<Address>",
-                        AnnotationConstants.MAPPING_TYPE to "collection",
-                        AnnotationConstants.SOURCE_TABLE to "a",
-                        AnnotationConstants.COLLECTION_KEY to "address_id"
-                    ))
+                    annotations = FieldAnnotationOverrides.parse(
+                        mapOf(
+                            AnnotationConstants.IS_DYNAMIC_FIELD to true,
+                            AnnotationConstants.PROPERTY_TYPE to "List<Address>",
+                            AnnotationConstants.MAPPING_TYPE to "collection",
+                            AnnotationConstants.SOURCE_TABLE to "a",
+                            AnnotationConstants.COLLECTION_KEY to "address_id"
+                        )
+                    )
                 )
             )
         )
@@ -205,19 +214,23 @@ class SelectStatementDynamicFieldTest {
                 ),
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource("address_id", "a", "id", "INTEGER"),
-                    annotations = FieldAnnotationOverrides.parse(mapOf(
-                        AnnotationConstants.IS_DYNAMIC_FIELD to true,
-                        AnnotationConstants.PROPERTY_TYPE to "Address",
-                        AnnotationConstants.MAPPING_TYPE to "perRow",
-                        AnnotationConstants.SOURCE_TABLE to "a",
-                        AnnotationConstants.ALIAS_PREFIX to "address_"
-                    ))
+                    annotations = FieldAnnotationOverrides.parse(
+                        mapOf(
+                            AnnotationConstants.IS_DYNAMIC_FIELD to true,
+                            AnnotationConstants.PROPERTY_TYPE to "Address",
+                            AnnotationConstants.MAPPING_TYPE to "perRow",
+                            AnnotationConstants.SOURCE_TABLE to "a",
+                            AnnotationConstants.ALIAS_PREFIX to "address_"
+                        )
+                    )
                 ),
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource("address_street", "a", "street", "TEXT"),
-                    annotations = FieldAnnotationOverrides.parse(mapOf(
-                        AnnotationConstants.ALIAS_PREFIX to "address_"
-                    ))
+                    annotations = FieldAnnotationOverrides.parse(
+                        mapOf(
+                            AnnotationConstants.ALIAS_PREFIX to "address_"
+                        )
+                    )
                 )
             )
         )
@@ -266,24 +279,28 @@ class SelectStatementDynamicFieldTest {
                 ),
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource("address_id", "a", "id", "INTEGER"),
-                    annotations = FieldAnnotationOverrides.parse(mapOf(
-                        AnnotationConstants.IS_DYNAMIC_FIELD to true,
-                        AnnotationConstants.PROPERTY_NAME to "primaryAddress",
-                        AnnotationConstants.PROPERTY_TYPE to "Address",
-                        AnnotationConstants.MAPPING_TYPE to "perRow",
-                        AnnotationConstants.SOURCE_TABLE to "a"
-                    ))
+                    annotations = FieldAnnotationOverrides.parse(
+                        mapOf(
+                            AnnotationConstants.IS_DYNAMIC_FIELD to true,
+                            AnnotationConstants.PROPERTY_NAME to "primaryAddress",
+                            AnnotationConstants.PROPERTY_TYPE to "Address",
+                            AnnotationConstants.MAPPING_TYPE to "perRow",
+                            AnnotationConstants.SOURCE_TABLE to "a"
+                        )
+                    )
                 ),
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource("comment_id", "c", "id", "INTEGER"),
-                    annotations = FieldAnnotationOverrides.parse(mapOf(
-                        AnnotationConstants.IS_DYNAMIC_FIELD to true,
-                        AnnotationConstants.PROPERTY_NAME to "comments",
-                        AnnotationConstants.PROPERTY_TYPE to "List<Comment>",
-                        AnnotationConstants.MAPPING_TYPE to "collection",
-                        AnnotationConstants.SOURCE_TABLE to "c",
-                        AnnotationConstants.COLLECTION_KEY to "comment_id"
-                    ))
+                    annotations = FieldAnnotationOverrides.parse(
+                        mapOf(
+                            AnnotationConstants.IS_DYNAMIC_FIELD to true,
+                            AnnotationConstants.PROPERTY_NAME to "comments",
+                            AnnotationConstants.PROPERTY_TYPE to "List<Comment>",
+                            AnnotationConstants.MAPPING_TYPE to "collection",
+                            AnnotationConstants.SOURCE_TABLE to "c",
+                            AnnotationConstants.COLLECTION_KEY to "comment_id"
+                        )
+                    )
                 )
             )
         )
@@ -338,13 +355,15 @@ class SelectStatementDynamicFieldTest {
                 ),
                 AnnotatedSelectStatement.Field(
                     src = SelectStatement.FieldSource("address_id", "a", "id", "INTEGER"),
-                    annotations = FieldAnnotationOverrides.parse(mapOf(
-                        AnnotationConstants.IS_DYNAMIC_FIELD to true,
-                        AnnotationConstants.PROPERTY_TYPE to "Address",
-                        AnnotationConstants.MAPPING_TYPE to "perRow",
-                        AnnotationConstants.SOURCE_TABLE to "a",
-                        AnnotationConstants.NOT_NULL to true
-                    ))
+                    annotations = FieldAnnotationOverrides.parse(
+                        mapOf(
+                            AnnotationConstants.IS_DYNAMIC_FIELD to true,
+                            AnnotationConstants.PROPERTY_TYPE to "Address",
+                            AnnotationConstants.MAPPING_TYPE to "perRow",
+                            AnnotationConstants.SOURCE_TABLE to "a",
+                            AnnotationConstants.NOT_NULL to true
+                        )
+                    )
                 )
             )
         )

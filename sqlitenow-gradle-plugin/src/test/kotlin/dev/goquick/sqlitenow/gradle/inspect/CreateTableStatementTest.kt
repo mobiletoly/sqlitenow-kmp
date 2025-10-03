@@ -1,5 +1,6 @@
 package dev.goquick.sqlitenow.gradle.inspect
 
+import dev.goquick.sqlitenow.gradle.sqlinspect.CreateTableStatement
 import net.sf.jsqlparser.parser.CCJSqlParserUtil
 import net.sf.jsqlparser.statement.create.table.CreateTable
 import org.junit.jupiter.api.DisplayName

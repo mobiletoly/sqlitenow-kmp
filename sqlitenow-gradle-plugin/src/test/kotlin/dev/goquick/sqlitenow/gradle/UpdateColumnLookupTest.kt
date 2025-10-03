@@ -1,8 +1,13 @@
 package dev.goquick.sqlitenow.gradle
 
-import dev.goquick.sqlitenow.gradle.inspect.AssociatedColumn
-import dev.goquick.sqlitenow.gradle.inspect.CreateTableStatement
-import dev.goquick.sqlitenow.gradle.inspect.UpdateStatement
+import dev.goquick.sqlitenow.gradle.context.ColumnLookup
+import dev.goquick.sqlitenow.gradle.sqlinspect.AssociatedColumn
+import dev.goquick.sqlitenow.gradle.sqlinspect.CreateTableStatement
+import dev.goquick.sqlitenow.gradle.sqlinspect.UpdateStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
+import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
+import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
@@ -121,7 +126,14 @@ class UpdateColumnLookupTest {
             src = UpdateStatement(
                 sql = "UPDATE person SET age = ?, score = ?, notes = ? WHERE id = ? AND birth_date <= ? AND birth_date >= ?",
                 table = "person",
-                namedParameters = listOf("myAge", "myScore", "myNotes", "id", "myBirthDate", "myBirthDate"),
+                namedParameters = listOf(
+                    "myAge",
+                    "myScore",
+                    "myNotes",
+                    "id",
+                    "myBirthDate",
+                    "myBirthDate"
+                ),
                 namedParametersToColumns = mapOf(
                     // WHERE clause parameters
                     "id" to AssociatedColumn.Default("id"),

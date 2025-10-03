@@ -1,10 +1,9 @@
 package dev.goquick.sqlitenow.gradle
 
+import dev.goquick.sqlitenow.gradle.database.DatabaseCodeGenerator
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Assertions.*
-import org.junit.jupiter.api.BeforeEach
-import org.junit.jupiter.api.io.TempDir
 import java.io.File
 
 /**

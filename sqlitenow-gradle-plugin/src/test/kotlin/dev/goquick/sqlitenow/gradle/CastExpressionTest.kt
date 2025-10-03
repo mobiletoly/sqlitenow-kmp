@@ -1,6 +1,12 @@
 package dev.goquick.sqlitenow.gradle
 
-import dev.goquick.sqlitenow.gradle.inspect.NamedParametersProcessor
+import dev.goquick.sqlitenow.gradle.generator.data.DataStructCodeGenerator
+import dev.goquick.sqlitenow.gradle.sqlinspect.AssociatedColumn
+import dev.goquick.sqlitenow.gradle.sqlinspect.NamedParametersProcessor
+import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
+import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
+import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
 import net.sf.jsqlparser.parser.CCJSqlParserUtil
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
@@ -79,20 +85,20 @@ class CastExpressionTest {
     @Test
     fun testDataStructCodeGeneratorIntegration() {
         // Create a mock SELECT statement with CAST expression
-        val mockSelectStatement = dev.goquick.sqlitenow.gradle.AnnotatedSelectStatement(
+        val mockSelectStatement = AnnotatedSelectStatement(
             name = "selectWithCast",
-            src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
+            src = SelectStatement(
                 sql = "SELECT * FROM PersonWithAddressView WHERE person_id = ? AND phone >= ?",
                 fromTable = "PersonWithAddressView",
                 joinTables = emptyList(),
                 fields = listOf(
-                    dev.goquick.sqlitenow.gradle.inspect.SelectStatement.FieldSource(
+                    SelectStatement.FieldSource(
                         fieldName = "person_id",
                         tableName = "PersonWithAddressView",
                         originalColumnName = "person_id",
                         dataType = "INTEGER"
                     ),
-                    dev.goquick.sqlitenow.gradle.inspect.SelectStatement.FieldSource(
+                    SelectStatement.FieldSource(
                         fieldName = "phone",
                         tableName = "PersonWithAddressView",
                         originalColumnName = "phone",
@@ -101,7 +107,7 @@ class CastExpressionTest {
                 ),
                 namedParameters = listOf("personId", "numberOfDays"),
                 namedParametersToColumns = mapOf(
-                    "personId" to dev.goquick.sqlitenow.gradle.inspect.AssociatedColumn.Default("person_id")
+                    "personId" to AssociatedColumn.Default("person_id")
                 ),
                 offsetNamedParam = null,
                 limitNamedParam = null,

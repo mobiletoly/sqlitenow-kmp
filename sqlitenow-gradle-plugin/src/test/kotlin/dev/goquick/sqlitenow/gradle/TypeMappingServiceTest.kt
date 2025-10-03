@@ -1,6 +1,7 @@
 package dev.goquick.sqlitenow.gradle
 
 import com.squareup.kotlinpoet.ClassName
+import dev.goquick.sqlitenow.gradle.context.TypeMapping
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals

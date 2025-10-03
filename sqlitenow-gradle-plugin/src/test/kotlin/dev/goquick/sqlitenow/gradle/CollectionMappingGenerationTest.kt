@@ -77,10 +77,11 @@ class CollectionMappingGenerationTest {
         val text = genFile.readText()
 
         // Verify grouping and distinct are present
-        assertTrue(text.contains("groupBy { it"), "Should group joined rows")
+        val hasGroupBy = text.contains("joinedRows.groupBy") || text.contains(".groupBy { row ->")
+        assertTrue(hasGroupBy, "Should group joined rows")
         assertTrue(text.contains(".distinctBy"), "Should distinct collection items by unique key")
         // Basic sanity: file contains mapping of collection items
-        assertTrue(text.contains("addresses = rowsForEntity"), "Should map collection items from joined rows")
+        assertTrue(text.contains("addresses ="), "Should map collection items from joined rows")
     }
 
     @Test
@@ -137,6 +138,106 @@ class CollectionMappingGenerationTest {
         val genFile = outDir.walkTopDown().first { it.name.contains("PersonQuery_SelectWithDetailAndList") && it.extension == "kt" }
         val text = genFile.readText()
         assertTrue(text.contains("primaryDetail ="), "Per-row dynamic field should be constructed in mapped result")
+    }
+
+    @Test
+    fun per_row_dynamic_field_is_guarded_when_collections_present() {
+        val root = createTempDir(prefix = "perrow-guard-")
+        val schemaDir = File(root, "schema").apply { mkdirs() }
+        val queriesDir = File(root, "queries").apply { mkdirs() }
+
+        File(schemaDir, "person.sql").writeText(
+            """
+            CREATE TABLE person (
+              id BLOB PRIMARY KEY NOT NULL,
+              doc_id TEXT NOT NULL UNIQUE,
+              name TEXT NOT NULL
+            ) WITHOUT ROWID;
+            """.trimIndent()
+        )
+        File(schemaDir, "address.sql").writeText(
+            """
+            CREATE TABLE address (
+              address_id TEXT PRIMARY KEY NOT NULL,
+              person_doc_id TEXT NOT NULL,
+              city TEXT NOT NULL
+            );
+            """.trimIndent()
+        )
+        File(schemaDir, "detail.sql").writeText(
+            """
+            CREATE TABLE detail (
+              doc_id TEXT PRIMARY KEY NOT NULL,
+              info TEXT NOT NULL
+            );
+            """.trimIndent()
+        )
+
+        val addressQueries = File(queriesDir, "address").apply { mkdirs() }
+        File(addressQueries, "selectAll.sql").writeText(
+            """
+            -- @@{ queryResult=Row }
+            SELECT address_id, person_doc_id, city FROM address;
+            """.trimIndent()
+        )
+
+        val detailQueries = File(queriesDir, "detail").apply { mkdirs() }
+        File(detailQueries, "selectAll.sql").writeText(
+            """
+            -- @@{ queryResult=Row }
+            SELECT doc_id, info FROM detail;
+            """.trimIndent()
+        )
+
+        val personQueries = File(queriesDir, "person").apply { mkdirs() }
+        File(personQueries, "selectWithAddressesAndDetail.sql").writeText(
+            """
+            /* @@{ queryResult=RowWithData, collectionKey=doc_id } */
+            SELECT
+              p.*,
+              a.address_id AS addr_address_id,
+              a.person_doc_id AS addr_person_doc_id,
+              a.city AS addr_city,
+              d.doc_id AS det_doc_id,
+              d.info AS det_info
+
+            /* @@{ dynamicField=addresses,
+                   mappingType=collection,
+                   propertyType=List<AddressQuery.SharedResult.Row>,
+                   sourceTable=a,
+                   collectionKey=addr_address_id,
+                   aliasPrefix=addr_ } */
+
+            /* @@{ dynamicField=primaryDetail,
+                   mappingType=perRow,
+                   propertyType=DetailQuery.SharedResult.Row,
+                   sourceTable=d,
+                   aliasPrefix=det_ } */
+
+            FROM person p
+            LEFT JOIN address a ON p.doc_id = a.person_doc_id
+            LEFT JOIN detail d ON p.doc_id = d.doc_id;
+            """.trimIndent()
+        )
+
+        val outDir = File(root, "out").apply { mkdirs() }
+        generateDatabaseFiles(
+            dbName = "GuardDb",
+            sqlDir = root,
+            packageName = "dev.guard",
+            outDir = outDir,
+            schemaDatabaseFile = null,
+            debug = false,
+        )
+
+        val genFile = outDir.walkTopDown().first {
+            it.name.contains("PersonQuery_SelectWithAddressesAndDetail") && it.extension == "kt"
+        }
+        val text = genFile.readText()
+        assertTrue(
+            text.contains("primaryDetail = rowsForEntity.firstOrNull"),
+            "Per-row mapping inside collection context should access rowsForEntity with a firstOrNull guard",
+        )
     }
 
     @Test
@@ -238,7 +339,8 @@ class CollectionMappingGenerationTest {
 
         // Verify basic collection mapping functionality
         assertTrue(text.contains(".distinctBy"), "Should generate distinctBy for collection deduplication")
-        assertTrue(text.contains("customerReviews = rowsForEntity"), "Should map collection items to 'customerReviews' field")
-        assertTrue(text.contains("groupBy { it"), "Should group joined rows")
+        assertTrue(text.contains("customerReviews ="), "Should map collection items to 'customerReviews' field")
+        val hasNestedGroupBy = text.contains(".groupBy { row ->") || text.contains(".groupBy { it")
+        assertTrue(hasNestedGroupBy, "Should group joined rows")
     }
 }

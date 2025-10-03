@@ -1,5 +1,6 @@
 package dev.goquick.sqlitenow.gradle
 
+import dev.goquick.sqlitenow.gradle.context.DatabaseConfig
 import javax.inject.Inject
 import org.gradle.api.NamedDomainObjectContainer
 import org.gradle.api.model.ObjectFactory

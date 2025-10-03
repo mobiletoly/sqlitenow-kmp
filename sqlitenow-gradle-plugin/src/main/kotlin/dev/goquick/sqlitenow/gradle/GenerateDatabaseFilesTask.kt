@@ -1,5 +1,12 @@
 package dev.goquick.sqlitenow.gradle
 
+import dev.goquick.sqlitenow.gradle.generator.data.DataStructCodeGenerator
+import dev.goquick.sqlitenow.gradle.database.DatabaseCodeGenerator
+import dev.goquick.sqlitenow.gradle.database.MigratorCodeGenerator
+import dev.goquick.sqlitenow.gradle.generator.query.QueryCodeGenerator
+import dev.goquick.sqlitenow.gradle.database.MigrationInspector
+import dev.goquick.sqlitenow.gradle.sqlinspect.SQLBatchInspector
+import dev.goquick.sqlitenow.gradle.sqlinspect.SchemaInspector
 import java.io.File
 import java.io.FileNotFoundException
 import java.sql.Connection
@@ -144,7 +151,9 @@ fun generateDatabaseFiles(
         )
         dataStructCodeGenerator.generateCode()
         val queryCodeGenerator = QueryCodeGenerator(
-            dataStructCodeGenerator = dataStructCodeGenerator, packageName = packageName, outputDir = outDir, debug = debug
+            generatorContext = dataStructCodeGenerator.generatorContext,
+            dataStructCodeGenerator = dataStructCodeGenerator,
+            debug = debug
         )
         queryCodeGenerator.generateCode()
 

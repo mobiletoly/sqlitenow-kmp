@@ -1,7 +1,14 @@
 package dev.goquick.sqlitenow.gradle
 
 import com.squareup.kotlinpoet.KModifier
-import dev.goquick.sqlitenow.gradle.inspect.SelectStatement
+import dev.goquick.sqlitenow.gradle.generator.data.DataStructCodeGenerator
+import dev.goquick.sqlitenow.gradle.generator.data.DataStructPropertyEmitter
+import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
+import dev.goquick.sqlitenow.gradle.processing.DynamicFieldUtils
+import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
+import dev.goquick.sqlitenow.gradle.processing.SelectFieldCodeGenerator
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import java.sql.Connection
@@ -60,11 +67,12 @@ class ExcludeOverrideFieldsPatternTest {
         val props = mutableListOf<com.squareup.kotlinpoet.PropertySpec>()
         val ctor = com.squareup.kotlinpoet.FunSpec.constructorBuilder()
         val fieldCodeGen = SelectFieldCodeGenerator()
+        val emitter = DataStructPropertyEmitter(gen.generatorContext)
 
         val fields = listOf(fieldA, fieldB)
         val skipSet = DynamicFieldUtils.computeSkipSet(fields)
 
-        gen.generatePropertiesWithInterfaceSupport(
+        emitter.emitPropertiesWithInterfaceSupport(
             fields = fields,
             mappedColumns = emptySet(),
             dynamicFieldSkipSet = skipSet,
@@ -95,11 +103,12 @@ class ExcludeOverrideFieldsPatternTest {
         val props = mutableListOf<com.squareup.kotlinpoet.PropertySpec>()
         val ctor = com.squareup.kotlinpoet.FunSpec.constructorBuilder()
         val fieldCodeGen = SelectFieldCodeGenerator()
+        val emitter = DataStructPropertyEmitter(gen.generatorContext)
 
         val fields = listOf(field)
         val skipSet = DynamicFieldUtils.computeSkipSet(fields)
 
-        gen.generatePropertiesWithInterfaceSupport(
+        emitter.emitPropertiesWithInterfaceSupport(
             fields = fields,
             mappedColumns = emptySet(),
             dynamicFieldSkipSet = skipSet,
@@ -122,11 +131,12 @@ class ExcludeOverrideFieldsPatternTest {
         val props = mutableListOf<com.squareup.kotlinpoet.PropertySpec>()
         val ctor = com.squareup.kotlinpoet.FunSpec.constructorBuilder()
         val fieldCodeGen = SelectFieldCodeGenerator()
+        val emitter = DataStructPropertyEmitter(gen.generatorContext)
 
         val fields = listOf(field)
         val skipSet = DynamicFieldUtils.computeSkipSet(fields)
 
-        gen.generatePropertiesWithInterfaceSupport(
+        emitter.emitPropertiesWithInterfaceSupport(
             fields = fields,
             mappedColumns = emptySet(),
             dynamicFieldSkipSet = skipSet,

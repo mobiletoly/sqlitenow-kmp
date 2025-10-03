@@ -2,7 +2,16 @@ package dev.goquick.sqlitenow.gradle
 
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.PropertySpec
-import dev.goquick.sqlitenow.gradle.inspect.SelectStatement
+import dev.goquick.sqlitenow.gradle.generator.data.DataStructCodeGenerator
+import dev.goquick.sqlitenow.gradle.generator.data.DataStructPropertyEmitter
+import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
+import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
+import dev.goquick.sqlitenow.gradle.processing.DynamicFieldMapper
+import dev.goquick.sqlitenow.gradle.processing.DynamicFieldUtils
+import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
+import dev.goquick.sqlitenow.gradle.processing.SelectFieldCodeGenerator
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import java.sql.Connection
@@ -98,7 +107,8 @@ class DynamicFieldMappingExclusionTest {
 
         val ctor = FunSpec.constructorBuilder()
         val props = mutableListOf<PropertySpec>()
-        gen.generatePropertiesWithInterfaceSupport(
+        val emitter = DataStructPropertyEmitter(gen.generatorContext)
+        emitter.emitPropertiesWithInterfaceSupport(
             fields = fields,
             mappedColumns = mapped,
             dynamicFieldSkipSet = skipSet,
@@ -141,7 +151,8 @@ class DynamicFieldMappingExclusionTest {
 
         val ctor = FunSpec.constructorBuilder()
         val props = mutableListOf<PropertySpec>()
-        gen.generatePropertiesWithInterfaceSupport(
+        val emitter = DataStructPropertyEmitter(gen.generatorContext)
+        emitter.emitPropertiesWithInterfaceSupport(
             fields = fields,
             mappedColumns = mapped,
             dynamicFieldSkipSet = skipSet,

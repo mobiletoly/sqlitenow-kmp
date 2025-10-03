@@ -1,7 +1,14 @@
 package dev.goquick.sqlitenow.gradle
 
-import dev.goquick.sqlitenow.gradle.inspect.CreateTableStatement
-import dev.goquick.sqlitenow.gradle.inspect.SelectStatement
+import dev.goquick.sqlitenow.gradle.sqlinspect.CreateTableStatement
+import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
+import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
+import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
+import dev.goquick.sqlitenow.gradle.processing.SelectFieldCodeGenerator
+import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.mock
@@ -282,7 +289,8 @@ class SelectFieldCodeGeneratorTest {
         )
 
         // Create a SelectFieldCodeGenerator with both tables in the schema
-        val generator = SelectFieldCodeGenerator(listOf(mockAnnotatedUserTable, mockAnnotatedAddressTable))
+        val generator =
+            SelectFieldCodeGenerator(listOf(mockAnnotatedUserTable, mockAnnotatedAddressTable))
 
         // Generate a property for the field
         val property = generator.generateProperty(field)

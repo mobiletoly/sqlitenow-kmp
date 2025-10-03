@@ -1,6 +1,13 @@
 package dev.goquick.sqlitenow.gradle
 
-import dev.goquick.sqlitenow.gradle.inspect.CreateTableStatement
+import dev.goquick.sqlitenow.gradle.database.DatabaseCodeGenerator
+import dev.goquick.sqlitenow.gradle.sqlinspect.CreateTableStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
+import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
+import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationResolver
+import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
+import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.processing.StatementProcessingHelper
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -268,7 +275,10 @@ class DatabaseCodeGeneratorTest {
         realConnection.createStatement().execute("CREATE TABLE users (id INTEGER, name TEXT, birth_date TEXT)")
 
         val stmtProcessingHelper =
-            StatementProcessingHelper(realConnection, FieldAnnotationResolver(emptyList(), emptyList()))
+            StatementProcessingHelper(
+                realConnection,
+                FieldAnnotationResolver(emptyList(), emptyList())
+            )
         val nsWithStatements = stmtProcessingHelper.processQueriesDirectory(queriesDir)
 
         val databaseGenerator = DatabaseCodeGenerator(
@@ -358,7 +368,10 @@ class DatabaseCodeGeneratorTest {
         realConnection.createStatement().execute("CREATE TABLE users (id INTEGER, name TEXT)")
 
         val stmtProcessingHelper =
-            StatementProcessingHelper(realConnection, FieldAnnotationResolver(emptyList(), emptyList()))
+            StatementProcessingHelper(
+                realConnection,
+                FieldAnnotationResolver(emptyList(), emptyList())
+            )
         val nsWithStatements = stmtProcessingHelper.processQueriesDirectory(queriesDir)
 
         val databaseGenerator = DatabaseCodeGenerator(
@@ -471,7 +484,10 @@ class DatabaseCodeGeneratorTest {
         realConnection.createStatement().execute("CREATE TABLE users (id INTEGER, name TEXT, email TEXT)")
 
         val stmtProcessingHelper =
-            StatementProcessingHelper(realConnection, FieldAnnotationResolver(emptyList(), emptyList()))
+            StatementProcessingHelper(
+                realConnection,
+                FieldAnnotationResolver(emptyList(), emptyList())
+            )
         val nsWithStatements = stmtProcessingHelper.processQueriesDirectory(queriesDir)
 
         val databaseGenerator = DatabaseCodeGenerator(

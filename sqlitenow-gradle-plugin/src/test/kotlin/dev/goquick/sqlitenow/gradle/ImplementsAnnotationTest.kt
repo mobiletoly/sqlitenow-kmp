@@ -1,5 +1,13 @@
 package dev.goquick.sqlitenow.gradle
 
+import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
+import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
+import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
+import dev.goquick.sqlitenow.gradle.processing.SharedResultManager
+import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.processing.extractAnnotations
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.DisplayName
@@ -58,14 +66,14 @@ class ImplementsAnnotationTest {
         // Create a simple mock statement for testing
         val mockStatement = AnnotatedSelectStatement(
             name = "SelectAll",
-            src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
+            src = SelectStatement(
                 sql = "SELECT * FROM person",
                 fromTable = "person",
                 joinTables = emptyList(),
                 namedParameters = emptyList(),
                 namedParametersToColumns = emptyMap(),
-            offsetNamedParam = null,
-            limitNamedParam = null,
+                offsetNamedParam = null,
+                limitNamedParam = null,
                 fields = emptyList()
             ),
             annotations = parsed,
@@ -87,7 +95,7 @@ class ImplementsAnnotationTest {
         // First statement with implements
         val firstStatement = AnnotatedSelectStatement(
             name = "SelectAll",
-            src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
+            src = SelectStatement(
                 sql = "SELECT * FROM Person",
                 fromTable = "person",
                 joinTables = emptyList(),
@@ -111,7 +119,7 @@ class ImplementsAnnotationTest {
         // Second statement without implements (conflicting)
         val secondStatement = AnnotatedSelectStatement(
             name = "SelectAllFiltered",
-            src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
+            src = SelectStatement(
                 sql = "SELECT * FROM Person WHERE active = 1",
                 fromTable = "person",
                 joinTables = emptyList(),
@@ -367,7 +375,7 @@ class ImplementsAnnotationTest {
         // First statement with excludeOverrideFields specified
         val firstStatement = AnnotatedSelectStatement(
             name = "SelectAll",
-            src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
+            src = SelectStatement(
                 sql = "SELECT * FROM Person",
                 fromTable = "person",
                 joinTables = emptyList(),
@@ -391,7 +399,7 @@ class ImplementsAnnotationTest {
         // Second statement WITHOUT excludeOverrideFields (should inherit)
         val secondStatement = AnnotatedSelectStatement(
             name = "SelectFiltered",
-            src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
+            src = SelectStatement(
                 sql = "SELECT * FROM Person WHERE age > 18",
                 fromTable = "person",
                 joinTables = emptyList(),
@@ -445,7 +453,7 @@ class ImplementsAnnotationTest {
         // First statement WITHOUT excludeOverrideFields
         val firstStatement = AnnotatedSelectStatement(
             name = "SelectAll",
-            src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
+            src = SelectStatement(
                 sql = "SELECT * FROM Person",
                 fromTable = "person",
                 joinTables = emptyList(),
@@ -469,7 +477,7 @@ class ImplementsAnnotationTest {
         // Second statement WITH excludeOverrideFields (should update the shared result)
         val secondStatement = AnnotatedSelectStatement(
             name = "SelectFiltered",
-            src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
+            src = SelectStatement(
                 sql = "SELECT * FROM Person WHERE age > 18",
                 fromTable = "person",
                 joinTables = emptyList(),
@@ -522,7 +530,7 @@ class ImplementsAnnotationTest {
         // but should be treated as equivalent because they map to the same Kotlin type
         val firstQueryFields = listOf(
             AnnotatedSelectStatement.Field(
-                src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement.FieldSource(
+                src = SelectStatement.FieldSource(
                     fieldName = "total_person_count",
                     tableName = "person",
                     originalColumnName = "total_person_count",
@@ -539,7 +547,7 @@ class ImplementsAnnotationTest {
 
         val secondQueryFields = listOf(
             AnnotatedSelectStatement.Field(
-                src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement.FieldSource(
+                src = SelectStatement.FieldSource(
                     fieldName = "total_person_count",
                     tableName = "person",
                     originalColumnName = "total_person_count",
@@ -557,7 +565,7 @@ class ImplementsAnnotationTest {
         // First statement with excludeOverrideFields
         val firstStatement = AnnotatedSelectStatement(
             name = "SelectWithLimit",
-            src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
+            src = SelectStatement(
                 sql = "SELECT *, COUNT(*) AS total_person_count FROM Person LIMIT :limit OFFSET :offset",
                 fromTable = "person",
                 joinTables = emptyList(),
@@ -572,7 +580,15 @@ class ImplementsAnnotationTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = "Person",
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
-                excludeOverrideFields = setOf("phone", "birthDate", "age", "score", "createdAt", "notes", "totalPersonCount"),
+                excludeOverrideFields = setOf(
+                    "phone",
+                    "birthDate",
+                    "age",
+                    "score",
+                    "createdAt",
+                    "notes",
+                    "totalPersonCount"
+                ),
                 collectionKey = null
             ),
             fields = firstQueryFields
@@ -581,7 +597,7 @@ class ImplementsAnnotationTest {
         // Second statement WITHOUT excludeOverrideFields (should inherit)
         val secondStatement = AnnotatedSelectStatement(
             name = "SelectWithFilter",
-            src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
+            src = SelectStatement(
                 sql = "SELECT *, COUNT(*) AS total_person_count FROM Person WHERE first_name IN (:firstNames)",
                 fromTable = "person",
                 joinTables = emptyList(),
@@ -630,7 +646,7 @@ class ImplementsAnnotationTest {
         // Simulate the exact user scenario with COUNT(*) fields that might have different annotations
         val firstQueryFields = listOf(
             AnnotatedSelectStatement.Field(
-                src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement.FieldSource(
+                src = SelectStatement.FieldSource(
                     fieldName = "id",
                     tableName = "person",
                     originalColumnName = "id",
@@ -644,7 +660,7 @@ class ImplementsAnnotationTest {
                 )
             ),
             AnnotatedSelectStatement.Field(
-                src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement.FieldSource(
+                src = SelectStatement.FieldSource(
                     fieldName = "total_person_count",
                     tableName = "person", // This might be different between queries!
                     originalColumnName = "total_person_count",
@@ -661,7 +677,7 @@ class ImplementsAnnotationTest {
 
         val secondQueryFields = listOf(
             AnnotatedSelectStatement.Field(
-                src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement.FieldSource(
+                src = SelectStatement.FieldSource(
                     fieldName = "id",
                     tableName = "person",
                     originalColumnName = "id",
@@ -675,7 +691,7 @@ class ImplementsAnnotationTest {
                 )
             ),
             AnnotatedSelectStatement.Field(
-                src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement.FieldSource(
+                src = SelectStatement.FieldSource(
                     fieldName = "total_person_count",
                     tableName = "person",
                     originalColumnName = "total_person_count",
@@ -693,7 +709,7 @@ class ImplementsAnnotationTest {
         // First statement with excludeOverrideFields
         val firstStatement = AnnotatedSelectStatement(
             name = "SelectWithLimit",
-            src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
+            src = SelectStatement(
                 sql = "SELECT *, COUNT(*) AS total_person_count FROM Person LIMIT :limit OFFSET :offset",
                 fromTable = "person",
                 joinTables = emptyList(),
@@ -708,7 +724,15 @@ class ImplementsAnnotationTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = "Person",
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
-                excludeOverrideFields = setOf("phone", "birthDate", "age", "score", "createdAt", "notes", "totalPersonCount"),
+                excludeOverrideFields = setOf(
+                    "phone",
+                    "birthDate",
+                    "age",
+                    "score",
+                    "createdAt",
+                    "notes",
+                    "totalPersonCount"
+                ),
                 collectionKey = null
             ),
             fields = firstQueryFields
@@ -717,7 +741,7 @@ class ImplementsAnnotationTest {
         // Second statement WITHOUT excludeOverrideFields (should inherit)
         val secondStatement = AnnotatedSelectStatement(
             name = "SelectWithFilter",
-            src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
+            src = SelectStatement(
                 sql = "SELECT *, COUNT(*) AS total_person_count FROM Person WHERE first_name IN (:firstNames)",
                 fromTable = "person",
                 joinTables = emptyList(),
@@ -761,7 +785,7 @@ class ImplementsAnnotationTest {
         // Create mock fields that are identical in structure
         val commonFields = listOf(
             AnnotatedSelectStatement.Field(
-                src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement.FieldSource(
+                src = SelectStatement.FieldSource(
                     fieldName = "id",
                     tableName = "person",
                     originalColumnName = "id",
@@ -775,7 +799,7 @@ class ImplementsAnnotationTest {
                 )
             ),
             AnnotatedSelectStatement.Field(
-                src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement.FieldSource(
+                src = SelectStatement.FieldSource(
                     fieldName = "total_person_count",
                     tableName = "person",
                     originalColumnName = "total_person_count",
@@ -793,7 +817,7 @@ class ImplementsAnnotationTest {
         // First statement with excludeOverrideFields
         val firstStatement = AnnotatedSelectStatement(
             name = "SelectWithLimit",
-            src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
+            src = SelectStatement(
                 sql = "SELECT *, COUNT(*) AS total_person_count FROM Person LIMIT :limit OFFSET :offset",
                 fromTable = "person",
                 joinTables = emptyList(),
@@ -808,7 +832,15 @@ class ImplementsAnnotationTest {
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = "Person",
                 implements = "dev.goquick.sqlitenow.samplekmp.PersonEssentialFields",
-                excludeOverrideFields = setOf("phone", "birthDate", "age", "score", "createdAt", "notes", "totalPersonCount"),
+                excludeOverrideFields = setOf(
+                    "phone",
+                    "birthDate",
+                    "age",
+                    "score",
+                    "createdAt",
+                    "notes",
+                    "totalPersonCount"
+                ),
                 collectionKey = null
             ),
             fields = commonFields
@@ -817,7 +849,7 @@ class ImplementsAnnotationTest {
         // Second statement WITHOUT excludeOverrideFields (should inherit)
         val secondStatement = AnnotatedSelectStatement(
             name = "SelectWithFilter",
-            src = dev.goquick.sqlitenow.gradle.inspect.SelectStatement(
+            src = SelectStatement(
                 sql = "SELECT *, COUNT(*) AS total_person_count FROM Person WHERE first_name IN (:firstNames)",
                 fromTable = "person",
                 joinTables = emptyList(),

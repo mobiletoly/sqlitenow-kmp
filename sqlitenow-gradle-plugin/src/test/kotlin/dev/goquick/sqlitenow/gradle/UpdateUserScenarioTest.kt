@@ -1,6 +1,6 @@
 package dev.goquick.sqlitenow.gradle
 
-import dev.goquick.sqlitenow.gradle.inspect.UpdateParametersProcessor
+import dev.goquick.sqlitenow.gradle.sqlinspect.UpdateParametersProcessor
 import net.sf.jsqlparser.parser.CCJSqlParserUtil
 import net.sf.jsqlparser.statement.update.Update
 import org.junit.jupiter.api.DisplayName
