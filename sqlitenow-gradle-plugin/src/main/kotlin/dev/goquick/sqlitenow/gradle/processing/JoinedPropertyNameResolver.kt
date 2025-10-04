@@ -1,6 +1,5 @@
 package dev.goquick.sqlitenow.gradle.processing
 
-import dev.goquick.sqlitenow.gradle.processing.SelectFieldCodeGenerator
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 
 /**
@@ -33,7 +32,7 @@ object JoinedPropertyNameResolver {
 
     materialFields.forEach { field ->
       val baseName = selectFieldGenerator.generateProperty(field, propertyNameGenerator).name
-      val tableAlias = field.src.tableName.orEmpty()
+      val tableAlias = field.src.tableName
       val key = JoinedFieldKey(tableAlias, field.src.fieldName)
 
       val candidate = createUniqueName(baseName, tableAlias, used)
@@ -42,7 +41,7 @@ object JoinedPropertyNameResolver {
       used += candidate
 
       val originalName = field.src.originalColumnName
-      if (!originalName.isNullOrBlank()) {
+      if (originalName.isNotBlank()) {
         val originalKey = JoinedFieldKey(tableAlias, originalName)
         result.putIfAbsent(originalKey, candidate)
       }

@@ -158,7 +158,7 @@ SELECT
 
     /* @@{ dynamicField=activityPackages,
            mappingType=collection,
-           propertyType=List<ActivityPackageWithActivitiesDoc>,
+           propertyType=List<ActivityPackageWithActivitiesRow>,
            sourceTable=pkg,
            collectionKey=package__doc_id,
            aliasPrefix=package__

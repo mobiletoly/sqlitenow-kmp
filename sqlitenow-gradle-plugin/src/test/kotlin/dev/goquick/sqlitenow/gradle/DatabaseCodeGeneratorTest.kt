@@ -45,8 +45,11 @@ class DatabaseCodeGeneratorTest {
         File(personDir, "selectWithAdapters.sql").writeText(
             """
             -- @@{name=SelectWithAdapters}
-            -- @@{field=birth_date, adapter=custom}
-            SELECT id, name, birth_date
+            SELECT
+                id,
+                name,
+                /* @@{ field=birth_date, adapter=custom } */
+                birth_date
             FROM users
             WHERE birth_date >= :myBirthDateStart;
         """.trimIndent()
@@ -569,16 +572,24 @@ class DatabaseCodeGeneratorTest {
         File(personDir, "query1.sql").writeText(
             """
             -- @@{name=Query1}
-            -- @@{field=created_at, adapter=custom}
-            SELECT id, created_at FROM users WHERE id = :userId;
+            SELECT
+                id,
+                /* @@{ field=created_at, adapter=custom } */
+                created_at
+            FROM users
+            WHERE id = :userId;
         """.trimIndent()
         )
 
         File(personDir, "query2.sql").writeText(
             """
             -- @@{name=Query2}
-            -- @@{field=created_at, adapter=custom}
-            SELECT name, created_at FROM users WHERE name = :userName;
+            SELECT
+                name,
+                /* @@{ field=created_at, adapter=custom } */
+                created_at
+            FROM users
+            WHERE name = :userName;
         """.trimIndent()
         )
 
@@ -694,16 +705,25 @@ class DatabaseCodeGeneratorTest {
         File(personDir, "selectWithCreatedAt1.sql").writeText(
             """
             -- @@{name=SelectWithCreatedAt1}
-            -- @@{field=created_at, adapter=custom}
-            SELECT id, name, created_at FROM users WHERE id = :userId;
+            SELECT
+                id,
+                name,
+                /* @@{ field=created_at, adapter=custom } */
+                created_at
+            FROM users
+            WHERE id = :userId;
         """.trimIndent()
         )
 
         File(personDir, "selectWithCreatedAt2.sql").writeText(
             """
             -- @@{name=SelectWithCreatedAt2}
-            -- @@{field=created_at, adapter=custom}
-            SELECT name, created_at FROM users WHERE name = :userName;
+            SELECT
+                name,
+                /* @@{ field=created_at, adapter=custom } */
+                created_at
+            FROM users
+            WHERE name = :userName;
         """.trimIndent()
         )
 
@@ -825,9 +845,15 @@ class DatabaseCodeGeneratorTest {
         File(personDir, "selectPerson.sql").writeText(
             """
             -- @@{name=SelectPerson}
-            -- @@{field=phone, adapter=custom}
-            -- @@{field=birth_date, adapter=custom}
-            SELECT id, name, phone, birth_date FROM users WHERE id = :userId;
+            SELECT
+                id,
+                name,
+                /* @@{ field=phone, adapter=custom } */
+                phone,
+                /* @@{ field=birth_date, adapter=custom } */
+                birth_date
+            FROM users
+            WHERE id = :userId;
         """.trimIndent()
         )
 

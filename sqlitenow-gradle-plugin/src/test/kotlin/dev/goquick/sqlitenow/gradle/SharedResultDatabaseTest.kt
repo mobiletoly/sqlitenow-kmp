@@ -29,16 +29,28 @@ class SharedResultDatabaseTest {
         File(queriesDir, "selectAllPaginated.sql").writeText(
             """
             -- @@{queryResult=All}
-            -- @@{field=birth_date, adapter=custom}
-            SELECT * FROM Person LIMIT :limit OFFSET :offset;
+            SELECT
+                id,
+                name,
+                /* @@{ field=birth_date, adapter=custom } */
+                birth_date,
+                active
+            FROM Person
+            LIMIT :limit OFFSET :offset;
         """.trimIndent()
         )
 
         File(queriesDir, "selectAllFiltered.sql").writeText(
             """
             -- @@{queryResult=All}
-            -- @@{field=birth_date, adapter=custom}
-            SELECT * FROM Person WHERE active = :active;
+            SELECT
+                id,
+                name,
+                /* @@{ field=birth_date, adapter=custom } */
+                birth_date,
+                active
+            FROM Person
+            WHERE active = :active;
         """.trimIndent()
         )
 

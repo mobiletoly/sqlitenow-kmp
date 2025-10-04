@@ -21,7 +21,7 @@ data class CreateTableStatement(
     )
 
     companion object {
-        fun parse(sql: String,create: CreateTable): CreateTableStatement {
+        fun parse(sql: String, create: CreateTable): CreateTableStatement {
             return CreateTableStatement(
                 sql = sql,
                 tableName = create.table.name,
@@ -48,8 +48,16 @@ data class CreateTableStatement(
                     Column(
                         name = col.columnName,
                         dataType = col.colDataType.toString(),
-                        notNull = specs.any { it.equals("NOT", true) } && specs.any { it.equals("NULL", true) },
-                        primaryKey = specs.any { it.equals("PRIMARY", true) && specs.any { it.equals("KEY", true) } }
+                        notNull = specs.any {
+                            it.equals(
+                                "NOT",
+                                true
+                            )
+                        } && specs.any { it.equals("NULL", true) },
+                        primaryKey = specs.any {
+                            it.equals("PRIMARY", true) &&
+                                    specs.any { it.equals("KEY", true) }
+                        }
                                 || pkCols.contains(col.columnName),
                         autoIncrement = specs.any {
                             it.equals("AUTOINCREMENT", true) || it.equals(

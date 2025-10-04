@@ -77,7 +77,7 @@ internal class SchemaInspector(
         }
 
         // Kahn's algorithm
-        val queue = ArrayDeque<String>(indeg.filter { it.value == 0 }.keys)
+        val queue = ArrayDeque(indeg.filter { it.value == 0 }.keys)
         val orderedNames = mutableListOf<String>()
         while (queue.isNotEmpty()) {
             val u = queue.removeFirst()

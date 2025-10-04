@@ -96,11 +96,6 @@ open class SqliteNowDatabase {
                 getUserVersion()
             }
 
-            // Create sync system tables if needed (before applying migrations)
-            if (migration.hasSyncEnabledTables()) {
-                createSyncSystemTables()
-            }
-
             // Apply migrations starting from the current version
             val newVersion = migration.applyMigration(conn, currentVersion)
             if (newVersion != currentVersion) {
@@ -167,21 +162,6 @@ open class SqliteNowDatabase {
      */
     fun enableTableChangeNotifications() {
         this.enableTableChangeNotifications = true
-    }
-
-    /**
-     * Creates sync system tables required for synchronization functionality.
-     * These tables are only created when there are tables with enableSync=true annotation.
-     */
-    private suspend fun createSyncSystemTables() {
-        // Create change log table
-        conn.execSQL(SyncSystemTables.CREATE_CHANGE_LOG_TABLE_SQL.trimIndent())
-
-        // Create sync control table (with single row constraint)
-        conn.execSQL(SyncSystemTables.CREATE_SYNC_CONTROL_TABLE_SQL.trimIndent())
-
-        // Initialize sync control table (only one record allowed)
-        conn.execSQL(SyncSystemTables.INITIALIZE_SYNC_CONTROL_SQL.trimIndent())
     }
 
     /**
@@ -259,52 +239,4 @@ interface DatabaseMigrations {
      * @return The new version of the database
      */
     suspend fun applyMigration(conn: SafeSQLiteConnection, currentVersion: Int): Int
-
-    /**
-     * Checks if synchronization features are needed (i.e., if any tables have enableSync=true).
-     * This is used to determine whether to create sync system tables.
-     *
-     * @return true if sync system tables should be created, false otherwise
-     */
-    fun hasSyncEnabledTables(): Boolean = false
-}
-
-/**
- * SQL constants for sync system tables.
- * These are used by the core library to create sync tables when needed.
- */
-object SyncSystemTables {
-    /**
-     * SQL to create the change log table.
-     */
-    const val CREATE_CHANGE_LOG_TABLE_SQL = """
-        CREATE TABLE IF NOT EXISTS _sqlitenow_change_log (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            table_name    TEXT    NOT NULL,
-            operation     TEXT    NOT NULL CHECK(operation IN('INSERT','UPDATE','DELETE')),
-            pk            BLOB    NOT NULL,
-            payload       TEXT,
-            schema_version INTEGER NOT NULL,
-            ts            INTEGER NOT NULL DEFAULT(strftime('%s','now'))
-        )
-    """
-
-    /**
-     * SQL to create the sync control table.
-     */
-    const val CREATE_SYNC_CONTROL_TABLE_SQL = """
-        CREATE TABLE IF NOT EXISTS _sqlitenow_sync_control (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            paused INTEGER NOT NULL DEFAULT 0,
-            last_sync_time INTEGER,
-            client_last_id INTEGER
-        )
-    """
-
-    /**
-     * SQL to initialize the sync control table.
-     */
-    const val INITIALIZE_SYNC_CONTROL_SQL = """
-        INSERT OR IGNORE INTO _sqlitenow_sync_control (id, paused) VALUES (1, 0)
-    """
 }

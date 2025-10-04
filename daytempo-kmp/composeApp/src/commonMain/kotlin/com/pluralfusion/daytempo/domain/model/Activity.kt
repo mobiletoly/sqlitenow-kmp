@@ -1,6 +1,12 @@
 package com.pluralfusion.daytempo.domain.model
 
 import dev.goquick.sqlitenow.core.util.EnumByValueLookup
+import dev.goquick.sqlitenow.daytempokmp.db.ActivityBundleDetailedDoc
+import dev.goquick.sqlitenow.daytempokmp.db.ActivityCategoryDoc
+import dev.goquick.sqlitenow.daytempokmp.db.ActivityDetailedDoc
+import dev.goquick.sqlitenow.daytempokmp.db.ActivityPackageDoc
+import dev.goquick.sqlitenow.daytempokmp.db.ActivityPackageWithActivitiesRow
+import dev.goquick.sqlitenow.daytempokmp.db.ProviderDoc
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import org.jetbrains.compose.resources.StringResource
@@ -272,3 +278,50 @@ enum class RegisteredValueType(val value: String) {
     companion object :
         EnumByValueLookup<String, RegisteredValueType>(entries.associateBy(RegisteredValueType::value))
 }
+
+enum class ActivityStatus {
+    READY,
+    SETUP_REQUIRED,
+}
+
+class ActivityPackageFullDoc(
+    val main: ActivityPackageDoc,
+    val activities: List<ActivityDetailedDoc>,
+    val category: ActivityCategoryDoc,
+) {
+    val activityTitles: List<String> = activities
+        .filter { it.main.enabled && !it.main.deleted }
+        .map { it.main.title }
+    val activityStatuses: List<ActivityStatus> = activities
+        .filter { !it.main.deleted }
+        .map {
+            if (it.schedule.mandatoryToSetup &&
+                it.schedule.repeat == ActivityScheduleRepeat.DAYS_INTERVAL &&
+                it.schedule.startAt.toEpochDays() == 0L &&
+                it.schedule.startAtEval == null
+            ) {
+                ActivityStatus.SETUP_REQUIRED
+            } else {
+                ActivityStatus.READY
+            }
+        }
+    val allGroupDocIdsSame: Boolean = activities
+        .map { it.main.groupDocId }
+        .distinct()
+        .size == 1
+
+    companion object {
+        fun fromActivityPackageWithActivitiesRow(doc: ActivityPackageWithActivitiesRow) = ActivityPackageFullDoc(
+            main = doc.main,
+            activities = doc.activities,
+            category = doc.category,
+        )
+    }
+}
+
+class ActivityBundleFullDoc(
+    val main: ActivityBundleDetailedDoc,
+    val activityPackages: List<ActivityPackageFullDoc>,
+    val provider: ProviderDoc,
+    val category: ActivityCategoryDoc,
+)

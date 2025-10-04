@@ -43,7 +43,6 @@ class NamedParametersProcessor(
             seen += param.name
             val parent = param.astNode?.jjtGetParent() as? SimpleNode
             val value = parent?.jjtGetValue()
-
             // Check if this parameter is used within a CAST expression
             if (value is CastExpression && value.leftExpression == param) {
                 castTypes[param.name] = value.colDataType.dataType

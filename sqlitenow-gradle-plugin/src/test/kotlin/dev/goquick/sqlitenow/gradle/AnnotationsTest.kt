@@ -3,6 +3,8 @@ package dev.goquick.sqlitenow.gradle
 import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter.Companion.KOTLIN_STDLIB_TYPES
 import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
 import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationContext
 import dev.goquick.sqlitenow.gradle.processing.extractAnnotations
 import dev.goquick.sqlitenow.gradle.processing.extractFieldAssociatedAnnotations
 import org.junit.jupiter.api.Test
@@ -727,5 +729,46 @@ class AnnotationsTest {
             FieldAnnotationOverrides.parse(annotations)
         }
         assertTrue(exception.message!!.contains("Currently supported: 'perRow'"))
+    }
+
+    @Test
+    fun `statement annotations capture mapTo`() {
+        val overrides = StatementAnnotationOverrides.parse(
+            mapOf(AnnotationConstants.MAP_TO to "com.example.Target")
+        )
+        assertEquals("com.example.Target", overrides.mapTo)
+    }
+
+    @Test
+    fun `field annotations reject unknown keys`() {
+        val exception = assertThrows<IllegalArgumentException> {
+            FieldAnnotationOverrides.parse(mapOf("unknown" to "value"))
+        }
+        assertTrue(exception.message!!.contains("Unsupported field annotation(s)"))
+        assertTrue(exception.message!!.contains("Supported keys"))
+    }
+
+    @Test
+    fun `select annotations reject unknown keys`() {
+        val exception = assertThrows<IllegalArgumentException> {
+            StatementAnnotationOverrides.parse(
+                mapOf("mystery" to "x"),
+                context = StatementAnnotationContext.SELECT
+            )
+        }
+        assertTrue(exception.message!!.contains("Unsupported annotation(s)"))
+        assertTrue(exception.message!!.contains("SELECT statement"))
+    }
+
+    @Test
+    fun `mapTo not allowed for create table`() {
+        val exception = assertThrows<IllegalArgumentException> {
+            StatementAnnotationOverrides.parse(
+                mapOf(AnnotationConstants.MAP_TO to "com.example.Target"),
+                context = StatementAnnotationContext.CREATE_TABLE
+            )
+        }
+        assertTrue(exception.message!!.contains("Unsupported annotation(s)"))
+        assertTrue(exception.message!!.contains("CREATE TABLE statement"))
     }
 }

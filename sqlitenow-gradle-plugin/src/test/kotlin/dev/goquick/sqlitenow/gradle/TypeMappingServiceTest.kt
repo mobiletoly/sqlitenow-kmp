@@ -62,35 +62,35 @@ class TypeMappingServiceTest {
         // Test Long getter
         val longType = ClassName("kotlin", "Long")
         assertEquals(
-            "stmt.getLong(0)",
+            "statement.getLong(0)",
             typeMapping.getGetterCall(longType, 0)
         )
 
         // Test Int getter
         val intType = ClassName("kotlin", "Int")
         assertEquals(
-            "stmt.getInt(2)",
+            "statement.getInt(2)",
             typeMapping.getGetterCall(intType, 2)
         )
 
         // Test Boolean getter (converts from Int)
         val booleanType = ClassName("kotlin", "Boolean")
         assertEquals(
-            "stmt.getInt(1) != 0",
+            "statement.getInt(1) != 0",
             typeMapping.getGetterCall(booleanType, 1)
         )
 
         // Test String getter
         val stringType = ClassName("kotlin", "String")
         assertEquals(
-            "stmt.getText(3)",
+            "statement.getText(3)",
             typeMapping.getGetterCall(stringType, 3)
         )
 
         // Test ByteArray getter
         val byteArrayType = ClassName("kotlin", "ByteArray")
         assertEquals(
-            "stmt.getBlob(0)",
+            "statement.getBlob(0)",
             typeMapping.getGetterCall(byteArrayType, 0)
         )
     }
@@ -122,8 +122,18 @@ class TypeMappingServiceTest {
 
         // Unknown types should default to text getter
         assertEquals(
-            "stmt.getText(0)",
+            "statement.getText(0)",
             typeMapping.getGetterCall(customType, 0)
+        )
+    }
+
+    @Test
+    @DisplayName("Custom receiver is honoured for getter generation")
+    fun testCustomReceiverForGetter() {
+        val longType = ClassName("kotlin", "Long")
+        assertEquals(
+            "joined.getLong(5)",
+            typeMapping.getGetterCall(longType, 5, receiver = "joined"),
         )
     }
 

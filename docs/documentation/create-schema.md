@@ -154,12 +154,12 @@ Statement-level annotations can be used to customize the generated code for spec
 For example, you can use `name` annotation to customize the generated class name or change
 `propertyNameGenerator` to change the generated property name format.
 
-
 | Annotation                        | Purpose                                   | Example                                        |
 |-----------------------------------|-------------------------------------------|------------------------------------------------|
 | `name=Name`                       | Custom class name                         | `name=PersonWithAddressEntity`                 |
 | `propertyNameGenerator=generator` | Change property name format               | `propertyNameGenerator=lowerCamelCase`         |
-| `sharedResult=Name`               | Class name reused across multiple queires | `sharedResult=PersonEntity`                    |
+| `queryResult=Name`                | Class name reused across multiple queires | `queryResult=PersonEntity`                     |
+| `mapTo=Name`                      | Map to existing class                     | `mapTo=PersonEntity`                           |
 | `implements=Interface`            | Implement interface                       | `implements=PersonEssentialFields`             |
 | `excludeOverrideFields=fields`    | Exclude fields from override              | `excludeOverrideFields=['phone', 'birthDate']` |
 
@@ -178,7 +178,7 @@ Notes for `excludeOverrideFields`:
 | `adapter={custom or default}` | Request type adapter generation   | `field=birth_date, adapter=custom`                   |
 | `notNull={true or false}`     | Control property nullability      | `field=phone, notNull=false`                         |
 | `dynamicField=name`           | Generate non-table dynamic field  | `dynamicField=addresses, propertyType=List<String>`  |
-| `defaultValue=value`          | Default value for dynamic field   | `dynamicField=addresses, defaultValue=listOf()`   |
+| `defaultValue=value`          | Default value for dynamic field   | `dynamicField=addresses, defaultValue=listOf()`      |
 
 ## Example
 

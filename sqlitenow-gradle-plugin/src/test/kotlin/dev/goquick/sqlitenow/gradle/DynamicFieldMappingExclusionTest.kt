@@ -107,7 +107,7 @@ class DynamicFieldMappingExclusionTest {
 
         val ctor = FunSpec.constructorBuilder()
         val props = mutableListOf<PropertySpec>()
-        val emitter = DataStructPropertyEmitter(gen.generatorContext)
+        val emitter = DataStructPropertyEmitter()
         emitter.emitPropertiesWithInterfaceSupport(
             fields = fields,
             mappedColumns = mapped,
@@ -151,7 +151,7 @@ class DynamicFieldMappingExclusionTest {
 
         val ctor = FunSpec.constructorBuilder()
         val props = mutableListOf<PropertySpec>()
-        val emitter = DataStructPropertyEmitter(gen.generatorContext)
+        val emitter = DataStructPropertyEmitter()
         emitter.emitPropertiesWithInterfaceSupport(
             fields = fields,
             mappedColumns = mapped,

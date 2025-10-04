@@ -36,7 +36,7 @@ internal class DataStructJoinedEmitter(
         val collectedProps = mutableListOf<PropertySpec>()
         fields.forEach { field ->
             if (!field.annotations.isDynamicField) {
-                val key = JoinedPropertyNameResolver.JoinedFieldKey(field.src.tableName.orEmpty(), field.src.fieldName)
+                val key = JoinedPropertyNameResolver.JoinedFieldKey(field.src.tableName, field.src.fieldName)
                 val uniqueName = joinedNameMap[key]
                     ?: fieldCodeGenerator.generateProperty(field, propertyNameGenerator).name
 

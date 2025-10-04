@@ -14,8 +14,8 @@ class UpdateStatement(
     val namedParametersToColumnNames: Map<String, String>,
     override val withSelectStatements: List<SelectStatement>,
     override val parameterCastTypes: Map<String, String> = emptyMap(),
-    val hasReturningClause: Boolean,
-    val returningColumns: List<String>
+    override val hasReturningClause: Boolean,
+    override val returningColumns: List<String>
 ) : ExecuteStatement {
 
     companion object {

@@ -9,6 +9,7 @@ import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationOverrides
 import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
 import dev.goquick.sqlitenow.gradle.processing.SelectFieldCodeGenerator
 import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
+import net.sf.jsqlparser.parser.CCJSqlParserUtil
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.mock
@@ -446,6 +447,102 @@ class SelectFieldCodeGeneratorTest {
         // Verify the property name and type
         assertEquals("createdAt", property.name)
         assertEquals("java.time.LocalDateTime?", property.type.toString())
+        assertTrue(property.type.isNullable)
+    }
+
+    @Test
+    @DisplayName("COUNT inference returns non-null Long")
+    fun testAggregateInferenceCount() {
+        val expression = CCJSqlParserUtil.parseExpression("COUNT(*)")
+        val fieldSource = SelectStatement.FieldSource(
+            fieldName = "activityCount",
+            tableName = "",
+            originalColumnName = "activityCount",
+            dataType = "INTEGER",
+            expression = expression
+        )
+
+        val annotations = FieldAnnotationOverrides(
+            propertyName = null,
+            propertyType = null,
+            notNull = null,
+            adapter = false
+        )
+
+        val field = AnnotatedSelectStatement.Field(
+            src = fieldSource,
+            annotations = annotations
+        )
+
+        val generator = SelectFieldCodeGenerator()
+        val property = generator.generateProperty(field)
+
+        assertEquals("activityCount", property.name)
+        assertEquals("kotlin.Long", property.type.toString())
+        assertFalse(property.type.isNullable)
+    }
+
+    @Test
+    @DisplayName("GROUP_CONCAT inference returns nullable String")
+    fun testAggregateInferenceGroupConcat() {
+        val expression = CCJSqlParserUtil.parseExpression("GROUP_CONCAT(act__title, ', ')")
+        val fieldSource = SelectStatement.FieldSource(
+            fieldName = "titles",
+            tableName = "",
+            originalColumnName = "titles",
+            dataType = "TEXT",
+            expression = expression
+        )
+
+        val annotations = FieldAnnotationOverrides(
+            propertyName = null,
+            propertyType = null,
+            notNull = null,
+            adapter = false
+        )
+
+        val field = AnnotatedSelectStatement.Field(
+            src = fieldSource,
+            annotations = annotations
+        )
+
+        val generator = SelectFieldCodeGenerator()
+        val property = generator.generateProperty(field)
+
+        assertEquals("titles", property.name)
+        assertEquals("kotlin.String?", property.type.toString())
+        assertTrue(property.type.isNullable)
+    }
+
+    @Test
+    @DisplayName("SUM inference returns nullable Double")
+    fun testAggregateInferenceSum() {
+        val expression = CCJSqlParserUtil.parseExpression("SUM(amount)")
+        val fieldSource = SelectStatement.FieldSource(
+            fieldName = "totalAmount",
+            tableName = "",
+            originalColumnName = "totalAmount",
+            dataType = "INTEGER",
+            expression = expression
+        )
+
+        val annotations = FieldAnnotationOverrides(
+            propertyName = null,
+            propertyType = null,
+            notNull = null,
+            adapter = false
+        )
+
+        val field = AnnotatedSelectStatement.Field(
+            src = fieldSource,
+            annotations = annotations
+        )
+
+        val generator = SelectFieldCodeGenerator()
+        val property = generator.generateProperty(field)
+
+        assertEquals("totalAmount", property.name)
+        assertEquals("kotlin.Double?", property.type.toString())
         assertTrue(property.type.isNullable)
     }
 

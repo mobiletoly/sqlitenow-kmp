@@ -27,20 +27,27 @@ class TypeMapping {
         }
     }
 
-    /** Generates the appropriate SQLite getter call for a Kotlin type. */
-    fun getGetterCall(kotlinType: TypeName, columnIndex: Int): String {
+    /**
+     * Generates the appropriate SQLite getter call for a Kotlin type.
+     * Caller may customise the receiver used to access statement APIs (defaults to `statement`).
+     */
+    fun getGetterCall(
+        kotlinType: TypeName,
+        columnIndex: Int,
+        receiver: String = "statement",
+    ): String {
         val baseType = kotlinType.toString().removePrefix("kotlin.")
 
         return when (baseType) {
-            "Long" -> "stmt.getLong($columnIndex)"
-            "Int" -> "stmt.getInt($columnIndex)"
-            "Double" -> "stmt.getDouble($columnIndex)"
-            "Float" -> "stmt.getFloat($columnIndex)"
-            "Boolean" -> "stmt.getInt($columnIndex) != 0"
-            "String" -> "stmt.getText($columnIndex)"
-            "ByteArray" -> "stmt.getBlob($columnIndex)"
-            "Byte" -> "stmt.getInt($columnIndex).toByte()"
-            else -> "stmt.getText($columnIndex)" // Default to text
+            "Long" -> "$receiver.getLong($columnIndex)"
+            "Int" -> "$receiver.getInt($columnIndex)"
+            "Double" -> "$receiver.getDouble($columnIndex)"
+            "Float" -> "$receiver.getFloat($columnIndex)"
+            "Boolean" -> "$receiver.getInt($columnIndex) != 0"
+            "String" -> "$receiver.getText($columnIndex)"
+            "ByteArray" -> "$receiver.getBlob($columnIndex)"
+            "Byte" -> "$receiver.getInt($columnIndex).toByte()"
+            else -> "$receiver.getText($columnIndex)" // Default to text
         }
     }
 

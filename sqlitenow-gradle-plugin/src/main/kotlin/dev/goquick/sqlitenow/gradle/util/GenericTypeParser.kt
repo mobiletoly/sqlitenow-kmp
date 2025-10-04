@@ -128,7 +128,7 @@ class GenericTypeParser {
             }
 
             val arguments = mutableListOf<String>()
-            var currentArg = StringBuilder()
+            val currentArg = StringBuilder()
             var bracketDepth = 0
 
             for (char in typeArgumentsString) {

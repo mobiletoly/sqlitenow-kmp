@@ -2,6 +2,7 @@
 
 package dev.goquick.sqlitenow.daytempokmp
 
+import com.pluralfusion.daytempo.domain.model.ActivityBundleFullDoc
 import com.pluralfusion.daytempo.domain.model.ActivityBundlePurchaseMode
 import com.pluralfusion.daytempo.domain.model.ActivityIconDoc
 import com.pluralfusion.daytempo.domain.model.ActivityProgramType
@@ -13,6 +14,7 @@ import com.pluralfusion.daytempo.domain.model.Gender
 import com.pluralfusion.daytempo.domain.model.GoalDirection
 import com.pluralfusion.daytempo.domain.model.HasStringValue
 import com.pluralfusion.daytempo.domain.model.MeasureSystem
+import com.pluralfusion.daytempo.domain.model.ActivityPackageFullDoc
 import com.pluralfusion.daytempo.domain.model.ProgramItemLockItemDisplay
 import com.pluralfusion.daytempo.domain.model.ProgramItemPresentation
 import com.pluralfusion.daytempo.domain.model.RegisteredValueType
@@ -74,6 +76,16 @@ object DayTempoTestDatabaseHelper {
                 promoScr1ToSqlValue = { it?.let { Json.encodeToString(it) } },
                 promoScr2ToSqlValue = { it?.let { Json.encodeToString(it) } },
                 promoScr3ToSqlValue = { it?.let { Json.encodeToString(it) } },
+                activityBundleFullRowMapper = { row ->
+                    ActivityBundleFullDoc(
+                        main = row.main,
+                        activityPackages = row.activityPackages.map(
+                            ActivityPackageFullDoc.Companion::fromActivityPackageWithActivitiesRow
+                        ),
+                        provider = row.provider,
+                        category = row.category,
+                    )
+                },
             ),
             activityAdapters = DayTempoDatabase.ActivityAdapters(
                 iconToSqlValue = { Json.encodeToString(it) },

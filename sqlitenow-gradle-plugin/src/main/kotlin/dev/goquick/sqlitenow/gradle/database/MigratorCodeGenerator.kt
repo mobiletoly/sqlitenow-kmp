@@ -11,8 +11,6 @@ import dev.goquick.sqlitenow.gradle.sqlinspect.SQLBatchInspector
 import dev.goquick.sqlitenow.gradle.sqlinspect.SchemaInspector
 import dev.goquick.sqlitenow.gradle.sqlite.SqlSingleStatement
 import dev.goquick.sqlitenow.gradle.sqlite.translateSqliteStatementToKotlin
-import org.gradle.api.logging.Logger
-import org.gradle.api.logging.Logging
 import java.io.File
 
 /**
@@ -28,11 +26,6 @@ internal class MigratorCodeGenerator(
     private val outputDir: File,
     private val debug: Boolean = false,
 ) {
-    // Logger for this class
-    private val logger: Logger = Logging.getLogger(MigratorCodeGenerator::class.java)
-
-    // Sync triggers deprecated: generation removed in favor of runtime oversqlite package
-
     /**
      * Generates the applyMigration function that implements the DatabaseMigrations interface.
      * This function applies migrations based on the current database version.
@@ -183,26 +176,6 @@ internal class MigratorCodeGenerator(
         return functionBuilder.build()
     }
 
-    // Sync triggers deprecated: no-op (kept for compatibility)
-    private fun addSyncTriggersToCodeBlock(codeBlockBuilder: CodeBlock.Builder) { /* no-op */ }
-
-    /** Checks if any tables have enableSync=true annotation */
-    fun hasSyncEnabledTables(): Boolean = false
-
-    /** Adds sync triggers for CREATE TABLE statements with enableSync=true in migration files */
-    private fun addSyncTriggersForMigrationToCodeBlock(codeBlockBuilder: CodeBlock.Builder, statements: List<SqlSingleStatement>) { /* no-op */ }
-
-    /** Generates the hasSyncEnabledTables function that checks if sync features are needed. */
-    private fun generateHasSyncEnabledTablesFunction(): FunSpec {
-        val hasSyncTables = hasSyncEnabledTables()
-
-        return FunSpec.Companion.builder("hasSyncEnabledTables")
-            .addModifiers(KModifier.OVERRIDE)
-            .returns(Boolean::class)
-            .addStatement("return %L", hasSyncTables)
-            .build()
-    }
-
     fun generateCode(className: String = "VersionBasedDatabaseMigrations"): FileSpec {
         // Create the output directory if it doesn't exist
         if (!outputDir.exists() && !outputDir.mkdirs()) {
@@ -221,10 +194,6 @@ internal class MigratorCodeGenerator(
         // Add the applyMigration function that implements the DatabaseMigrations interface
         val applyMigrationFunction = generateApplyMigrationFunction()
         classBuilder.addFunction(applyMigrationFunction)
-
-        // Add the hasSyncEnabledTables function
-        val hasSyncEnabledTablesFunction = generateHasSyncEnabledTablesFunction()
-        classBuilder.addFunction(hasSyncEnabledTablesFunction)
 
         // Add individual migration functions for each version
         migrationInspector.sqlStatements.forEach { (version, statements) ->

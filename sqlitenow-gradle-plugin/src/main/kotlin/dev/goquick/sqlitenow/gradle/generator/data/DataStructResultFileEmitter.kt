@@ -4,13 +4,11 @@ import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import dev.goquick.sqlitenow.gradle.context.GeneratorContext
-import dev.goquick.sqlitenow.gradle.processing.ReturningColumnsResolver
-import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
-import dev.goquick.sqlitenow.gradle.util.pascalize
-import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
+import dev.goquick.sqlitenow.gradle.processing.ReturningColumnsResolver
 import dev.goquick.sqlitenow.gradle.processing.SharedResultManager
+import dev.goquick.sqlitenow.gradle.util.pascalize
 import java.io.File
 
 internal class DataStructResultFileEmitter(

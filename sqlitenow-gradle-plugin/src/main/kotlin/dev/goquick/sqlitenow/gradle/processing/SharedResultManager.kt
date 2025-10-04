@@ -130,18 +130,7 @@ class SharedResultManager {
         val propertyNameGenerator: PropertyNameGeneratorType,
         val implements: String?,
         val excludeOverrideFields: Set<String>?
-    ) {
-        /**
-         * Gets the TypeName for this shared result class.
-         */
-        fun getTypeName(packageName: String): TypeName {
-            return SharedResultTypeUtils.createSharedResultTypeName(packageName, namespace, name)
-        }
-
-        fun hasDynamicFieldMapping() = fields.any {
-            it.annotations.isDynamicField && it.annotations.mappingType != null
-        }
-    }
+    )
     
     private val sharedResults = mutableMapOf<String, SharedResult>()
     private val structureValidation = mutableMapOf<String, String>() // sharedResultKey -> structureKey

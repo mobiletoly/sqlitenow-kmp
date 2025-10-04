@@ -52,10 +52,10 @@ internal class QueryFunctionScaffolder(
             val paramsParam = ParameterSpec.builder("params", paramsType).build()
             fnBld.addParameter(paramsParam)
         }
-        adapterParameterEmitter.addParameterBindingAdapters(fnBld, statement)
+        adapterParameterEmitter.addParameterBindingAdapters(fnBld, namespace, statement)
         when (statement) {
             is AnnotatedSelectStatement ->
-                adapterParameterEmitter.addResultConversionAdapters(fnBld, statement)
+                adapterParameterEmitter.addResultConversionAdapters(fnBld, namespace, statement)
 
             is AnnotatedExecuteStatement -> {
                 if (statement.hasReturningClause()) {
@@ -89,11 +89,11 @@ internal class QueryFunctionScaffolder(
         }
         when (adapterType) {
             AdapterType.PARAMETER_BINDING ->
-                adapterParameterEmitter.addParameterBindingAdapters(fnBld, statement)
+                adapterParameterEmitter.addParameterBindingAdapters(fnBld, namespace, statement)
 
             AdapterType.RESULT_CONVERSION -> when (statement) {
                 is AnnotatedSelectStatement ->
-                    adapterParameterEmitter.addResultConversionAdapters(fnBld, statement)
+                    adapterParameterEmitter.addResultConversionAdapters(fnBld, namespace, statement)
 
                 is AnnotatedExecuteStatement -> {
                     if (statement.hasReturningClause()) {

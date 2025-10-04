@@ -9,6 +9,4 @@ internal class CaseInsensitiveMap<V>(
     private val delegate: Map<String, V> = entries.associate { it.first.lowercase() to it.second }
 
     operator fun get(key: String): V? = delegate[key.lowercase()]
-
-    fun containsKey(key: String): Boolean = delegate.containsKey(key.lowercase())
 }

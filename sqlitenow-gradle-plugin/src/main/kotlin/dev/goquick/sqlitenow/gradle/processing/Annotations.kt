@@ -2,9 +2,90 @@ package dev.goquick.sqlitenow.gradle.processing
 
 import com.typesafe.config.ConfigFactory
 import com.typesafe.config.ConfigParseOptions
-import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter.Companion.KOTLIN_STDLIB_TYPES
 import dev.goquick.sqlitenow.gradle.util.capitalized
 import dev.goquick.sqlitenow.gradle.logger
+import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter.Companion.KOTLIN_STDLIB_TYPES
+
+enum class StatementAnnotationContext(
+    val description: String,
+    private val allowedKeys: Set<String>
+) {
+    SELECT(
+        description = "SELECT statement",
+        allowedKeys = setOf(
+            AnnotationConstants.NAME,
+            AnnotationConstants.PROPERTY_NAME_GENERATOR,
+            AnnotationConstants.QUERY_RESULT,
+            AnnotationConstants.IMPLEMENTS,
+            AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS,
+            AnnotationConstants.COLLECTION_KEY,
+            AnnotationConstants.MAP_TO,
+        )
+    ),
+    CREATE_VIEW(
+        description = "CREATE VIEW statement",
+        allowedKeys = setOf(
+            AnnotationConstants.NAME,
+            AnnotationConstants.PROPERTY_NAME_GENERATOR,
+            AnnotationConstants.COLLECTION_KEY,
+        )
+    ),
+    CREATE_TABLE(
+        description = "CREATE TABLE statement",
+        allowedKeys = setOf(
+            AnnotationConstants.NAME,
+            AnnotationConstants.PROPERTY_NAME_GENERATOR,
+            AnnotationConstants.ENABLE_SYNC,
+            AnnotationConstants.SYNC_KEY_COLUMN_NAME,
+        )
+    ),
+    EXECUTE(
+        description = "INSERT/UPDATE/DELETE statement",
+        allowedKeys = setOf(
+            AnnotationConstants.NAME,
+            AnnotationConstants.PROPERTY_NAME_GENERATOR,
+            AnnotationConstants.QUERY_RESULT,
+        )
+    );
+
+    fun validateKeys(annotations: Map<String, Any?>) {
+        val unknownKeys = annotations.keys.filter { it !in allowedKeys }
+        if (unknownKeys.isNotEmpty()) {
+            val supported = if (allowedKeys.isEmpty()) "none" else allowedKeys.sorted().joinToString(", ")
+            throw IllegalArgumentException(
+                "Unsupported annotation(s) ${unknownKeys.sorted().joinToString(", ")} for $description. " +
+                    "Supported keys: $supported"
+            )
+        }
+    }
+}
+
+private val ALLOWED_FIELD_KEYS = setOf(
+    AnnotationConstants.PROPERTY_NAME,
+    AnnotationConstants.PROPERTY_TYPE,
+    AnnotationConstants.NOT_NULL,
+    AnnotationConstants.ADAPTER,
+    AnnotationConstants.DEFAULT_VALUE,
+    AnnotationConstants.ALIAS_PREFIX,
+    AnnotationConstants.MAPPING_TYPE,
+    AnnotationConstants.SOURCE_TABLE,
+    AnnotationConstants.COLLECTION_KEY,
+    AnnotationConstants.IS_DYNAMIC_FIELD,
+)
+
+private fun validateFieldAnnotationKeys(annotations: Map<String, Any?>) {
+    val unknownKeys = annotations.keys.filter { it !in ALLOWED_FIELD_KEYS }
+    if (unknownKeys.isNotEmpty()) {
+        val supported = ALLOWED_FIELD_KEYS
+            .filter { it != AnnotationConstants.IS_DYNAMIC_FIELD }
+            .sorted()
+            .joinToString(", ")
+        throw IllegalArgumentException(
+            "Unsupported field annotation(s) ${unknownKeys.sorted().joinToString(", ")}. " +
+                "Supported keys: $supported"
+        )
+    }
+}
 
 fun extractAnnotations(comments: List<String>): Map<String, Any?> {
     val combinedComment = cleanedUpComments(comments)
@@ -247,6 +328,8 @@ data class FieldAnnotationOverrides(
 ) {
     companion object {
         fun parse(annotations: Map<String, Any?>): FieldAnnotationOverrides {
+            validateFieldAnnotationKeys(annotations)
+
             val propertyType = annotations[AnnotationConstants.PROPERTY_TYPE] as? String
             val adapterValue = annotations[AnnotationConstants.ADAPTER] as? String
 
@@ -356,13 +439,20 @@ data class StatementAnnotationOverrides(
     val excludeOverrideFields: Set<String>?,
     val collectionKey: String?,
     val enableSync: Boolean = false,
-    val syncKeyColumnName: String? = null
+    val syncKeyColumnName: String? = null,
+    val mapTo: String? = null,
 ) {
     companion object {
-        fun parse(annotations: Map<String, Any?>): StatementAnnotationOverrides {
+        fun parse(
+            annotations: Map<String, Any?>,
+            context: StatementAnnotationContext = StatementAnnotationContext.SELECT
+        ): StatementAnnotationOverrides {
+            context.validateKeys(annotations)
+
             val name = annotations[AnnotationConstants.NAME] as? String
             val propertyNameGenerator = annotations[AnnotationConstants.PROPERTY_NAME_GENERATOR] as? String
             val queryResult = annotations[AnnotationConstants.QUERY_RESULT] as? String
+            val mapTo = annotations[AnnotationConstants.MAP_TO] as? String
             val implements = annotations[AnnotationConstants.IMPLEMENTS] as? String
             val excludeOverrideFields = annotations[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS]
             val collectionKey = annotations[AnnotationConstants.COLLECTION_KEY] as? String
@@ -381,6 +471,9 @@ data class StatementAnnotationOverrides(
             if (annotations.containsKey(AnnotationConstants.IMPLEMENTS) && implements?.isBlank() == true) {
                 throw IllegalArgumentException("Annotation '${AnnotationConstants.IMPLEMENTS}' cannot be blank")
             }
+            if (annotations.containsKey(AnnotationConstants.MAP_TO) && mapTo?.isBlank() == true) {
+                throw IllegalArgumentException("Annotation '${AnnotationConstants.MAP_TO}' cannot be blank")
+            }
 
             return StatementAnnotationOverrides(
                 name = name,
@@ -390,7 +483,8 @@ data class StatementAnnotationOverrides(
                 excludeOverrideFields = parseExcludeOverrideFieldsFromHocon(excludeOverrideFields),
                 collectionKey = collectionKey,
                 enableSync = enableSync,
-                syncKeyColumnName = syncKeyColumnName
+                syncKeyColumnName = syncKeyColumnName,
+                mapTo = mapTo,
             )
         }
 

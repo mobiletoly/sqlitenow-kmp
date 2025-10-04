@@ -13,9 +13,7 @@ import dev.goquick.sqlitenow.gradle.processing.SelectFieldCodeGenerator
  * Responsible for emitting properties and constructor parameters for generated data classes.
  * Encapsulates the previous DataStructCodeGenerator.generatePropertiesWithInterfaceSupport logic.
  */
-internal class DataStructPropertyEmitter(
-    private val generatorContext: GeneratorContext,
-) {
+internal class DataStructPropertyEmitter {
     fun emitPropertiesWithInterfaceSupport(
         fields: List<AnnotatedSelectStatement.Field>,
         mappedColumns: Set<String>,

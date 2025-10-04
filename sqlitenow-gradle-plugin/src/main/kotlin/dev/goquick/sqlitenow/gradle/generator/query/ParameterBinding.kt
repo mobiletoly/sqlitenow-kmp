@@ -148,11 +148,6 @@ class ParameterBinding(
     /**
      * Generates the standard nullable parameter binding pattern.
      * This centralizes the duplicated null checking logic.
-     *
-     * @param fnBld The function builder
-     * @param paramIndex The parameter index
-     * @param expression The expression to check for null
-     * @param bindingCallGenerator Function that generates the non-null binding call
      */
     private fun generateNullableBinding(
         fnBld: FunSpec.Builder,

@@ -11,7 +11,7 @@ import com.pluralfusion.daytempo.domain.model.ActivityScheduleRepeat
 import com.pluralfusion.daytempo.domain.model.ActivityScheduleTimeRange
 import com.pluralfusion.daytempo.domain.model.AlarmHourMinute
 import com.pluralfusion.daytempo.domain.model.ActivityIconDoc.Format
-import dev.goquick.sqlitenow.daytempokmp.db.ActivityBundleFullDoc
+import com.pluralfusion.daytempo.domain.model.ActivityBundleFullDoc
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityBundleQuery
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityCategoryQuery
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityPackageQuery

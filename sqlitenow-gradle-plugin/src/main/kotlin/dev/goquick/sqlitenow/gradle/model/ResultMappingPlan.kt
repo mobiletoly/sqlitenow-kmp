@@ -33,26 +33,17 @@ data class ResultMappingPlan(
     val includedDynamicFields: List<AnnotatedSelectStatement.Field>
         get() = includedDynamicEntries.map { it.field }
 
-    val includedCollectionEntries: List<DynamicFieldEntry>
-        get() = includedDynamicEntries.filter { it.role == Role.COLLECTION }
-
     val includedCollectionFields: List<AnnotatedSelectStatement.Field>
         get() = includedCollectionEntries.map { it.field }
+
+    val includedCollectionEntries: List<DynamicFieldEntry>
+        get() = includedDynamicEntries.filter { it.role == Role.COLLECTION }
 
     val includedPerRowEntries: List<DynamicFieldEntry>
         get() = includedDynamicEntries.filter { it.role == Role.PER_ROW }
 
-    val includedPerRowFields: List<AnnotatedSelectStatement.Field>
-        get() = includedPerRowEntries.map { it.field }
-
     val includedEntityEntries: List<DynamicFieldEntry>
         get() = includedDynamicEntries.filter { it.role == Role.ENTITY }
-
-    val includedEntityFields: List<AnnotatedSelectStatement.Field>
-        get() = includedEntityEntries.map { it.field }
-
-    val includedDefaultDynamicEntries: List<DynamicFieldEntry>
-        get() = includedDynamicEntries.filter { it.role == Role.DEFAULT }
 }
 
 /** Planner that materialises [ResultMappingPlan]s from SELECT metadata. */

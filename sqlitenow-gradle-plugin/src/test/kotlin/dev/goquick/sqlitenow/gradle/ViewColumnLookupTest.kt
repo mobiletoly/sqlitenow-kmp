@@ -235,7 +235,7 @@ class ViewColumnLookupTest {
             CREATE VIEW PersonWithAddressView AS
             SELECT
                 p.id AS person_id,
-                -- @@{field=birth_date, propertyName=myBirthDateAAA, propertyType=kotlinx.datetime.LocalDateTime, adapter=custom}
+                /* @@{ field=birth_date, propertyName=myBirthDateAAA, propertyType=kotlinx.datetime.LocalDateTime, adapter=custom } */
                 p.birth_date,
                 p.first_name
             FROM Person p
@@ -244,7 +244,7 @@ class ViewColumnLookupTest {
         // Parse the VIEW statement with annotations
         val topComments = listOf("-- @@{name=PersonWithAddressEntity}")
         val innerComments =
-            listOf("-- @@{field=birth_date, propertyName=myBirthDateAAA, propertyType=kotlinx.datetime.LocalDateTime, adapter=custom}")
+            listOf("/* @@{ field=birth_date, propertyName=myBirthDateAAA, propertyType=kotlinx.datetime.LocalDateTime, adapter=custom } */")
 
         val createViewStatement = CreateViewStatement(
             sql = viewSql,

@@ -90,7 +90,6 @@ class InsertParameterTypeInferenceTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            AnnotationConstants.FIELD to "birth_date",
                             AnnotationConstants.ADAPTER to "custom",
                             AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDate"
                         )
@@ -105,7 +104,6 @@ class InsertParameterTypeInferenceTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            AnnotationConstants.FIELD to "created_at",
                             AnnotationConstants.ADAPTER to "custom",
                             AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDateTime"
                         )
@@ -120,7 +118,6 @@ class InsertParameterTypeInferenceTest {
                             unique = false
                         ),
                         annotations = mapOf(
-                            AnnotationConstants.FIELD to "notes",
                             AnnotationConstants.ADAPTER to "custom",
                             AnnotationConstants.PROPERTY_TYPE to "dev.goquick.sqlitenow.samplekmp.model.PersonNote"
                         )

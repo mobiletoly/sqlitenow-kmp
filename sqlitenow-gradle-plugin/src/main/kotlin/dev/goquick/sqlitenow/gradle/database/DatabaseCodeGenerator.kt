@@ -16,9 +16,6 @@ import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter
 import dev.goquick.sqlitenow.gradle.context.AdapterConfig
 import dev.goquick.sqlitenow.gradle.context.AdapterParameterNameResolver
 import dev.goquick.sqlitenow.gradle.context.ColumnLookup
-import dev.goquick.sqlitenow.gradle.sqlinspect.DeleteStatement
-import dev.goquick.sqlitenow.gradle.sqlinspect.InsertStatement
-import dev.goquick.sqlitenow.gradle.sqlinspect.UpdateStatement
 import dev.goquick.sqlitenow.gradle.util.lowercaseFirst
 import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateViewStatement
@@ -140,7 +137,7 @@ class DatabaseCodeGenerator(
         // Collect adapters for each namespace separately
         nsWithStatements.forEach { (namespace, statements) ->
             val namespaceAdapters = mutableListOf<UniqueAdapter>()
-            val processedSharedResults = mutableSetOf<String>()
+            val processedSharedResults = mutableMapOf<String, Boolean>()
 
             // First, register all shared results for this namespace
             statements.filterIsInstance<AnnotatedSelectStatement>().forEach { statement ->
@@ -149,16 +146,31 @@ class DatabaseCodeGenerator(
 
             statements.forEach { statement ->
                 // For SELECT statements with shared results, only collect adapters once per shared result
+                var sharedResultKey: String? = null
+                var hasMapTo = false
                 if (statement is AnnotatedSelectStatement && statement.annotations.queryResult != null) {
-                    val sharedResultKey = "${namespace}.${statement.annotations.queryResult}"
-                    if (sharedResultKey in processedSharedResults) {
-                        // Skip - we already processed adapters for this shared result
-                        return@forEach
+                    sharedResultKey = "${namespace}.${statement.annotations.queryResult}"
+                    hasMapTo = statement.annotations.mapTo != null
+                    val alreadyProcessed = processedSharedResults[sharedResultKey]
+                    if (alreadyProcessed != null) {
+                        // If we've already collected mapTo adapters for this shared result and this
+                        // statement doesn't introduce a new mapper, skip to avoid duplicate work.
+                        if (alreadyProcessed && !hasMapTo) {
+                            return@forEach
+                        }
+                        if (alreadyProcessed && hasMapTo) {
+                            // Another statement with the same shared result and the mapper already captured.
+                            return@forEach
+                        }
+                        if (!alreadyProcessed && !hasMapTo) {
+                            // Already handled inputs/output adapters; nothing new to add.
+                            return@forEach
+                        }
+                        // else -> we previously processed without a mapper, but this statement has one.
                     }
-                    processedSharedResults.add(sharedResultKey)
                 }
 
-                val statementAdapters = adapterConfig.collectAllParamConfigs(statement)
+                val statementAdapters = adapterConfig.collectAllParamConfigs(statement, namespace)
                 statementAdapters.forEach { config ->
                     namespaceAdapters.add(
                         UniqueAdapter(
@@ -168,6 +180,12 @@ class DatabaseCodeGenerator(
                             isNullable = config.isNullable
                         )
                     )
+                }
+
+                if (sharedResultKey != null) {
+                    val mapCollected = statement.annotations.mapTo != null
+                    val previous = processedSharedResults[sharedResultKey]
+                    processedSharedResults[sharedResultKey] = (previous == true) || mapCollected
                 }
             }
 
@@ -228,6 +246,7 @@ class DatabaseCodeGenerator(
     private fun findAdapterName(
         namespace: String,
         expectedFunctionName: String,
+        expectedInputType: TypeName,
         adaptersByNamespace: Map<String, List<UniqueAdapter>>
     ): String {
         val deduplicatedAdapters = adaptersByNamespace[namespace] ?: return expectedFunctionName
@@ -240,7 +259,7 @@ class DatabaseCodeGenerator(
 
         // Look for renamed version (e.g., phoneToSqlValueForString)
         val renamedMatch = deduplicatedAdapters.find {
-            it.functionName.startsWith(expectedFunctionName + "For")
+            it.functionName.startsWith(expectedFunctionName + "For") && it.inputType == expectedInputType
         }
 
         return renamedMatch?.functionName ?: expectedFunctionName
@@ -529,7 +548,7 @@ class DatabaseCodeGenerator(
                 ?: namespace
         val providerProp = adapterPropertyNameFor(providerNs)
         val actualAdapterName =
-            findAdapterName(providerNs, config.adapterFunctionName, adaptersByNamespace)
+            findAdapterName(providerNs, config.adapterFunctionName, config.inputType, adaptersByNamespace)
         return providerProp to actualAdapterName
     }
 
@@ -567,24 +586,11 @@ class DatabaseCodeGenerator(
             return emptyList()
         }
 
-        // Get the table name from the execute statement
-        val tableName = when (val src = statement.src) {
-            is InsertStatement -> src.table
-            is UpdateStatement -> src.table
-            is DeleteStatement -> src.table
-            else -> return emptyList()
-        }
-
         // Find the table definition
-        val tableStatement = tableLookup[tableName] ?: return emptyList()
+        val tableStatement = tableLookup[statement.src.table] ?: return emptyList()
 
         // Get RETURNING columns
-        val returningColumns = when (val src = statement.src) {
-            is InsertStatement -> src.returningColumns
-            is UpdateStatement -> src.returningColumns
-            is DeleteStatement -> src.returningColumns
-            else -> emptyList<String>()
-        }
+        val returningColumns = statement.src.returningColumns
 
         // Determine which columns to include
         val columnsToInclude = if (returningColumns.contains("*")) {
@@ -623,7 +629,9 @@ class DatabaseCodeGenerator(
                     adapterFunctionName = adapterFunctionName,
                     inputType = inputType,
                     outputType = outputType,
-                    isNullable = isNullable
+                    isNullable = isNullable,
+                    providerNamespace = null,
+                    kind = AdapterConfig.AdapterKind.RESULT_FIELD,
                 )
                 configs.add(config)
             }
@@ -828,8 +836,7 @@ class DatabaseCodeGenerator(
         val propertyName = className.lowercaseFirst()
 
         // Determine result type (handles shared results)
-        val resultType =
-            SharedResultTypeUtils.createResultTypeName(packageName, namespace, statement)
+        val resultType = resolvePublicResultType(namespace, statement)
 
         // Check if statement has parameters
         val namedParameters = StatementUtils.getNamedParameters(statement)
@@ -873,7 +880,7 @@ class DatabaseCodeGenerator(
         adaptersByNamespace: Map<String, List<UniqueAdapter>>
     ): String {
         val capitalizedNamespace = queryNamespaceName(namespace)
-        val statementAdapters = adapterConfig.collectAllParamConfigs(statement)
+        val statementAdapters = adapterConfig.collectAllParamConfigs(statement, namespace)
         val paramLines = buildCommonParamsLines(
             hasParams = hasParams,
             statementAdapters = statementAdapters,
@@ -882,10 +889,11 @@ class DatabaseCodeGenerator(
         )
 
         val b = IndentedCodeBuilder()
+        val resultTypeName = resolvePublicResultTypeString(namespace, statement)
         if (hasParams) {
             b.line("{ params ->")
         }
-        b.line("object : SelectRunners<${statement.getResultTypeName(namespace)}> {")
+        b.line("object : SelectRunners<$resultTypeName> {")
         // asList
         b.indent(by = 2) {
             b.line("override suspend fun asList() = $capitalizedNamespace.$className.executeAsList(")
@@ -921,9 +929,9 @@ class DatabaseCodeGenerator(
                 b.line("")
             } else {
                 // For collection mapping queries, single-row methods don't make sense
-                b.line("override suspend fun asOne(): ${statement.getResultTypeName(namespace)} = throw UnsupportedOperationException(\"asOne() is not supported for collection mapping queries. Use asList() instead.\")")
+                b.line("override suspend fun asOne(): $resultTypeName = throw UnsupportedOperationException(\"asOne() is not supported for collection mapping queries. Use asList() instead.\")")
                 b.line("")
-                b.line("override suspend fun asOneOrNull(): ${statement.getResultTypeName(namespace)}? = throw UnsupportedOperationException(\"asOneOrNull() is not supported for collection mapping queries. Use asList() instead.\")")
+                b.line("override suspend fun asOneOrNull(): $resultTypeName? = throw UnsupportedOperationException(\"asOneOrNull() is not supported for collection mapping queries. Use asList() instead.\")")
                 b.line("")
             }
 
@@ -964,7 +972,7 @@ class DatabaseCodeGenerator(
         adaptersByNamespace: Map<String, List<UniqueAdapter>>
     ): String {
         val capitalizedNamespace = queryNamespaceName(namespace)
-        val statementAdapters = adapterConfig.collectAllParamConfigs(statement)
+        val statementAdapters = adapterConfig.collectAllParamConfigs(statement, namespace)
         val paramLines = buildCommonParamsLines(
             hasParams = hasParams,
             statementAdapters = statementAdapters,
@@ -1013,7 +1021,7 @@ class DatabaseCodeGenerator(
         val capitalizedNamespace = queryNamespaceName(namespace)
 
         // For RETURNING queries, we need both input and output adapters
-        val inputAdapters = adapterConfig.collectAllParamConfigs(statement) // Input adapters for parameter binding
+        val inputAdapters = adapterConfig.collectAllParamConfigs(statement, namespace) // Input adapters for parameter binding
         val outputAdapters = collectOutputAdaptersForExecuteReturning(statement) // Output adapters for result conversion
         val allAdapters = inputAdapters + outputAdapters
 
@@ -1050,7 +1058,7 @@ class DatabaseCodeGenerator(
             b.line("")
 
             // executeReturningOne method
-            b.line("override suspend fun executeReturningOne(): ${resultTypeString} {")
+            b.line("override suspend fun executeReturningOne(): $resultTypeString {")
             b.indent(by = 2) {
                 b.line("val result = $capitalizedNamespace.$className.executeReturningOne(")
                 b.indent(by = 2) {
@@ -1093,9 +1101,24 @@ class DatabaseCodeGenerator(
         return b.build()
     }
 
-    /** Helper extension to get the result type name for a statement. */
-    private fun AnnotatedSelectStatement.getResultTypeName(namespace: String): String {
-        val resultType = SharedResultTypeUtils.createResultTypeName(packageName, namespace, this)
-        return resultType.toString()
+    private fun resolvePublicResultType(
+        namespace: String,
+        statement: AnnotatedSelectStatement,
+    ): TypeName {
+        return resolveMapToType(statement) ?: SharedResultTypeUtils.createResultTypeName(packageName, namespace, statement)
+    }
+
+    private fun resolveMapToType(statement: AnnotatedSelectStatement): TypeName? {
+        val target = statement.annotations.mapTo ?: return null
+        return SqliteTypeToKotlinCodeConverter.parseCustomType(target, packageName)
+    }
+
+    private fun resolvePublicResultTypeString(
+        namespace: String,
+        statement: AnnotatedSelectStatement,
+    ): String {
+        val override = statement.annotations.mapTo?.trim()
+        if (!override.isNullOrEmpty()) return override
+        return SharedResultTypeUtils.createResultTypeString(namespace, statement)
     }
 }

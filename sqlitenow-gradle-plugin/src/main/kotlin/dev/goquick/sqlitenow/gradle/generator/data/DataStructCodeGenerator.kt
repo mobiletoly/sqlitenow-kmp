@@ -92,7 +92,7 @@ open class DataStructCodeGenerator(
         createViewStatements = createViewStatements,
         nsWithStatements = nsWithStatements
     )
-    private val propertyEmitter = DataStructPropertyEmitter(generatorContext)
+    private val propertyEmitter = DataStructPropertyEmitter()
     private val joinedEmitter = DataStructJoinedEmitter(generatorContext)
     private val resultEmitter = DataStructResultEmitter(generatorContext, propertyEmitter)
     private val resultFileEmitter = DataStructResultFileEmitter(
@@ -102,21 +102,6 @@ open class DataStructCodeGenerator(
         sharedResultManager = sharedResultManager,
         outputDir = outputDir
     )
-
-    /**
-     * Gets all shared results from all namespaces.
-     */
-    fun getAllSharedResults(): List<SharedResultManager.SharedResult> {
-        return sharedResultManager.getSharedResultsByNamespace().values.flatten()
-    }
-
-    /**
-     * Finds a SELECT statement that generates a queryResult with the given name.
-     * Returns null when no matching statement is registered.
-     */
-    fun findSelectStatementByResultName(resultName: String): AnnotatedSelectStatement? {
-        return generatorContext.findSelectStatementByResultName(resultName)
-    }
 
     private fun sortViewsByDependencies(viewExecutors: List<CreateViewStatementExecutor>): List<CreateViewStatementExecutor> {
         if (viewExecutors.size <= 1) return viewExecutors
@@ -135,7 +120,7 @@ open class DataStructCodeGenerator(
             }
         }
 
-        val queue = ArrayDeque<String>(indeg.filter { it.value == 0 }.keys)
+        val queue = ArrayDeque(indeg.filter { it.value == 0 }.keys)
         val orderedNames = mutableListOf<String>()
         while (queue.isNotEmpty()) {
             val u = queue.removeFirst()
@@ -186,11 +171,11 @@ open class DataStructCodeGenerator(
                 if (statement.annotations.queryResult != null) {
                     sharedResultsWithContext[statement.annotations.queryResult] = statement
                 }
-                val queryObject = generateQueryObject(statement, namespace)
+                val queryObject = generateQueryObject(statement)
                 namespaceObject.addType(queryObject)
             },
             onExecuteStatement = { statement: AnnotatedExecuteStatement ->
-                val queryObject = generateQueryObject(statement, namespace)
+                val queryObject = generateQueryObject(statement)
                 namespaceObject.addType(queryObject)
             }
         )
@@ -218,7 +203,7 @@ open class DataStructCodeGenerator(
     }
 
     /** Generates a query-specific object (e.g., Person.SelectWeird) containing SQL, Params, and Result. */
-    private fun generateQueryObject(statement: AnnotatedStatement, namespace: String): TypeSpec {
+    private fun generateQueryObject(statement: AnnotatedStatement): TypeSpec {
         val className = statement.getDataClassName()
 
         val queryObjectBuilder = TypeSpec.objectBuilder(className)
@@ -449,8 +434,6 @@ open class DataStructCodeGenerator(
                         // For now, return null as InsertStatement typically doesn't have IN clauses
                         null
                     }
-
-                    else -> null
                 }
             }
 

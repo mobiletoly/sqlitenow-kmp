@@ -118,7 +118,7 @@ internal object AliasResolutionHelper {
         if (aliasPath.isNullOrEmpty()) return false
         val rootAliases = collectRootAliases(statement)
         val aliasPathMatchesRoot = aliasPath.any { rootAliases.contains(it) }
-        val sourceAliasMatchesRoot = !mapping.sourceTableAlias.isNullOrBlank() &&
+        val sourceAliasMatchesRoot = mapping.sourceTableAlias.isNotBlank() &&
                 rootAliases.contains(mapping.sourceTableAlias)
         return !(aliasPathMatchesRoot || sourceAliasMatchesRoot)
     }

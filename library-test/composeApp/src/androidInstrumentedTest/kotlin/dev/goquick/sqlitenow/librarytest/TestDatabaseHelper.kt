@@ -6,6 +6,12 @@ import dev.goquick.sqlitenow.core.util.toSqliteDate
 import dev.goquick.sqlitenow.core.util.toSqliteTimestamp
 import dev.goquick.sqlitenow.librarytest.db.AddressType
 import dev.goquick.sqlitenow.librarytest.db.LibraryTestDatabase
+import dev.goquick.sqlitenow.librarytest.db.PersonSelectOneResult
+import dev.goquick.sqlitenow.librarytest.db.PersonAggregateResult
+import dev.goquick.sqlitenow.librarytest.db.PersonAggregateSummary
+import dev.goquick.sqlitenow.librarytest.db.SinglePersonSummary
+import dev.goquick.sqlitenow.librarytest.db.PersonSummary
+import dev.goquick.sqlitenow.librarytest.db.PersonSummaryResult
 import dev.goquick.sqlitenow.librarytest.db.VersionBasedDatabaseMigrations
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
@@ -31,7 +37,26 @@ object TestDatabaseHelper {
             ),
             personAdapters = LibraryTestDatabase.PersonAdapters(
                 birthDateToSqlValue = { it?.toSqliteDate() },
+                personSummaryResultMapper = { raw: PersonSummaryResult ->
+                    PersonSummary(
+                        id = raw.id,
+                        fullName = "${raw.myFirstName} ${raw.myLastName}".trim()
+                    )
+                },
+                personSelectOneResultMapper = { raw: PersonSelectOneResult ->
+                    SinglePersonSummary(
+                        id = raw.id,
+                        fullName = "${raw.myFirstName} ${raw.myLastName}".trim(),
+                        age = 33
+                    )
+                },
                 sqlValueToTags = { it?.let { Json.decodeFromString(it) } },
+                personAggregateResultMapper = { raw: PersonAggregateResult ->
+                    PersonAggregateSummary(
+                        totalCount = raw.totalCount,
+                        averageFirstNameLength = raw.avgFirstNameLength ?: 0.0,
+                    )
+                },
             ),
             commentAdapters = LibraryTestDatabase.CommentAdapters(
                 createdAtToSqlValue = { it.toSqliteTimestamp() },

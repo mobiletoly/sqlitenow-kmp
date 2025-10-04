@@ -78,12 +78,12 @@ internal object DataStructUtils {
                         else -> "contentHashCode()"
                     }
                     if (type.isNullable) {
-                        CodeBlock.of("%L?.%L ?: 0", name, call)
+                        CodeBlock.of("(%L?.%L ?: 0)", name, call)
                     } else {
                         CodeBlock.of("%L.%L", name, call)
                     }
                 }
-                type.isNullable -> CodeBlock.of("%L?.hashCode() ?: 0", name)
+                type.isNullable -> CodeBlock.of("(%L?.hashCode() ?: 0)", name)
                 else -> CodeBlock.of("%L.hashCode()", name)
             }
 

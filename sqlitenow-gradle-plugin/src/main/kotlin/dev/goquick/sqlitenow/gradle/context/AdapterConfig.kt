@@ -10,11 +10,11 @@ import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
 import dev.goquick.sqlitenow.gradle.processing.DynamicFieldMapper
 import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
 import dev.goquick.sqlitenow.gradle.processing.SelectFieldCodeGenerator
+import dev.goquick.sqlitenow.gradle.processing.SharedResultTypeUtils
+import dev.goquick.sqlitenow.gradle.processing.StatementUtils
 import dev.goquick.sqlitenow.gradle.util.CaseInsensitiveMap
 import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter
-import dev.goquick.sqlitenow.gradle.processing.StatementUtils
 import dev.goquick.sqlitenow.gradle.util.capitalized
-import kotlin.collections.forEach
 
 /**
  * Service responsible for collecting and configuring adapter parameters for SQL statements.
@@ -69,6 +69,12 @@ class AdapterConfig(
         // 3) No dynamic prefix to strip; return as-is
         return fs.fieldName
     }
+    enum class AdapterKind {
+        INPUT,
+        RESULT_FIELD,
+        MAP_RESULT,
+    }
+
     data class ParamConfig(
         val paramName: String,
         val adapterFunctionName: String,
@@ -77,17 +83,25 @@ class AdapterConfig(
         val isNullable: Boolean,
         // Optional hint for which namespace should provide this adapter (e.g., table behind aliasPrefix)
         val providerNamespace: String? = null,
+        val kind: AdapterKind,
     )
 
     /** Collects all adapter configurations needed for a statement. */
-    fun collectAllParamConfigs(statement: AnnotatedStatement): List<ParamConfig> {
+    fun collectAllParamConfigs(statement: AnnotatedStatement, namespace: String? = null): List<ParamConfig> {
         val configs = mutableListOf<ParamConfig>()
         val processedAdapters = mutableSetOf<String>()
+        var mapToNames: MutableMap<String, String>? = null
 
         when (statement) {
             is AnnotatedSelectStatement -> {
+                if (namespace != null) {
+                    mapToNames = mutableMapOf()
+                }
                 configs.addAll(collectInputParamConfigs(statement, processedAdapters))
                 configs.addAll(collectOutputParamConfigs(statement, processedAdapters))
+                if (namespace != null) {
+                    createMapToParamConfig(statement, namespace, mapToNames!!)?.let { configs.add(it) }
+                }
             }
 
             is AnnotatedExecuteStatement -> {
@@ -268,7 +282,8 @@ class AdapterConfig(
             inputType = inputType,
             outputType = outputType,
             isNullable = isNullable,
-            providerNamespace = null // inputs don't need cross-namespace routing for now
+            providerNamespace = null, // inputs don't need cross-namespace routing for now
+            kind = AdapterKind.INPUT,
         )
     }
 
@@ -313,8 +328,56 @@ class AdapterConfig(
             inputType = inputType,
             outputType = targetType,
             isNullable = inputNullable,
-            providerNamespace = providerNs
+            providerNamespace = providerNs,
+            kind = AdapterKind.RESULT_FIELD,
         )
+    }
+
+    private fun createMapToParamConfig(
+        statement: AnnotatedSelectStatement,
+        namespace: String,
+        seenMapToNames: MutableMap<String, String>,
+    ): ParamConfig? {
+        val targetTypeNameRaw = statement.annotations.mapTo ?: return null
+        val baseType = SharedResultTypeUtils.createResultTypeName(
+            packageName = packageName ?: "",
+            namespace = namespace,
+            statement = statement,
+        )
+        val targetType = SqliteTypeToKotlinCodeConverter.parseCustomType(targetTypeNameRaw, packageName)
+        val adapterFunctionName = buildMapToAdapterFunctionName(statement, namespace)
+        val existing = seenMapToNames[adapterFunctionName]
+        if (existing != null && existing != statement.name) {
+            throw IllegalStateException(
+                "MapTo adapter name '$adapterFunctionName' already defined in namespace '$namespace' by statement '$existing'. " +
+                    "Only one mapTo per queryResult name is allowed."
+            )
+        }
+        seenMapToNames[adapterFunctionName] = statement.name
+        return ParamConfig(
+            paramName = adapterFunctionName,
+            adapterFunctionName = adapterFunctionName,
+            inputType = baseType,
+            outputType = targetType,
+            isNullable = targetType.isNullable,
+            providerNamespace = namespace,
+            kind = AdapterKind.MAP_RESULT,
+        )
+    }
+
+    private fun buildMapToAdapterFunctionName(
+        statement: AnnotatedSelectStatement,
+        namespace: String,
+    ): String {
+        val rawName = statement.annotations.queryResult?.takeIf { it.isNotBlank() }
+            ?: run {
+                val packageHint = packageName ?: ""
+                val className = SharedResultTypeUtils.createResultTypeName(packageHint, namespace, statement)
+                className.simpleNames.lastOrNull() ?: statement.getDataClassName()
+            }
+        val sanitized = rawName.replace(Regex("[^A-Za-z0-9]"), "")
+        val base = sanitized.replaceFirstChar { if (it.isLowerCase()) it else it.lowercaseChar() }
+        return "${base.ifEmpty { "result" }}Mapper"
     }
 
     /**

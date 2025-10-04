@@ -7,13 +7,10 @@ import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedStatement
-import dev.goquick.sqlitenow.gradle.sqlinspect.DeleteStatement
-import dev.goquick.sqlitenow.gradle.sqlinspect.InsertStatement
-import dev.goquick.sqlitenow.gradle.sqlinspect.UpdateStatement
 import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
-import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter
+import dev.goquick.sqlitenow.gradle.processing.SharedResultTypeUtils
 import dev.goquick.sqlitenow.gradle.util.CaseInsensitiveSet
-import kotlin.collections.forEach
+import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter
 
 /**
  * Handles adding adapter parameters to generated query functions and exposes helper lookups
@@ -38,19 +35,25 @@ internal class AdapterParameterEmitter(
 
     fun addParameterBindingAdapters(
         fnBld: FunSpec.Builder,
+        namespace: String,
         statement: AnnotatedStatement,
     ) {
-        addAdapterParameters(fnBld, statement) { config ->
-            config.adapterFunctionName.endsWith("ToSqlValue")
+        addAdapterParameters(fnBld, namespace, statement) { config ->
+            config.kind == AdapterConfig.AdapterKind.INPUT
         }
     }
 
     fun addResultConversionAdapters(
         fnBld: FunSpec.Builder,
+        namespace: String,
         statement: AnnotatedSelectStatement
     ) {
-        addAdapterParameters(fnBld, statement) { config ->
-            config.adapterFunctionName.startsWith("sqlValueTo")
+        addAdapterParameters(fnBld, namespace, statement) { config ->
+            when (config.kind) {
+                AdapterConfig.AdapterKind.RESULT_FIELD -> true
+                AdapterConfig.AdapterKind.MAP_RESULT -> true
+                AdapterConfig.AdapterKind.INPUT -> false
+            }
         }
     }
 
@@ -61,21 +64,22 @@ internal class AdapterParameterEmitter(
         addExecuteReturningAdapters(fnBld, statement)
     }
 
-    fun parameterBindingAdapterNames(statement: AnnotatedStatement): List<String> {
-        return getFilteredAdapterNames(statement) { config ->
-            config.adapterFunctionName.endsWith("ToSqlValue")
+    fun parameterBindingAdapterNames(namespace: String, statement: AnnotatedStatement): List<String> {
+        return getFilteredAdapterNames(namespace, statement) { config ->
+            config.kind == AdapterConfig.AdapterKind.INPUT
         }
     }
 
-    fun resultConversionAdapterNames(statement: AnnotatedStatement): List<String> {
-        return getFilteredAdapterNames(statement) { config ->
-            config.adapterFunctionName.startsWith("sqlValueTo")
+    fun resultConversionAdapterNames(namespace: String, statement: AnnotatedStatement): List<String> {
+        return getFilteredAdapterNames(namespace, statement) { config ->
+            config.kind == AdapterConfig.AdapterKind.RESULT_FIELD ||
+                    config.kind == AdapterConfig.AdapterKind.MAP_RESULT
         }
     }
 
-    fun buildJoinedReadParamsList(statement: AnnotatedSelectStatement): List<String> {
+    fun buildJoinedReadParamsList(namespace: String, statement: AnnotatedSelectStatement): List<String> {
         val params = mutableListOf("statement")
-        params += resultConversionAdapterNames(statement)
+        params += resultConversionAdapterNames(namespace, statement)
         return params
     }
 
@@ -85,12 +89,26 @@ internal class AdapterParameterEmitter(
         return params
     }
 
+    fun mapToAdapterParameterName(
+        namespace: String,
+        statement: AnnotatedSelectStatement,
+    ): String? {
+        val configs = adapterConfig.collectAllParamConfigs(statement, namespace)
+        val mapConfigs = configs.filter { it.kind == AdapterConfig.AdapterKind.MAP_RESULT }
+        if (mapConfigs.isEmpty()) return null
+        val targetInputType = SharedResultTypeUtils.createResultTypeName(packageName, namespace, statement)
+        val matchingConfig = mapConfigs.firstOrNull { it.inputType == targetInputType } ?: return null
+        val chosen = chooseAdapterParamNames(configs)
+        return chosen[matchingConfig]
+    }
+
     private fun addAdapterParameters(
         fnBld: FunSpec.Builder,
+        namespace: String,
         statement: AnnotatedStatement,
         filter: (AdapterConfig.ParamConfig) -> Boolean,
     ) {
-        val adapterConfigs = adapterConfig.collectAllParamConfigs(statement)
+        val adapterConfigs = adapterConfig.collectAllParamConfigs(statement, namespace)
         val filteredConfigs = adapterConfigs.filter(filter)
         val chosenNames = chooseAdapterParamNames(filteredConfigs)
         val byName: MutableMap<String, AdapterConfig.ParamConfig> = linkedMapOf()
@@ -109,10 +127,11 @@ internal class AdapterParameterEmitter(
     }
 
     private fun getFilteredAdapterNames(
+        namespace: String,
         statement: AnnotatedStatement,
         filter: (AdapterConfig.ParamConfig) -> Boolean,
     ): List<String> {
-        val adapterConfigs = adapterConfig.collectAllParamConfigs(statement)
+        val adapterConfigs = adapterConfig.collectAllParamConfigs(statement, namespace)
         val filtered = adapterConfigs.filter(filter)
         val chosen = chooseAdapterParamNames(filtered)
         val seen = LinkedHashSet<String>()
@@ -183,24 +202,13 @@ internal class AdapterParameterEmitter(
     private fun AnnotatedExecuteStatement.tableDefinition(
         tableLookup: Map<String, AnnotatedCreateTableStatement>
     ): AnnotatedCreateTableStatement? {
-        val tableName = when (val src = src) {
-            is InsertStatement -> src.table
-            is UpdateStatement -> src.table
-            is DeleteStatement -> src.table
-            else -> return null
-        }
-        return tableLookup[tableName.lowercase()]
+        return tableLookup[src.table.lowercase()]
     }
 
     private fun AnnotatedExecuteStatement.returningColumns(
         tableStatement: AnnotatedCreateTableStatement
     ): List<AnnotatedCreateTableStatement.Column> {
-        val returningColumns = when (val src = src) {
-            is InsertStatement -> src.returningColumns
-            is UpdateStatement -> src.returningColumns
-            is DeleteStatement -> src.returningColumns
-            else -> emptyList<String>()
-        }
+        val returningColumns = src.returningColumns
         if (returningColumns.contains("*")) {
             return tableStatement.columns
         }

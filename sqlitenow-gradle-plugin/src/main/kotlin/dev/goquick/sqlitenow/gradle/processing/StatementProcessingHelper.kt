@@ -88,8 +88,8 @@ class StatementProcessingHelper(
             logger.error("Failed to process SQL statement in file: ${file.absolutePath}")
             logger.error("Statement name: $stmtName")
             logger.error("SQL content:")
-            logger.error("${sqlStatement.topComments.joinToString("\n")}")
-            logger.error("${sqlStatement.sql}")
+            logger.error(sqlStatement.topComments.joinToString("\n"))
+            logger.error(sqlStatement.sql)
             logger.error("Parse error: ${e.message}")
             throw RuntimeException("Failed to parse SQL statement '$stmtName' in file '${file.name}'", e)
         }
@@ -156,8 +156,9 @@ class StatementProcessingHelper(
 
         // Add regular database fields
         stmt.fields.forEach { column ->
+            val enrichedColumn = enrichFieldSourceWithViewExpression(column, stmt)
             val annotations = mergeFieldAnnotations(
-                column,
+                enrichedColumn,
                 fieldAnnotations,
                 stmt,
                 annotationResolver
@@ -167,7 +168,7 @@ class StatementProcessingHelper(
             } ?: emptyList()
             fields.add(
                 AnnotatedSelectStatement.Field(
-                    src = column,
+                    src = enrichedColumn,
                     annotations = annotations,
                     aliasPath = aliasPath
                 )
@@ -183,7 +184,8 @@ class StatementProcessingHelper(
                     fieldName = fieldName,
                     tableName = "", // Dynamic fields don't belong to any table
                     originalColumnName = fieldName,
-                    dataType = "DYNAMIC" // Special type for dynamic fields
+                    dataType = "DYNAMIC", // Special type for dynamic fields
+                    expression = null
                 )
                 val fieldAnnotationOverrides = FieldAnnotationOverrides.parse(annotations)
                 val aliasPath = computeAliasPathForSelectField(stmt, fieldAnnotationOverrides.sourceTable)
@@ -225,7 +227,8 @@ class StatementProcessingHelper(
                                 fieldName = df.name,
                                 tableName = "",
                                 originalColumnName = df.name,
-                                dataType = "DYNAMIC"
+                                dataType = "DYNAMIC",
+                                expression = null
                             )
                             val aliasPrefix = computeAliasPathForAlias(stmt, alias)
                             val dynField = AnnotatedSelectStatement.Field(
@@ -353,6 +356,37 @@ class StatementProcessingHelper(
         return merged
     }
 
+    private fun enrichFieldSourceWithViewExpression(
+        column: SelectStatement.FieldSource,
+        stmt: SelectStatement
+    ): SelectStatement.FieldSource {
+        if (column.expression != null || annotationResolver == null) {
+            return column
+        }
+
+        val candidateViewNames = linkedSetOf<String>().apply {
+            stmt.fromTable?.takeIf { it.isNotBlank() }?.let { add(it) }
+            stmt.tableAliases.values.forEach { value ->
+                if (value.isNotBlank()) add(value)
+            }
+            stmt.joinTables.forEach { table ->
+                if (table.isNotBlank()) add(table)
+            }
+        }
+
+        candidateViewNames.forEach { viewName ->
+            val view = annotationResolver.findView(viewName) ?: return@forEach
+            val matchedField = view.fields.firstOrNull { viewField ->
+                viewField.src.fieldName.equals(column.fieldName, ignoreCase = true)
+            }
+            if (matchedField?.src?.expression != null) {
+                return column.copy(expression = matchedField.src.expression)
+            }
+        }
+
+        return column
+    }
+
     /** Recursively collect dynamic fields from a view and its referenced views. */
     private fun collectTransitiveDynamicFields(
         view: AnnotatedCreateViewStatement,
@@ -426,13 +460,43 @@ class StatementProcessingHelper(
         val mergedAnnotations = mutableMapOf<String, Any?>()
 
         // If we have a resolver and this SELECT queries a table/view, get resolved annotations
-        val fromTable = selectStatement.fromTable
-        if (fromTable != null && annotationResolver != null) {
-            val resolvedAnnotations = annotationResolver.getFieldAnnotations(fromTable, column.fieldName)
-                ?: annotationResolver.getFieldAnnotations(fromTable, column.originalColumnName)
+        if (annotationResolver != null) {
+            val candidateSources = linkedSetOf<String>()
 
-            if (resolvedAnnotations != null) {
-                FieldAnnotationMerger.mergeFieldAnnotations(mergedAnnotations, resolvedAnnotations)
+            val tableAlias = column.tableName
+            if (tableAlias.isNotBlank()) {
+                candidateSources += tableAlias
+                selectStatement.tableAliases[tableAlias]?.let { candidateSources += it }
+            } else {
+                candidateSources += selectStatement.tableAliases.values
+            }
+
+            selectStatement.fromTable?.let { candidateSources += it }
+
+            candidateSources.forEach { sourceName ->
+                val resolvedAnnotations = annotationResolver.getFieldAnnotations(sourceName, column.fieldName)
+                    ?: annotationResolver.getFieldAnnotations(sourceName, column.originalColumnName)
+
+                if (resolvedAnnotations != null) {
+                    FieldAnnotationMerger.mergeFieldAnnotations(mergedAnnotations, resolvedAnnotations)
+                    return@forEach
+                }
+
+                val view = annotationResolver.findView(sourceName)
+                if (view != null) {
+                    val viewField = view.fields.firstOrNull { field ->
+                        field.src.fieldName.equals(column.fieldName, ignoreCase = true) ||
+                                field.src.originalColumnName.equals(column.fieldName, ignoreCase = true)
+                    } ?: view.fields.firstOrNull { field ->
+                        field.src.fieldName.equals(column.originalColumnName, ignoreCase = true) ||
+                                field.src.originalColumnName.equals(column.originalColumnName, ignoreCase = true)
+                    }
+
+                    if (viewField != null) {
+                        FieldAnnotationMerger.mergeFieldAnnotations(mergedAnnotations, viewField.annotations)
+                        return@forEach
+                    }
+                }
             }
         }
 

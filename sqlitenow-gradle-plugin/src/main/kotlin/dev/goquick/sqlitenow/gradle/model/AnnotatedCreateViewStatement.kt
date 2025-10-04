@@ -3,6 +3,7 @@ package dev.goquick.sqlitenow.gradle.model
 import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
 import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationOverrides
 import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationContext
 import dev.goquick.sqlitenow.gradle.processing.extractAnnotations
 import dev.goquick.sqlitenow.gradle.processing.extractFieldAssociatedAnnotations
 import dev.goquick.sqlitenow.gradle.sqlinspect.CreateViewStatement
@@ -35,7 +36,8 @@ data class AnnotatedCreateViewStatement(
             innerComments: List<String>,
         ): AnnotatedCreateViewStatement {
             val viewAnnotations = StatementAnnotationOverrides.Companion.parse(
-                extractAnnotations(topComments)
+                extractAnnotations(topComments),
+                context = StatementAnnotationContext.CREATE_VIEW
             )
             val fieldAnnotations = extractFieldAssociatedAnnotations(innerComments)
             // Collect dynamic field annotations declared at VIEW level

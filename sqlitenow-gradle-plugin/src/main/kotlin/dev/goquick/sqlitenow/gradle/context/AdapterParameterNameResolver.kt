@@ -36,7 +36,7 @@ internal class AdapterParameterNameResolver {
      * Normalize alias noise by removing duplicate tokens.
      * Example: "sqlValueToAddressAddressType" -> "sqlValueToAddressType"
      */
-    fun normalizeAliasNoiseForNamespace(namespace: String, functionName: String): String {
+    fun normalizeAliasNoiseForNamespace(functionName: String): String {
         val base = functionName.substringBefore("For")
         fun compress(prop: String): String {
             val tokens = prop.split(Regex("(?=[A-Z])")).filter { it.isNotEmpty() }
@@ -71,7 +71,7 @@ internal class AdapterParameterNameResolver {
             val base = config.providerNamespace?.let { ns ->
                 canonicalizeAdapterNameForNamespace(ns, config.adapterFunctionName)
             } ?: config.adapterFunctionName
-            normalizeAliasNoiseForNamespace(config.providerNamespace ?: "", base)
+            normalizeAliasNoiseForNamespace(base)
         }
         
         // Step 2: group by (name + signature); assign one shared param name per group
@@ -111,27 +111,64 @@ internal class AdapterParameterNameResolver {
         tableAliases: Map<String, String>,
         aliasPrefixes: List<String>,
         adapterConfig: AdapterConfig
-    ): String? {
+    ): String {
         val all = adapterConfig.collectAllParamConfigs(statement)
         val outputConfigs = all.filter { it.adapterFunctionName.startsWith("sqlValueTo") }
-        if (outputConfigs.isEmpty()) return null
+        if (outputConfigs.isEmpty()) {
+            return fallbackAdapterName(field, tableAliases, aliasPrefixes, adapterConfig)
+        }
         val chosen = chooseAdapterParamNames(outputConfigs)
 
         // Build raw function name as AdapterConfig does (using base column name, not visible name)
-        val baseColumnName = adapterConfig.baseOriginalNameForField(field, aliasPrefixes)
-        val columnName = PropertyNameGeneratorType.LOWER_CAMEL_CASE.convertToPropertyName(baseColumnName)
-        val rawAdapterName = adapterConfig.getOutputAdapterFunctionName(columnName)
-        val providerNs = if (field.src.tableName.isNotBlank()) {
-            tableAliases[field.src.tableName] ?: field.src.tableName
-        } else null
+        val rawAdapterName = computeRawAdapterName(field, aliasPrefixes, adapterConfig)
+        val providerNs = providerNamespaceForField(field, tableAliases)
 
         // Try exact match (by raw name and provider namespace)
         val exact = outputConfigs.firstOrNull { it.adapterFunctionName == rawAdapterName && it.providerNamespace == providerNs }
-        if (exact != null) return chosen[exact]
+        if (exact != null) {
+            chosen[exact]?.let { return it }
+        }
 
         // Fallback: match by raw name only
         val any = outputConfigs.firstOrNull { it.adapterFunctionName == rawAdapterName }
-        return any?.let { chosen[it] }
+        chosen[any]?.let { return it }
+
+        return fallbackAdapterName(field, tableAliases, aliasPrefixes, adapterConfig)
+    }
+
+    private fun computeRawAdapterName(
+        field: AnnotatedSelectStatement.Field,
+        aliasPrefixes: List<String>,
+        adapterConfig: AdapterConfig,
+    ): String {
+        val baseColumnName = adapterConfig.baseOriginalNameForField(field, aliasPrefixes)
+        val columnName = PropertyNameGeneratorType.LOWER_CAMEL_CASE.convertToPropertyName(baseColumnName)
+        return adapterConfig.getOutputAdapterFunctionName(columnName)
+    }
+
+    private fun providerNamespaceForField(
+        field: AnnotatedSelectStatement.Field,
+        tableAliases: Map<String, String>,
+    ): String? {
+        return if (field.src.tableName.isNotBlank()) {
+            tableAliases[field.src.tableName] ?: field.src.tableName
+        } else {
+            null
+        }
+    }
+
+    private fun fallbackAdapterName(
+        field: AnnotatedSelectStatement.Field,
+        tableAliases: Map<String, String>,
+        aliasPrefixes: List<String>,
+        adapterConfig: AdapterConfig,
+    ): String {
+        val rawAdapterName = computeRawAdapterName(field, aliasPrefixes, adapterConfig)
+        val providerNs = providerNamespaceForField(field, tableAliases)
+        val canonical = providerNs?.let { ns ->
+            canonicalizeAdapterNameForNamespace(ns, rawAdapterName)
+        } ?: rawAdapterName
+        return normalizeAliasNoiseForNamespace(canonical)
     }
 
 

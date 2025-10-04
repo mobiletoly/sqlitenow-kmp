@@ -4,10 +4,7 @@ import dev.goquick.sqlitenow.gradle.context.GeneratorContext
 import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
-import dev.goquick.sqlitenow.gradle.sqlinspect.DeleteStatement
-import dev.goquick.sqlitenow.gradle.sqlinspect.InsertStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
-import dev.goquick.sqlitenow.gradle.sqlinspect.UpdateStatement
 import dev.goquick.sqlitenow.gradle.util.CaseInsensitiveSet
 
 /**
@@ -45,6 +42,7 @@ internal object ReturningColumnsResolver {
                 tableName = tableStatement.src.tableName,
                 originalColumnName = column.src.name,
                 dataType = column.src.dataType,
+                expression = null,
             )
 
             AnnotatedSelectStatement.Field(
@@ -58,12 +56,7 @@ internal object ReturningColumnsResolver {
         generatorContext: GeneratorContext,
         statement: AnnotatedExecuteStatement,
     ): Pair<AnnotatedCreateTableStatement, List<String>> {
-        val tableName = when (val src = statement.src) {
-            is InsertStatement -> src.table
-            is UpdateStatement -> src.table
-            is DeleteStatement -> src.table
-            else -> error("Only INSERT, UPDATE, and DELETE statements support RETURNING clauses")
-        }
+        val tableName = statement.src.table
 
         val tableLookup =
             generatorContext.createTableStatements.associateBy { it.src.tableName.lowercase() }

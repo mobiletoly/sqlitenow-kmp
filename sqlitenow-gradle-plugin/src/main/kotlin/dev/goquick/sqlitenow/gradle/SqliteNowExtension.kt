@@ -1,10 +1,9 @@
 package dev.goquick.sqlitenow.gradle
 
 import dev.goquick.sqlitenow.gradle.context.DatabaseConfig
-import javax.inject.Inject
 import org.gradle.api.NamedDomainObjectContainer
 import org.gradle.api.model.ObjectFactory
-import org.gradle.api.provider.Property
+import javax.inject.Inject
 
 open class SqliteNowExtension @Inject constructor(
     objects: ObjectFactory

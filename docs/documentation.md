@@ -29,10 +29,10 @@ Understand how to INSERT, UPDATE, and DELETE data in your database.
 
 [Manage Data →]({{ site.baseurl }}/documentation/manage-data/)
 
-### Collections and relationships
-Understand how to deal with 1:1, 1:many, and many:many collections in your queries.
+### Dynamic Fields
+Understand how to embed nested objects, collections, or existing entities in your result models.
 
-[Collections →]({{ site.baseurl }}/documentation/collection/)
+[Dynamic Fields →]({{ site.baseurl }}/documentation/dynamic-fields/)
 
 ### Initializing Data
 Learn how to populate your database with initial data during creation.
@@ -67,9 +67,9 @@ Useful recipes and patterns for common use cases.
     <p>INSERT, UPDATE, and DELETE operations to modify your database</p>
   </a>
 
-  <a href="{{ site.baseurl }}/documentation/collection/" class="doc-nav-card">
-    <h3>📚 Collections</h3>
-    <p>Map JOIN query results to nested data structures</p>
+  <a href="{{ site.baseurl }}/documentation/dynamic-fields/" class="doc-nav-card">
+    <h3>🧩 Dynamic Fields</h3>
+    <p>Map JOIN results to nested objects, collections, or embedded entities</p>
   </a>
 
   <a href="{{ site.baseurl }}/documentation/initialize-data/" class="doc-nav-card">

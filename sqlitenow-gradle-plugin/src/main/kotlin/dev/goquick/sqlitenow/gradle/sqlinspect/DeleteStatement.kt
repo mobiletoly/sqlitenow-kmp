@@ -12,8 +12,8 @@ class DeleteStatement(
     val namedParametersToColumns: Map<String, AssociatedColumn>,
     override val withSelectStatements: List<SelectStatement>,
     override val parameterCastTypes: Map<String, String> = emptyMap(),
-    val hasReturningClause: Boolean = false,
-    val returningColumns: List<String> = emptyList()
+    override val hasReturningClause: Boolean = false,
+    override val returningColumns: List<String> = emptyList()
 ) : ExecuteStatement {
 
     companion object {

@@ -181,29 +181,33 @@ You can override any schema-level annotation in a query (including property name
 nullability etc). It means that **SELECT** annotations have higher priorities than annotations
 in **CREATE TABLE**.
 
-### Shared Result Classes
+### Reusing Result Classes
 
-Assuming that you have two (or more) queries in two different files:
+You can point multiple queries at the same generated data class by giving them the same
+`queryResult` name. The generator now creates that data class once at the namespace level and
+reuses it everywhere, rather than nesting it under a `SharedResult` container like earlier
+iterations of the plugin.
+
+For example, consider two queries:
 
 **File: `queries/person/selectActive.sql`**
 
 ```sql
--- @@{ sharedResult=Row }
+-- @@{ queryResult=Row }
 SELECT * FROM Person WHERE active = 1;
 ```
 
 **File: `queries/person/selectNew.sql`**
 
 ```sql
--- @@{ sharedResult=Row }
+-- @@{ queryResult=Row }
 SELECT * FROM Person WHERE created_at > :since;
 ```
 
-Instead of two separate result classes `PersonQuery/SelectActive` and
-`PersonQuery/SelectNew`, both queries will use the same `Person/SharedResult/Row` result
-class, reducing code duplication.
-
-`Person/SharedResult` object contains all shared result classes for the `person` namespace.
+Both files generate a single Kotlin data class named `PersonRow` (emitted to
+`dev.goquick.sqlitenow.librarytest.db.PersonRow`). Each query extension function then returns or
+maps from that shared class. If you also supply `mapTo=…`, the generated reader accepts a mapper
+lambda so both queries can project the shared `PersonRow` into whatever domain type you need.
 
 ## Collection Parameters
 

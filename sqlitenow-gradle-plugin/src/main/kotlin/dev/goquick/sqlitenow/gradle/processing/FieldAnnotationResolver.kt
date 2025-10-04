@@ -11,9 +11,6 @@ class FieldAnnotationResolver(
     private val createTableStatements: List<AnnotatedCreateTableStatement>,
     private val createViewStatements: List<AnnotatedCreateViewStatement>
 ) {
-
-    private val tableLookup: Map<String, AnnotatedCreateTableStatement> =
-        createTableStatements.associateBy { it.name.lowercase() }
     private val viewLookup: Map<String, AnnotatedCreateViewStatement> =
         createViewStatements.associateBy { it.src.viewName.lowercase() }
 

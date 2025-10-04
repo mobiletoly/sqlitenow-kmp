@@ -67,7 +67,7 @@ class ExcludeOverrideFieldsPatternTest {
         val props = mutableListOf<com.squareup.kotlinpoet.PropertySpec>()
         val ctor = com.squareup.kotlinpoet.FunSpec.constructorBuilder()
         val fieldCodeGen = SelectFieldCodeGenerator()
-        val emitter = DataStructPropertyEmitter(gen.generatorContext)
+        val emitter = DataStructPropertyEmitter()
 
         val fields = listOf(fieldA, fieldB)
         val skipSet = DynamicFieldUtils.computeSkipSet(fields)
@@ -103,7 +103,7 @@ class ExcludeOverrideFieldsPatternTest {
         val props = mutableListOf<com.squareup.kotlinpoet.PropertySpec>()
         val ctor = com.squareup.kotlinpoet.FunSpec.constructorBuilder()
         val fieldCodeGen = SelectFieldCodeGenerator()
-        val emitter = DataStructPropertyEmitter(gen.generatorContext)
+        val emitter = DataStructPropertyEmitter()
 
         val fields = listOf(field)
         val skipSet = DynamicFieldUtils.computeSkipSet(fields)
@@ -131,7 +131,7 @@ class ExcludeOverrideFieldsPatternTest {
         val props = mutableListOf<com.squareup.kotlinpoet.PropertySpec>()
         val ctor = com.squareup.kotlinpoet.FunSpec.constructorBuilder()
         val fieldCodeGen = SelectFieldCodeGenerator()
-        val emitter = DataStructPropertyEmitter(gen.generatorContext)
+        val emitter = DataStructPropertyEmitter()
 
         val fields = listOf(field)
         val skipSet = DynamicFieldUtils.computeSkipSet(fields)

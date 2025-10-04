@@ -7,12 +7,14 @@ import net.sf.jsqlparser.statement.select.WithItem
 /**
  * Base interface for EXECUTE statements (INSERT/UPDATE/DELETE).
  */
-interface ExecuteStatement : SqlStatement {
+sealed interface ExecuteStatement : SqlStatement {
     override val sql: String
     val table: String
     override val namedParameters: List<String>
     val withSelectStatements: List<SelectStatement>
     val parameterCastTypes: Map<String, String>
+    val hasReturningClause: Boolean
+    val returningColumns: List<String>
 
     companion object {
         fun buildSelectStatementFromWithItemsList(

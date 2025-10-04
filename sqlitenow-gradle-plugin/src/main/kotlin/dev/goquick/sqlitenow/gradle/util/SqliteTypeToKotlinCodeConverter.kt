@@ -49,8 +49,20 @@ class SqliteTypeToKotlinCodeConverter {
 
         // List of Kotlin collection types that should be mapped to kotlin.collections
         val KOTLIN_COLLECTION_TYPES = listOf(
-            "List", "MutableList", "Set", "MutableSet", "Map", "MutableMap", "Collection", "MutableCollection",
-            "Iterable", "MutableIterable", "Iterator", "MutableIterator", "ListIterator", "MutableListIterator"
+            "List",
+            "MutableList",
+            "Set",
+            "MutableSet",
+            "Map",
+            "MutableMap",
+            "Collection",
+            "MutableCollection",
+            "Iterable",
+            "MutableIterable",
+            "Iterator",
+            "MutableIterator",
+            "ListIterator",
+            "MutableListIterator"
         )
 
         /**
@@ -89,6 +101,22 @@ class SqliteTypeToKotlinCodeConverter {
         }
 
         /**
+         * Parses a custom Kotlin type string (optionally nullable) into a [TypeName].
+         *
+         * This is primarily used for statement-level annotations such as `mapTo` where
+         * the annotation provides a direct Kotlin type without any SQL context.
+         */
+        fun parseCustomType(typeString: String, packageName: String? = null): TypeName {
+            val trimmed = typeString.trim()
+            require(trimmed.isNotEmpty()) { "Type string cannot be blank" }
+
+            val isNullable = trimmed.endsWith('?')
+            val coreType = if (isNullable) trimmed.dropLast(1).trim() else trimmed
+            val parsed = parseTypeString(coreType, packageName)
+            return if (isNullable) parsed.copy(nullable = true) else parsed
+        }
+
+        /**
          * Parses a type string that may contain generics (e.g., "List<String>", "Map<String, Int>")
          * and converts it to a proper KotlinPoet TypeName.
          *
@@ -118,7 +146,8 @@ class SqliteTypeToKotlinCodeConverter {
                         if (!rootClassName.contains('.') &&
                             rootClassName.isNotEmpty() &&
                             rootClassName[0].isUpperCase() &&
-                            packageName != null) {
+                            packageName != null
+                        ) {
                             // Create a ClassName for same-package nested class
                             var className = ClassName(packageName, rootClassName)
                             // Add nested class names
@@ -157,12 +186,13 @@ class SqliteTypeToKotlinCodeConverter {
             val typeArgumentsString = typeString.substring(openBracket + 1, closeBracket).trim()
 
             // Parse the raw type
-            val rawType = when {
-                rawTypeName in KOTLIN_STDLIB_TYPES -> ClassName("kotlin", rawTypeName)
-                rawTypeName in KOTLIN_COLLECTION_TYPES -> ClassName(
+            val rawType = when (rawTypeName) {
+                in KOTLIN_STDLIB_TYPES -> ClassName("kotlin", rawTypeName)
+                in KOTLIN_COLLECTION_TYPES -> ClassName(
                     "kotlin.collections",
                     rawTypeName
                 )
+
                 else -> {
                     // Handle qualified type names (e.g., PersonAddress.SharedResult.Row)
                     if (rawTypeName.contains('.')) {
@@ -176,7 +206,8 @@ class SqliteTypeToKotlinCodeConverter {
                         if (!rootClassName.contains('.') &&
                             rootClassName.isNotEmpty() &&
                             rootClassName[0].isUpperCase() &&
-                            packageName != null) {
+                            packageName != null
+                        ) {
                             // Create a ClassName for same-package nested class
                             var className = ClassName(packageName, rootClassName)
                             // Add nested class names
@@ -208,7 +239,10 @@ class SqliteTypeToKotlinCodeConverter {
          * @param typeArgumentsString The type arguments string to parse
          * @return List of TypeName objects representing the type arguments
          */
-        private fun parseTypeArguments(typeArgumentsString: String, packageName: String? = null): List<TypeName> {
+        private fun parseTypeArguments(
+            typeArgumentsString: String,
+            packageName: String? = null
+        ): List<TypeName> {
             // Use GenericTypeParser for the core parsing logic
             val typeArgumentStrings = GenericTypeParser.parseTypeArguments(typeArgumentsString)
 

@@ -1,11 +1,14 @@
 package dev.goquick.sqlitenow.gradle.sqlinspect
 
 import java.sql.Connection
+import java.util.Locale
+import net.sf.jsqlparser.expression.Expression
 import net.sf.jsqlparser.expression.JdbcNamedParameter
 import net.sf.jsqlparser.expression.operators.relational.EqualsTo
 import net.sf.jsqlparser.schema.Column
 import net.sf.jsqlparser.schema.Table
 import net.sf.jsqlparser.statement.select.PlainSelect
+import net.sf.jsqlparser.statement.select.SelectItem
 
 class SelectStatement(
     override val sql: String,
@@ -32,7 +35,8 @@ class SelectStatement(
         val fieldName: String,
         val tableName: String,
         val originalColumnName: String,
-        val dataType: String
+        val dataType: String,
+        val expression: Expression? = null
     )
 
     companion object {
@@ -132,6 +136,7 @@ class SelectStatement(
          */
         private fun extractSelectFieldInfo(conn: Connection, select: PlainSelect, sql: String): List<FieldSource> {
             val fieldSources = mutableListOf<FieldSource>()
+            val expressionLookup = buildExpressionLookup(select)
 
             try {
                 val limitedSql = rewriteLimitOffset(sql)
@@ -162,18 +167,21 @@ class SelectStatement(
                         // Third pass: create FieldSource objects
                         deduplicatedFields.forEach { fieldInfo ->
                         val lookupFieldName = cleanSqliteColumnDisambiguation(fieldInfo.fieldName)
-                        val cleanColumnName = cleanSqliteColumnDisambiguation(fieldInfo.columnName)
                         val originalColumnName = findFieldOriginalColumn(select, lookupFieldName)
                             ?: fieldInfo.fieldName
+
+                        val expression = expressionLookup[lookupFieldName.lowercase(Locale.ROOT)]
+                            ?: expressionLookup[fieldInfo.fieldName.lowercase(Locale.ROOT)]
 
                         fieldSources.add(
                             FieldSource(
                                 fieldName = fieldInfo.fieldName,
                                 tableName = fieldInfo.tableName,
-                                    originalColumnName = originalColumnName,
-                                    dataType = fieldInfo.sqlType
-                                )
+                                originalColumnName = originalColumnName,
+                                dataType = fieldInfo.sqlType,
+                                expression = expression
                             )
+                        )
                         }
                     }
                 }
@@ -186,6 +194,38 @@ class SelectStatement(
             }
 
             return fieldSources
+        }
+
+        private fun buildExpressionLookup(select: PlainSelect): Map<String, Expression> {
+            if (select.selectItems.isNullOrEmpty()) return emptyMap()
+
+            val lookup = mutableMapOf<String, Expression>()
+            select.selectItems.forEach { item ->
+                val expressionItem = item as? SelectItem<*> ?: return@forEach
+                val expression = expressionItem.expression ?: return@forEach
+
+                val alias = expressionItem.alias?.name?.trim()?.takeIf { it.isNotEmpty() }
+                val keys = mutableSetOf<String>()
+
+                if (alias != null) {
+                    keys += alias
+                    val cleaned = cleanSqliteColumnDisambiguation(alias)
+                    if (cleaned != alias) {
+                        keys += cleaned
+                    }
+                } else {
+                    val raw = expression.toString().trim()
+                    if (raw.isNotEmpty()) {
+                        keys += raw
+                    }
+                }
+
+                keys.forEach { key ->
+                    lookup[key.lowercase(Locale.ROOT)] = expression
+                }
+            }
+
+            return lookup
         }
 
         /**

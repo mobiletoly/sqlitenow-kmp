@@ -69,6 +69,9 @@ class DayTempoHeavyIntegrationTest {
             val bundleResult = resultsByDocId[expectedBundle.docId]
                 ?: error("Missing bundle ${expectedBundle.docId} in results")
 
+            val primaryPackage = expectedBundle.packages.firstOrNull()
+                ?: error("Expected bundle ${expectedBundle.docId} to contain packages")
+
             assertEquals(
                 "Bundle title mismatch for ${expectedBundle.docId}",
                 expectedBundle.title,
@@ -405,7 +408,9 @@ private class DayTempoSeedHelper(private val database: DayTempoDatabase) {
 
                         activityExpectations += ActivityExpectation(
                             docId = activityDocId,
+                            title = activityTitle,
                             categoryTitle = activityCategory.title,
+                            groupDocId = "group-$bundleIndex-$packageIndex",
                             scheduleStartAt = scheduleStartAt,
                             scheduleTimePoints = scheduleTimePoints,
                             scheduleRepeat = ActivityScheduleRepeat.WEEK_DAYS,
@@ -497,7 +502,9 @@ private data class PackageExpectation(
 
 private data class ActivityExpectation(
     val docId: String,
+    val title: String,
     val categoryTitle: String,
+    val groupDocId: String,
     val scheduleStartAt: LocalDate,
     val scheduleTimePoints: List<AlarmHourMinute>,
     val scheduleRepeat: ActivityScheduleRepeat,

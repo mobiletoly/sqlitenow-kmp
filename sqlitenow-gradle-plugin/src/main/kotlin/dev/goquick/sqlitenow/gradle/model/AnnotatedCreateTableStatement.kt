@@ -2,6 +2,7 @@ package dev.goquick.sqlitenow.gradle.model
 
 import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
 import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationContext
 import dev.goquick.sqlitenow.gradle.processing.extractAnnotations
 import dev.goquick.sqlitenow.gradle.processing.extractFieldAssociatedAnnotations
 import dev.goquick.sqlitenow.gradle.processing.parseNotNullValue
@@ -44,7 +45,8 @@ data class AnnotatedCreateTableStatement(
             innerComments: List<String>,
         ): AnnotatedCreateTableStatement {
             val tableAnnotations = StatementAnnotationOverrides.Companion.parse(
-                extractAnnotations(topComments)
+                extractAnnotations(topComments),
+                context = StatementAnnotationContext.CREATE_TABLE
             )
             val fieldAnnotations = extractFieldAssociatedAnnotations(innerComments)
 

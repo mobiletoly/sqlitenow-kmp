@@ -4,6 +4,7 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
+import com.squareup.kotlinpoet.TypeName
 import dev.goquick.sqlitenow.gradle.util.IndentedCodeBuilder
 import dev.goquick.sqlitenow.gradle.context.AdapterParameterEmitter
 import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
@@ -14,6 +15,7 @@ import dev.goquick.sqlitenow.gradle.model.AnnotatedStatement
 import dev.goquick.sqlitenow.gradle.util.pascalize
 import dev.goquick.sqlitenow.gradle.processing.SharedResultTypeUtils
 import dev.goquick.sqlitenow.gradle.processing.StatementUtils
+import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter
 
 /**
  * Emits the suspend execute helpers (SELECT, INSERT/UPDATE/DELETE) that sit on generated query classes.
@@ -32,6 +34,7 @@ internal class QueryExecuteEmitter(
         String,
         String,
         String,
+        String?,
     ) -> Unit,
 ) {
     fun generateSelectQueryFunction(
@@ -52,13 +55,12 @@ internal class QueryExecuteEmitter(
 
         scaffolder.setupExecuteFunctionStructure(fnBld, statement, namespace, className)
 
-        val resultType =
-            SharedResultTypeUtils.createResultTypeName(packageName, namespace, statement)
+        val publicResultType = resolvePublicResultType(namespace, statement)
         val returnType = when (functionName) {
-            "executeAsList" -> ClassName("kotlin.collections", "List").parameterizedBy(resultType)
-            "executeAsOne" -> resultType
-            "executeAsOneOrNull" -> resultType.copy(nullable = true)
-            else -> resultType
+            "executeAsList" -> ClassName("kotlin.collections", "List").parameterizedBy(publicResultType)
+            "executeAsOne" -> publicResultType
+            "executeAsOneOrNull" -> publicResultType.copy(nullable = true)
+            else -> publicResultType
         }
         fnBld.returns(returnType)
 
@@ -112,7 +114,7 @@ internal class QueryExecuteEmitter(
         val builder = IndentedCodeBuilder()
         builder.line(withContextHeader())
         builder.indent(by = 2) {
-            prepareAndMaybeBindParamsLines(statement, capitalizedNamespace, className).forEach { line(it) }
+            prepareAndMaybeBindParamsLines(namespace, statement, capitalizedNamespace, className).forEach { line(it) }
             addSqlExecutionImplementationToBuilder(this, statement, namespace, className, functionName)
         }
         builder.line("}")
@@ -123,6 +125,7 @@ internal class QueryExecuteEmitter(
         if (debug) "return conn.withContextAndTrace {" else "return withContext(conn.dispatcher) {"
 
     private fun prepareAndMaybeBindParamsLines(
+        namespace: String,
         statement: AnnotatedStatement,
         capitalizedNamespace: String,
         className: String,
@@ -133,7 +136,7 @@ internal class QueryExecuteEmitter(
         val namedParameters = StatementUtils.getNamedParameters(statement)
         if (namedParameters.isNotEmpty()) {
             val params = mutableListOf("statement", "params")
-            params += adapterParameterEmitter.parameterBindingAdapterNames(statement)
+            params += adapterParameterEmitter.parameterBindingAdapterNames(namespace, statement)
             lines += "$capitalizedNamespace.$className.bindStatementParams(${params.joinToString(", ")})"
         }
         return lines
@@ -183,14 +186,15 @@ internal class QueryExecuteEmitter(
         functionName: String,
     ) {
         val capitalizedNamespace = queryNamespaceName(namespace)
-        val resultType = SharedResultTypeUtils.createResultTypeString(namespace, statement)
-        val paramsString = adapterParameterEmitter.buildJoinedReadParamsList(statement).joinToString(", ")
+        val resultType = resolvePublicResultTypeString(namespace, statement)
+        val paramsString = adapterParameterEmitter.buildJoinedReadParamsList(namespace, statement).joinToString(", ")
+        val mapAdapterName = adapterParameterEmitter.mapToAdapterParameterName(namespace, statement)
         builder.line("statement.use { statement ->")
         builder.indent(by = 2) {
             when (functionName) {
                 "executeAsList" -> {
                     if (statement.hasCollectionMapping()) {
-                        collectionMappingBuilder(this, statement, namespace, className, paramsString)
+                        collectionMappingBuilder(this, statement, namespace, className, paramsString, mapAdapterName)
                     } else {
                         line("val results = mutableListOf<$resultType>()")
                         line("while (statement.step()) {")
@@ -299,5 +303,33 @@ internal class QueryExecuteEmitter(
                 builder.line("}")
             }
         }
+    }
+
+    private fun resolvePublicResultType(
+        namespace: String,
+        statement: AnnotatedSelectStatement,
+    ): TypeName {
+        return resolveMapToType(statement) ?: resolveBaseResultType(namespace, statement)
+    }
+
+    private fun resolvePublicResultTypeString(
+        namespace: String,
+        statement: AnnotatedSelectStatement,
+    ): String {
+        val override = statement.annotations.mapTo?.trim()
+        if (!override.isNullOrEmpty()) return override
+        return SharedResultTypeUtils.createResultTypeString(namespace, statement)
+    }
+
+    private fun resolveBaseResultType(
+        namespace: String,
+        statement: AnnotatedSelectStatement,
+    ): ClassName {
+        return SharedResultTypeUtils.createResultTypeName(packageName, namespace, statement)
+    }
+
+    private fun resolveMapToType(statement: AnnotatedSelectStatement): TypeName? {
+        val target = statement.annotations.mapTo ?: return null
+        return SqliteTypeToKotlinCodeConverter.parseCustomType(target, packageName)
     }
 }

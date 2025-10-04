@@ -10,6 +10,9 @@ import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter
 import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateViewStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
+import java.util.Locale
+import net.sf.jsqlparser.expression.Function
+import net.sf.jsqlparser.expression.MySQLGroupConcat
 
 /**
  * Generates KotlinPoet property specifications for data class properties based on
@@ -29,6 +32,9 @@ class SelectFieldCodeGenerator(
         createTableStatements.associateBy { it.src.tableName.lowercase() }
     private val viewMap = CaseInsensitiveMap(createViewStatements.map { it.src.viewName to it })
     private val viewAliasMap = CaseInsensitiveMap(createViewStatements.map { it.name to it })
+    private val kotlinStringType = ClassName("kotlin", "String")
+    private val kotlinLongType = ClassName("kotlin", "Long")
+    private val kotlinDoubleType = ClassName("kotlin", "Double")
 
     /**
      * Generates field information for a property or parameter based on the given field.
@@ -211,6 +217,8 @@ class SelectFieldCodeGenerator(
         sqliteType: String,
         field: AnnotatedSelectStatement.Field? = null
     ): TypeName {
+        inferAggregateType(field)?.let { return it }
+
         // Extract the base type without size or precision information
         val baseType = sqliteType.split("(")[0].uppercase()
 
@@ -238,6 +246,58 @@ class SelectFieldCodeGenerator(
         }
 
         return kotlinType
+    }
+
+    private fun inferAggregateType(field: AnnotatedSelectStatement.Field?): TypeName? {
+        val expression = field?.src?.expression ?: return null
+        return when (expression) {
+            is MySQLGroupConcat -> kotlinStringType
+            is Function -> inferFunctionType(expression)
+            else -> null
+        }
+    }
+
+    private fun inferFunctionType(function: Function): TypeName? {
+        return when (extractFunctionName(function)) {
+            "COUNT", "COUNT_BIG" -> kotlinLongType
+            "GROUP_CONCAT" -> kotlinStringType
+            "SUM", "TOTAL", "AVG" -> kotlinDoubleType
+            "JSON_GROUP_ARRAY", "JSON_GROUP_OBJECT" -> kotlinStringType
+            else -> null
+        }
+    }
+
+    private fun extractFunctionName(function: Function): String? {
+        val explicitName = function.name?.takeIf { it.isNotBlank() }
+        if (!explicitName.isNullOrBlank()) {
+            return explicitName.uppercase(Locale.ROOT)
+        }
+
+        val raw = function.toString()
+        val prefix = buildString {
+            for (ch in raw) {
+                if (ch.isLetterOrDigit() || ch == '_') {
+                    append(ch)
+                } else {
+                    break
+                }
+            }
+        }
+
+        return prefix.takeIf { it.isNotBlank() }?.uppercase(Locale.ROOT)
+    }
+
+    private fun inferAggregateNullability(field: AnnotatedSelectStatement.Field): Boolean? {
+        val expression = field.src.expression ?: return null
+        val function = when (expression) {
+            is Function -> expression
+            else -> return null
+        }
+
+        return when (extractFunctionName(function)) {
+            "COUNT", "COUNT_BIG" -> false
+            else -> null
+        }
     }
 
     /**
@@ -277,27 +337,11 @@ class SelectFieldCodeGenerator(
                 if (column != null) {
                     return column.isNullable()
                 }
+                inferAggregateNullability(field)?.let { return it }
                 // Default to nullable if no explicit annotation or schema constraint is found
                 return true
             }
         }
-    }
-
-    /**
-     * Finds a column in a table by its original column name or field name.
-     *
-     * @param table The table to search in
-     * @param originalColumnName The original column name
-     * @param fieldName The field name (used as fallback)
-     * @return The column if found, null otherwise
-     */
-    private fun findColumnInTable(
-        table: AnnotatedCreateTableStatement,
-        originalColumnName: String,
-        fieldName: String
-    ): AnnotatedCreateTableStatement.Column? {
-        val candidates = buildColumnNameCandidates(originalColumnName, fieldName)
-        return lookupColumnUsingCandidates(table, null, candidates)
     }
 
     private fun lookupColumnUsingCandidates(

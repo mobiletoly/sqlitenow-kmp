@@ -5,9 +5,6 @@ import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateViewStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedStatement
-import dev.goquick.sqlitenow.gradle.sqlinspect.DeleteStatement
-import dev.goquick.sqlitenow.gradle.sqlinspect.InsertStatement
-import dev.goquick.sqlitenow.gradle.sqlinspect.UpdateStatement
 
 /**
  * Utility class for common statement operations.
@@ -38,22 +35,8 @@ object StatementUtils {
 
         // Add parameters from WITH clauses for execute statements
         if (statement is AnnotatedExecuteStatement) {
-            when (val src = statement.src) {
-                is InsertStatement -> {
-                    src.withSelectStatements.forEach { withSelectStatement ->
-                        allNamedParameters.addAll(withSelectStatement.namedParameters)
-                    }
-                }
-                is DeleteStatement -> {
-                    src.withSelectStatements.forEach { withSelectStatement ->
-                        allNamedParameters.addAll(withSelectStatement.namedParameters)
-                    }
-                }
-                is UpdateStatement -> {
-                    src.withSelectStatements.forEach { withSelectStatement ->
-                        allNamedParameters.addAll(withSelectStatement.namedParameters)
-                    }
-                }
+            statement.src.withSelectStatements.forEach { withSelectStatement ->
+                allNamedParameters.addAll(withSelectStatement.namedParameters)
             }
         }
 

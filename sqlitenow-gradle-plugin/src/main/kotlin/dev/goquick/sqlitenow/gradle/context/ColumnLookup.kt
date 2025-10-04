@@ -15,8 +15,8 @@ import dev.goquick.sqlitenow.gradle.sqlinspect.UpdateStatement
  * across different statement types (SELECT, INSERT, DELETE).
  */
 class ColumnLookup(
-    private val createTableStatements: List<AnnotatedCreateTableStatement>,
-    private val createViewStatements: List<AnnotatedCreateViewStatement>,
+    createTableStatements: List<AnnotatedCreateTableStatement>,
+    createViewStatements: List<AnnotatedCreateViewStatement>,
 ) {
 
     private val tableLookup: Map<String, AnnotatedCreateTableStatement> =
@@ -84,14 +84,7 @@ class ColumnLookup(
         statement: AnnotatedExecuteStatement,
         paramName: String
     ): AnnotatedCreateTableStatement.Column? {
-        val tableName = when (val src = statement.src) {
-            is InsertStatement -> src.table
-            is DeleteStatement -> src.table
-            is UpdateStatement -> src.table
-            else -> return null
-        }
-
-        val table = findTableByName(tableName) ?: return null
+        val table = findTableByName(statement.src.table) ?: return null
 
         fun findColumnInWithClause(stmts: List<SelectStatement>): AnnotatedCreateTableStatement.Column? {
             for (withSelectStatement in stmts) {
@@ -112,40 +105,27 @@ class ColumnLookup(
         return when (val src = statement.src) {
             is InsertStatement -> {
                 val columnName = src.columnNamesAssociatedWithNamedParameters[paramName]
-
-                if (columnName != null) {
-                    return table.findColumnByName(columnName)
-                }
-
-                return findColumnInWithClause(src.withSelectStatements)
+                columnName?.let(table::findColumnByName)
+                    ?: findColumnInWithClause(src.withSelectStatements)
             }
 
             is DeleteStatement -> {
                 val associatedColumn = src.namedParametersToColumns[paramName]
-                if (associatedColumn != null) {
-                    return table.findColumnByName(associatedColumn.columnName)
-                }
-
-                return findColumnInWithClause(src.withSelectStatements)
+                associatedColumn?.let { table.findColumnByName(it.columnName) }
+                    ?: findColumnInWithClause(src.withSelectStatements)
             }
 
             is UpdateStatement -> {
                 // First check if this parameter is from a SET clause (has direct column mapping)
                 val directColumnName = src.namedParametersToColumnNames[paramName]
-                if (directColumnName != null) {
-                    return table.findColumnByName(directColumnName)
-                }
-
-                // If not from SET clause, check WHERE clause parameters
-                val associatedColumn = src.namedParametersToColumns[paramName]
-                if (associatedColumn != null) {
-                    return table.findColumnByName(associatedColumn.columnName)
-                }
-
-                return findColumnInWithClause(src.withSelectStatements)
+                directColumnName?.let(table::findColumnByName)
+                    ?: run {
+                        // If not from SET clause, check WHERE clause parameters
+                        val associatedColumn = src.namedParametersToColumns[paramName]
+                        associatedColumn?.let { table.findColumnByName(it.columnName) }
+                            ?: findColumnInWithClause(src.withSelectStatements)
+                    }
             }
-
-            else -> null
         }
     }
 

@@ -18,7 +18,7 @@ internal sealed class MigratorTempStorage {
 
 internal class TempDatabaseConnector(
     storage: MigratorTempStorage,
-    private val logger: Logger = Logging.getLogger(TempDatabaseConnector::class.java)
+    logger: Logger = Logging.getLogger(TempDatabaseConnector::class.java)
 ) {
     val connection: Connection
 

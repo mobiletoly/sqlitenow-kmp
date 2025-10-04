@@ -62,7 +62,7 @@ to my domain layer, without sacrificing the ability to write pure SQL queries.
 Here is the brief example:
 
 ```sqlite
-/* @@{ sharedResult=Person,
+/* @@{ queryResult=Person,
        implements=com.example.app.PersonEssentialFields,
        excludeOverrideFields=[phone, birthDate] } */
 SELECT id, first_name, last_name, email, phone, birth_date, created_at
@@ -82,7 +82,7 @@ Note: `excludeOverrideFields` supports simple wildcard patterns. You can use glo
 Example:
 
 ```sqlite
--- @@{ sharedResult=Row, implements=MyInterface,
+-- @@{ queryResult=Row, implements=MyInterface,
 --      excludeOverrideFields=[id, packageDocs, schedule__*] }
 SELECT
   sch.activity_id AS schedule__activity_id,
@@ -95,7 +95,7 @@ All `schedule__*` columns (and their generated property names) are excluded from
 Here is another one that you place in your **queries/person/selectAllWithAddresses.sql** file:
 
 ```sqlite
--- @@{ sharedResult=PersonWithAddresses }
+-- @@{ queryResult=PersonWithAddresses }
 SELECT p.id,
        p.first_name,
        p.last_name,
@@ -122,7 +122,7 @@ LIMIT :limit OFFSET :offset
 ```
 
 This will generate **PersonQuery.SelectAllWithAddresses.Result** data class (since you
-have not specified `sharedResult` annotation - SQLiteNow will automatically pick name
+have not specified `queryResult` annotation - SQLiteNow will automatically pick name
 for you). This class has `addresses: List<Address>` property that contains all home
 addresses for the person. Another class **PersonQuery.SelectAllWithAddresses.Params** will be
 generated as well with `limit` and `offset` parameters to pass parameters to the query.

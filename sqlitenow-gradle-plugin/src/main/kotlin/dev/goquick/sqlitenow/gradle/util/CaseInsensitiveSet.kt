@@ -17,6 +17,4 @@ internal class CaseInsensitiveSet {
     }
 
     fun containsIgnoreCase(value: String): Boolean = lowercased.contains(value.lowercase())
-
-    fun toLinkedSet(): LinkedHashSet<String> = LinkedHashSet(delegate)
 }
