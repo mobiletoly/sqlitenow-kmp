@@ -1,15 +1,39 @@
 package com.pluralfusion.daytempo.domain.model
 
 import dev.goquick.sqlitenow.core.util.EnumByValueLookup
-import dev.goquick.sqlitenow.daytempokmp.db.ActivityBundleDetailedDoc
-import dev.goquick.sqlitenow.daytempokmp.db.ActivityCategoryDoc
-import dev.goquick.sqlitenow.daytempokmp.db.ActivityDetailedDoc
-import dev.goquick.sqlitenow.daytempokmp.db.ActivityPackageDoc
+import dev.goquick.sqlitenow.daytempokmp.db.ActivityBundleDetailedRow
+import dev.goquick.sqlitenow.daytempokmp.db.ActivityBundleMetaRow
+import dev.goquick.sqlitenow.daytempokmp.db.ActivityBundleRow
+import dev.goquick.sqlitenow.daytempokmp.db.ActivityBundleWithActivitiesRow
+import dev.goquick.sqlitenow.daytempokmp.db.ActivityBundleWithPackagesRow
+import dev.goquick.sqlitenow.daytempokmp.db.ActivityCategoryRow
+import dev.goquick.sqlitenow.daytempokmp.db.ActivityDetailedRow
+import dev.goquick.sqlitenow.daytempokmp.db.ActivityPackageRow
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityPackageWithActivitiesRow
-import dev.goquick.sqlitenow.daytempokmp.db.ProviderDoc
+import dev.goquick.sqlitenow.daytempokmp.db.ActivityRow
+import dev.goquick.sqlitenow.daytempokmp.db.ActivityScheduleRow
+import dev.goquick.sqlitenow.daytempokmp.db.ActivityWithProgramItemsRow
+import dev.goquick.sqlitenow.daytempokmp.db.DailyLogDetailedRow
+import dev.goquick.sqlitenow.daytempokmp.db.DailyLogRow
+import dev.goquick.sqlitenow.daytempokmp.db.ProviderRow
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import org.jetbrains.compose.resources.StringResource
+import kotlin.text.category
+
+typealias ActivityDoc = ActivityRow
+typealias ActivityDetailedDoc = ActivityDetailedRow
+typealias ActivityWithProgramItemsDoc = ActivityWithProgramItemsRow
+typealias ActivityBundleDoc = ActivityBundleRow
+typealias ActivityBundleDetailedDoc = ActivityBundleDetailedRow
+typealias ActivityBundleMetaDoc = ActivityBundleMetaRow
+typealias ActivityBundleWithPackagesDoc = ActivityBundleWithPackagesRow
+typealias ActivityCategoryDoc = ActivityCategoryRow
+typealias ActivityPackageDoc = ActivityPackageRow
+typealias ActivityScheduleDoc = ActivityScheduleRow
+typealias DailyLogDoc = DailyLogRow
+typealias DailyLogDetailedDoc = DailyLogDetailedRow
+typealias ProviderDoc = ProviderRow
 
 @Serializable
 data class ActivityIconDoc(
@@ -325,3 +349,54 @@ class ActivityBundleFullDoc(
     val provider: ProviderDoc,
     val category: ActivityCategoryDoc,
 )
+
+class ActivityBundleWithActivitiesDoc(
+    val main: ActivityBundleDetailedDoc,
+    val activityPackages: List<ActivityPackageWithActivitiesDoc>,
+    val provider: ProviderDoc,
+    val category: ActivityCategoryDoc,
+) {
+    companion object {
+        fun from(row: ActivityBundleWithActivitiesRow) = ActivityBundleWithActivitiesDoc(
+            main = row.main,
+            activityPackages = row.activityPackages.map { ActivityPackageWithActivitiesDoc.from(it) },
+            provider = row.provider,
+            category = row.category,
+        )
+    }
+}
+
+class ActivityPackageWithActivitiesDoc(
+    val main: ActivityPackageDoc,
+    val activities: List<ActivityDetailedDoc>,
+    val category: ActivityCategoryDoc,
+) {
+    val activityTitles: List<String> = activities
+        .filter { it.main.enabled && !it.main.deleted }
+        .map { it.main.title }
+    val activityStatuses: List<ActivityStatus> = activities
+        .filter { !it.main.deleted }
+        .map {
+            if (it.schedule.mandatoryToSetup &&
+                it.schedule.repeat == ActivityScheduleRepeat.DAYS_INTERVAL &&
+                it.schedule.startAt.toEpochDays() == 0L &&
+                it.schedule.startAtEval == null
+            ) {
+                ActivityStatus.SETUP_REQUIRED
+            } else {
+                ActivityStatus.READY
+            }
+        }
+    val allGroupDocIdsSame: Boolean = activities
+        .map { it.main.groupDocId }
+        .distinct()
+        .size == 1
+
+    companion object {
+        fun from(doc: ActivityPackageWithActivitiesRow) = ActivityPackageWithActivitiesDoc(
+            main = doc.main,
+            activities = doc.activities,
+            category = doc.category,
+        )
+    }
+}

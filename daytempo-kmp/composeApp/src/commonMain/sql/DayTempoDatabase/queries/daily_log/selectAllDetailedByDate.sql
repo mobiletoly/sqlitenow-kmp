@@ -1,4 +1,4 @@
--- @@{ queryResult=DailyLogDetailedDoc }
+-- @@{ queryResult=DailyLogDetailedRow }
 SELECT
     dl.*
 FROM daily_log_detailed_view dl

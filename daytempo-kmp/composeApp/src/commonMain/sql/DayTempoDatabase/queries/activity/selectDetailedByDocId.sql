@@ -1,4 +1,4 @@
--- @@{ queryResult=ActivityDetailedDoc }
+-- @@{ queryResult=ActivityDetailedRow }
 SELECT
     act.*
 

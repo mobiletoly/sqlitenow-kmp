@@ -1,2 +1,2 @@
--- @@{ queryResult=ActivityDoc }
+-- @@{ queryResult=ActivityRow }
 SELECT * FROM activity;

@@ -54,14 +54,14 @@ SELECT
 
   /* @@{ dynamicField=main,
          mappingType=entity,
-         propertyType=ActivityPackageDoc,
+         propertyType=ActivityPackageRow,
          sourceTable=pkg,
          aliasPrefix=package__,
          notNull=true } */
 
   /* @@{ dynamicField=category,
          mappingType=perRow,
-         propertyType=ActivityCategoryDoc,
+         propertyType=ActivityCategoryRow,
          sourceTable=cat,
          aliasPrefix=joined__package__category__
          notNull=true } */
@@ -79,7 +79,7 @@ SELECT
 
     /* @@{ dynamicField=activities,
            mappingType=collection,
-           propertyType=List<ActivityDetailedDoc>,
+           propertyType=List<ActivityDetailedRow>,
            sourceTable=act,
            collectionKey=act__id,
            aliasPrefix=act__,

@@ -1,2 +1,2 @@
--- @@{ queryResult=DailyLogDoc }
+-- @@{ queryResult=DailyLogRow }
 SELECT * FROM daily_log;

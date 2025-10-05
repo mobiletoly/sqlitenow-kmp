@@ -59,7 +59,7 @@ CREATE TABLE program_item (
     -- @@{ field=input_entries, propertyType=kotlin.collections.List<com.pluralfusion.daytempo.domain.model.ProgramItemInputEntry> }
     input_entries TEXT NOT NULL,
 
-    FOREIGN KEY (activity_doc_id) REFERENCES activity(doc_id)
+    FOREIGN KEY (activity_doc_id) REFERENCES activity(doc_id) ON DELETE CASCADE
 ) WITHOUT ROWID;
 
 CREATE INDEX idx_programItem_activityDocId ON program_item(activity_doc_id);

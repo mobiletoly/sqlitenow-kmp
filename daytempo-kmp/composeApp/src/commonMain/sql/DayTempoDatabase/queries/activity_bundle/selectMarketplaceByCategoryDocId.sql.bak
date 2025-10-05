@@ -1,6 +1,6 @@
--- @@{ queryResult=MarketplaceActivityBundleDoc }
+-- @@{ queryResult=MarketplaceActivityBundleRow }
 SELECT view.*, MAX(act.act__category_doc_id) AS category_doc_id
-FROM activity_bundle_full_view AS view
+FROM activity_bundle_with_activities_view AS view
 WHERE :categoryDocId IS NULL OR act.act__category_doc_id = :categoryDocId
 GROUP BY view.bundle__doc_id
 ORDER BY view.bundle__title;

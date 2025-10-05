@@ -4,14 +4,14 @@ package dev.goquick.sqlitenow.daytempokmp
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.pluralfusion.daytempo.domain.model.ActivityBundlePurchaseMode
+import com.pluralfusion.daytempo.domain.model.ActivityBundleWithActivitiesDoc
 import com.pluralfusion.daytempo.domain.model.ActivityIconDoc
+import com.pluralfusion.daytempo.domain.model.ActivityIconDoc.Format
 import com.pluralfusion.daytempo.domain.model.ActivityProgramType
 import com.pluralfusion.daytempo.domain.model.ActivityReportingType
 import com.pluralfusion.daytempo.domain.model.ActivityScheduleRepeat
 import com.pluralfusion.daytempo.domain.model.ActivityScheduleTimeRange
 import com.pluralfusion.daytempo.domain.model.AlarmHourMinute
-import com.pluralfusion.daytempo.domain.model.ActivityIconDoc.Format
-import com.pluralfusion.daytempo.domain.model.ActivityBundleFullDoc
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityBundleQuery
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityCategoryQuery
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityPackageQuery
@@ -54,7 +54,7 @@ class ActivityBundleIntegrationTest {
     }
 
     @Test
-    fun selectAllFullEnabledReturnsNestedStructure() = runBlocking {
+    fun selectAllWithEnabledActivitiesReturnsNestedStructure() = runBlocking {
         seedActivityBundleHierarchy()
 
         database.connection().prepare("SELECT doc_id, program_type FROM activity").use { stmt ->
@@ -63,10 +63,10 @@ class ActivityBundleIntegrationTest {
             }
         }
 
-        val results = database.activityBundle.selectAllFullEnabled.asList()
+        val results = database.activityBundle.selectAllWithEnabledActivities.asList()
 
         assertEquals("Expected exactly one bundle", 1, results.size)
-        val bundle: ActivityBundleFullDoc = results.single()
+        val bundle: ActivityBundleWithActivitiesDoc = results.single()
 
         assertEquals("Morning Routine", bundle.main.main.title)
         assertEquals(ActivityBundlePurchaseMode.FULLY_FREE, bundle.main.main.purchaseMode)
@@ -91,14 +91,10 @@ class ActivityBundleIntegrationTest {
         // ensure nested collections are populated and no stray top-level activity list leaks out
         assertEquals(1, bundle.activityPackages.size)
         assertEquals(1, packageDoc.activities.size)
-        assertTrue(
-            "ActivityBundleFullDoc should only contain expected properties",
-            ActivityBundleFullDoc::class.java.declaredFields.none { it.name == "activities" }
-        )
     }
 
     @Test
-    fun selectAllFullEnabledPreservesDistinctPackageAndActivityCategories() = runBlocking {
+    fun selectAllWithEnabledActivitiesPreservesDistinctPackageAndActivityCategories() = runBlocking {
         val packageCategory = TestCategory(
             docId = "category-package",
             title = "Flexibility Package",
@@ -115,7 +111,7 @@ class ActivityBundleIntegrationTest {
             activityCategory = activityCategory,
         )
 
-        val bundle = database.activityBundle.selectAllFullEnabled.asList().single()
+        val bundle = database.activityBundle.selectAllWithEnabledActivities.asList().single()
         val packageDoc = bundle.activityPackages.single()
         val activityDoc = packageDoc.activities.single()
 

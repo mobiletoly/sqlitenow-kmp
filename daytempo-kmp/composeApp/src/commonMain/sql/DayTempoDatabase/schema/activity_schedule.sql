@@ -3,7 +3,7 @@ CREATE TABLE activity_schedule (
     id BLOB PRIMARY KEY NOT NULL DEFAULT (randomblob(16)),
 
     -- @@{ field=activity_id, propertyType=kotlin.uuid.Uuid }
-    activity_id BLOB NOT NULL REFERENCES activity(id),
+    activity_id BLOB NOT NULL REFERENCES activity(id) ON DELETE CASCADE,
 
     -- @@{ field=mandatory_to_setup, propertyType=kotlin.Boolean }
     mandatory_to_setup INTEGER NOT NULL DEFAULT 0,

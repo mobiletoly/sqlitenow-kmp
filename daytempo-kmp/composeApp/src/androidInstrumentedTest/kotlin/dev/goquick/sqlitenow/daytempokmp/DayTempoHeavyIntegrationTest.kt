@@ -4,6 +4,7 @@ package dev.goquick.sqlitenow.daytempokmp
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.pluralfusion.daytempo.domain.model.ActivityBundlePurchaseMode
+import com.pluralfusion.daytempo.domain.model.ActivityBundleWithActivitiesDoc
 import com.pluralfusion.daytempo.domain.model.ActivityIconDoc
 import com.pluralfusion.daytempo.domain.model.ActivityIconDoc.Format
 import com.pluralfusion.daytempo.domain.model.ActivityProgramType
@@ -19,7 +20,7 @@ import dev.goquick.sqlitenow.daytempokmp.db.ActivityBundleQuery
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityCategoryQuery
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityPackageQuery
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityQuery
-import dev.goquick.sqlitenow.daytempokmp.db.ActivityScheduleDoc
+import com.pluralfusion.daytempo.domain.model.ActivityScheduleDoc
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityScheduleQuery
 import dev.goquick.sqlitenow.daytempokmp.db.DailyLogQuery
 import dev.goquick.sqlitenow.daytempokmp.db.DayTempoDatabase
@@ -60,8 +61,8 @@ class DayTempoHeavyIntegrationTest {
     }
 
     @Test
-    fun selectAllFullEnabledHandlesMultipleBundles() = runBlocking {
-        val results = database.activityBundle.selectAllFullEnabled.asList()
+    fun selectAllWithEnabledActivitiesHandlesMultipleBundles() = runBlocking {
+        val results = database.activityBundle.selectAllWithEnabledActivities.asList()
         assertEquals("Unexpected bundle count", fixture.bundleExpectations.size, results.size)
 
         val resultsByDocId = results.associateBy { it.main.main.docId }
@@ -130,7 +131,7 @@ class DayTempoHeavyIntegrationTest {
     @Test
     fun selectAllDetailedByDateReturnsProgramItemsAndSchedules() = runBlocking {
         val logs = database.dailyLog.selectAllDetailedByDate(
-            DailyLogQuery.SelectAllDetailedByDate.Params(date = fixture.dailyLogEpochString)
+            DailyLogQuery.SelectAllDetailedByDate.Params(date = fixture.dailyLogDate)
         ).asList()
 
         assertEquals("Unexpected daily log count", fixture.dailyLogExpectations.size, logs.size)
@@ -155,6 +156,55 @@ class DayTempoHeavyIntegrationTest {
         }
     }
 
+    @Test
+    fun selectAllEnabledWithTimePointsByScheduleRepeatReturnsMatchingActivities() = runBlocking {
+        val params = ActivityQuery.SelectAllEnabledWithTimePointsByScheduleRepeat.Params(
+            scheduleRepeat = ActivityScheduleRepeat.WEEK_DAYS,
+        )
+
+        val results = database.activity
+            .selectAllEnabledWithTimePointsByScheduleRepeat(params)
+            .asList()
+
+        val expectedActivities = fixture.bundleExpectations
+            .flatMap { it.packages }
+            .flatMap { it.activities }
+
+        assertEquals("Unexpected activity count", expectedActivities.size, results.size)
+
+        val resultsByDocId = results.associateBy { it.main.docId }
+        expectedActivities.forEach { expected ->
+            val row = resultsByDocId[expected.docId] ?: error("Missing activity ${expected.docId}")
+
+            assertTrue("Activity should be enabled", row.main.enabled)
+            assertEquals(
+                "Schedule repeat mismatch for ${expected.docId}",
+                ActivityScheduleRepeat.WEEK_DAYS,
+                row.schedule.repeat,
+            )
+            assertEquals(
+                "Schedule startAt mismatch for ${expected.docId}",
+                expected.scheduleStartAt,
+                row.schedule.startAt,
+            )
+            assertEquals(
+                "Time points mismatch for ${expected.docId}",
+                expected.scheduleTimePoints,
+                row.schedule.timePoints,
+            )
+        }
+
+        val noneResults = database.activity
+            .selectAllEnabledWithTimePointsByScheduleRepeat(
+                ActivityQuery.SelectAllEnabledWithTimePointsByScheduleRepeat.Params(
+                    scheduleRepeat = ActivityScheduleRepeat.NONE,
+                ),
+            )
+            .asList()
+
+        assertTrue("Expected empty results for NONE repeat", noneResults.isEmpty())
+    }
+
     private fun assertScheduleMatches(expected: ActivityExpectation, actual: ActivityScheduleDoc) {
         assertEquals("Schedule startAt mismatch", expected.scheduleStartAt, actual.startAt)
         assertEquals("Schedule repeat mismatch", expected.scheduleRepeat, actual.repeat)
@@ -176,7 +226,6 @@ private class DayTempoSeedHelper(private val database: DayTempoDatabase) {
         val bundleExpectations = mutableListOf<BundleExpectation>()
         val dailyLogExpectations = mutableListOf<DailyLogExpectation>()
         val targetDate = LocalDate(2024, 2, 1)
-        val dateEpochString = targetDate.toEpochDays().toString()
 
         database.transaction {
             database.provider.add(
@@ -449,7 +498,7 @@ private class DayTempoSeedHelper(private val database: DayTempoDatabase) {
         return SeedFixture(
             bundleExpectations = bundleExpectations,
             dailyLogExpectations = dailyLogExpectations,
-            dailyLogEpochString = dateEpochString,
+            dailyLogDate = targetDate,
         )
     }
 
@@ -483,7 +532,7 @@ private class DayTempoSeedHelper(private val database: DayTempoDatabase) {
 private data class SeedFixture(
     val bundleExpectations: List<BundleExpectation>,
     val dailyLogExpectations: List<DailyLogExpectation>,
-    val dailyLogEpochString: String,
+    val dailyLogDate: LocalDate,
 )
 
 private data class BundleExpectation(

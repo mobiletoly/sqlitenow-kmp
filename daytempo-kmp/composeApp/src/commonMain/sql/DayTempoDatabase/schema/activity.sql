@@ -109,21 +109,21 @@ SELECT
 
   /* @@{ dynamicField=main,
          mappingType=entity,
-         propertyType=ActivityDoc,
+         propertyType=ActivityRow,
          sourceTable=act,
          aliasPrefix=act__,
          notNull=true } */
 
   /* @@{ dynamicField=category,
          mappingType=perRow,
-         propertyType=ActivityCategoryDoc,
+         propertyType=ActivityCategoryRow,
          sourceTable=cat,
          aliasPrefix=joined__act__category__
          notNull=true } */
 
   /* @@{ dynamicField=schedule,
          mappingType=perRow,
-         propertyType=ActivityScheduleDoc,
+         propertyType=ActivityScheduleRow,
          sourceTable=sch,
          aliasPrefix=schedule__
          notNull=true } */
@@ -141,7 +141,7 @@ SELECT
 
   /* @@{ dynamicField=programItems,
          mappingType=collection,
-         propertyType=List<ProgramItemDoc>,
+         propertyType=List<ProgramItemRow>,
          sourceTable=pi,
          collectionKey=pi__doc_id,
          aliasPrefix=pi__

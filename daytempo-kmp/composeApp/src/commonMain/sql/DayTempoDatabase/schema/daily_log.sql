@@ -130,21 +130,21 @@ SELECT
 
   /* @@{ dynamicField=main,
          mappingType=entity,
-         propertyType=DailyLogDoc,
+         propertyType=DailyLogRow,
          sourceTable=dl,
          aliasPrefix=dl__,
          notNull=true } */
 
   /* @@{ dynamicField=activity,
          mappingType=perRow,
-         propertyType=ActivityDetailedDoc,
+         propertyType=ActivityDetailedRow,
          sourceTable=act,
          aliasPrefix=act__,
          notNull=true } */
 
     /* @@{ dynamicField=programItem,
          mappingType=perRow,
-         propertyType=ProgramItemDoc,
+         propertyType=ProgramItemRow,
          sourceTable=pi,
          aliasPrefix=pi__
          notNull=true } */

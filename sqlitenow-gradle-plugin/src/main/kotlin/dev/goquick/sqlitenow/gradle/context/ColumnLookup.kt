@@ -163,28 +163,86 @@ class ColumnLookup(
         val associatedColumn = statement.src.namedParametersToColumns[paramName]
         val columnName = associatedColumn?.columnName ?: paramName
 
-        val viewSelectStatement = view.src.selectStatement
+        resolveColumnFromView(
+            view = view,
+            fieldAlias = columnName,
+            paramName = paramName,
+            statement = statement,
+            visitedViews = mutableSetOf()
+        )?.let { return it }
 
-        // Look for the column in the tables referenced by the VIEW
-        val fromTable = viewSelectStatement.fromTable
-        if (fromTable != null) {
-            val table = findTableByName(fromTable)
-            if (table != null) {
-                val column = findColumnInTable(table, columnName, paramName, statement)
-                if (column != null) {
-                    return column
+        return null
+    }
+
+    private fun resolveColumnFromView(
+        view: AnnotatedCreateViewStatement,
+        fieldAlias: String,
+        paramName: String,
+        statement: AnnotatedSelectStatement,
+        visitedViews: MutableSet<String>,
+    ): AnnotatedCreateTableStatement.Column? {
+        val viewKey = view.src.viewName.lowercase()
+        if (!visitedViews.add(viewKey)) {
+            return null
+        }
+
+        val candidates = view.fields.filter { field ->
+            field.src.fieldName.equals(fieldAlias, ignoreCase = true) ||
+                field.src.originalColumnName.equals(fieldAlias, ignoreCase = true)
+        }
+
+        candidates.forEach { field ->
+            val sourceTableName = field.src.tableName
+            val originalColumnName = field.src.originalColumnName.ifBlank { field.src.fieldName }
+
+            if (sourceTableName.isNotBlank()) {
+                findTableByName(sourceTableName)?.let { table ->
+                    findColumnInTable(table, originalColumnName, paramName, statement)?.let { return it }
+                }
+
+                findViewByName(sourceTableName)?.let { nestedView ->
+                    resolveColumnFromView(
+                        view = nestedView,
+                        fieldAlias = originalColumnName,
+                        paramName = paramName,
+                        statement = statement,
+                        visitedViews = visitedViews
+                    )?.let { return it }
                 }
             }
         }
 
-        // Also check joined tables in the VIEW
-        for (joinTableName in viewSelectStatement.joinTables) {
-            val joinTable = findTableByName(joinTableName)
-            if (joinTable != null) {
-                val column = findColumnInTable(joinTable, columnName, paramName, statement)
-                if (column != null) {
-                    return column
-                }
+        val selectStatement = view.src.selectStatement
+
+        selectStatement.fromTable?.let { fromTableName ->
+            findTableByName(fromTableName)?.let { table ->
+                findColumnInTable(table, fieldAlias, paramName, statement)?.let { return it }
+            }
+
+            findViewByName(fromTableName)?.let { nestedView ->
+                resolveColumnFromView(
+                    view = nestedView,
+                    fieldAlias = fieldAlias,
+                    paramName = paramName,
+                    statement = statement,
+                    visitedViews = visitedViews
+                )?.let { return it }
+            }
+        }
+
+        for (joinTableName in selectStatement.joinTables) {
+            findTableByName(joinTableName)?.let { table ->
+                findColumnInTable(table, fieldAlias, paramName, statement)?.let { return it }
+            }
+
+            findViewByName(joinTableName)?.let { nestedView ->
+                resolveColumnFromView(
+                    view = nestedView,
+                    fieldAlias = fieldAlias,
+                    paramName = paramName,
+                    statement = statement,
+                    visitedViews = visitedViews
+                )?.let { return it }
             }
         }
 

@@ -91,21 +91,21 @@ SELECT
 
     /* @@{ dynamicField=main,
            mappingType=entity,
-           propertyType=ActivityBundleDoc,
+           propertyType=ActivityBundleRow,
            sourceTable=bndl,
            aliasPrefix=bundle__
            notNull=true } */
 
     /* @@{ dynamicField=provider,
            mappingType=perRow,
-           propertyType=ProviderDoc,
+           propertyType=ProviderRow,
            sourceTable=prov,
            aliasPrefix=provider__
            notNull=true } */
 
     /* @@{ dynamicField=category,
            mappingType=perRow,
-           propertyType=ActivityCategoryDoc,
+           propertyType=ActivityCategoryRow,
            sourceTable=cat,
            aliasPrefix=joined__bndl__category__
            notNull=true } */
@@ -125,14 +125,14 @@ SELECT
 
     /* @@{ dynamicField=main,
            mappingType=entity,
-           propertyType=ActivityBundleDetailedDoc,
+           propertyType=ActivityBundleDetailedRow,
            sourceTable=bndl,
            aliasPrefix=bundle__
            notNull=true } */
 
     /* @@{ dynamicField=activityPackages,
            mappingType=collection,
-           propertyType=List<ActivityPackageDoc>,
+           propertyType=List<ActivityPackageRow>,
            sourceTable=pkg,
            collectionKey=package__doc_id,
            aliasPrefix=package__
@@ -144,14 +144,14 @@ FROM activity_bundle_detailed_view bndl
 
 -- Activity bundle with detailed packages
 -- @@{ collectionKey=bundle__doc_id }
-CREATE VIEW activity_bundle_full_view AS
+CREATE VIEW activity_bundle_with_activities_view AS
 SELECT
     bndl.*,
     pkg.*
 
     /* @@{ dynamicField=main,
            mappingType=entity,
-           propertyType=ActivityBundleDetailedDoc,
+           propertyType=ActivityBundleDetailedRow,
            sourceTable=bndl,
            aliasPrefix=bundle__
            notNull=true } */
