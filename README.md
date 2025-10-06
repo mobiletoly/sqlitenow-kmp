@@ -86,7 +86,7 @@ to my domain layer, without sacrificing the ability to write pure SQL queries.
 Here is the brief example:
 
 ```sqlite
-/* @@{ sharedResult=Person,
+/* @@{ queryResult=Person,
        implements=com.example.app.PersonEssentialFields,
        excludeOverrideFields=[phone, birthDate] } */
 SELECT id, first_name, last_name, email, phone, birth_date, created_at
@@ -100,7 +100,7 @@ This will generate shared data class **Person** that implements my custom
 Here is another one that you place in your **queries/person/selectAllWithAddresses.sql** file:
 
 ```sqlite
--- @@{ sharedResult=PersonWithAddresses }
+-- @@{ queryResult=PersonWithAddresses }
 SELECT p.id,
        p.first_name,
        p.last_name,
