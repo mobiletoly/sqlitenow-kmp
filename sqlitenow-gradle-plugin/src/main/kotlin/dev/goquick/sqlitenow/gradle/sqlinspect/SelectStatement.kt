@@ -1,6 +1,7 @@
 package dev.goquick.sqlitenow.gradle.sqlinspect
 
 import java.sql.Connection
+import java.sql.ResultSetMetaData
 import java.util.Locale
 import net.sf.jsqlparser.expression.Expression
 import net.sf.jsqlparser.expression.JdbcNamedParameter
@@ -36,7 +37,8 @@ class SelectStatement(
         val tableName: String,
         val originalColumnName: String,
         val dataType: String,
-        val expression: Expression? = null
+        val expression: Expression? = null,
+        val isNullable: Boolean = true,
     )
 
     companion object {
@@ -179,7 +181,8 @@ class SelectStatement(
                                 tableName = fieldInfo.tableName,
                                 originalColumnName = originalColumnName,
                                 dataType = fieldInfo.sqlType,
-                                expression = expression
+                                expression = expression,
+                                isNullable = fieldInfo.isNullable(),
                             )
                         )
                         }
@@ -251,8 +254,10 @@ class SelectStatement(
             val tableName: String,
             val columnName: String,
             val sqlType: String,
-            val nullable: Int
-        )
+            val nullable: Int,
+        ) {
+            fun isNullable(): Boolean = nullable != ResultSetMetaData.columnNoNulls
+        }
 
         private fun deduplicateFields(allFields: List<FieldInfo>): List<FieldInfo> {
             if (allFields.isEmpty()) return emptyList()

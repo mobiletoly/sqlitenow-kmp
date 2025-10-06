@@ -61,9 +61,14 @@ internal class ResultMappingHelper(
         val disambiguationIndex: Int?,
     )
 
+    private data class NullGuardMetadata(
+        val requiresGuard: Boolean,
+        val relevantColumns: List<SelectStatement.FieldSource>,
+    )
+
     private data class NullGuardConfig(
         val invocation: DynamicFieldInvocation,
-        val columns: List<SelectStatement.FieldSource>,
+        val relevantColumns: List<SelectStatement.FieldSource>,
         val notNull: Boolean,
         val rowsVarName: String?,
         val constructorExpression: String,
@@ -265,7 +270,15 @@ internal class ResultMappingHelper(
         return parts.joinToString(", ")
     }
 
-    fun isTargetPropertyNullable(column: SelectStatement.FieldSource): Boolean {
+    fun isTargetPropertyNullable(
+        statement: AnnotatedSelectStatement,
+        column: SelectStatement.FieldSource,
+    ): Boolean {
+        val annotatedField = findAnnotatedField(statement, column)
+        if (annotatedField != null) {
+            return selectFieldGenerator.determineNullability(annotatedField)
+        }
+
         val mockFieldAnnotations = FieldAnnotationOverrides(
             propertyName = null,
             propertyType = null,
@@ -277,6 +290,24 @@ internal class ResultMappingHelper(
             annotations = mockFieldAnnotations,
         )
         return selectFieldGenerator.determineNullability(mockField)
+    }
+
+    private fun findAnnotatedField(
+        statement: AnnotatedSelectStatement,
+        column: SelectStatement.FieldSource,
+    ): AnnotatedSelectStatement.Field? {
+        val normalizedFieldName = column.fieldName.substringBefore(':')
+        return statement.fields.firstOrNull { field ->
+            val candidateFieldName = field.src.fieldName.substringBefore(':')
+            val candidateOriginal = field.src.originalColumnName.substringBefore(':')
+            val matchesField = candidateFieldName.equals(column.fieldName, ignoreCase = true) ||
+                candidateFieldName.equals(normalizedFieldName, ignoreCase = true)
+            val matchesOriginal = column.originalColumnName.isNotBlank() &&
+                candidateOriginal.equals(column.originalColumnName, ignoreCase = true)
+            val tableMatches = field.src.tableName.equals(column.tableName, ignoreCase = true) ||
+                field.src.tableName.isBlank() || column.tableName.isBlank()
+            (matchesField || matchesOriginal) && tableMatches
+        }
     }
 
     fun findOriginalColumnPropertyName(
@@ -476,7 +507,7 @@ internal class ResultMappingHelper(
                 ?: propertyNameGenerator.convertToPropertyName(strippedBaseName)
             val isSuffixed = resolvedJoinedName.suffixed
 
-            val isTargetNullable = isTargetPropertyNullable(column)
+            val isTargetNullable = isTargetPropertyNullable(statement, column)
             val valueExpression = when {
                 context.enforceNonNull && !isTargetNullable -> "${context.sourceVariableName}.$effectiveJoinedPropertyName!!"
                 isTargetNullable -> "${context.sourceVariableName}.$effectiveJoinedPropertyName"
@@ -972,9 +1003,8 @@ internal class ResultMappingHelper(
             val baseIndentLevel = request.baseIndentLevel
 
             val notNull = dynamicField.annotations.notNull == true
-            val originatesFromPrimaryAlias = dynamicField.aliasPath.size <= 1
-            val skipNullGuard = notNull && originatesFromPrimaryAlias
-            val needsNullGuard = !skipNullGuard
+            val guardMetadata = computeNullGuardMetadata(request)
+            val needsNullGuard = guardMetadata.requiresGuard
 
             val useRowVariable = needsNullGuard && rowsVar != null
             val effectiveSourceVar = if (useRowVariable) "row" else sourceVar
@@ -1010,7 +1040,7 @@ internal class ResultMappingHelper(
 
             val guardConfig = NullGuardConfig(
                 invocation = request,
-                columns = mapping.columns,
+                relevantColumns = guardMetadata.relevantColumns,
                 notNull = notNull,
                 rowsVarName = effectiveRowsVar,
                 constructorExpression = constructorExpression,
@@ -1040,12 +1070,53 @@ internal class ResultMappingHelper(
         }
     }
 
+    private fun computeNullGuardMetadata(invocation: DynamicFieldInvocation): NullGuardMetadata {
+        val dynamicField = invocation.field
+        val mapping = invocation.mapping
+        val relevantColumns = mapping.columns.filterNot { column ->
+            DynamicFieldUtils.isNestedAlias(column.fieldName, mapping.aliasPrefix)
+        }
+        if (relevantColumns.isEmpty()) {
+            return NullGuardMetadata(
+                requiresGuard = false,
+                relevantColumns = relevantColumns,
+            )
+        }
+
+        var hasPropertyNullable = false
+        var hasMetadataNullable = false
+        relevantColumns.forEach { column ->
+            val propertyNullable = isTargetPropertyNullable(invocation.statement, column)
+            val metadataNullable = column.isNullable
+            if (propertyNullable) {
+                hasPropertyNullable = true
+            }
+            if (metadataNullable) {
+                hasMetadataNullable = true
+            }
+        }
+
+        val skipByAnnotation = dynamicField.annotations.notNull == true &&
+            mapping.mappingType != AnnotationConstants.MappingType.COLLECTION
+        if (skipByAnnotation) {
+            return NullGuardMetadata(
+                requiresGuard = false,
+                relevantColumns = relevantColumns,
+            )
+        }
+
+        val requiresGuard = hasPropertyNullable || hasMetadataNullable
+        return NullGuardMetadata(
+            requiresGuard = requiresGuard,
+            relevantColumns = relevantColumns,
+        )
+    }
+
     private inner class NullGuardBuilder {
         fun build(config: NullGuardConfig): String {
             val invocation = config.invocation
             val mapping = invocation.mapping
-            val relevantColumns = config.columns
-                .filterNot { DynamicFieldUtils.isNestedAlias(it.fieldName, mapping.aliasPrefix) }
+            val relevantColumns = config.relevantColumns
             if (relevantColumns.isEmpty()) {
                 return config.constructorExpression
             }
@@ -1132,20 +1203,23 @@ internal class ResultMappingHelper(
             val elementType = extractFirstTypeArgumentOrSelf(propertyType)
             val elementSimpleName = elementType.substringAfterLast('.')
             val propertyNameGenerator = statement.annotations.propertyNameGenerator
-            val relevantColumns = mapping.columns.filterNot {
-                DynamicFieldUtils.isNestedAlias(it.fieldName, mapping.aliasPrefix)
+            val guardMetadata = computeNullGuardMetadata(context)
+            val requiresNullGuard = guardMetadata.requiresGuard
+            val nullCondition = if (requiresNullGuard) {
+                val joinedNameMap = computeJoinedNameMap(statement)
+                guardMetadata.relevantColumns.joinToString(" && ") { column ->
+                    val resolved = resolveJoinedPropertyName(
+                        column = column,
+                        mapping = mapping,
+                        statement = statement,
+                        aliasPath = dynamicField.aliasPath,
+                        joinedNameMap = joinedNameMap,
+                    )
+                    "row.${resolved.property} == null"
+                }.ifBlank { "false" }
+            } else {
+                null
             }
-            val joinedNameMap = computeJoinedNameMap(statement)
-            val nullCondition = relevantColumns.joinToString(" && ") { column ->
-                val resolved = resolveJoinedPropertyName(
-                    column = column,
-                    mapping = mapping,
-                    statement = statement,
-                    aliasPath = dynamicField.aliasPath,
-                    joinedNameMap = joinedNameMap,
-                )
-                "row.${resolved.property} == null"
-            }.ifBlank { "false" }
 
             val requiresNested = requiresNestedConstruction(elementType)
             val rawGroupBy = mapping.groupByColumn?.takeIf { it.isNotBlank() }
@@ -1154,7 +1228,9 @@ internal class ResultMappingHelper(
 
             val chainBuilder = CollectionMappingBuilder(builder)
             chainBuilder.emit(rowsVar) {
-                filter(nullCondition)
+                if (requiresNullGuard) {
+                    filter(nullCondition!!)
+                }
 
                 if (requiresNested && groupByProperty != null) {
                     groupedMap(
@@ -1249,7 +1325,7 @@ internal class ResultMappingHelper(
                     candidateKeys.firstNotNullOfOrNull { key -> joinedNameMap[key] }
                         ?: parentStatement.annotations.propertyNameGenerator
                             .convertToPropertyName(field.src.fieldName)
-                val isNullable = isTargetPropertyNullable(field.src)
+                val isNullable = isTargetPropertyNullable(targetStatement, field.src)
                 val expression = when {
                     enforceNonNull && !isNullable -> "$sourceVar.$joinedPropertyName!!"
                     isNullable -> "$sourceVar.$joinedPropertyName"
