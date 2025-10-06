@@ -94,16 +94,14 @@ abstract class GenerateDatabaseFilesTask @Inject constructor(
         val sqlDir = dbDir.get().asFile
         val packageName = packageName.get()
 
-        with (project.logger) {
-            generateDatabaseFiles(
-                dbName = dbName.get(),
-                sqlDir = sqlDir,
-                packageName = packageName,
-                outDir = outDir,
-                schemaDatabaseFile = dbFile,
-                debug = debug.get(),
-            )
-        }
+        generateDatabaseFiles(
+            dbName = dbName.get(),
+            sqlDir = sqlDir,
+            packageName = packageName,
+            outDir = outDir,
+            schemaDatabaseFile = dbFile,
+            debug = debug.get(),
+        )
     }
 }
 
