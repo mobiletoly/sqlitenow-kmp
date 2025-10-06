@@ -82,6 +82,11 @@ internal class DataStructResultFileEmitter(
             .addFileComment("Generated code for $packageName.$className")
             .addFileComment("\nDo not modify this file manually")
             .addAnnotation(
+                AnnotationSpec.builder(ClassName("kotlin", "Suppress"))
+                    .addMember("%S", "UNNECESSARY_NOT_NULL_ASSERTION")
+                    .build()
+            )
+            .addAnnotation(
                 AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
                     .addMember("%T::class", ClassName("kotlin.uuid", "ExperimentalUuidApi"))
                     .build()

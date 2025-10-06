@@ -113,6 +113,11 @@ internal class QueryCodeGenerator(
             .addFileComment("Generated query extension functions for ${namespace}.${className}")
             .addFileComment("\nDO NOT MODIFY THIS FILE MANUALLY!")
             .addAnnotation(
+                AnnotationSpec.builder(ClassName("kotlin", "Suppress"))
+                    .addMember("%S", "UNNECESSARY_NOT_NULL_ASSERTION")
+                    .build()
+            )
+            .addAnnotation(
                 AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
                     .addMember("%T::class", ClassName("kotlin.uuid", "ExperimentalUuidApi"))
                     .build()
