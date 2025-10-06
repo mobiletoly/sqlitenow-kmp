@@ -108,10 +108,14 @@ class StatementProcessingHelper(
 
         return queriesDir.listFiles()
             ?.filter { it.isDirectory }
+            // Ensure deterministic namespace traversal across platforms
+            ?.sortedBy { it.name }
             ?.associate { namespaceDir ->
                 val namespace = namespaceDir.name
                 val sqlFiles = namespaceDir.listFiles()
                     ?.filter { it.isFile && it.extension == "sql" }
+                    // Likewise, stabilise file ordering inside each namespace
+                    ?.sortedBy { it.name }
                     ?: emptyList()
                 namespace to sqlFiles
             } ?: emptyMap()

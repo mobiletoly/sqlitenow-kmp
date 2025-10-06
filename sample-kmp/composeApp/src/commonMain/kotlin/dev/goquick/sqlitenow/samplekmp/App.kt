@@ -120,16 +120,14 @@ val db = NowSampleDatabase(
         sqlValueToBirthDate = {
             it?.let { LocalDate.fromSqliteDate(it) }
         },
-        sqlValueToCreatedAt = {
-            LocalDateTime.fromSqliteTimestamp(it)
-        },
         sqlValueToNotes = { it?.let { PersonNote.deserialize(it) } },
         sqlValueToAddressType = { AddressType.from(it) },
-        sqlValueToTags = { it?.jsonDecodeListFromSqlite() ?: emptyList() },
     ),
     commentAdapters = NowSampleDatabase.CommentAdapters(
         createdAtToSqlValue = { ts -> ts.toSqliteTimestamp() },
         tagsToSqlValue = { tags -> tags?.jsonEncodeToSqlite() },
+        sqlValueToCreatedAt = { LocalDateTime.fromSqliteTimestamp(it) },
+        sqlValueToTags = { it?.jsonDecodeListFromSqlite() ?: emptyList() },
     ),
     personAddressAdapters = NowSampleDatabase.PersonAddressAdapters(
         addressTypeToSqlValue = { it.value },

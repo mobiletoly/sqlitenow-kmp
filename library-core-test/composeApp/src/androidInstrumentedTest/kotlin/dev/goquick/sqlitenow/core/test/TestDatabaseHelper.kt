@@ -33,10 +33,11 @@ object TestDatabaseHelper {
             migration = VersionBasedDatabaseMigrations(),
             debug = debug,
             categoryAdapters = LibraryTestDatabase.CategoryAdapters(
-                sqlValueToBirthDate = { it?.let { LocalDate.fromSqliteDate(it) } }
+                sqlValueToCreatedAt = { LocalDateTime.fromSqliteTimestamp(it) }
             ),
             personAdapters = LibraryTestDatabase.PersonAdapters(
                 birthDateToSqlValue = { it?.toSqliteDate() },
+                sqlValueToBirthDate = { it?.let { LocalDate.fromSqliteDate(it) } },
                 personSummaryResultMapper = { raw: PersonSummaryResult ->
                     PersonSummary(
                         id = raw.id,
@@ -50,7 +51,6 @@ object TestDatabaseHelper {
                         age = 33
                     )
                 },
-                sqlValueToTags = { it?.let { Json.decodeFromString(it) } },
                 personAggregateResultMapper = { raw: PersonAggregateResult ->
                     PersonAggregateSummary(
                         totalCount = raw.totalCount,
@@ -60,7 +60,8 @@ object TestDatabaseHelper {
             ),
             commentAdapters = LibraryTestDatabase.CommentAdapters(
                 createdAtToSqlValue = { it.toSqliteTimestamp() },
-                tagsToSqlValue = { it?.let { Json.encodeToString(it) } },
+                tagsToSqlValue = { it?.let { json -> Json.encodeToString(json) } },
+                sqlValueToTags = { value -> value?.let { Json.decodeFromString<List<String>>(it) } },
             ),
             personCategoryAdapters = LibraryTestDatabase.PersonCategoryAdapters(
                 sqlValueToAssignedAt = { LocalDateTime.fromSqliteTimestamp(it) }
@@ -68,7 +69,6 @@ object TestDatabaseHelper {
             personAddressAdapters = LibraryTestDatabase.PersonAddressAdapters(
                 addressTypeToSqlValue = { it.value },
                 sqlValueToAddressType = { AddressType.from(it) },
-                sqlValueToCreatedAt = { LocalDateTime.fromSqliteTimestamp(it) },
             )
         )
     }

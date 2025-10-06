@@ -70,19 +70,38 @@ class DatabaseCodeGenerator(
         return customScore + nnInput + nonIdentity
     }
 
+    // Give precedence to adapters emitted from the namespace that owns the source column/result
+    private fun providerPreferenceScore(namespace: String, adapter: UniqueAdapter): Int {
+        return if (adapter.providerNamespace?.equals(namespace, ignoreCase = true) == true) 1 else 0
+    }
+
     private fun baseFunctionKey(name: String): String = name.substringBefore("For")
 
     private fun computeBestProviders(
         adaptersByNamespace: Map<String, List<UniqueAdapter>>
     ): Map<String, String> {
         val winners = mutableMapOf<String, Pair<String, UniqueAdapter>>()
-        adaptersByNamespace.forEach { (ns, adapters) ->
-            adapters.forEach { ua ->
+        adaptersByNamespace.toSortedMap().forEach { (ns, adapters) ->
+            // Iterate deterministically so ties break in a stable manner across platforms
+            adapters.sortedBy { it.functionName }.forEach { ua ->
                 val key = baseFunctionKey(ua.functionName)
-                val cur = winners[key]
-                val cand = ns to ua
-                if (cur == null || adapterScore(cand.second) > adapterScore(cur.second)) {
-                    winners[key] = cand
+                val current = winners[key]
+                if (current == null) {
+                    winners[key] = ns to ua
+                } else {
+                    val currentPref = providerPreferenceScore(current.first, current.second)
+                    val candidatePref = providerPreferenceScore(ns, ua)
+                    when {
+                        candidatePref > currentPref -> winners[key] = ns to ua
+                        candidatePref < currentPref -> { /* keep current */ }
+                        else -> {
+                            val currentScore = adapterScore(current.second)
+                            val candidateScore = adapterScore(ua)
+                            if (candidateScore > currentScore || (candidateScore == currentScore && ns < current.first)) {
+                                winners[key] = ns to ua
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -114,7 +133,8 @@ class DatabaseCodeGenerator(
         val functionName: String,
         val inputType: TypeName,
         val outputType: TypeName,
-        val isNullable: Boolean
+        val isNullable: Boolean,
+        val providerNamespace: String?
     ) {
         fun toParameterSpec(): ParameterSpec {
             val lambdaType = LambdaTypeName.Companion.get(
@@ -177,7 +197,8 @@ class DatabaseCodeGenerator(
                             functionName = config.adapterFunctionName,
                             inputType = config.inputType,
                             outputType = config.outputType,
-                            isNullable = config.isNullable
+                            isNullable = config.isNullable,
+                            providerNamespace = config.providerNamespace
                         )
                     )
                 }
@@ -275,12 +296,6 @@ class DatabaseCodeGenerator(
         }
 
         fun normalized(t: TypeName) = t.toString().removeSuffix("?")
-        fun score(u: UniqueAdapter): Int {
-            val customScore = if (isCustom(u.outputType)) 2 else 0
-            val nnInput = if (!u.inputType.isNullable) 1 else 0
-            val nonIdentity = if (normalized(u.inputType) != normalized(u.outputType)) 1 else 0
-            return customScore + nnInput + nonIdentity
-        }
 
         var best: Pair<String, UniqueAdapter>? = null
         adaptersByNamespace.forEach { (ns, adapters) ->
@@ -290,8 +305,26 @@ class DatabaseCodeGenerator(
                 )
             }.forEach { cand ->
                 val cur = best
-                if (cur == null || score(cand) > score(cur.second)) {
+                if (cur == null) {
                     best = ns to cand
+                } else {
+                    val currentPref = providerPreferenceScore(cur.first, cur.second)
+                    val candidatePref = providerPreferenceScore(ns, cand)
+                    // Prefer adapters from the namespace that declared the column/result; when that
+                    // still ties, fall back to quality score and finally namespace name for stability.
+                    when {
+                        candidatePref > currentPref -> best = ns to cand
+                        candidatePref < currentPref -> {
+                            // keep current
+                        }
+                        else -> {
+                            val currentScore = adapterScore(cur.second)
+                            val candidateScore = adapterScore(cand)
+                            if (candidateScore > currentScore || (candidateScore == currentScore && ns < cur.first)) {
+                                best = ns to cand
+                            }
+                        }
+                    }
                 }
             }
         }

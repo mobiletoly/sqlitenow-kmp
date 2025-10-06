@@ -227,18 +227,16 @@ val db = NowSampleSyncDatabase(
         sqlValueToBirthDate = {
             it?.let { LocalDate.fromSqliteDate(it) }
         },
-        sqlValueToTags = {
-            it?.jsonDecodeListFromSqlite() ?: emptyList()
-        },
     ),
     commentAdapters = NowSampleSyncDatabase.CommentAdapters(
         createdAtToSqlValue = { ts -> ts.toSqliteTimestamp() },
-        tagsToSqlValue = { tags -> tags?.jsonEncodeToSqlite() }
+        tagsToSqlValue = { tags -> tags?.jsonEncodeToSqlite() },
+        sqlValueToCreatedAt = { LocalDateTime.fromSqliteTimestamp(it) },
+        sqlValueToTags = { it?.jsonDecodeListFromSqlite() ?: emptyList() },
     ),
     personAddressAdapters = NowSampleSyncDatabase.PersonAddressAdapters(
         addressTypeToSqlValue = { it.value },
         sqlValueToAddressType = { AddressType.from(it) },
-        sqlValueToCreatedAt = { LocalDateTime.fromSqliteTimestamp(it) }
     ),
     migration = VersionBasedDatabaseMigrations()
 )
