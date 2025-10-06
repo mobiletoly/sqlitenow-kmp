@@ -27,16 +27,15 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            implementation(libs.sqlite.bundled)
-            implementation(libs.kotlinx.coroutines.core)
-            implementation(libs.kotlinx.datetime)
-            implementation(libs.kotlinx.serialization.json)
-            implementation(libs.kermit)
-            implementation(libs.ktor.client.core)
-            implementation(libs.ktor.client.content.negotiation)
-            implementation(libs.ktor.client.auth)
-            implementation(libs.ktor.serialization.kotlinx.json)
-
+            api(libs.sqlite.bundled)
+            api(libs.kotlinx.coroutines.core)
+            api(libs.kotlinx.datetime)
+            api(libs.kotlinx.serialization.json)
+            api(libs.kermit)
+            api(libs.ktor.client.core)
+            api(libs.ktor.client.content.negotiation)
+            api(libs.ktor.client.auth)
+            api(libs.ktor.serialization.kotlinx.json)
         }
 
         commonTest.dependencies {
