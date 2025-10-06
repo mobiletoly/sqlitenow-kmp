@@ -25,7 +25,7 @@ import kotlin.uuid.Uuid
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 
-internal class SyncUploader(
+class SyncUploader(
     private val http: HttpClient,
     private val config: OversqliteConfig,
     private val resolver: Resolver,

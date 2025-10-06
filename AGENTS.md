@@ -31,6 +31,7 @@ The notes below capture the current mental model so the next agent can resume qu
 - Instrumented coverage exists for DayTempo’s complex bundle hierarchy: `ActivityBundleIntegrationTest` seeds a full provider/bundle/package/activity/schedule stack and asserts the nested mapping emitted by `selectAllFullEnabled`. The test relies on `DayTempoTestDatabaseHelper` to configure adapters identical to production wiring; reuse that helper when adding new DayTempo Android tests.
 - `DayTempoHeavyIntegrationTest` seeds multiple bundles/packages/activities with schedules, program items, and daily logs to stress nested mapping. It validates both `activityBundle.selectAllFullEnabled` on larger datasets and `dailyLog.selectAllDetailedByDate` to ensure schedule/program-item wiring remains intact.
 - `DayTempoHeavyIntegrationTest` now also covers `activity.selectAllEnabledWithTimePointsByScheduleRepeat`, exercising schedule-repeat filtering and time-point hydration end-to-end, plus `dailyLog.selectAllForDateRangeAndActivityDocIds` to validate collection parameters flowing through json_each().
+- `library-oversqlite-test` mirrors the core test app but focuses on SQLite/oversqlite scenarios;
 - When annotating collection mappings, point `sourceTable` at the join alias surfaced in the current SELECT (e.g., `cdv` for `child_detailed_view` in `parent_with_children_view`). Inner aliases coming from nested views still show up via the appended alias path and keep skip logic aligned.
 - `QueryCodeGenerator` now annotates every `readStatementResult` constructor argument (and the joined variants) with inline `//` comments describing the SQL type mapping plus the originating alias/table/column. Use these when tracing regressions in generated code—the emitted comments mirror alias paths, mapping hints, and `notNull` flags.
 - Nested dynamic fields are resolved via `DataStructCodeGenerator.findSelectStatementByResultName`, letting the query generator reuse the referenced result type to build constructor arguments (including multi-level collections). `generateCollectionMappingCode` performs hierarchical `groupBy` so structures such as `ActivityBundleFullView` and `ActivityPackageWithActivitiesDoc` hydrate correctly.
@@ -39,7 +40,7 @@ The notes below capture the current mental model so the next agent can resume qu
 - `generateDynamicFieldMappingCodeFromJoined` no longer assumes the first grouped row contains the full payload. It searches `rowsFor*` for the first non-null tuple before constructing per-row/entity mappings so left joins with intermittent nulls stop tripping the `notNull=true` guard.
 - Constructor synthesis now consults table `propertyName` overrides for all mapping types (not just `entity`). Per-row projections like `PersonRow` therefore respect annotations such as `-- @@{ field=first_name, propertyName=myFirstName }` when wiring generated DTOs.
 - For dynamic fields marked `notNull=true`, the generator skips the runtime null guard when the mapping originates from the primary alias; this removes the "condition is always false" warnings for base-entity projections while keeping protective checks on joined aliases.
-- Integration coverage: instrumentation tests under `library-test/composeApp/src/androidInstrumentedTest/kotlin/dev/goquick/sqlitenow/librarytest` include `ParentViewCollectionTest`, which seeds SQL fixtures and verifies view-based dynamic fields omit unintended top-level properties, plus `BasicCollectionTest.selectAllByLastNamesUsesCollectionParameter` to assert `IN :param` collection binding end-to-end.
+- Integration coverage: instrumentation tests under `library-core-test/composeApp/src/androidInstrumentedTest/kotlin/dev/goquick/sqlitenow/librarytest` include `ParentViewCollectionTest`, which seeds SQL fixtures and verifies view-based dynamic fields omit unintended top-level properties, plus `BasicCollectionTest.selectAllByLastNamesUsesCollectionParameter` to assert `IN :param` collection binding end-to-end.
 - Parameter type inference now walks nested view columns (e.g., `activity_detailed_view` → `activity_schedule_to_join`) so placeholders inherit the same property types as their backing tables. Expect generated `Params` to surface enums like `ActivityScheduleRepeat` instead of falling back to `String`. Collection placeholders are covered by `SelectStatementInParameterTest`, which ensures `IN :param` gets rewritten to `json_each` and mapped to `Collection<T>`.
 
 ## Debug & Customization Tips
@@ -51,17 +52,20 @@ The notes below capture the current mental model so the next agent can resume qu
 ## Routine Commands
 - After **any changes to `sqlitenow-gradle-plugin`**, always run plugin unit tests and fix failures: `./gradlew :sqlitenow-gradle-plugin:test`.
 - To validate core runtime behavior, regenerate and test the dedicated library suite:
-  - `./gradlew :library-test:composeApp:generateLibraryTestDatabase`
-  - `./gradlew :library-test:composeApp:test`
-  - `./gradlew :library-test:composeApp:compileDebugAndroidTestKotlin` (guards instrumentation stubs)
+  - `./gradlew :library-core-test:composeApp:generateLibraryTestDatabase`
+  - `./gradlew :library-core-test:composeApp:test`
+  - `./gradlew :library-core-test:composeApp:compileDebugAndroidTestKotlin` (guards instrumentation stubs)
 - For investigations in the complex `daytempo-kmp` sample:
   - Regenerate DB code: `./gradlew :daytempo-kmp:composeApp:generateDayTempoDatabase`
   - Verify compilation: `./gradlew :daytempo-kmp:composeApp:compileDebugUnitTestSources`
 - During incremental refactors, run the full verification loop after **each** meaningful change:
   - `./gradlew :sqlitenow-gradle-plugin:test`
-  - `./gradlew :library-test:composeApp:generateLibraryTestDatabase`
-  - `./gradlew :library-test:composeApp:connectedAndroidTest`
+  - `./gradlew :library-core-test:composeApp:generateLibraryTestDatabase`
+  - `./gradlew :library-core-test:composeApp:connectedAndroidTest`
   - `./gradlew :daytempo-kmp:composeApp:generateDayTempoDatabase`
   - `./gradlew :daytempo-kmp:composeApp:connectedAndroidTest`
+- For the oversqlite harness (usually not needed unless instructed specifically):
+  - `./gradlew :library-oversqlite-test:composeApp:connectedAndroidTest`
+
 
 Keep this document updated when plugin behavior, verification steps, or expected SQL layout changes.
