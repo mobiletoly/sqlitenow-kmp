@@ -190,4 +190,56 @@ class BasicCollectionTest {
             assertEquals(person.id, results[0].personId)
         }
     }
+
+    @Test
+    fun selectAllByLastNamesUsesCollectionParameter() {
+        runBlocking {
+            database.open()
+
+            val doe = database.person.add(
+                PersonQuery.Add.Params(
+                    firstName = "Alice",
+                    lastName = "Doe",
+                    email = "alice.doe@example.com",
+                    phone = null,
+                    birthDate = null,
+                ),
+            ).executeReturningOne()
+
+            val smith = database.person.add(
+                PersonQuery.Add.Params(
+                    firstName = "Bob",
+                    lastName = "Smith",
+                    email = "bob.smith@example.com",
+                    phone = null,
+                    birthDate = null,
+                ),
+            ).executeReturningOne()
+
+            database.person.add(
+                PersonQuery.Add.Params(
+                    firstName = "Charlie",
+                    lastName = "Excluded",
+                    email = "charlie@example.com",
+                    phone = null,
+                    birthDate = null,
+                ),
+            ).executeReturningOne()
+
+            val params = PersonQuery.SelectAllByLastNames.Params(
+                lastNames = listOf("Doe", "Smith"),
+            )
+
+            val results = database.person.selectAllByLastNames(params).asList()
+            assertEquals(2, results.size)
+            val resultIds = results.map { it.id }.toSet()
+            assertTrue(resultIds.containsAll(listOf(doe.id, smith.id)))
+            assertTrue(results.all { it.myLastName in listOf("Doe", "Smith") })
+
+            val none = database.person.selectAllByLastNames(
+                PersonQuery.SelectAllByLastNames.Params(lastNames = emptyList()),
+            ).asList()
+            assertTrue(none.isEmpty())
+        }
+    }
 }

@@ -205,6 +205,41 @@ class DayTempoHeavyIntegrationTest {
         assertTrue("Expected empty results for NONE repeat", noneResults.isEmpty())
     }
 
+    @Test
+    fun selectAllForDateRangeAndActivityDocIdsFiltersLogs() = runBlocking {
+        val start = fixture.dailyLogDate
+        val end = fixture.dailyLogDate
+        val includedActivities = fixture.dailyLogExpectations.take(2).map { it.activityDocId }
+
+        val params = DailyLogQuery.SelectAllForDateRangeAndActivityDocIds.Params(
+            start = start,
+            end = end,
+            activityDocIds = includedActivities,
+        )
+
+        val results = database.dailyLog
+            .selectAllForDateRangeAndActivityDocIds(params)
+            .asList()
+
+        val expectedLogs = fixture.dailyLogExpectations.filter { it.activityDocId in includedActivities }
+        assertEquals(expectedLogs.size, results.size)
+
+        val resultDocIds = results.map { it.main.docId }.toSet()
+        assertEquals(expectedLogs.map { it.docId }.toSet(), resultDocIds)
+
+        val emptyResults = database.dailyLog
+            .selectAllForDateRangeAndActivityDocIds(
+                DailyLogQuery.SelectAllForDateRangeAndActivityDocIds.Params(
+                    start = start,
+                    end = end,
+                    activityDocIds = emptyList(),
+                ),
+            )
+            .asList()
+
+        assertTrue(emptyResults.isEmpty())
+    }
+
     private fun assertScheduleMatches(expected: ActivityExpectation, actual: ActivityScheduleDoc) {
         assertEquals("Schedule startAt mismatch", expected.scheduleStartAt, actual.startAt)
         assertEquals("Schedule repeat mismatch", expected.scheduleRepeat, actual.repeat)

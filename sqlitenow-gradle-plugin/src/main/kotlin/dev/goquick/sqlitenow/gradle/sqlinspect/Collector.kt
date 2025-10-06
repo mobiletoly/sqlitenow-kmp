@@ -63,12 +63,16 @@ fun Expression.collectNamedParametersAssociatedWithColumns(): LinkedHashMap<Stri
         override fun visit(expr: InExpression) {
             val col = expr.leftExpression as? Column
             if (col != null) {
-                val itemsList = expr.rightExpression
-                if (itemsList is ExpressionList<*>) {
-                    // ExpressionList contains a list of expressions
-                    itemsList.filterIsInstance<JdbcNamedParameter>().forEach { param ->
-                        pairs += param.name.removePrefix(":") to AssociatedColumn.Collection(col.columnName)
+                when (val rhs = expr.rightExpression) {
+                    is JdbcNamedParameter -> {
+                        pairs += rhs.name.removePrefix(":") to AssociatedColumn.Collection(col.columnName)
                     }
+                    is ExpressionList<*> -> {
+                        rhs.filterIsInstance<JdbcNamedParameter>().forEach { param ->
+                            pairs += param.name.removePrefix(":") to AssociatedColumn.Collection(col.columnName)
+                        }
+                    }
+                    else -> Unit
                 }
             }
             super.visit(expr)

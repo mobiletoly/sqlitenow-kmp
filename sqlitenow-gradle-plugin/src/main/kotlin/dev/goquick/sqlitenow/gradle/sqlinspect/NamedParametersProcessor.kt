@@ -50,7 +50,7 @@ class NamedParametersProcessor(
 
             if (value is InExpression) {
                 // We are using json_each() to expand the array into individual values
-                buffer.append("SELECT value from json_each(?)")
+                buffer.append("(SELECT value FROM json_each(?))")
             } else {
                 buffer.append('?')
             }
