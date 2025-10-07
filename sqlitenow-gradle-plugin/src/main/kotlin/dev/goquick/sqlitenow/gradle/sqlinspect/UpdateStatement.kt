@@ -32,11 +32,13 @@ class UpdateStatement(
             val withItemsList = update.withItemsList
             val withSelectStatements = buildSelectStatementFromWithItemsList(conn, withItemsList)
             val columnNamesAssociatedWithNamedParameters = update.updateSets
-                ?.mapNotNull {
-                    val column = it.columns.firstOrNull()
-                    if (column == null) return@mapNotNull null
-                    val expr = it.values.first() as JdbcNamedParameter
-                    expr.name to column.columnName
+                ?.flatMap { updateSet ->
+                    val columns = updateSet.columns.orEmpty()
+                    val values = updateSet.values.orEmpty()
+                    columns.zip(values).mapNotNull { (column, expr) ->
+                        val namedParam = expr as? JdbcNamedParameter ?: return@mapNotNull null
+                        namedParam.name to column.columnName
+                    }
                 }
                 ?.toMap() ?: emptyMap()
 

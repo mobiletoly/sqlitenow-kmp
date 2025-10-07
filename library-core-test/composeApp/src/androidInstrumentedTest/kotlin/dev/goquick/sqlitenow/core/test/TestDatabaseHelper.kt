@@ -15,6 +15,10 @@ import dev.goquick.sqlitenow.core.test.db.PersonSummaryResult
 import dev.goquick.sqlitenow.core.test.db.VersionBasedDatabaseMigrations
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
+import kotlinx.datetime.Instant
+import kotlin.time.ExperimentalTime
 import kotlinx.serialization.json.Json
 
 /**
@@ -27,6 +31,7 @@ object TestDatabaseHelper {
      * Creates a LibraryTestDatabase instance with all required adapters configured.
      * Uses the working configuration from BasicCollectionTest as the reference.
      */
+    @OptIn(ExperimentalTime::class)
     fun createDatabase(dbName: String = ":memory:", debug: Boolean = true): LibraryTestDatabase {
         return LibraryTestDatabase(
             dbName = dbName,
@@ -69,6 +74,9 @@ object TestDatabaseHelper {
             personAddressAdapters = LibraryTestDatabase.PersonAddressAdapters(
                 addressTypeToSqlValue = { it.value },
                 sqlValueToAddressType = { AddressType.from(it) },
+                sqlValueToConstantTimestamp = { epochSeconds ->
+                    epochSeconds?.let { Instant.fromEpochSeconds(it).toLocalDateTime(TimeZone.UTC) }
+                },
             )
         )
     }
