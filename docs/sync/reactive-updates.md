@@ -9,7 +9,7 @@ parent: Sync
 
 SQLiteNow's reactive flows automatically update your UI when sync operations modify data. This page focuses on sync-specific patterns and behaviors.
 
-> **📖 New to reactive flows?** Start with the [Reactive UI Updates recipe]({{ site.baseurl }}/documentation/recipes/#reactive-ui-updates-with-flows) to learn the basics of using `.asFlow()` with your queries.
+> **📖 New to reactive flows?** Start with the [Reactive Flows recipe]({{ site.baseurl }}/recipes/reactive-flows/) to learn the basics of using `.asFlow()` with your queries.
 
 ## How Sync Triggers UI Updates
 

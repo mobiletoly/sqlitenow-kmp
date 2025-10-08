@@ -30,7 +30,6 @@
                     <a href="{{ site.baseurl }}/documentation/dynamic-fields/">Dynamic Fields</a>
                     <a href="{{ site.baseurl }}/documentation/initialize-data/">Initialize Data</a>
                     <a href="{{ site.baseurl }}/documentation/migration/">Migration</a>
-                    <a href="{{ site.baseurl }}/documentation/recipes/">Recipes</a>
                   </div>
                 </div>
               {%- elsif my_page.title == "Sync" -%}
@@ -43,6 +42,17 @@
                     <a href="{{ site.baseurl }}/sync/bootstrap-hydration/">Bootstrap & Hydration</a>
                     <a href="{{ site.baseurl }}/sync/sync-operations/">Sync Operations</a>
                     <a href="{{ site.baseurl }}/sync/reactive-updates/">Reactive Sync Updates</a>
+                  </div>
+                </div>
+              {%- elsif my_page.title == "Recipes" -%}
+                <div class="dropdown">
+                  <a class="page-link dropdown-toggle" href="{{ my_page.url | relative_url }}">{{ my_page.title | escape }}</a>
+                  <div class="dropdown-content">
+                    <a href="{{ site.baseurl }}/recipes/serialization/">Serialization</a>
+                    <a href="{{ site.baseurl }}/recipes/reactive-flows/">Reactive Flows</a>
+                    <a href="{{ site.baseurl }}/recipes/inspection/">Inspection</a>
+                    <a href="{{ site.baseurl }}/recipes/named-parameters/">Named Parameters</a>
+                    <a href="{{ site.baseurl }}/recipes/complex-example/">Complex Example</a>
                   </div>
                 </div>
               {%- else -%}
@@ -152,4 +162,3 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 });
 </script>
-

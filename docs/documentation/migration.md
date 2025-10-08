@@ -63,7 +63,7 @@ CREATE TABLE user_preferences
     id      INTEGER PRIMARY KEY NOT NULL,
     user_id INTEGER             NOT NULL,
     theme   TEXT                NOT NULL DEFAULT 'light',
-    FOREIGN KEY (user_id) REFERENCES person (id)
+    FOREIGN KEY (user_id)       REFERENCES person (id)
 );
 ```
 
@@ -136,4 +136,4 @@ Users upgrading from any previous version will have all necessary migrations app
 
 ## Next Steps
 
-[Recipes]({{ site.baseurl }}/documentation/recipes/) - Learn about common patterns and best practices
+[Recipes]({{ site.baseurl }}/recipes/) - Learn about common patterns and best practices

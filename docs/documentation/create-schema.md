@@ -84,7 +84,7 @@ CREATE TABLE person
     created_at TEXT                NOT NULL DEFAULT current_timestamp,
     
     -- @@{ field=is_active, adapter=default, propertyType=Boolean }
-    is_active INTEGER NOT NULL DEFAULT 1
+    is_active INTEGER              NOT NULL DEFAULT 1
 );
 ```
 

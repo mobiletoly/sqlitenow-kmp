@@ -44,6 +44,7 @@ header_pages:
   - getting-started.md
   - documentation.md
   - sync.md
+  - recipes.md
 
 # Exclude from processing.
 # The following items will not be processed, by default.
