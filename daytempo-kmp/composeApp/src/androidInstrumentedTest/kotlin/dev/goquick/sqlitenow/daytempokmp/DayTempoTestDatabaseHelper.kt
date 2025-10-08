@@ -106,7 +106,7 @@ object DayTempoTestDatabaseHelper {
                 activityIdToSqlValue = { it.toByteArray() },
                 repeatToSqlValue = { it.value },
                 allowedRepeatModesToSqlValue = { it.joinHasStringValues() },
-                startAtToSqlValue = { it.toEpochDays() },
+                startAtToSqlValue = { it?.toEpochDays() ?: 0 },
                 timePointsToSqlValue = { it.joinAlarmPoints() },
                 timeRangeToSqlValue = { it?.value },
                 sqlValueToActivityId = { Uuid.fromByteArray(it) },

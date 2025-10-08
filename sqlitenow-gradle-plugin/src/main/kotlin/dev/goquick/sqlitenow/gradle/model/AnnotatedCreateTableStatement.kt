@@ -22,13 +22,31 @@ data class AnnotatedCreateTableStatement(
         val src: CreateTableStatement.Column,
         val annotations: Map<String, Any?>
     ) {
+        private val annotationNotNull: Boolean? = annotations[AnnotationConstants.NOT_NULL]?.let {
+            parseNotNullValue(it)
+        }
+
+        /**
+         * Determines Kotlin-side nullability for generated properties/params.
+         * Respects explicit annotation overrides; otherwise falls back to table schema.
+         */
         fun isNullable(): Boolean {
-            if (annotations.containsKey(AnnotationConstants.NOT_NULL)) {
-                val notNull = parseNotNullValue(annotations[AnnotationConstants.NOT_NULL])
-                return !notNull
+            return when (annotationNotNull) {
+                true -> false
+                false -> true
+                null -> !src.notNull
             }
-            // No notNull annotation specified - inherit from table structure
-            return !src.notNull
+        }
+
+        /**
+         * Determines the SQL nullability used for adapter return types and parameter binding.
+         * Explicit notNull=true enforces non-null, but notNull=false does not relax a NOT NULL column.
+         */
+        fun isSqlNullable(): Boolean {
+            return when (annotationNotNull) {
+                true -> false
+                else -> !src.notNull
+            }
         }
     }
 

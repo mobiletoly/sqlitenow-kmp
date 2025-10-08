@@ -252,7 +252,9 @@ class AdapterConfig(
                     field = field,
                     adapterFunctionName = adapterFunctionName,
                     propertyNameGenerator = statement.annotations.propertyNameGenerator,
-                    selectFieldGenerator = selectFieldGenerator
+                    selectFieldGenerator = selectFieldGenerator,
+                    baseColumnName = baseColumnName,
+                    aliasPrefixes = aliasPrefixes
                 )
                 configs.add(config)
             }
@@ -269,19 +271,25 @@ class AdapterConfig(
     ): ParamConfig {
         val baseType = SqliteTypeToKotlinCodeConverter.Companion.mapSqlTypeToKotlinType(column.src.dataType)
         val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE] as? String
-        val isNullable = column.isNullable()
+        val propertyNullable = column.isNullable()
+        val sqlNullable = column.isSqlNullable()
 
-        val targetType = SqliteTypeToKotlinCodeConverter.Companion.determinePropertyType(baseType, propertyType, isNullable, packageName)
+        val targetType = SqliteTypeToKotlinCodeConverter.Companion.determinePropertyType(
+            baseType,
+            propertyType,
+            propertyNullable,
+            packageName
+        )
 
-        val inputType = targetType.copy(nullable = isNullable)
-        val outputType = baseType.copy(nullable = isNullable)
+        val inputType = targetType.copy(nullable = propertyNullable)
+        val outputType = baseType.copy(nullable = sqlNullable)
 
         return ParamConfig(
             paramName = parameterName,
             adapterFunctionName = adapterFunctionName,
             inputType = inputType,
             outputType = outputType,
-            isNullable = isNullable,
+            isNullable = propertyNullable,
             providerNamespace = null, // inputs don't need cross-namespace routing for now
             kind = AdapterKind.INPUT,
         )
@@ -293,7 +301,9 @@ class AdapterConfig(
         field: AnnotatedSelectStatement.Field,
         adapterFunctionName: String,
         propertyNameGenerator: PropertyNameGeneratorType,
-        selectFieldGenerator: SelectFieldCodeGenerator
+        selectFieldGenerator: SelectFieldCodeGenerator,
+        baseColumnName: String,
+        aliasPrefixes: List<String>
     ): ParamConfig {
         // Determine preferred provider namespace by resolving the field's source table alias -> table name
         val providerNs: String? = run {
@@ -318,16 +328,21 @@ class AdapterConfig(
         val property = selectFieldGenerator.generateProperty(field, propertyNameGenerator)
         val targetType = property.type
 
-        val inputNullable = property.type.isNullable
         val underlyingType = SqliteTypeToKotlinCodeConverter.Companion.mapSqlTypeToKotlinType(field.src.dataType)
-        val inputType = underlyingType.copy(nullable = inputNullable)
+        val propertyNullable = targetType.isNullable
+        val sqlNullable = columnLookup.findColumnForSelectField(
+            statement = statement,
+            field = field,
+            aliasPrefixes = aliasPrefixes,
+        )?.isSqlNullable() ?: field.src.isNullable
+        val inputType = underlyingType.copy(nullable = sqlNullable)
 
         return ParamConfig(
             paramName = field.src.fieldName,
             adapterFunctionName = adapterFunctionName,
             inputType = inputType,
             outputType = targetType,
-            isNullable = inputNullable,
+            isNullable = propertyNullable,
             providerNamespace = providerNs,
             kind = AdapterKind.RESULT_FIELD,
         )

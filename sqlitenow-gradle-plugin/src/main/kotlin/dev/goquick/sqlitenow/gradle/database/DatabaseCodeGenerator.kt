@@ -651,18 +651,24 @@ class DatabaseCodeGenerator(
                 // Create adapter configuration for output (result conversion)
                 val baseType = SqliteTypeToKotlinCodeConverter.Companion.mapSqlTypeToKotlinType(column.src.dataType)
                 val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE] as? String
-                val isNullable = column.isNullable()
-                val targetType = SqliteTypeToKotlinCodeConverter.Companion.determinePropertyType(baseType, propertyType, isNullable, packageName)
+                val propertyNullable = column.isNullable()
+                val sqlNullable = column.isSqlNullable()
+                val targetType = SqliteTypeToKotlinCodeConverter.Companion.determinePropertyType(
+                    baseType,
+                    propertyType,
+                    propertyNullable,
+                    packageName
+                )
 
-                val inputType = baseType.copy(nullable = isNullable)
-                val outputType = targetType.copy(nullable = isNullable)
+                val inputType = baseType.copy(nullable = sqlNullable)
+                val outputType = targetType.copy(nullable = propertyNullable)
 
                 val config = AdapterConfig.ParamConfig(
                     paramName = column.src.name,
                     adapterFunctionName = adapterFunctionName,
                     inputType = inputType,
                     outputType = outputType,
-                    isNullable = isNullable,
+                    isNullable = propertyNullable,
                     providerNamespace = null,
                     kind = AdapterConfig.AdapterKind.RESULT_FIELD,
                 )

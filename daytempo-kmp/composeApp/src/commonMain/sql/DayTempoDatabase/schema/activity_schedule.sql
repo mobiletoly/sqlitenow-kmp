@@ -62,7 +62,7 @@ CREATE TABLE activity_schedule (
     -- @@{ field=day4, propertyType=kotlin.Int }
     day4 INTEGER NOT NULL,
 
-    -- @@{ field=start_at, propertyType=kotlinx.datetime.LocalDate }
+    -- @@{ field=start_at, propertyType=kotlinx.datetime.LocalDate, notNull=false }
     start_at INTEGER NOT NULL,
 
     -- @@{ field=start_at_eval }

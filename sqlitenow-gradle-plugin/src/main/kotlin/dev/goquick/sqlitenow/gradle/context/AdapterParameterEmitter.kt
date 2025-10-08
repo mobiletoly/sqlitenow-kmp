@@ -160,15 +160,16 @@ internal class AdapterParameterEmitter(
                 val baseType =
                     SqliteTypeToKotlinCodeConverter.mapSqlTypeToKotlinType(column.src.dataType)
                 val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE] as? String
-                val isNullable = column.isNullable()
+                val propertyNullable = column.isNullable()
+                val sqlNullable = column.isSqlNullable()
                 val targetType = SqliteTypeToKotlinCodeConverter.determinePropertyType(
                     baseType,
                     propertyType,
-                    isNullable,
+                    propertyNullable,
                     packageName
                 )
-                val inputType = baseType.copy(nullable = isNullable)
-                val outputType = targetType.copy(nullable = isNullable)
+                val inputType = baseType.copy(nullable = sqlNullable)
+                val outputType = targetType.copy(nullable = propertyNullable)
                 val adapterType =
                     LambdaTypeName.get(parameters = arrayOf(inputType), returnType = outputType)
                 val parameterSpec = ParameterSpec.builder(adapterFunctionName, adapterType).build()

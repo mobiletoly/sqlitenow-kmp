@@ -691,8 +691,8 @@ class DataStructCodeGeneratorTest {
     }
 
     @Test
-    @DisplayName("Test INSERT statement with @@nullable annotation overrides NOT NULL constraint for adapter")
-    fun testInsertWithNullableAnnotationOverridesNotNull() {
+    @DisplayName("Test INSERT statement keeps NOT NULL binding even with @@nullable annotation")
+    fun testInsertWithNullableAnnotationDoesNotRelaxNotNullBinding() {
         // Create a temporary directory for SQL files
         val tempDir = Files.createTempDirectory("test-sql")
         val queriesDir = tempDir.resolve("queries").resolve("person").toFile()
@@ -798,9 +798,9 @@ class DataStructCodeGeneratorTest {
         // Test that the column is detected as nullable despite NOT NULL constraint using ColumnLookupService
         val columnLookup = ColumnLookup(createTableStatements, createViewStatements = emptyList())
         val isNullable = columnLookup.isParameterNullable(mockAnnotatedStatement, "lastName")
-        assertTrue(
+        assertFalse(
             isNullable,
-            "last_name column should be detected as nullable due to @@nullable annotation, even though it has NOT NULL constraint"
+            "last_name column should remain non-null for SQL binding even when @@{notNull=false} overrides Kotlin property nullability"
         )
 
         // Clean up
@@ -926,8 +926,8 @@ class DataStructCodeGeneratorTest {
         )
 
         // The function should be generated successfully without type errors
-        // This test verifies that nullable adapter parameters are correctly generated
-        // with both nullable input and return types: (String?) -> String?
+        // This test verifies that nullable adapter parameters are generated without type errors even
+        // when the SQL side remains NOT NULL (e.g. signature becomes (String?) -> String).
 
         // Clean up
         tempDir.toFile().deleteRecursively()

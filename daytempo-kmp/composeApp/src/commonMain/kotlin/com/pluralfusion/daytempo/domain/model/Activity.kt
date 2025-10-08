@@ -321,7 +321,7 @@ class ActivityPackageFullDoc(
         .map {
             if (it.schedule.mandatoryToSetup &&
                 it.schedule.repeat == ActivityScheduleRepeat.DAYS_INTERVAL &&
-                it.schedule.startAt.toEpochDays() == 0L &&
+                (it.schedule.startAt?.toEpochDays() ?: 0L) == 0L &&
                 it.schedule.startAtEval == null
             ) {
                 ActivityStatus.SETUP_REQUIRED
@@ -379,7 +379,7 @@ class ActivityPackageWithActivitiesDoc(
         .map {
             if (it.schedule.mandatoryToSetup &&
                 it.schedule.repeat == ActivityScheduleRepeat.DAYS_INTERVAL &&
-                it.schedule.startAt.toEpochDays() == 0L &&
+                (it.schedule.startAt?.toEpochDays() ?: 0L) == 0L &&
                 it.schedule.startAtEval == null
             ) {
                 ActivityStatus.SETUP_REQUIRED

@@ -5,10 +5,12 @@ import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateViewStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedStatement
+import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
 import dev.goquick.sqlitenow.gradle.sqlinspect.DeleteStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.InsertStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.UpdateStatement
+import java.util.LinkedHashSet
 
 /**
  * Centralized logic for finding columns associated with parameters
@@ -41,6 +43,102 @@ class ColumnLookup(
             is AnnotatedExecuteStatement -> findColumnForExecuteParameter(statement, paramName)
             else -> null
         }
+    }
+
+    /**
+     * Resolve the originating CREATE TABLE column for a SELECT field, traversing view expansions
+     * and alias prefixes when necessary.
+     */
+    fun findColumnForSelectField(
+        statement: AnnotatedSelectStatement,
+        field: AnnotatedSelectStatement.Field,
+        aliasPrefixes: List<String> = emptyList(),
+    ): AnnotatedCreateTableStatement.Column? {
+        val candidates = LinkedHashSet<String>()
+        fun addCandidate(name: String?) {
+            if (name.isNullOrBlank()) return
+            addNameVariants(name, candidates)
+        }
+
+        addCandidate(field.src.originalColumnName)
+        addCandidate(field.src.fieldName)
+        addCandidate(field.annotations.propertyName)
+
+        val propertyNameGenerator: PropertyNameGeneratorType = statement.annotations.propertyNameGenerator
+        val inferredPropertyName = propertyNameGenerator.convertToPropertyName(field.src.fieldName)
+        addCandidate(inferredPropertyName)
+
+        field.annotations.aliasPrefix?.takeIf { it.isNotBlank() }?.let { prefix ->
+            addCandidate(field.src.fieldName.removePrefixIfMatches(prefix))
+            addCandidate(field.src.originalColumnName.removePrefixIfMatches(prefix))
+        }
+
+        aliasPrefixes.forEach { prefix ->
+            addCandidate(field.src.fieldName.removePrefixIfMatches(prefix))
+            addCandidate(field.src.originalColumnName.removePrefixIfMatches(prefix))
+        }
+
+        val propertyNameHint = field.annotations.propertyName?.takeIf { it.isNotBlank() } ?: inferredPropertyName
+
+        fun lookupInTable(tableName: String?): AnnotatedCreateTableStatement.Column? {
+            if (tableName.isNullOrBlank()) return null
+            val table = findTableByName(tableName) ?: return null
+            candidates.forEach { candidate ->
+                findColumnInTable(table, candidate, propertyNameHint, statement)?.let { return it }
+            }
+            return null
+        }
+
+        fun resolveIn(name: String?): AnnotatedCreateTableStatement.Column? {
+            if (name.isNullOrBlank()) return null
+            lookupInTable(name)?.let { return it }
+
+            val view = findViewByName(name) ?: return null
+            candidates.forEach { candidate ->
+                resolveColumnFromView(
+                    view = view,
+                    fieldAlias = candidate,
+                    paramName = propertyNameHint,
+                    statement = statement,
+                    visitedViews = mutableSetOf()
+                )?.let { return it }
+            }
+            return null
+        }
+
+        field.aliasPath.reversed().forEach { alias ->
+            resolveIn(statement.src.tableAliases[alias] ?: alias)?.let { return it }
+        }
+
+        field.src.tableName.takeIf { it.isNotBlank() }?.let { alias ->
+            resolveIn(statement.src.tableAliases[alias] ?: alias)?.let { return it }
+        }
+
+        resolveIn(statement.src.fromTable)?.let { return it }
+
+        statement.src.tableAliases.values.forEach { tableOrView ->
+            resolveIn(tableOrView)?.let { return it }
+        }
+
+        tableLookup.values.forEach { table ->
+            candidates.forEach { candidate ->
+                findColumnInTable(table, candidate, propertyNameHint, statement)?.let { return it }
+            }
+        }
+
+        viewLookup.values.forEach { view ->
+            candidates.forEach { candidate ->
+                resolveColumnFromView(
+                    view = view,
+                    fieldAlias = candidate,
+                    paramName = propertyNameHint,
+                    statement = statement,
+                    visitedViews = mutableSetOf()
+                )?.let { return it }
+            }
+        }
+
+        return null
     }
 
     /**
@@ -249,10 +347,38 @@ class ColumnLookup(
         return null
     }
 
+    private fun addNameVariants(name: String, sink: MutableSet<String>) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return
+        sink += trimmed
+
+        val withoutSuffix = trimmed.substringBefore(':')
+        if (withoutSuffix.isNotEmpty()) sink += withoutSuffix
+
+        val afterDot = withoutSuffix.substringAfterLast('.', withoutSuffix)
+        if (afterDot.isNotEmpty()) sink += afterDot
+
+        val segments = afterDot.split('_').filter { it.isNotEmpty() }
+        if (segments.size > 1) {
+            segments.indices.forEach { index ->
+                sink += segments.drop(index).joinToString("_")
+            }
+        }
+    }
+
+    private fun String?.removePrefixIfMatches(prefix: String): String? {
+        if (this.isNullOrBlank()) return null
+        return if (this.startsWith(prefix)) {
+            this.removePrefix(prefix).takeIf { it.isNotBlank() }
+        } else {
+            null
+        }
+    }
+
 
     /** Checks if a parameter's corresponding column is nullable. */
     fun isParameterNullable(statement: AnnotatedStatement, paramName: String): Boolean {
         val column = findColumnForParameter(statement, paramName) ?: return false
-        return column.isNullable()
+        return column.isSqlNullable()
     }
 }
