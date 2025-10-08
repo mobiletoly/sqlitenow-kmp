@@ -45,6 +45,7 @@ dependencies {
     // SQLite JDBC for database access
     implementation("org.xerial:sqlite-jdbc:3.50.3.0")
     implementation("com.github.jsqlparser:jsqlparser:4.9")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
 
     // -- Testing dependencies --
     testImplementation("org.junit.jupiter:junit-jupiter-api:5.13.4")

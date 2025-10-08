@@ -54,7 +54,7 @@ class TypeMapping {
     /** Generates a binding call for Collection types that need JSON encoding. */
     fun getCollectionBindingCall(paramIndex: Int, propertyName: String): String {
         val sqliteIndex = paramIndex + 1
-        return "statement.bindText($sqliteIndex, params.$propertyName.jsonEncodeToSqlite())"
+        return "statement.bindText($sqliteIndex, Json.encodeToString(params.$propertyName))"
     }
 
     /** Checks if a type string represents a standard Kotlin type that we can handle directly. */

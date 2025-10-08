@@ -3,7 +3,6 @@ package dev.goquick.sqlitenow.gradle.generator.query
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.TypeName
-import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter
 import dev.goquick.sqlitenow.gradle.context.ColumnLookup
 import dev.goquick.sqlitenow.gradle.context.TypeMapping
 import dev.goquick.sqlitenow.gradle.generator.data.DataStructCodeGenerator
@@ -11,6 +10,9 @@ import dev.goquick.sqlitenow.gradle.model.AnnotatedStatement
 import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
 import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
 import dev.goquick.sqlitenow.gradle.processing.StatementUtils
+import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 /**
  * Service responsible for generating parameter binding code for SQL statements.
@@ -122,7 +124,7 @@ class ParameterBinding(
     ) {
         val isParameterNullable = columnLookup.isParameterNullable(statement, paramName)
         val actualType = getActualParameterType(namespace, className, propertyName)
-        val valueExpr = if (actualType == "Collection") "params.$propertyName.jsonEncodeToSqlite()" else "params.$propertyName"
+        val valueExpr = if (actualType == "Collection") "Json.encodeToString(params.$propertyName)" else "params.$propertyName"
 
         if (isParameterNullable) {
             generateNullableBinding(

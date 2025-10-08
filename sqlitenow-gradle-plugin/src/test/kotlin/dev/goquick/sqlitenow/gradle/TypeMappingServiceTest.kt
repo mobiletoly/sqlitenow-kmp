@@ -99,12 +99,12 @@ class TypeMappingServiceTest {
     @DisplayName("Test collection binding call")
     fun testCollectionBindingCall() {
         assertEquals(
-            "statement.bindText(1, params.tags.jsonEncodeToSqlite())",
+            "statement.bindText(1, Json.encodeToString(params.tags))",
             typeMapping.getCollectionBindingCall(0, "tags")
         )
 
         assertEquals(
-            "statement.bindText(3, params.categories.jsonEncodeToSqlite())",
+            "statement.bindText(3, Json.encodeToString(params.categories))",
             typeMapping.getCollectionBindingCall(2, "categories")
         )
     }

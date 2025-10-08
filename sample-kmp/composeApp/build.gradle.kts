@@ -1,4 +1,6 @@
+import org.gradle.api.tasks.JavaExec
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
+import org.jetbrains.kotlin.gradle.targets.jvm.KotlinJvmTarget
 
 plugins {
     id(libs.plugins.kotlinMultiplatform.get().pluginId)
@@ -10,13 +12,9 @@ plugins {
 }
 
 kotlin {
-    androidTarget {
-        compilations.all {
-            this@androidTarget.compilerOptions {
-                jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
-            }
-        }
-    }
+    androidTarget()
+
+    jvm("desktop")
 
     compilerOptions {
         languageVersion.set(KotlinVersion.KOTLIN_2_2)
@@ -58,6 +56,10 @@ kotlin {
             implementation(libs.androidx.activityCompose)
             implementation(libs.compose.ui.tooling)
             implementation(libs.compose.ui.toolingPreview)
+        }
+
+        getByName("desktopMain").dependencies {
+            implementation(compose.desktop.currentOs)
         }
     }
 }
@@ -105,6 +107,25 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEa
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
     }
+}
+
+compose.desktop {
+    application {
+        mainClass = "dev.goquick.sqlitenow.samplekmp.DesktopMainKt"
+        buildTypes.release.proguard.isEnabled = false
+    }
+}
+
+val desktopTarget = kotlin.targets.getByName("desktop") as KotlinJvmTarget
+val desktopMainCompilation = desktopTarget.compilations.getByName("main")
+
+tasks.register<JavaExec>("runDesktop") {
+    group = "application"
+    description = "Runs the sample app on the desktop JVM target."
+    mainClass.set("dev.goquick.sqlitenow.samplekmp.DesktopMainKt")
+    classpath = desktopMainCompilation.runtimeDependencyFiles
+    classpath(desktopMainCompilation.output.allOutputs)
+    dependsOn(desktopMainCompilation.compileTaskProvider)
 }
 
 sqliteNow {

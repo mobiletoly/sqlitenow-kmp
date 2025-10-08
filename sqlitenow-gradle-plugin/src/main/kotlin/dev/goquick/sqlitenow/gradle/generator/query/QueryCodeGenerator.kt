@@ -122,7 +122,8 @@ internal class QueryCodeGenerator(
                     .addMember("%T::class", ClassName("kotlin.uuid", "ExperimentalUuidApi"))
                     .build()
             )
-            .addImport("dev.goquick.sqlitenow.core.util", "jsonEncodeToSqlite")
+            .addImport("kotlinx.serialization", "encodeToString")
+            .addImport("kotlinx.serialization.json", "Json")
 
         if (!debug) {
             fileBuilder.addImport("kotlinx.coroutines", "withContext")
