@@ -59,6 +59,7 @@ Client-side framework components:
 Server-side components:
 - **OverSync** - Sync server that provides an adapter library for data synchronization.
   Currently we have **go-oversync** implementation in Go with PostgreSQL as data store.
+  Visit this link for more information: https://github.com/mobiletoly/go-oversync
 
 **It is important to mention** that you can use SQLiteNow Generator and SQLiteNow Library without
 using OverSqlite for synchronization. And vice versa - you can use OverSqlite for synchronization
