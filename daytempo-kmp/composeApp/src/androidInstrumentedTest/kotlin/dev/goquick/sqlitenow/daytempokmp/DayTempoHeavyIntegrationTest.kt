@@ -65,7 +65,7 @@ class DayTempoHeavyIntegrationTest {
         val results = database.activityBundle.selectAllWithEnabledActivities.asList()
         assertEquals("Unexpected bundle count", fixture.bundleExpectations.size, results.size)
 
-        val resultsByDocId = results.associateBy { it.main.main.docId }
+        val resultsByDocId = results.associateBy { it.main.bndl.docId }
         fixture.bundleExpectations.forEach { expectedBundle ->
             val bundleResult = resultsByDocId[expectedBundle.docId]
                 ?: error("Missing bundle ${expectedBundle.docId} in results")
@@ -76,7 +76,7 @@ class DayTempoHeavyIntegrationTest {
             assertEquals(
                 "Bundle title mismatch for ${expectedBundle.docId}",
                 expectedBundle.title,
-                bundleResult.main.main.title,
+                bundleResult.main.bndl.title,
             )
             val expectedPackageCategories = expectedBundle.packages.map { it.categoryTitle }.toSet()
             assertTrue(

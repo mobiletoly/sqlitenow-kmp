@@ -68,8 +68,8 @@ class ActivityBundleIntegrationTest {
         assertEquals("Expected exactly one bundle", 1, results.size)
         val bundle: ActivityBundleWithActivitiesDoc = results.single()
 
-        assertEquals("Morning Routine", bundle.main.main.title)
-        assertEquals(ActivityBundlePurchaseMode.FULLY_FREE, bundle.main.main.purchaseMode)
+        assertEquals("Morning Routine", bundle.main.bndl.title)
+        assertEquals(ActivityBundlePurchaseMode.FULLY_FREE, bundle.main.bndl.purchaseMode)
         assertEquals("Provider One", bundle.provider.title)
         assertEquals("Flexibility", bundle.category.title)
 

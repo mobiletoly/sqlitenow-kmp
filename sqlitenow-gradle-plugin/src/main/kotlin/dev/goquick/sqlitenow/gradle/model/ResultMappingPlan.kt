@@ -3,6 +3,7 @@ package dev.goquick.sqlitenow.gradle.model
 import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants.MappingType
 import dev.goquick.sqlitenow.gradle.processing.DynamicFieldMapper
 import dev.goquick.sqlitenow.gradle.processing.DynamicFieldUtils
+import dev.goquick.sqlitenow.gradle.util.AliasPathUtils
 import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
 
 /**
@@ -105,13 +106,34 @@ object ResultMappingPlanner {
             ResultMappingPlan.DynamicFieldEntry(field, mappingType, role)
         }
 
+        val containerEntries = dynamicEntries.filter { entry ->
+            entry.role == ResultMappingPlan.Role.ENTITY || entry.role == ResultMappingPlan.Role.PER_ROW
+        }
+
         val dynamicMappingsByField = dynamicMappings.associateBy { it.fieldName }
+
+        val skipZeroColumnDuplicates = containerEntries.asSequence()
+            .filter { entry ->
+                dynamicMappingsByField[entry.field.src.fieldName]?.columns.isNullOrEmpty()
+            }
+            .mapNotNull { entry ->
+                val aliasPathLower = AliasPathUtils.lowercase(entry.field.aliasPath)
+                val hasAnnotatedSibling = containerEntries.any { other ->
+                    if (other === entry) return@any false
+                    val otherPath = AliasPathUtils.lowercase(other.field.aliasPath)
+                    otherPath == aliasPathLower && !dynamicMappingsByField[other.field.src.fieldName]?.columns.isNullOrEmpty()
+                }
+                if (hasAnnotatedSibling) entry.field.src.fieldName else null
+            }
+            .toSet()
+
+        val combinedSkipSet = (skipSet) + skipZeroColumnDuplicates
 
         return ResultMappingPlan(
             mappedColumns = mappedColumns,
             regularFields = regularFields,
             dynamicFieldEntries = dynamicEntries,
-            skippedDynamicFieldNames = skipSet,
+            skippedDynamicFieldNames = combinedSkipSet,
             dynamicMappingsByField = dynamicMappingsByField,
         )
     }

@@ -89,7 +89,7 @@ SELECT
     cat.title AS joined__bndl__category__title,
     cat.icon AS joined__bndl__category__icon
 
-    /* @@{ dynamicField=main,
+    /* @@{ dynamicField=bndl,
            mappingType=entity,
            propertyType=ActivityBundleRow,
            sourceTable=bndl,
@@ -123,7 +123,7 @@ SELECT
     bndl.*,
     pkg.*
 
-    /* @@{ dynamicField=main,
+    /* @@{ dynamicField=bndlDetailed,
            mappingType=entity,
            propertyType=ActivityBundleDetailedRow,
            sourceTable=bndl,
