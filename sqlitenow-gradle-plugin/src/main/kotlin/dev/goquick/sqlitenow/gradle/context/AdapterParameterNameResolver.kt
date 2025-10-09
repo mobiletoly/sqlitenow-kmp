@@ -115,12 +115,12 @@ internal class AdapterParameterNameResolver {
         val all = adapterConfig.collectAllParamConfigs(statement)
         val outputConfigs = all.filter { it.adapterFunctionName.startsWith("sqlValueTo") }
         if (outputConfigs.isEmpty()) {
-            return fallbackAdapterName(field, tableAliases, aliasPrefixes, adapterConfig)
+            return fallbackAdapterName(statement, field, tableAliases, aliasPrefixes, adapterConfig)
         }
         val chosen = chooseAdapterParamNames(outputConfigs)
 
         // Build raw function name as AdapterConfig does (using base column name, not visible name)
-        val rawAdapterName = computeRawAdapterName(field, aliasPrefixes, adapterConfig)
+        val rawAdapterName = computeRawAdapterName(statement, field, aliasPrefixes, adapterConfig)
         val providerNs = providerNamespaceForField(field, tableAliases)
 
         // Try exact match (by raw name and provider namespace)
@@ -133,15 +133,16 @@ internal class AdapterParameterNameResolver {
         val any = outputConfigs.firstOrNull { it.adapterFunctionName == rawAdapterName }
         chosen[any]?.let { return it }
 
-        return fallbackAdapterName(field, tableAliases, aliasPrefixes, adapterConfig)
+        return fallbackAdapterName(statement, field, tableAliases, aliasPrefixes, adapterConfig)
     }
 
     private fun computeRawAdapterName(
+        statement: AnnotatedSelectStatement,
         field: AnnotatedSelectStatement.Field,
         aliasPrefixes: List<String>,
         adapterConfig: AdapterConfig,
     ): String {
-        val baseColumnName = adapterConfig.baseOriginalNameForField(field, aliasPrefixes)
+        val baseColumnName = adapterConfig.baseOriginalNameForField(field, aliasPrefixes, statement)
         val columnName = PropertyNameGeneratorType.LOWER_CAMEL_CASE.convertToPropertyName(baseColumnName)
         return adapterConfig.getOutputAdapterFunctionName(columnName)
     }
@@ -158,12 +159,13 @@ internal class AdapterParameterNameResolver {
     }
 
     private fun fallbackAdapterName(
+        statement: AnnotatedSelectStatement,
         field: AnnotatedSelectStatement.Field,
         tableAliases: Map<String, String>,
         aliasPrefixes: List<String>,
         adapterConfig: AdapterConfig,
     ): String {
-        val rawAdapterName = computeRawAdapterName(field, aliasPrefixes, adapterConfig)
+        val rawAdapterName = computeRawAdapterName(statement, field, aliasPrefixes, adapterConfig)
         val providerNs = providerNamespaceForField(field, tableAliases)
         val canonical = providerNs?.let { ns ->
             canonicalizeAdapterNameForNamespace(ns, rawAdapterName)

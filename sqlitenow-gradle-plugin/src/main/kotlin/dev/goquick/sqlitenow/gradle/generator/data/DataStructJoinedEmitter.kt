@@ -72,6 +72,15 @@ internal class DataStructJoinedEmitter(
         field: AnnotatedSelectStatement.Field,
         allFields: List<AnnotatedSelectStatement.Field>
     ): TypeName {
+        val explicitNotNull = field.annotations.notNull == true
+        val explicitNullable = field.annotations.notNull == false
+        if (explicitNotNull) {
+            return originalType.copy(nullable = false)
+        }
+        if (explicitNullable) {
+            return originalType.copy(nullable = true)
+        }
+
         val fieldTableAlias = field.src.tableName
         val mainTableAlias = generatorContext.findMainTableAlias(allFields)
 

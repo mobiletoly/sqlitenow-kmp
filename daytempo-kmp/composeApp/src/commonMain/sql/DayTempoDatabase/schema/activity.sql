@@ -105,7 +105,14 @@ SELECT
     cat.id AS joined__act__category__id,
     cat.doc_id AS joined__act__category__doc_id,
     cat.title AS joined__act__category__title,
-    cat.icon AS joined__act__category__icon
+    cat.icon AS joined__act__category__icon,
+
+    -- @@{ field=first_program_item_doc_id, notNull=true }
+    (SELECT pi.doc_id
+     FROM program_item AS pi
+     WHERE pi.activity_doc_id = act.id
+     ORDER BY pi.doc_id                  -- choose the column(s) that define "first" (TODO)
+     LIMIT 1) AS first_program_item_doc_id
 
   /* @@{ dynamicField=main,
          mappingType=entity,

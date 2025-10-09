@@ -211,6 +211,7 @@ internal class QueryReadEmitter(
     ): String {
         val fieldTableAlias = field.src.tableName
         val mainTableAlias = findMainTableAlias(allFields)
+        val explicitNotNull = field.annotations.notNull == true
         val joinedNullable = if (fieldTableAlias.isNotBlank()) {
             mainTableAlias != null && fieldTableAlias != mainTableAlias
         } else {
@@ -226,7 +227,11 @@ internal class QueryReadEmitter(
             .generateProperty(field, PropertyNameGeneratorType.LOWER_CAMEL_CASE)
             .type
 
-        val isFromJoinedForGetter = joinedNullable && !baseDesiredType.isNullable
+        val isFromJoinedForGetter = if (explicitNotNull) {
+            false
+        } else {
+            joinedNullable && !baseDesiredType.isNullable
+        }
 
         return generateGetterCallWithPrefixes(
             statement,

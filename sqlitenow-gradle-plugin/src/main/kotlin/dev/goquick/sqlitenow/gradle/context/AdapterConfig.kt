@@ -42,9 +42,15 @@ class AdapterConfig(
     /** Resolve original base column name for a field, considering VIEW mappings and dynamic alias prefixes. */
     fun baseOriginalNameForField(
         field: AnnotatedSelectStatement.Field,
-        aliasPrefixes: List<String> = emptyList()
+        aliasPrefixes: List<String> = emptyList(),
+        statement: AnnotatedSelectStatement? = null
     ): String {
         val fs = field.src
+        if (statement != null) {
+            columnLookup.findColumnForSelectField(statement, field, aliasPrefixes)?.let { column ->
+                return column.src.name
+            }
+        }
         // 1) Try view mapping by tableName first
         if (fs.tableName.isNotEmpty()) {
             columnLookup.findViewByName(fs.tableName)?.let { view ->
@@ -236,7 +242,7 @@ class AdapterConfig(
 
             if (hasAdapterAnnotation(field, aliasPrefixes)) {
                 // Use base column name to generate adapter function name (strips alias prefixes)
-                val baseColumnName = baseOriginalNameForField(field, aliasPrefixes)
+                val baseColumnName = baseOriginalNameForField(field, aliasPrefixes, statement)
                 val columnName = PropertyNameGeneratorType.LOWER_CAMEL_CASE.convertToPropertyName(baseColumnName)
                 val adapterFunctionName = getOutputAdapterFunctionName(columnName)
 
