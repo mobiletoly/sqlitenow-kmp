@@ -73,11 +73,11 @@ class StatementProcessingHelper(
         return try {
             when (parsedStatement) {
                 is PlainSelect -> {
-                    createAnnotatedSelectStatement(stmtName, parsedStatement, sqlStatement)
+                    createAnnotatedSelectStatement(stmtName, parsedStatement, sqlStatement, file)
                 }
 
                 is Insert, is Delete, is Update -> {
-                    createAnnotatedExecuteStatement(stmtName, parsedStatement, sqlStatement)
+                    createAnnotatedExecuteStatement(stmtName, parsedStatement, sqlStatement, file)
                 }
 
                 else -> {
@@ -142,7 +142,8 @@ class StatementProcessingHelper(
     private fun createAnnotatedSelectStatement(
         stmtName: String,
         parsedStatement: PlainSelect,
-        sqlStatement: SqlSingleStatement
+        sqlStatement: SqlSingleStatement,
+        sourceFile: File,
     ): AnnotatedSelectStatement {
         val stmt = SelectStatement.parse(
             conn = conn,
@@ -277,7 +278,8 @@ class StatementProcessingHelper(
             name = stmtName,
             src = stmt,
             annotations = statementAnnotations,
-            fields = fields
+            fields = fields,
+            sourceFile = sourceFile.normalizedPath(),
         )
     }
 
@@ -423,7 +425,8 @@ class StatementProcessingHelper(
     private fun createAnnotatedExecuteStatement(
         stmtName: String,
         parsedStatement: Any,
-        sqlStatement: SqlSingleStatement
+        sqlStatement: SqlSingleStatement,
+        @Suppress("UNUSED_PARAMETER") sourceFile: File,
     ): AnnotatedExecuteStatement {
         val stmt = when (parsedStatement) {
             is Insert -> {
@@ -524,4 +527,8 @@ class StatementProcessingHelper(
         val collapsed = sql.replace(Regex("(?m)(?:\\r?\\n[ \t]*){2,}"), "\n")
         return collapsed.trim()
     }
+}
+
+private fun File.normalizedPath(): String {
+    return this.toPath().normalize().toString().replace(File.separatorChar, '/')
 }

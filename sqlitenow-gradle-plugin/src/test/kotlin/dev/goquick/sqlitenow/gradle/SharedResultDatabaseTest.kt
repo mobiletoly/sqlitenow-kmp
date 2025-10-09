@@ -19,7 +19,7 @@ class SharedResultDatabaseTest {
     lateinit var tempDir: File
 
     @Test
-    @DisplayName("Test DatabaseCodeGenerator handles sharedResult correctly")
+    @DisplayName("Test DatabaseCodeGenerator handles queryResult correctly")
     fun testDatabaseGeneratorWithSharedResults() {
         // Create test SQL files with shared results
         val queriesDir = File(tempDir, "queries/person")

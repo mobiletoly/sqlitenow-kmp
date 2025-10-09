@@ -93,6 +93,82 @@ class SharedResultTest {
     }
 
     @Test
+    fun `structure mismatch reports detailed diagnostics`() {
+        val manager = SharedResultManager()
+
+        val statement1 = createAnnotatedSelectStatement(
+            statementName = "SelectDetailed",
+            sourceFile = "queries/activity/selectDetailed.sql",
+            queryResult = "ActivityDetailedRow",
+            fields = listOf(
+                field("act__id", "activity", "id", "BLOB", isNullable = false),
+                field(
+                    alias = "act__title",
+                    tableName = "activity",
+                    columnName = "title",
+                    dataType = "TEXT",
+                    isNullable = false,
+                    overrides = FieldAnnotationOverrides(
+                        propertyName = null,
+                    propertyType = "kotlin.String?",
+                        notNull = true,
+                        adapter = null,
+                        isDynamicField = false,
+                        defaultValue = null,
+                        aliasPrefix = null,
+                        mappingType = null,
+                        sourceTable = null,
+                        collectionKey = null,
+                    )
+                ),
+            )
+        )
+
+        val statement2 = createAnnotatedSelectStatement(
+            statementName = "SelectDetailedInstalled",
+            sourceFile = "queries/activity/selectDetailedInstalled.sql",
+            queryResult = "ActivityDetailedRow",
+            fields = listOf(
+                field("act__id", "activity", "id", "BLOB", isNullable = false),
+                field(
+                    alias = "act__title",
+                    tableName = "activity",
+                    columnName = "title",
+                    dataType = "TEXT",
+                    isNullable = true,
+                    overrides = FieldAnnotationOverrides(
+                        propertyName = null,
+                        propertyType = "kotlin.String",
+                        notNull = false,
+                        adapter = null,
+                        isDynamicField = false,
+                        defaultValue = null,
+                        aliasPrefix = null,
+                        mappingType = null,
+                        sourceTable = null,
+                        collectionKey = null,
+                    )
+                ),
+            )
+        )
+
+        manager.registerSharedResult(statement1, "activity")
+
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            manager.registerSharedResult(statement2, "activity")
+        }
+
+        val message = error.message ?: ""
+        assertTrue(message.contains("SelectDetailed"), "expected statement name in message: $message")
+        assertTrue(message.contains("SelectDetailedInstalled"), "expected conflicting statement name in message: $message")
+        assertTrue(message.contains("selectDetailed.sql"), "expected existing file reference in message: $message")
+        assertTrue(message.contains("selectDetailedInstalled.sql"), "expected new file reference in message: $message")
+        assertTrue(message.contains("act__title"), "expected alias mention in message: $message")
+        assertTrue(message.contains("notNull=true"), "expected original notNull info in message: $message")
+        assertTrue(message.contains("notNull=false"), "expected conflicting notNull info in message: $message")
+    }
+
+    @Test
     @DisplayName("Test SharedResultManager validates field structure consistency")
     fun testSharedResultStructureValidation() {
         val sharedResultManager = SharedResultManager()
@@ -321,4 +397,75 @@ class SharedResultTest {
         assertEquals("listOf()", dynamicField.annotations.defaultValue)
         assertTrue(dynamicField.annotations.isDynamicField)
     }
+}
+
+private fun createAnnotatedSelectStatement(
+    statementName: String,
+    sourceFile: String,
+    queryResult: String,
+    fields: List<Pair<SelectStatement.FieldSource, FieldAnnotationOverrides>>,
+): AnnotatedSelectStatement {
+    val selectStatement = SelectStatement(
+        sql = "SELECT ...",
+        fromTable = "activity",
+        joinTables = emptyList(),
+        fields = fields.map { it.first },
+        namedParameters = emptyList(),
+        namedParametersToColumns = emptyMap(),
+        offsetNamedParam = null,
+        limitNamedParam = null,
+        parameterCastTypes = emptyMap(),
+        tableAliases = mapOf("act" to "activity"),
+        joinConditions = emptyList(),
+    )
+
+    return AnnotatedSelectStatement(
+        name = statementName,
+        src = selectStatement,
+        annotations = StatementAnnotationOverrides(
+            name = null,
+            propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
+            queryResult = queryResult,
+            implements = null,
+            excludeOverrideFields = null,
+            collectionKey = null
+        ),
+        fields = fields.map { (fieldSource, overrides) ->
+            AnnotatedSelectStatement.Field(
+                src = fieldSource,
+                annotations = overrides
+            )
+        },
+        sourceFile = sourceFile,
+    )
+}
+
+private fun field(
+    alias: String,
+    tableName: String,
+    columnName: String,
+    dataType: String,
+    isNullable: Boolean,
+    overrides: FieldAnnotationOverrides = FieldAnnotationOverrides(
+        propertyName = null,
+        propertyType = null,
+        notNull = null,
+        adapter = null,
+        isDynamicField = false,
+        defaultValue = null,
+        aliasPrefix = null,
+        mappingType = null,
+        sourceTable = null,
+        collectionKey = null,
+    ),
+): Pair<SelectStatement.FieldSource, FieldAnnotationOverrides> {
+    val source = SelectStatement.FieldSource(
+        fieldName = alias,
+        tableName = tableName,
+        originalColumnName = columnName,
+        dataType = dataType,
+        expression = null,
+        isNullable = isNullable,
+    )
+    return source to overrides
 }

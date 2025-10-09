@@ -1,11 +1,13 @@
 package dev.goquick.sqlitenow.gradle.processing
 
 import com.squareup.kotlinpoet.*
-import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants.PROPERTY_NAME_GENERATOR
-import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter
 import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
+import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants.PROPERTY_NAME_GENERATOR
+import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter
 import dev.goquick.sqlitenow.gradle.util.pascalize
+import java.util.Locale
+import kotlin.math.max
 
 /**
  * Utility object for shared result type name generation.
@@ -129,7 +131,9 @@ class SharedResultManager {
         val fields: List<AnnotatedSelectStatement.Field>,
         val propertyNameGenerator: PropertyNameGeneratorType,
         val implements: String?,
-        val excludeOverrideFields: Set<String>?
+        val excludeOverrideFields: Set<String>?,
+        val statementName: String,
+        val sourceFile: String?,
     )
     
     private val sharedResults = mutableMapOf<String, SharedResult>()
@@ -151,31 +155,18 @@ class SharedResultManager {
         // Validate structure consistency
         val existingStructureKey = structureValidation[sharedResultKey]
         if (existingStructureKey != null && existingStructureKey != structureKey) {
-            // Enhanced error message with detailed field comparison
-            val existingFields = sharedResults[sharedResultKey]?.fields ?: emptyList()
-            val newFields = statement.fields
-
-            val fieldComparison = buildString {
-                appendLine("Detailed field comparison:")
-                appendLine("Existing structure key: $existingStructureKey")
-                appendLine("New structure key: $structureKey")
-                appendLine()
-                appendLine("Existing fields (${existingFields.size}):")
-                existingFields.forEachIndexed { index, field ->
-                    appendLine("  [$index] ${field.src.fieldName}:${field.src.dataType}:${field.annotations.propertyType ?: "default"}")
-                }
-                appendLine()
-                appendLine("New fields (${newFields.size}):")
-                newFields.forEachIndexed { index, field ->
-                    appendLine("  [$index] ${field.src.fieldName}:${field.src.dataType}:${field.annotations.propertyType ?: "default"}")
-                }
-            }
-
-            throw IllegalArgumentException(
-                "Shared result '$sharedResultName' in namespace '$namespace' has inconsistent field structure. " +
-                "All SELECT statements using the same sharedResult must have identical field names, types, and annotations.\n\n" +
-                fieldComparison
+            val existingSharedResult = sharedResults[sharedResultKey]
+            val message = buildStructureMismatchMessage(
+                sharedResultName = sharedResultName,
+                namespace = namespace,
+                existingSharedResult = existingSharedResult,
+                existingStructureKey = existingStructureKey,
+                existingFields = existingSharedResult?.fields ?: emptyList(),
+                newStructureKey = structureKey,
+                newStatement = statement,
+                newFields = statement.fields,
             )
+            throw IllegalArgumentException(message)
         }
         
         // Register or retrieve shared result with inheritance support
@@ -216,7 +207,9 @@ class SharedResultManager {
                 fields = statement.fields,
                 propertyNameGenerator = statement.annotations.propertyNameGenerator,
                 implements = statement.annotations.implements,
-                excludeOverrideFields = statement.annotations.excludeOverrideFields
+                excludeOverrideFields = statement.annotations.excludeOverrideFields,
+                statementName = statement.name,
+                sourceFile = statement.sourceFile
             )
             sharedResults[sharedResultKey] = newSharedResult
             newSharedResult
@@ -346,6 +339,165 @@ class SharedResultManager {
             statement.annotations.excludeOverrideFields
         }
     }
+
+    private fun buildStructureMismatchMessage(
+        sharedResultName: String,
+        namespace: String,
+        existingSharedResult: SharedResult?,
+        existingStructureKey: String,
+        existingFields: List<AnnotatedSelectStatement.Field>,
+        newStructureKey: String,
+        newStatement: AnnotatedSelectStatement,
+        newFields: List<AnnotatedSelectStatement.Field>,
+    ): String {
+        val diff = computeFieldDiff(existingFields, newFields)
+
+        val builder = StringBuilder()
+        builder.appendLine(
+            "Query result '$sharedResultName' in namespace '$namespace' has inconsistent field structure."
+        )
+        builder.appendLine(
+            "All SELECT statements that share the same queryResult must expose identical field aliases, Kotlin types, and overrides."
+        )
+        builder.appendLine()
+        builder.appendLine(
+            "Existing statement: ${existingSharedResult?.statementName ?: "unknown"} (${existingSharedResult?.sourceFile
+                ?: "unknown file"})"
+        )
+        builder.appendLine("Existing structure key: $existingStructureKey")
+        builder.appendLine(
+            "New statement: ${newStatement.name} (${newStatement.sourceFile ?: "unknown file"})"
+        )
+        builder.appendLine("New structure key: $newStructureKey")
+        builder.appendLine()
+
+        if (diff.onlyInExisting.isNotEmpty()) {
+            builder.appendLine("Fields missing from the new statement:")
+            diff.onlyInExisting.forEach { descriptor ->
+                builder.appendLine("  - ${descriptor.alias}: ${descriptor.summary()}")
+            }
+            builder.appendLine()
+        }
+
+        if (diff.onlyInNew.isNotEmpty()) {
+            builder.appendLine("New fields not present in the existing statement:")
+            diff.onlyInNew.forEach { descriptor ->
+                builder.appendLine("  + ${descriptor.alias}: ${descriptor.summary()}")
+            }
+            builder.appendLine()
+        }
+
+        if (diff.changed.isNotEmpty()) {
+            builder.appendLine("Fields with conflicting definitions:")
+            diff.changed.forEach { (existingDescriptor, newDescriptor) ->
+                builder.appendLine("  * ${existingDescriptor.alias}:")
+                builder.appendLine("      existing -> ${existingDescriptor.summary()}")
+                builder.appendLine("      new      -> ${newDescriptor.summary()}")
+            }
+            builder.appendLine()
+        }
+
+        if (diff.onlyInExisting.isEmpty() && diff.onlyInNew.isEmpty() && diff.changed.isEmpty()) {
+            builder.appendLine("No alias-level differences detected, but structure hashes diverge.")
+        } else {
+            val compared = max(existingFields.size, newFields.size)
+            builder.appendLine("Compared $compared field definitions.")
+        }
+
+        return builder.toString().trimEnd()
+    }
+
+    private fun computeFieldDiff(
+        existingFields: List<AnnotatedSelectStatement.Field>,
+        newFields: List<AnnotatedSelectStatement.Field>,
+    ): FieldDiffResult {
+        val existingDescriptors = existingFields.associateBy(
+            { it.src.fieldName.lowercase(Locale.ROOT) },
+            { describeField(it) }
+        )
+        val newDescriptors = newFields.associateBy(
+            { it.src.fieldName.lowercase(Locale.ROOT) },
+            { describeField(it) }
+        )
+
+        val onlyExisting = (existingDescriptors.keys - newDescriptors.keys)
+            .mapNotNull(existingDescriptors::get)
+            .sortedBy { it.alias }
+
+        val onlyNew = (newDescriptors.keys - existingDescriptors.keys)
+            .mapNotNull(newDescriptors::get)
+            .sortedBy { it.alias }
+
+        val changed = existingDescriptors.keys.intersect(newDescriptors.keys)
+            .mapNotNull { alias ->
+                val existingDescriptor = existingDescriptors[alias]
+                val newDescriptor = newDescriptors[alias]
+                if (existingDescriptor != null && newDescriptor != null && existingDescriptor != newDescriptor) {
+                    existingDescriptor to newDescriptor
+                } else {
+                    null
+                }
+            }
+            .sortedBy { it.first.alias }
+
+        return FieldDiffResult(
+            onlyInExisting = onlyExisting,
+            onlyInNew = onlyNew,
+            changed = changed,
+        )
+    }
+
+    private fun describeField(field: AnnotatedSelectStatement.Field): FieldDescriptor {
+        val alias = field.src.fieldName
+        val kotlinType = determineKotlinType(field)
+        val propertyType = field.annotations.propertyType
+        val normalizedNotNull = field.annotations.notNull ?: if (field.annotations.isDynamicField) {
+            null
+        } else {
+            !field.src.isNullable
+        }
+
+        return FieldDescriptor(
+            alias = alias,
+            kotlinType = kotlinType,
+            propertyType = propertyType,
+            notNull = normalizedNotNull,
+            sourceTable = field.src.tableName.takeIf { it.isNotBlank() },
+            mappingType = field.annotations.mappingType,
+            aliasPrefix = field.annotations.aliasPrefix,
+        )
+    }
+
+    private fun determineKotlinType(field: AnnotatedSelectStatement.Field): String {
+        return field.annotations.propertyType
+            ?: SqliteTypeToKotlinCodeConverter.mapSqlTypeToKotlinType(field.src.dataType).toString()
+    }
+
+    private data class FieldDescriptor(
+        val alias: String,
+        val kotlinType: String,
+        val propertyType: String?,
+        val notNull: Boolean?,
+        val sourceTable: String?,
+        val mappingType: String?,
+        val aliasPrefix: String?,
+    ) {
+        fun summary(): String {
+            val parts = mutableListOf("type=$kotlinType")
+            propertyType?.let { parts += "propertyType=$it" }
+            notNull?.let { parts += "notNull=$it" }
+            sourceTable?.let { parts += "source=$it" }
+            mappingType?.let { parts += "mappingType=$it" }
+            aliasPrefix?.takeIf { it.isNotBlank() }?.let { parts += "aliasPrefix=$it" }
+            return parts.joinToString(", ")
+        }
+    }
+
+    private data class FieldDiffResult(
+        val onlyInExisting: List<FieldDescriptor>,
+        val onlyInNew: List<FieldDescriptor>,
+        val changed: List<Pair<FieldDescriptor, FieldDescriptor>>,
+    )
     
     /**
      * Creates a structure key for field validation.

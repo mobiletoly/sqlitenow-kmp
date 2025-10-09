@@ -9,7 +9,8 @@ data class AnnotatedSelectStatement(
     override val name: String,
     val src: SelectStatement,
     override val annotations: StatementAnnotationOverrides,
-    val fields: List<Field>
+    val fields: List<Field>,
+    val sourceFile: String? = null,
 ) : AnnotatedStatement {
     data class Field(
         val src: SelectStatement.FieldSource,
