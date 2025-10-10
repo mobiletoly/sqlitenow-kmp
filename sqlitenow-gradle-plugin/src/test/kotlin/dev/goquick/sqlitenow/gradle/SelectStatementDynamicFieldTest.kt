@@ -36,8 +36,6 @@ class SelectStatementDynamicFieldTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(
@@ -94,8 +92,6 @@ class SelectStatementDynamicFieldTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = "person_id"
             ),
             fields = listOf(
@@ -199,8 +195,6 @@ class SelectStatementDynamicFieldTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(
@@ -264,8 +258,6 @@ class SelectStatementDynamicFieldTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = "person_id"
             ),
             fields = listOf(
@@ -340,8 +332,6 @@ class SelectStatementDynamicFieldTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(

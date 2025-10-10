@@ -87,8 +87,6 @@ class DynamicFieldMappingExclusionTest {
             name = null,
             propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
             queryResult = null,
-            implements = null,
-            excludeOverrideFields = null,
             collectionKey = null
         )
         return AnnotatedSelectStatement(
@@ -105,8 +103,6 @@ class DynamicFieldMappingExclusionTest {
         DataStructPropertyEmitter().emitPropertiesWithInterfaceSupport(
             statement = statement,
             propertyNameGenerator = statement.annotations.propertyNameGenerator,
-            implementsInterface = statement.annotations.implements,
-            excludeOverrideFields = statement.annotations.excludeOverrideFields,
             fieldCodeGenerator = SelectFieldCodeGenerator(),
             constructorBuilder = ctor,
         ) { prop -> props += prop }

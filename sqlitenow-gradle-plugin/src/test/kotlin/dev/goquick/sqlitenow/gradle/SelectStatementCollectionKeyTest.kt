@@ -33,8 +33,6 @@ class SelectStatementCollectionKeyTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = "person_id"
             ),
             fields = listOf(
@@ -74,8 +72,6 @@ class SelectStatementCollectionKeyTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = "p.id"
             ),
             fields = listOf(
@@ -116,8 +112,6 @@ class SelectStatementCollectionKeyTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = "id"
             ),
             fields = listOf(
@@ -173,8 +167,6 @@ class SelectStatementCollectionKeyTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = "id"
             ),
             fields = listOf(
@@ -229,8 +221,6 @@ class SelectStatementCollectionKeyTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = "id"
             ),
             fields = listOf(

@@ -50,16 +50,6 @@ class AnnotationsTest {
     }
 
     @Test
-    fun `test annotation syntax with array values`() {
-        val comment = "-- @@{field=tags, propertyType=List<String>, excludeOverrideFields=[id, name]}"
-        val annotations = extractAnnotations(listOf(comment))
-
-        assertEquals("tags", annotations["field"])
-        assertEquals("List<String>", annotations["propertyType"])
-        assertEquals(listOf("id", "name"), annotations["excludeOverrideFields"])
-    }
-
-    @Test
     fun `test annotation syntax with quoted values`() {
         val comment = """-- @@{field="user name", propertyType="String?"}"""
         val annotations = extractAnnotations(listOf(comment))

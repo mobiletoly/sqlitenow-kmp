@@ -87,20 +87,6 @@ to my domain layer, without sacrificing the ability to write pure SQL queries.
 Here is the brief example:
 
 ```sqlite
-/* @@{ queryResult=Person,
-       implements=com.example.app.PersonEssentialFields,
-       excludeOverrideFields=[phone, birthDate] } */
-SELECT id, first_name, last_name, email, phone, birth_date, created_at
-FROM Person
-```
-
-This will generate shared data class **Person** that implements my custom
-**PersonEssentialFields** interface but because this interface does not include `phone` and
-`birthDate` fields - they will be excluded.
-
-Here is another one that you place in your **queries/person/selectAllWithAddresses.sql** file:
-
-```sqlite
 -- @@{ queryResult=PersonWithAddresses }
 SELECT p.id,
        p.first_name,
@@ -122,21 +108,21 @@ SELECT p.id,
        collectionKey=address_id } */
 
 FROM Person p
-         LEFT JOIN PersonAddress a ON p.id = a.person_id
+     LEFT JOIN PersonAddress a ON p.id = a.person_id
 ORDER BY p.id, a.address_type
 LIMIT :limit OFFSET :offset
 ```
 
-This will generate **PersonQuery.SelectAllWithAddresses.Result** data class (since you
-have not specified `sharedResult` annotation - SQLiteNow will automatically pick name
-for you). This class has `addresses: List<Address>` property that contains all home
-addresses for the person. Another class **PersonQuery.SelectAllWithAddresses.Params** will be
-generated as well with `limit` and `offset` parameters to pass parameters to the query.
-And yes, we support passing lists as parameters for `IN` clauses.
+This will generate **PersonWithAddresses** data class. This class has `addresses: List<Address>`
+property that contains all home addresses for the person. Another class
+**PersonQuery.SelectAllWithAddresses.Params** will be generated as well with `limit` and `offset`
+parameters to pass parameters to the query.
 
-Ah, and you can define your own adapters to convert between SQLite and your domain types
+And you can define your own adapters to convert between SQLite and your domain types
 and register them for seamless integration. We provide few built-in adapters as well,
 such as converting from TEXT to Kotlin's date/time etc.
+
+You can always shape your data even more with `mapTo` annotation.
 
 ## How it works
 

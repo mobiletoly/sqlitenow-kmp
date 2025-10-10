@@ -179,8 +179,6 @@ class SelectFieldCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             columns = listOf(mockAnnotatedColumn)
@@ -263,8 +261,6 @@ class SelectFieldCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             columns = listOf(mockAnnotatedUserColumn)
@@ -282,8 +278,6 @@ class SelectFieldCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             columns = listOf(mockAnnotatedAddressColumn)
@@ -356,8 +350,6 @@ class SelectFieldCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             columns = listOf(mockAnnotatedIdColumn)
@@ -597,8 +589,6 @@ class SelectFieldCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             columns = listOf(mockAnnotatedColumn)
@@ -670,8 +660,6 @@ class SelectFieldCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             columns = listOf(mockAnnotatedColumn)
@@ -740,8 +728,6 @@ class SelectFieldCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             columns = listOf(mockAnnotatedColumn)

@@ -99,7 +99,6 @@ open class DataStructCodeGenerator(
         generatorContext = generatorContext,
         joinedEmitter = joinedEmitter,
         resultEmitter = resultEmitter,
-        sharedResultManager = sharedResultManager,
         outputDir = outputDir
     )
 
@@ -307,8 +306,6 @@ open class DataStructCodeGenerator(
                             name = null,
                             propertyNameGenerator = statement.annotations.propertyNameGenerator,
                             queryResult = null,
-                            implements = statement.annotations.implements,
-                            excludeOverrideFields = statement.annotations.excludeOverrideFields,
                             collectionKey = null
                         ),
                         fields = withSelectStatement.fields.map { field ->

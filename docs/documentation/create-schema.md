@@ -160,12 +160,6 @@ For example, you can use `name` annotation to customize the generated class name
 | `propertyNameGenerator=generator` | Change property name format               | `propertyNameGenerator=lowerCamelCase`         |
 | `queryResult=Name`                | Class name reused across multiple queires | `queryResult=PersonEntity`                     |
 | `mapTo=Name`                      | Map to existing class                     | `mapTo=PersonEntity`                           |
-| `implements=Interface`            | Implement interface                       | `implements=PersonEssentialFields`             |
-| `excludeOverrideFields=fields`    | Exclude fields from override              | `excludeOverrideFields=['phone', 'birthDate']` |
-
-Notes for `excludeOverrideFields`:
-- Supports simple wildcard patterns (`*` and `?`). Example: `excludeOverrideFields=['schedule__*']`.
-- Patterns are matched against the generated property name, the SQL label/alias, and the original column name.
 
 ## Field-level Annotations
 

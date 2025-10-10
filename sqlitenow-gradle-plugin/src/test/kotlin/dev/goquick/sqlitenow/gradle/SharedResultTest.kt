@@ -48,8 +48,6 @@ class SharedResultTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = "All",
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(
@@ -193,8 +191,6 @@ class SharedResultTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = "All",
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(
@@ -234,8 +230,6 @@ class SharedResultTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = "All",
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(
@@ -282,8 +276,6 @@ class SharedResultTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = "All",
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = emptyList()
@@ -305,8 +297,6 @@ class SharedResultTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = "All",
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = emptyList()
@@ -351,8 +341,6 @@ class SharedResultTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = "PersonWithExtras",
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(
@@ -426,8 +414,6 @@ private fun createAnnotatedSelectStatement(
             name = null,
             propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
             queryResult = queryResult,
-            implements = null,
-            excludeOverrideFields = null,
             collectionKey = null
         ),
         fields = fields.map { (fieldSource, overrides) ->

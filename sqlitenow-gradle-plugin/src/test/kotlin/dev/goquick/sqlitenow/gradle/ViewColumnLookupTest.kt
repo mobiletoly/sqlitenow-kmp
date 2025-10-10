@@ -58,8 +58,6 @@ class ViewColumnLookupTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -118,8 +116,6 @@ class ViewColumnLookupTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -171,8 +167,6 @@ class ViewColumnLookupTest {
                     name = "PersonWithAddressEntity",
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 fields = emptyList(),
@@ -203,8 +197,6 @@ class ViewColumnLookupTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = emptyList()
@@ -326,8 +318,6 @@ class ViewColumnLookupTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             columns = listOf(
@@ -373,8 +363,6 @@ class ViewColumnLookupTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(
@@ -413,8 +401,6 @@ class ViewColumnLookupTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = emptyList()
@@ -481,8 +467,6 @@ class ViewColumnLookupTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(
@@ -638,8 +622,6 @@ class ViewColumnLookupTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(

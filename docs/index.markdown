@@ -62,35 +62,10 @@ to my domain layer, without sacrificing the ability to write pure SQL queries.
 Here is the brief example:
 
 ```sqlite
-/* @@{ queryResult=Person,
-       implements=com.example.app.PersonEssentialFields,
-       excludeOverrideFields=[phone, birthDate] } */
+/* @@{ queryResult=Person } */
 SELECT id, first_name, last_name, email, phone, birth_date, created_at
 FROM Person
 ```
-
-This will generate shared data class **Person** that implements my custom
-**PersonEssentialFields** interface but because this interface does not include `phone` and
-`birthDate` fields - they will be excluded.
-
-Note: `excludeOverrideFields` supports simple wildcard patterns. You can use globs like
-`schedule__*` to exclude many fields at once. Patterns are matched against:
-- the generated property name (e.g., `joinedScheduleActivityId`),
-- the SQL column label/alias (e.g., `schedule__activity_id`), and
-- the original column name.
-
-Example:
-
-```sqlite
--- @@{ queryResult=Row, implements=MyInterface,
---      excludeOverrideFields=[id, packageDocs, schedule__*] }
-SELECT
-  sch.activity_id AS schedule__activity_id,
-  sch.mandatory_to_setup AS schedule__mandatory_to_setup,
-  sch.repeat AS schedule__repeat
-FROM schedule sch
-```
-All `schedule__*` columns (and their generated property names) are excluded from overrides.
 
 Here is another one that you place in your **queries/person/selectAllWithAddresses.sql** file:
 
@@ -121,16 +96,16 @@ ORDER BY p.id, a.address_type
 LIMIT :limit OFFSET :offset
 ```
 
-This will generate **PersonQuery.SelectAllWithAddresses.Result** data class (since you
-have not specified `queryResult` annotation - SQLiteNow will automatically pick name
-for you). This class has `addresses: List<Address>` property that contains all home
-addresses for the person. Another class **PersonQuery.SelectAllWithAddresses.Params** will be
-generated as well with `limit` and `offset` parameters to pass parameters to the query.
-And yes, we support passing lists as parameters for `IN` clauses.
+This will generate **PersonWithAddresses** data class. This class has `addresses: List<Address>`
+property that contains all home addresses for the person. Another class
+**PersonQuery.SelectAllWithAddresses.Params** will be generated as well with `limit` and `offset`
+parameters to pass parameters to the query.
 
-Ah, and you can define your own adapters to convert between SQLite and your domain types
+And you can define your own adapters to convert between SQLite and your domain types
 and register them for seamless integration. We provide few built-in adapters as well,
 such as converting from TEXT to Kotlin's date/time etc.
+
+You can always shape your data even more with `mapTo` annotation.
 
 ## How it works
 
@@ -159,6 +134,11 @@ Simply annotate your tables with `enableSync=true` and the sync system handles t
 - **Authentication** via customizable HttpClient
 
 Full sync example is available in the [`/samplesync-kmp`](https://github.com/mobiletoly/sqlitenow-kmp/tree/main/samplesync-kmp) directory.
+
+Server-side components:
+- **OverSync** - Sync server that provides an adapter library for data synchronization.
+  Currently we have **go-oversync** implementation in Go with PostgreSQL as data store.
+  Visit this link for more information: https://github.com/mobiletoly/go-oversync
 
 ## Next Steps
 

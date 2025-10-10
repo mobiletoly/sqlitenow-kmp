@@ -370,8 +370,6 @@ class DataStructCodeGeneratorTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -431,8 +429,6 @@ class DataStructCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             )
         )
@@ -489,8 +485,6 @@ class DataStructCodeGeneratorTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -541,8 +535,6 @@ class DataStructCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             )
         )
@@ -610,8 +602,6 @@ class DataStructCodeGeneratorTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -662,8 +652,6 @@ class DataStructCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             )
         )
@@ -736,8 +724,6 @@ class DataStructCodeGeneratorTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -789,8 +775,6 @@ class DataStructCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             )
         )
@@ -853,8 +837,6 @@ class DataStructCodeGeneratorTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -906,8 +888,6 @@ class DataStructCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             )
         )
@@ -979,8 +959,6 @@ class DataStructCodeGeneratorTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -1031,8 +1009,6 @@ class DataStructCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             )
         )
@@ -1061,8 +1037,6 @@ class DataStructCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(
@@ -1157,8 +1131,6 @@ class DataStructCodeGeneratorTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -1227,8 +1199,6 @@ class DataStructCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(
@@ -1328,8 +1298,6 @@ class DataStructCodeGeneratorTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -1416,8 +1384,6 @@ class DataStructCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             )
         )
@@ -1521,8 +1487,6 @@ class DataStructCodeGeneratorTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -1596,8 +1560,6 @@ class DataStructCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             )
         )
@@ -1665,8 +1627,6 @@ class DataStructCodeGeneratorTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -1734,8 +1694,6 @@ class DataStructCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(
@@ -1834,8 +1792,6 @@ class DataStructCodeGeneratorTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -1909,8 +1865,6 @@ class DataStructCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             )
         )
@@ -2004,8 +1958,6 @@ class DataStructCodeGeneratorTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -2063,8 +2015,6 @@ class DataStructCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(
@@ -2160,8 +2110,6 @@ class DataStructCodeGeneratorTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -2233,8 +2181,6 @@ class DataStructCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(
@@ -2335,8 +2281,6 @@ class DataStructCodeGeneratorTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -2392,8 +2336,6 @@ class DataStructCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(
@@ -2525,8 +2467,6 @@ class DataStructCodeGeneratorTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -2673,8 +2613,6 @@ class DataStructCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             )
         )
@@ -2797,8 +2735,6 @@ class DataStructCodeGeneratorTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -2911,8 +2847,6 @@ class DataStructCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             )
         )
@@ -3011,8 +2945,6 @@ class DataStructCodeGeneratorTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -3132,8 +3064,6 @@ class DataStructCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             )
         )
@@ -3274,8 +3204,6 @@ class DataStructCodeGeneratorTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -3410,8 +3338,6 @@ class DataStructCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             )
         )
@@ -3515,8 +3441,6 @@ class DataStructCodeGeneratorTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -3591,8 +3515,6 @@ class DataStructCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             )
         )
@@ -3653,8 +3575,6 @@ class DataStructCodeGeneratorTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(
@@ -3741,13 +3661,11 @@ class DataStructCodeGeneratorTest {
                     )
                 ),
                 annotations = StatementAnnotationOverrides(
-                    null,
-                    PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                    null,
-                    null,
-                    null,
-                    null
-                ),
+                    name = null,
+                    propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
+                    queryResult = null,
+                    collectionKey = null
+),
                 columns = emptyList()
             )
         )

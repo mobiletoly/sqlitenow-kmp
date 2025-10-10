@@ -34,8 +34,6 @@ class SelectStatementJoinTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(
@@ -89,8 +87,6 @@ class SelectStatementJoinTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(
@@ -140,8 +136,6 @@ class SelectStatementJoinTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(
@@ -201,8 +195,6 @@ class SelectStatementJoinTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(
@@ -263,8 +255,6 @@ class SelectStatementJoinTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(
@@ -322,8 +312,6 @@ class SelectStatementJoinTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = listOf(

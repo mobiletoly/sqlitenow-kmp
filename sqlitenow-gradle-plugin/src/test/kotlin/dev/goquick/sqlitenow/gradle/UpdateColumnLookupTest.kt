@@ -64,8 +64,6 @@ class UpdateColumnLookupTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -153,8 +151,6 @@ class UpdateColumnLookupTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             )
         )
@@ -219,8 +215,6 @@ class UpdateColumnLookupTest {
                     name = null,
                     propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                     queryResult = null,
-                    implements = null,
-                    excludeOverrideFields = null,
                     collectionKey = null
                 ),
                 columns = listOf(
@@ -273,8 +267,6 @@ class UpdateColumnLookupTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             )
         )

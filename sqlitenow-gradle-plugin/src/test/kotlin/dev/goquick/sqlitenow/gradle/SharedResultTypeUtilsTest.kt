@@ -42,8 +42,6 @@ class SharedResultTypeUtilsTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = "All",
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = emptyList()
@@ -77,8 +75,6 @@ class SharedResultTypeUtilsTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = emptyList()
@@ -112,8 +108,6 @@ class SharedResultTypeUtilsTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = "All",
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = emptyList()
@@ -138,8 +132,6 @@ class SharedResultTypeUtilsTest {
                 name = null,
                 propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
                 queryResult = null,
-                implements = null,
-                excludeOverrideFields = null,
                 collectionKey = null
             ),
             fields = emptyList()

@@ -130,8 +130,6 @@ class SharedResultManager {
         val namespace: String,
         val fields: List<AnnotatedSelectStatement.Field>,
         val propertyNameGenerator: PropertyNameGeneratorType,
-        val implements: String?,
-        val excludeOverrideFields: Set<String>?,
         val statementName: String,
         val sourceFile: String?,
     )
@@ -172,44 +170,23 @@ class SharedResultManager {
         // Register or retrieve shared result with inheritance support
         val existingSharedResult = sharedResults[sharedResultKey]
         val sharedResult = if (existingSharedResult != null) {
-            // Validate consistency first
-            validateSharedResultConsistency(existingSharedResult, statement, sharedResultKey)
-
-            // Handle excludeOverrideFields inheritance and updating
-            val finalExcludeOverrideFields = when {
-                // If new statement has excludeOverrideFields but existing doesn't → update existing
-                existingSharedResult.excludeOverrideFields == null && statement.annotations.excludeOverrideFields != null -> {
-                    statement.annotations.excludeOverrideFields
-                }
-                // If existing has excludeOverrideFields but new statement doesn't → inherit from existing
-                existingSharedResult.excludeOverrideFields != null && statement.annotations.excludeOverrideFields == null -> {
-                    existingSharedResult.excludeOverrideFields
-                }
-                // Otherwise use existing (either both null, both same, or validation already passed)
-                else -> {
-                    existingSharedResult.excludeOverrideFields
-                }
+            if (existingSharedResult.propertyNameGenerator != statement.annotations.propertyNameGenerator) {
+                throw IllegalArgumentException(
+                    "Conflicting $PROPERTY_NAME_GENERATOR annotations for shared result '$sharedResultKey'.\n" +
+                        "Existing: ${existingSharedResult.propertyNameGenerator}\n" +
+                        "New statement '${statement.name}': ${statement.annotations.propertyNameGenerator}\n" +
+                        "All SELECT statements using the same sharedResult must use the same propertyNameGenerator."
+                )
             }
-
-            // Update the shared result if excludeOverrideFields changed
-            if (finalExcludeOverrideFields != existingSharedResult.excludeOverrideFields) {
-                val updatedSharedResult = existingSharedResult.copy(excludeOverrideFields = finalExcludeOverrideFields)
-                sharedResults[sharedResultKey] = updatedSharedResult
-                updatedSharedResult
-            } else {
-                existingSharedResult
-            }
+            existingSharedResult
         } else {
-            // First time registering this shared result
             val newSharedResult = SharedResult(
                 name = sharedResultName,
                 namespace = namespace,
                 fields = statement.fields,
                 propertyNameGenerator = statement.annotations.propertyNameGenerator,
-                implements = statement.annotations.implements,
-                excludeOverrideFields = statement.annotations.excludeOverrideFields,
                 statementName = statement.name,
-                sourceFile = statement.sourceFile
+                sourceFile = statement.sourceFile,
             )
             sharedResults[sharedResultKey] = newSharedResult
             newSharedResult
@@ -222,86 +199,6 @@ class SharedResultManager {
     /**
      * Validates that all statements using the same shared result have consistent annotations.
      */
-    private fun validateSharedResultConsistency(
-        existingSharedResult: SharedResult,
-        newStatement: AnnotatedSelectStatement,
-        sharedResultKey: String
-    ) {
-        // Check if implements annotations are consistent
-        if (existingSharedResult.implements != newStatement.annotations.implements) {
-            val existingImplements = existingSharedResult.implements ?: "null"
-            val newImplements = newStatement.annotations.implements ?: "null"
-
-            throw IllegalArgumentException(
-                "Conflicting 'implements' annotations for shared result '$sharedResultKey'.\n" +
-                "Existing: implements=$existingImplements\n" +
-                "New statement '${newStatement.name}': implements=$newImplements\n" +
-                "All SELECT statements using the same sharedResult must have identical 'implements' annotations.\n" +
-                "Either add the missing 'implements' annotation or use different sharedResult names."
-            )
-        }
-
-        // Check if propertyNameGenerator is consistent
-        if (existingSharedResult.propertyNameGenerator != newStatement.annotations.propertyNameGenerator) {
-            throw IllegalArgumentException(
-                "Conflicting $PROPERTY_NAME_GENERATOR annotations for shared result '$sharedResultKey'.\n" +
-                "Existing: ${existingSharedResult.propertyNameGenerator}\n" +
-                "New statement '${newStatement.name}': ${newStatement.annotations.propertyNameGenerator}\n" +
-                "All SELECT statements using the same sharedResult must have identical propertyNameGenerator annotations."
-            )
-        }
-
-        // Check if excludeOverrideFields is consistent or can be inherited
-        validateExcludeOverrideFieldsConsistency(existingSharedResult, newStatement, sharedResultKey)
-    }
-
-    /**
-     * Validates excludeOverrideFields consistency with inheritance support.
-     *
-     * Logic:
-     * - If both have excludeOverrideFields specified → must be identical (consistency check)
-     * - If new statement has no excludeOverrideFields → inherit from existing (if any)
-     * - If existing has no excludeOverrideFields but new statement does → update existing
-     * - If neither has excludeOverrideFields → no action needed
-     */
-    private fun validateExcludeOverrideFieldsConsistency(
-        existingSharedResult: SharedResult,
-        newStatement: AnnotatedSelectStatement,
-        sharedResultKey: String
-    ) {
-        val existingExclude = existingSharedResult.excludeOverrideFields
-        val newExclude = newStatement.annotations.excludeOverrideFields
-
-        when {
-            // Both have excludeOverrideFields specified → must be identical
-            existingExclude != null && newExclude != null -> {
-                if (existingExclude != newExclude) {
-                    val existingStr = existingExclude.joinToString(",")
-                    val newStr = newExclude.joinToString(",")
-
-                    throw IllegalArgumentException(
-                        "Conflicting 'excludeOverrideFields' annotations for shared result '$sharedResultKey'.\n" +
-                        "Existing: excludeOverrideFields=$existingStr\n" +
-                        "New statement '${newStatement.name}': excludeOverrideFields=$newStr\n" +
-                        "All SELECT statements using the same sharedResult must have identical 'excludeOverrideFields' annotations."
-                    )
-                }
-            }
-            // Existing has excludeOverrideFields but new statement doesn't → inherit (handled in registerSharedResult)
-            existingExclude != null && newExclude == null -> {
-                // This case is handled by inheritance in registerSharedResult
-            }
-            // New statement has excludeOverrideFields but existing doesn't → update existing (handled in registerSharedResult)
-            existingExclude == null && newExclude != null -> {
-                // This case is handled by updating the existing shared result
-            }
-            // Neither has excludeOverrideFields → no action needed
-            else -> {
-                // Both are null, no action needed
-            }
-        }
-    }
-
     /**
      * Gets all shared results grouped by namespace.
      */
@@ -323,21 +220,6 @@ class SharedResultManager {
         val sharedResultName = statement.annotations.queryResult ?: return null
         val sharedResultKey = "${namespace}.${sharedResultName}"
         return sharedResults[sharedResultKey]
-    }
-
-    /**
-     * Gets the effective excludeOverrideFields for a statement, considering inheritance from shared results.
-     * This method should be used by code generation to get the final excludeOverrideFields value.
-     */
-    fun getEffectiveExcludeOverrideFields(statement: AnnotatedSelectStatement, namespace: String): Set<String>? {
-        val sharedResult = getSharedResult(statement, namespace)
-        return if (sharedResult != null) {
-            // For shared results, use the shared result's excludeOverrideFields (which may have been inherited)
-            sharedResult.excludeOverrideFields
-        } else {
-            // For regular statements, use the statement's own excludeOverrideFields
-            statement.annotations.excludeOverrideFields
-        }
     }
 
     private fun buildStructureMismatchMessage(

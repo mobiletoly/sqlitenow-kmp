@@ -18,8 +18,6 @@ object AnnotationConstants {
     const val NAME = "name"
     const val PROPERTY_NAME_GENERATOR = "propertyNameGenerator"
     const val QUERY_RESULT = "queryResult"
-    const val IMPLEMENTS = "implements"
-    const val EXCLUDE_OVERRIDE_FIELDS = "excludeOverrideFields"
     const val ENABLE_SYNC = "enableSync"
     const val SYNC_KEY_COLUMN_NAME = "syncKeyColumnName"
     const val MAP_TO = "mapTo"

@@ -1,6 +1,5 @@
 package dev.goquick.sqlitenow.gradle.generator.data
 
-import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterSpec
@@ -21,20 +20,10 @@ internal class DataStructResultEmitter(
     fun generateSelectResult(
         statement: AnnotatedSelectStatement,
         className: String,
-        excludeOverrideFields: Set<String>?,
     ): TypeSpec {
         val dataClassBuilder = TypeSpec.classBuilder(className)
             .addModifiers(KModifier.DATA)
             .addKdoc("Data class for ${statement.name} query results.")
-
-        statement.annotations.implements?.let { implement ->
-            val interfaceType = if (implement.contains('.')) {
-                ClassName.bestGuess(implement)
-            } else {
-                ClassName("", implement)
-            }
-            dataClassBuilder.addSuperinterface(interfaceType)
-        }
 
         val constructorBuilder = FunSpec.constructorBuilder()
         val fieldCodeGenerator = generatorContext.selectFieldGenerator
@@ -44,8 +33,6 @@ internal class DataStructResultEmitter(
         propertyEmitter.emitPropertiesWithInterfaceSupport(
             statement = statement,
             propertyNameGenerator = propertyNameGeneratorType,
-            implementsInterface = statement.annotations.implements,
-            excludeOverrideFields = excludeOverrideFields,
             fieldCodeGenerator = fieldCodeGenerator,
             constructorBuilder = constructorBuilder
         ) { prop ->

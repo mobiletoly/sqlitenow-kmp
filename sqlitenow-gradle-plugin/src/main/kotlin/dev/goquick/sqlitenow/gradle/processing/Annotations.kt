@@ -16,8 +16,6 @@ enum class StatementAnnotationContext(
             AnnotationConstants.NAME,
             AnnotationConstants.PROPERTY_NAME_GENERATOR,
             AnnotationConstants.QUERY_RESULT,
-            AnnotationConstants.IMPLEMENTS,
-            AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS,
             AnnotationConstants.COLLECTION_KEY,
             AnnotationConstants.MAP_TO,
         )
@@ -437,8 +435,6 @@ data class StatementAnnotationOverrides(
     val name: String?,
     val propertyNameGenerator: PropertyNameGeneratorType,
     val queryResult: String?,
-    val implements: String?,
-    val excludeOverrideFields: Set<String>?,
     val collectionKey: String?,
     val enableSync: Boolean = false,
     val syncKeyColumnName: String? = null,
@@ -455,8 +451,6 @@ data class StatementAnnotationOverrides(
             val propertyNameGenerator = annotations[AnnotationConstants.PROPERTY_NAME_GENERATOR] as? String
             val queryResult = annotations[AnnotationConstants.QUERY_RESULT] as? String
             val mapTo = annotations[AnnotationConstants.MAP_TO] as? String
-            val implements = annotations[AnnotationConstants.IMPLEMENTS] as? String
-            val excludeOverrideFields = annotations[AnnotationConstants.EXCLUDE_OVERRIDE_FIELDS]
             val collectionKey = annotations[AnnotationConstants.COLLECTION_KEY] as? String
             val enableSync = annotations[AnnotationConstants.ENABLE_SYNC] as? Boolean ?: false
             val syncKeyColumnName = annotations[AnnotationConstants.SYNC_KEY_COLUMN_NAME] as? String
@@ -470,9 +464,6 @@ data class StatementAnnotationOverrides(
             if (annotations.containsKey(AnnotationConstants.QUERY_RESULT) && queryResult?.isBlank() == true) {
                 throw IllegalArgumentException("Annotation '${AnnotationConstants.QUERY_RESULT}' cannot be blank")
             }
-            if (annotations.containsKey(AnnotationConstants.IMPLEMENTS) && implements?.isBlank() == true) {
-                throw IllegalArgumentException("Annotation '${AnnotationConstants.IMPLEMENTS}' cannot be blank")
-            }
             if (annotations.containsKey(AnnotationConstants.MAP_TO) && mapTo?.isBlank() == true) {
                 throw IllegalArgumentException("Annotation '${AnnotationConstants.MAP_TO}' cannot be blank")
             }
@@ -481,25 +472,11 @@ data class StatementAnnotationOverrides(
                 name = name,
                 propertyNameGenerator = propertyNameGenerator.parsePropertyNameGeneratorType(),
                 queryResult = queryResult,
-                implements = implements,
-                excludeOverrideFields = parseExcludeOverrideFieldsFromHocon(excludeOverrideFields),
                 collectionKey = collectionKey,
                 enableSync = enableSync,
                 syncKeyColumnName = syncKeyColumnName,
                 mapTo = mapTo,
             )
-        }
-
-        private fun parseExcludeOverrideFieldsFromHocon(excludeFields: Any?): Set<String>? {
-            return when (excludeFields) {
-                is List<*> -> {
-                    // HOCON parsed it as a native list - use it directly
-                    excludeFields.filterIsInstance<String>().toSet()
-                }
-
-                null -> null
-                else -> throw IllegalArgumentException("excludeOverrideFields must be a list, got: ${excludeFields::class.simpleName}")
-            }
         }
 
         private fun String?.parsePropertyNameGeneratorType(): PropertyNameGeneratorType {

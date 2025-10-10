@@ -7,7 +7,6 @@ import dev.goquick.sqlitenow.gradle.context.GeneratorContext
 import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.processing.ReturningColumnsResolver
-import dev.goquick.sqlitenow.gradle.processing.SharedResultManager
 import dev.goquick.sqlitenow.gradle.util.pascalize
 import java.io.File
 
@@ -15,7 +14,6 @@ internal class DataStructResultFileEmitter(
     private val generatorContext: GeneratorContext,
     private val joinedEmitter: DataStructJoinedEmitter,
     private val resultEmitter: DataStructResultEmitter,
-    private val sharedResultManager: SharedResultManager,
     private val outputDir: File,
 ) {
     fun writeSelectResultFile(
@@ -24,11 +22,9 @@ internal class DataStructResultFileEmitter(
         packageName: String,
     ) {
         val className = statement.annotations.queryResult ?: "${pascalize(namespace)}${statement.getDataClassName()}Result"
-        val excludeFields = sharedResultManager.getEffectiveExcludeOverrideFields(statement, namespace)
         val resultDataClass = resultEmitter.generateSelectResult(
             statement = statement,
             className = className,
-            excludeOverrideFields = excludeFields
         )
         createFileSpec(packageName, className)
             .addType(resultDataClass)
