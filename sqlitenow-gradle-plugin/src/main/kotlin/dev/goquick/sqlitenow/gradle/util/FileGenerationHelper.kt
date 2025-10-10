@@ -37,7 +37,6 @@ class FileGenerationHelper(
                 val fileSpecBuilder = fileGenerator(namespace, packageName)
                 fileSpecBuilder.build().writeTo(outputDir)
             } catch (e: Exception) {
-                e.printStackTrace()
                 logger.error("Failed to generate code for namespace '$namespace'")
                 logger.error("Package: $packageName")
                 logger.error("Output directory: ${outputDir.absolutePath}")

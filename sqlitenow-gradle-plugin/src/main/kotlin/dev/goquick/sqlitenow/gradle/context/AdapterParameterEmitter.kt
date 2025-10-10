@@ -38,7 +38,12 @@ internal class AdapterParameterEmitter(
         namespace: String,
         statement: AnnotatedStatement,
     ) {
-        addAdapterParameters(fnBld, namespace, statement) { config ->
+        addAdapterParameters(
+            fnBld = fnBld,
+            namespace = namespace,
+            statement = statement,
+            includeMapAdapters = true,
+        ) { config ->
             config.kind == AdapterConfig.AdapterKind.INPUT
         }
     }
@@ -46,9 +51,15 @@ internal class AdapterParameterEmitter(
     fun addResultConversionAdapters(
         fnBld: FunSpec.Builder,
         namespace: String,
-        statement: AnnotatedSelectStatement
+        statement: AnnotatedSelectStatement,
+        includeMapAdapters: Boolean = true,
     ) {
-        addAdapterParameters(fnBld, namespace, statement) { config ->
+        addAdapterParameters(
+            fnBld = fnBld,
+            namespace = namespace,
+            statement = statement,
+            includeMapAdapters = includeMapAdapters,
+        ) { config ->
             when (config.kind) {
                 AdapterConfig.AdapterKind.RESULT_FIELD -> true
                 AdapterConfig.AdapterKind.MAP_RESULT -> true
@@ -65,21 +76,39 @@ internal class AdapterParameterEmitter(
     }
 
     fun parameterBindingAdapterNames(namespace: String, statement: AnnotatedStatement): List<String> {
-        return getFilteredAdapterNames(namespace, statement) { config ->
+        return getFilteredAdapterNames(
+            namespace = namespace,
+            statement = statement,
+            includeMapAdapters = true,
+        ) { config ->
             config.kind == AdapterConfig.AdapterKind.INPUT
         }
     }
 
-    fun resultConversionAdapterNames(namespace: String, statement: AnnotatedStatement): List<String> {
-        return getFilteredAdapterNames(namespace, statement) { config ->
+    fun resultConversionAdapterNames(
+        namespace: String,
+        statement: AnnotatedStatement,
+        includeMapAdapters: Boolean = true,
+    ): List<String> {
+        return getFilteredAdapterNames(
+            namespace = namespace,
+            statement = statement,
+            includeMapAdapters = includeMapAdapters,
+        ) { config ->
             config.kind == AdapterConfig.AdapterKind.RESULT_FIELD ||
-                    config.kind == AdapterConfig.AdapterKind.MAP_RESULT
+                config.kind == AdapterConfig.AdapterKind.MAP_RESULT
         }
     }
 
     fun buildJoinedReadParamsList(namespace: String, statement: AnnotatedSelectStatement): List<String> {
         val params = mutableListOf("statement")
-        params += resultConversionAdapterNames(namespace, statement)
+        params += resultConversionAdapterNames(namespace, statement, includeMapAdapters = false)
+        return params
+    }
+
+    fun buildReadStatementParamsList(namespace: String, statement: AnnotatedSelectStatement): List<String> {
+        val params = mutableListOf("statement")
+        params += resultConversionAdapterNames(namespace, statement, includeMapAdapters = true)
         return params
     }
 
@@ -106,10 +135,13 @@ internal class AdapterParameterEmitter(
         fnBld: FunSpec.Builder,
         namespace: String,
         statement: AnnotatedStatement,
+        includeMapAdapters: Boolean,
         filter: (AdapterConfig.ParamConfig) -> Boolean,
     ) {
         val adapterConfigs = adapterConfig.collectAllParamConfigs(statement, namespace)
-        val filteredConfigs = adapterConfigs.filter(filter)
+        val filteredConfigs = adapterConfigs.filter(filter).filter { config ->
+            includeMapAdapters || config.kind != AdapterConfig.AdapterKind.MAP_RESULT
+        }
         val chosenNames = chooseAdapterParamNames(filteredConfigs)
         val byName: MutableMap<String, AdapterConfig.ParamConfig> = linkedMapOf()
         filteredConfigs.forEach { cfg ->
@@ -129,10 +161,13 @@ internal class AdapterParameterEmitter(
     private fun getFilteredAdapterNames(
         namespace: String,
         statement: AnnotatedStatement,
+        includeMapAdapters: Boolean,
         filter: (AdapterConfig.ParamConfig) -> Boolean,
     ): List<String> {
         val adapterConfigs = adapterConfig.collectAllParamConfigs(statement, namespace)
-        val filtered = adapterConfigs.filter(filter)
+        val filtered = adapterConfigs.filter(filter).filter { config ->
+            includeMapAdapters || config.kind != AdapterConfig.AdapterKind.MAP_RESULT
+        }
         val chosen = chooseAdapterParamNames(filtered)
         val seen = LinkedHashSet<String>()
         filtered.forEach { config ->

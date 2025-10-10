@@ -57,7 +57,126 @@ CREATE TABLE activity (
     unlocked_days INTEGER,
 
     -- @@{ field=reporting, propertyType=com.pluralfusion.daytempo.domain.model.ActivityReportingType }
-    reporting TEXT NOT NULL DEFAULT 'default'
+    reporting TEXT NOT NULL DEFAULT 'default',
+
+    --- SCHEDULE ---
+
+    -- @@{ field=sched_mandatory_to_setup, propertyType=kotlin.Boolean }
+    sched_mandatory_to_setup INTEGER NOT NULL DEFAULT 0,
+
+    -- @@{ field=sched_repeat, propertyType=com.pluralfusion.daytempo.domain.model.ActivityScheduleRepeat }
+    sched_repeat TEXT NOT NULL,
+
+    -- @@{ field=sched_allowed_repeat_modes, propertyType=kotlin.collections.Set<com.pluralfusion.daytempo.domain.model.ActivityScheduleRepeat> }
+    sched_allowed_repeat_modes TEXT NOT NULL,
+
+    -- @@{ field=sched_mon, propertyType=kotlin.Boolean }
+    sched_mon INTEGER NOT NULL,
+
+    -- @@{ field=sched_tue, propertyType=kotlin.Boolean }
+    sched_tue INTEGER NOT NULL,
+
+    -- @@{ field=sched_wed, propertyType=kotlin.Boolean }
+    sched_wed INTEGER NOT NULL,
+
+    -- @@{ field=sched_thu, propertyType=kotlin.Boolean }
+    sched_thu INTEGER NOT NULL,
+
+    -- @@{ field=sched_fri, propertyType=kotlin.Boolean }
+    sched_fri INTEGER NOT NULL,
+
+    -- @@{ field=sched_sat, propertyType=kotlin.Boolean }
+    sched_sat INTEGER NOT NULL,
+
+    -- @@{ field=sched_sun, propertyType=kotlin.Boolean }
+    sched_sun INTEGER NOT NULL,
+
+    -- @@{ field=sched_week1, propertyType=kotlin.Boolean }
+    sched_week1 INTEGER NOT NULL,
+
+    -- @@{ field=sched_week2, propertyType=kotlin.Boolean }
+    sched_week2 INTEGER NOT NULL,
+
+    -- @@{ field=sched_week3, propertyType=kotlin.Boolean }
+    sched_week3 INTEGER NOT NULL,
+
+    -- @@{ field=sched_week4, propertyType=kotlin.Boolean }
+    sched_week4 INTEGER NOT NULL,
+
+    -- @@{ field=sched_day0, propertyType=kotlin.Int }
+    sched_day0 INTEGER NOT NULL,
+
+    -- @@{ field=sched_day1, propertyType=kotlin.Int }
+    sched_day1 INTEGER NOT NULL,
+
+    -- @@{ field=sched_day2, propertyType=kotlin.Int }
+    sched_day2 INTEGER NOT NULL,
+
+    -- @@{ field=sched_day3, propertyType=kotlin.Int }
+    sched_day3 INTEGER NOT NULL,
+
+    -- @@{ field=sched_day4, propertyType=kotlin.Int }
+    sched_day4 INTEGER NOT NULL,
+
+    -- @@{ field=sched_start_at, propertyType=kotlinx.datetime.LocalDate, notNull=false }
+    sched_start_at INTEGER NOT NULL,
+
+    -- @@{ field=sched_start_at_eval }
+    sched_start_at_eval TEXT,
+
+    -- @@{ field=sched_read_ref_start_at }
+    sched_read_ref_start_at TEXT,
+
+    -- @@{ field=sched_write_ref_start_at }
+    sched_write_ref_start_at TEXT,
+
+    -- @@{ field=sched_start_at_label }
+    sched_start_at_label TEXT,
+
+    -- @@{ field=sched_repeat_after_days, propertyType=kotlin.Int }
+    sched_repeat_after_days INTEGER NOT NULL,
+
+    -- @@{ field=sched_read_ref_repeat_after_days }
+    sched_read_ref_repeat_after_days TEXT,
+
+    -- @@{ field=sched_write_ref_repeat_after_days }
+    sched_write_ref_repeat_after_days TEXT,
+
+    -- @@{ field=sched_repeat_after_days_label }
+    sched_repeat_after_days_label TEXT,
+
+    -- @@{ field=sched_repeat_after_days_min, propertyType=kotlin.Int }
+    sched_repeat_after_days_min INTEGER,
+
+    -- @@{ field=sched_repeat_after_days_max, propertyType=kotlin.Int }
+    sched_repeat_after_days_max INTEGER,
+
+    -- @@{ field=sched_allow_edit_days_duration, propertyType=kotlin.Boolean }
+    sched_allow_edit_days_duration INTEGER NOT NULL,
+
+    -- @@{ field=sched_days_duration, propertyType=kotlin.Int }
+    sched_days_duration INTEGER NOT NULL,
+
+    -- @@{ field=sched_read_ref_days_duration }
+    sched_read_ref_days_duration TEXT,
+
+    -- @@{ field=sched_write_ref_days_duration }
+    sched_write_ref_days_duration TEXT,
+
+    -- @@{ field=sched_days_duration_label }
+    sched_days_duration_label TEXT,
+
+    -- @@{ field=sched_days_duration_min, propertyType=kotlin.Int }
+    sched_days_duration_min INTEGER,
+
+    -- @@{ field=sched_days_duration_max, propertyType=kotlin.Int }
+    sched_days_duration_max INTEGER,
+
+    -- @@{ field=sched_time_points, propertyType=kotlin.collections.List<com.pluralfusion.daytempo.domain.model.AlarmHourMinute> }
+    sched_time_points TEXT NOT NULL,
+
+    -- @@{ field=sched_time_range, propertyType=com.pluralfusion.daytempo.domain.model.ActivityScheduleTimeRange }
+    sched_time_range TEXT
 ) WITHOUT ROWID;
 
 CREATE INDEX idx_activity_dependsOnDocId ON activity(depends_on_doc_id);
@@ -99,15 +218,53 @@ SELECT
     act.priority AS act__priority,
     act.unlocked_days AS act__unlocked_days,
     act.reporting AS act__reporting,
-
-    sch.*,
+    act.sched_mandatory_to_setup AS act__sched_mandatory_to_setup,
+    act.sched_repeat AS act__sched_repeat,
+    act.sched_allowed_repeat_modes AS act__sched_allowed_repeat_modes,
+    act.sched_mon AS act__sched_mon,
+    act.sched_tue AS act__sched_tue,
+    act.sched_wed AS act__sched_wed,
+    act.sched_thu AS act__sched_thu,
+    act.sched_fri AS act__sched_fri,
+    act.sched_sat AS act__sched_sat,
+    act.sched_sun AS act__sched_sun,
+    act.sched_week1 AS act__sched_week1,
+    act.sched_week2 AS act__sched_week2,
+    act.sched_week3 AS act__sched_week3,
+    act.sched_week4 AS act__sched_week4,
+    act.sched_day0 AS act__sched_day0,
+    act.sched_day1 AS act__sched_day1,
+    act.sched_day2 AS act__sched_day2,
+    act.sched_day3 AS act__sched_day3,
+    act.sched_day4 AS act__sched_day4,
+    act.sched_start_at AS act__sched_start_at,
+    act.sched_start_at_eval AS act__sched_start_at_eval,
+    act.sched_read_ref_start_at AS act__sched_read_ref_start_at,
+    act.sched_write_ref_start_at AS act__sched_write_ref_start_at,
+    act.sched_start_at_label AS act__sched_start_at_label,
+    act.sched_repeat_after_days AS act__sched_repeat_after_days,
+    act.sched_read_ref_repeat_after_days AS act__sched_read_ref_repeat_after_days,
+    act.sched_write_ref_repeat_after_days AS act__sched_write_ref_repeat_after_days,
+    act.sched_repeat_after_days_label AS act__sched_repeat_after_days_label,
+    act.sched_repeat_after_days_min AS act__sched_repeat_after_days_min,
+    act.sched_repeat_after_days_max AS act__sched_repeat_after_days_max,
+    act.sched_allow_edit_days_duration AS act__sched_allow_edit_days_duration,
+    act.sched_days_duration AS act__sched_days_duration,
+    act.sched_read_ref_days_duration AS act__sched_read_ref_days_duration,
+    act.sched_write_ref_days_duration AS act__sched_write_ref_days_duration,
+    act.sched_days_duration_label AS act__sched_days_duration_label,
+    act.sched_days_duration_min AS act__sched_days_duration_min,
+    act.sched_days_duration_max AS act__sched_days_duration_max,
+    act.sched_time_points AS act__sched_time_points,
+    act.sched_time_range AS act__sched_time_range,
 
     cat.id AS joined__act__category__id,
     cat.doc_id AS joined__act__category__doc_id,
     cat.title AS joined__act__category__title,
     cat.icon AS joined__act__category__icon,
 
-    -- @@{ field=first_program_item_doc_id, notNull=true }
+    -- Pick ONE program_item per activity
+    -- @@{ field=first_program_item_doc_id, propertyType=kotlin.String, notNull=true }
     (SELECT pi.doc_id
      FROM program_item AS pi
      WHERE pi.activity_doc_id = act.id
@@ -128,16 +285,8 @@ SELECT
          aliasPrefix=joined__act__category__
          notNull=true } */
 
-  /* @@{ dynamicField=schedule,
-         mappingType=perRow,
-         propertyType=ActivityScheduleRow,
-         sourceTable=sch,
-         aliasPrefix=schedule__
-         notNull=true } */
-
 FROM activity act
-    LEFT JOIN activity_category cat ON act.category_doc_id = cat.doc_id
-    LEFT JOIN activity_schedule_to_join sch ON act.id = sch.schedule__activity_id;
+    LEFT JOIN activity_category cat ON act.category_doc_id = cat.doc_id;
 
 -- Activity with program items
 -- @@{ collectionKey=act__doc_id }
@@ -145,6 +294,13 @@ CREATE VIEW activity_with_program_items_view AS
 SELECT
     av.*,
     pi.*
+
+  /* @@{ dynamicField=main,
+         mappingType=entity,
+         propertyType=ActivityDetailedRow,
+         sourceTable=av,
+         aliasPrefix=act__,
+         notNull=true } */
 
   /* @@{ dynamicField=programItems,
          mappingType=collection,

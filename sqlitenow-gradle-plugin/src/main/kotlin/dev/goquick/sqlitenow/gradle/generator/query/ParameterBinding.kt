@@ -6,6 +6,7 @@ import com.squareup.kotlinpoet.TypeName
 import dev.goquick.sqlitenow.gradle.context.ColumnLookup
 import dev.goquick.sqlitenow.gradle.context.TypeMapping
 import dev.goquick.sqlitenow.gradle.generator.data.DataStructCodeGenerator
+import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedStatement
 import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
 import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType

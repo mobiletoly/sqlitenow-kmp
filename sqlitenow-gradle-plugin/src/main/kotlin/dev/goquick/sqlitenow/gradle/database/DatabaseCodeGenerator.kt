@@ -165,32 +165,16 @@ class DatabaseCodeGenerator(
             }
 
             statements.forEach { statement ->
-                // For SELECT statements with shared results, only collect adapters once per shared result
-                var sharedResultKey: String? = null
-                var hasMapTo = false
+                val statementAdapters = adapterConfig.collectAllParamConfigs(statement, namespace).toMutableList()
                 if (statement is AnnotatedSelectStatement && statement.annotations.queryResult != null) {
-                    sharedResultKey = "${namespace}.${statement.annotations.queryResult}"
-                    hasMapTo = statement.annotations.mapTo != null
-                    val alreadyProcessed = processedSharedResults[sharedResultKey]
-                    if (alreadyProcessed != null) {
-                        // If we've already collected mapTo adapters for this shared result and this
-                        // statement doesn't introduce a new mapper, skip to avoid duplicate work.
-                        if (alreadyProcessed && !hasMapTo) {
-                            return@forEach
-                        }
-                        if (alreadyProcessed && hasMapTo) {
-                            // Another statement with the same shared result and the mapper already captured.
-                            return@forEach
-                        }
-                        if (!alreadyProcessed && !hasMapTo) {
-                            // Already handled inputs/output adapters; nothing new to add.
-                            return@forEach
-                        }
-                        // else -> we previously processed without a mapper, but this statement has one.
+                    val sharedResultKey = "${namespace}.${statement.annotations.queryResult}"
+                    val alreadyProcessed = processedSharedResults[sharedResultKey] ?: false
+                    if (alreadyProcessed) {
+                        statementAdapters.removeIf { it.kind == AdapterConfig.AdapterKind.MAP_RESULT }
                     }
+                    val mapCollected = statement.annotations.mapTo != null
+                    processedSharedResults[sharedResultKey] = alreadyProcessed || mapCollected
                 }
-
-                val statementAdapters = adapterConfig.collectAllParamConfigs(statement, namespace)
                 statementAdapters.forEach { config ->
                     namespaceAdapters.add(
                         UniqueAdapter(
@@ -202,15 +186,8 @@ class DatabaseCodeGenerator(
                         )
                     )
                 }
-
-                if (sharedResultKey != null) {
-                    val mapCollected = statement.annotations.mapTo != null
-                    val previous = processedSharedResults[sharedResultKey]
-                    processedSharedResults[sharedResultKey] = (previous == true) || mapCollected
-                }
             }
 
-            // Deduplicate adapters within this namespace
             val deduplicatedAdapters = deduplicateAdaptersForNamespace(namespaceAdapters)
             adaptersByNamespace[namespace] = deduplicatedAdapters.toMutableList()
         }

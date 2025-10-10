@@ -4,7 +4,7 @@ CREATE TABLE program_item (
 
     doc_id TEXT NOT NULL UNIQUE,
 
-    activity_doc_id TEXT NOT NULL,
+    activity_doc_id TEXT NOT NULL REFERENCES activity(doc_id) ON DELETE CASCADE,
 
     item_id TEXT NOT NULL,
 
@@ -57,9 +57,7 @@ CREATE TABLE program_item (
     lock_item_display TEXT NOT NULL,
 
     -- @@{ field=input_entries, propertyType=kotlin.collections.List<com.pluralfusion.daytempo.domain.model.ProgramItemInputEntry> }
-    input_entries TEXT NOT NULL,
-
-    FOREIGN KEY (activity_doc_id) REFERENCES activity(doc_id) ON DELETE CASCADE
+    input_entries TEXT NOT NULL
 ) WITHOUT ROWID;
 
 CREATE INDEX idx_programItem_activityDocId ON program_item(activity_doc_id);
@@ -91,4 +89,4 @@ SELECT
     has_unlocked_seq_items AS pi__has_unlocked_seq_items,
     lock_item_display AS pi__lock_item_display,
     input_entries AS pi__input_entries
-FROM program_item;
+FROM program_item pi;

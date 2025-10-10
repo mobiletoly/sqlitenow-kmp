@@ -11,29 +11,219 @@ import dev.goquick.sqlitenow.daytempokmp.db.ActivityDetailedRow
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityPackageRow
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityPackageWithActivitiesRow
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityRow
-import dev.goquick.sqlitenow.daytempokmp.db.ActivityScheduleRow
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityWithProgramItemsRow
 import dev.goquick.sqlitenow.daytempokmp.db.DailyLogDetailedRow
 import dev.goquick.sqlitenow.daytempokmp.db.DailyLogRow
+import dev.goquick.sqlitenow.daytempokmp.db.ProgramItemRow
 import dev.goquick.sqlitenow.daytempokmp.db.ProviderRow
+import kotlinx.datetime.DayOfWeek
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.LocalDateTime
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import org.jetbrains.compose.resources.StringResource
 import kotlin.text.category
+import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
 
-typealias ActivityDoc = ActivityRow
-typealias ActivityDetailedDoc = ActivityDetailedRow
-typealias ActivityWithProgramItemsDoc = ActivityWithProgramItemsRow
+//typealias ActivityDetailedDoc = ActivityDetailedRow
+//typealias ActivityWithProgramItemsDoc = ActivityWithProgramItemsRow
 typealias ActivityBundleDoc = ActivityBundleRow
 typealias ActivityBundleDetailedDoc = ActivityBundleDetailedRow
 typealias ActivityBundleMetaDoc = ActivityBundleMetaRow
 typealias ActivityBundleWithPackagesDoc = ActivityBundleWithPackagesRow
 typealias ActivityCategoryDoc = ActivityCategoryRow
 typealias ActivityPackageDoc = ActivityPackageRow
-typealias ActivityScheduleDoc = ActivityScheduleRow
+//typealias ActivityScheduleDoc = ActivityScheduleRow
 typealias DailyLogDoc = DailyLogRow
 typealias DailyLogDetailedDoc = DailyLogDetailedRow
 typealias ProviderDoc = ProviderRow
+typealias ProgramItemDoc = ProgramItemRow
+
+const val ACTIVITY_PRIORITY_LOW = 0
+const val ACTIVITY_PRIORITY_NORMAL = 1
+const val ACTIVITY_PRIORITY_HIGH = 2
+
+data class ActivityDoc(
+    val docId: String,
+    val dependsOnDocId: String?,
+    val groupDocId: String,
+    val activityBundleDocId: String,
+    val activityPackageDocId: String,
+    val firstProgramItemDocId: String,
+    val deleted: Boolean,
+    val enabled: Boolean,
+    val userDefined: Boolean,
+    val programType: ActivityProgramType,
+    val deleteWhenExpired: Boolean,
+    val daysConfirmRequired: Boolean,
+    val orderInd: Int,
+    val installedAt: LocalDateTime?,
+    val title: String,
+    val descr: String,
+    val icon: ActivityIconDoc,
+    val monthlyGlanceView: Boolean,
+    val requiredUnlockCode: String?,
+    val priority: Int,
+    val unlockedDays: Int?,
+    val reporting: ActivityReportingType,
+    val category: ActivityCategoryDoc,
+    val schedule: ActivityScheduleDoc,
+) {
+    companion object {
+        fun from(row: ActivityDetailedRow) = ActivityDoc(
+            docId = row.main.docId,
+            dependsOnDocId = row.main.dependsOnDocId,
+            groupDocId = row.main.groupDocId,
+            activityBundleDocId = row.main.activityBundleDocId,
+            activityPackageDocId = row.main.activityPackageDocId,
+            firstProgramItemDocId = row.firstProgramItemDocId,
+            deleted = row.main.deleted,
+            enabled = row.main.enabled,
+            userDefined = row.main.userDefined,
+            programType = row.main.programType,
+            deleteWhenExpired = row.main.deleteWhenExpired,
+            daysConfirmRequired = row.main.daysConfirmRequired,
+            orderInd = row.main.orderInd,
+            installedAt = row.main.installedAt,
+            title = row.main.title,
+            descr = row.main.descr,
+            icon = row.main.icon,
+            monthlyGlanceView = row.main.monthlyGlanceView,
+            requiredUnlockCode = row.main.requiredUnlockCode,
+            priority = row.main.priority,
+            unlockedDays = row.main.unlockedDays,
+            reporting = row.main.reporting,
+            schedule = ActivityScheduleDoc.from(row.main),
+            category = row.category,
+        )
+
+        fun empty() = ActivityDoc(
+            docId = "",
+            dependsOnDocId = null,
+            groupDocId = "",
+            activityBundleDocId = "",
+            activityPackageDocId = "",
+            firstProgramItemDocId = "",
+            deleted = false,
+            enabled = true,
+            programType = ActivityProgramType.SIMPLE,
+            deleteWhenExpired = false,
+            daysConfirmRequired = false,
+            orderInd = 0,
+            installedAt = null,
+            title = "",
+            descr = "",
+            icon = ActivityIconDoc.empty(),
+            monthlyGlanceView = false,
+            requiredUnlockCode = null,
+            priority = ACTIVITY_PRIORITY_NORMAL,
+            unlockedDays = null,
+            reporting = ActivityReportingType.DEFAULT,
+            userDefined = true,
+            schedule = ActivityScheduleDoc.empty(),
+            category = ActivityCategoryDoc.empty(),
+        )
+    }
+}
+
+data class ActivityScheduleDoc(
+    val mandatoryToSetup: Boolean,
+    val repeat: ActivityScheduleRepeat,
+    val allowedRepeatModes: Set<ActivityScheduleRepeat>,
+    val daysOfWeek: Set<DayOfWeek>,
+    val daysOfMonth: Set<Int>,
+    val weeks: Set<Int>,
+    val startAt: LocalDate?,
+    val startAtEval: String?,
+    val startAtLabel: String?,
+    val readRefStartAt: String?,
+    val writeRefStartAt: String?,
+    val repeatAfterDays: Int,
+    val repeatAfterDaysLabel: String?,
+    val repeatAfterDaysMin: Int?,
+    val repeatAfterDaysMax: Int?,
+    val readRefRepeatAfterDays: String?,
+    val writeRefRepeatAfterDays: String?,
+    val daysDuration: Int,
+    val allowEditDaysDuration: Boolean,
+    val readRefDaysDuration: String?,
+    val writeRefDaysDuration: String?,
+    val daysDurationLabel: String?,
+    val daysDurationMin: Int?,
+    val daysDurationMax: Int?,
+    val timePoints: Set<AlarmHourMinute>,
+    val timeRange: ActivityScheduleTimeRange?,
+) {
+    companion object {
+        fun from(act: ActivityRow): ActivityScheduleDoc {
+            return ActivityScheduleDoc(
+                mandatoryToSetup = act.schedMandatoryToSetup,
+                repeat = act.schedRepeat,
+                allowedRepeatModes = act.schedAllowedRepeatModes,
+                daysOfWeek = buildDayOfWeekSet(
+                    act.schedMon,
+                    act.schedTue,
+                    act.schedWed,
+                    act.schedThu,
+                    act.schedFri,
+                    act.schedSat,
+                    act.schedSun,
+                ),
+                daysOfMonth = setOf(act.schedDay0, act.schedDay1, act.schedDay2, act.schedDay3, act.schedDay4),
+                weeks = buildWeekSet(act.schedWeek1, act.schedWeek2, act.schedWeek3, act.schedWeek4),
+                startAt = act.schedStartAt,
+                startAtEval = act.schedStartAtEval,
+                startAtLabel = act.schedStartAtLabel,
+                readRefStartAt = act.schedReadRefStartAt,
+                writeRefStartAt = act.schedWriteRefStartAt,
+                repeatAfterDays = act.schedRepeatAfterDays,
+                repeatAfterDaysLabel = act.schedRepeatAfterDaysLabel,
+                repeatAfterDaysMin = act.schedRepeatAfterDaysMin,
+                repeatAfterDaysMax = act.schedRepeatAfterDaysMax,
+                readRefRepeatAfterDays = act.schedReadRefRepeatAfterDays,
+                writeRefRepeatAfterDays = act.schedWriteRefRepeatAfterDays,
+                daysDuration = act.schedDaysDuration,
+                allowEditDaysDuration = act.schedAllowEditDaysDuration,
+                readRefDaysDuration = act.schedReadRefDaysDuration,
+                writeRefDaysDuration = act.schedWriteRefDaysDuration,
+                daysDurationLabel = act.schedDaysDurationLabel,
+                daysDurationMin = act.schedDaysDurationMin,
+                daysDurationMax = act.schedDaysDurationMax,
+                timePoints = act.schedTimePoints.toSet(),
+                timeRange = act.schedTimeRange,
+            )
+        }
+
+        fun empty() = ActivityScheduleDoc(
+            mandatoryToSetup = false,
+            repeat = ActivityScheduleRepeat.NONE,
+            allowedRepeatModes = emptySet(),
+            daysOfWeek = emptySet(),
+            daysOfMonth = emptySet(),
+            weeks = emptySet(),
+            startAt = null,
+            startAtEval = null,
+            startAtLabel = null,
+            readRefStartAt = null,
+            writeRefStartAt = null,
+            repeatAfterDays = 0,
+            repeatAfterDaysLabel = null,
+            repeatAfterDaysMin = null,
+            repeatAfterDaysMax = null,
+            readRefRepeatAfterDays = null,
+            writeRefRepeatAfterDays = null,
+            daysDuration = 0,
+            allowEditDaysDuration = false,
+            readRefDaysDuration = null,
+            writeRefDaysDuration = null,
+            daysDurationLabel = null,
+            daysDurationMin = null,
+            daysDurationMax = null,
+            timePoints = emptySet(),
+            timeRange = null,
+        )
+    }
+}
 
 @Serializable
 data class ActivityIconDoc(
@@ -308,20 +498,20 @@ enum class ActivityStatus {
     SETUP_REQUIRED,
 }
 
-class ActivityPackageFullDoc(
+data class ActivityPackageWithActivitiesDoc(
     val main: ActivityPackageDoc,
-    val activities: List<ActivityDetailedDoc>,
+    val activities: List<ActivityDoc>,
     val category: ActivityCategoryDoc,
 ) {
     val activityTitles: List<String> = activities
-        .filter { it.main.enabled && !it.main.deleted }
-        .map { it.main.title }
+        .filter { it.enabled && !it.deleted }
+        .map { it.title }
     val activityStatuses: List<ActivityStatus> = activities
-        .filter { !it.main.deleted }
+        .filter { !it.deleted }
         .map {
             if (it.schedule.mandatoryToSetup &&
                 it.schedule.repeat == ActivityScheduleRepeat.DAYS_INTERVAL &&
-                (it.schedule.startAt?.toEpochDays() ?: 0L) == 0L &&
+                it.schedule.startAt == null &&
                 it.schedule.startAtEval == null
             ) {
                 ActivityStatus.SETUP_REQUIRED
@@ -330,24 +520,55 @@ class ActivityPackageFullDoc(
             }
         }
     val allGroupDocIdsSame: Boolean = activities
-        .map { it.main.groupDocId }
+        .map { it.groupDocId }
         .distinct()
         .size == 1
 
     companion object {
-        fun fromActivityPackageWithActivitiesRow(doc: ActivityPackageWithActivitiesRow) = ActivityPackageFullDoc(
-            main = doc.main,
-            activities = doc.activities,
-            category = doc.category,
+        fun from(row: ActivityPackageWithActivitiesRow) = ActivityPackageWithActivitiesDoc(
+            main = row.main,
+            activities = row.activities.map { ActivityDoc.from(it) },
+            category = row.category,
         )
     }
 }
 
-class ActivityBundleFullDoc(
-    val main: ActivityBundleDetailedDoc,
-    val activityPackages: List<ActivityPackageFullDoc>,
-    val provider: ProviderDoc,
-    val category: ActivityCategoryDoc,
+internal fun buildDayOfWeekSet(
+    activityScheduleMon: Boolean,
+    activityScheduleTue: Boolean,
+    activityScheduleWed: Boolean,
+    activityScheduleThu: Boolean,
+    activityScheduleFri: Boolean,
+    activityScheduleSat: Boolean,
+    activityScheduleSun: Boolean,
+) = buildSet {
+    if (activityScheduleMon) add(DayOfWeek.MONDAY)
+    if (activityScheduleTue) add(DayOfWeek.TUESDAY)
+    if (activityScheduleWed) add(DayOfWeek.WEDNESDAY)
+    if (activityScheduleThu) add(DayOfWeek.THURSDAY)
+    if (activityScheduleFri) add(DayOfWeek.FRIDAY)
+    if (activityScheduleSat) add(DayOfWeek.SATURDAY)
+    if (activityScheduleSun) add(DayOfWeek.SUNDAY)
+}
+
+internal fun buildWeekSet(
+    week1: Boolean,
+    week2: Boolean,
+    week3: Boolean,
+    week4: Boolean,
+) = buildSet {
+    if (week1) add(1)
+    if (week2) add(2)
+    if (week3) add(3)
+    if (week4) add(4)
+}
+
+@OptIn(ExperimentalUuidApi::class)
+fun ActivityCategoryRow.Companion.empty() = ActivityCategoryDoc(
+    id = Uuid.NIL,
+    docId = "",
+    title = "",
+    icon = ActivityIconDoc.empty(),
 )
 
 class ActivityBundleWithActivitiesDoc(
@@ -358,7 +579,7 @@ class ActivityBundleWithActivitiesDoc(
 ) {
     companion object {
         fun from(row: ActivityBundleWithActivitiesRow) = ActivityBundleWithActivitiesDoc(
-            main = row.main,
+            main = row.detailedBundle,
             activityPackages = row.activityPackages.map { ActivityPackageWithActivitiesDoc.from(it) },
             provider = row.provider,
             category = row.category,
@@ -366,37 +587,14 @@ class ActivityBundleWithActivitiesDoc(
     }
 }
 
-class ActivityPackageWithActivitiesDoc(
-    val main: ActivityPackageDoc,
-    val activities: List<ActivityDetailedDoc>,
-    val category: ActivityCategoryDoc,
+data class ActivityWithProgramItemsDoc(
+    val activity: ActivityDoc,
+    val programItems: List<ProgramItemDoc>,
 ) {
-    val activityTitles: List<String> = activities
-        .filter { it.main.enabled && !it.main.deleted }
-        .map { it.main.title }
-    val activityStatuses: List<ActivityStatus> = activities
-        .filter { !it.main.deleted }
-        .map {
-            if (it.schedule.mandatoryToSetup &&
-                it.schedule.repeat == ActivityScheduleRepeat.DAYS_INTERVAL &&
-                (it.schedule.startAt?.toEpochDays() ?: 0L) == 0L &&
-                it.schedule.startAtEval == null
-            ) {
-                ActivityStatus.SETUP_REQUIRED
-            } else {
-                ActivityStatus.READY
-            }
-        }
-    val allGroupDocIdsSame: Boolean = activities
-        .map { it.main.groupDocId }
-        .distinct()
-        .size == 1
-
     companion object {
-        fun from(doc: ActivityPackageWithActivitiesRow) = ActivityPackageWithActivitiesDoc(
-            main = doc.main,
-            activities = doc.activities,
-            category = doc.category,
+        fun from(row: ActivityWithProgramItemsRow) = ActivityWithProgramItemsDoc(
+            activity = ActivityDoc.from(row.main),
+            programItems = row.programItems,
         )
     }
 }

@@ -16,7 +16,6 @@ import dev.goquick.sqlitenow.daytempokmp.db.ActivityBundleQuery
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityCategoryQuery
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityPackageQuery
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityQuery
-import dev.goquick.sqlitenow.daytempokmp.db.ActivityScheduleQuery
 import dev.goquick.sqlitenow.daytempokmp.db.DayTempoDatabase
 import dev.goquick.sqlitenow.daytempokmp.db.ProviderQuery
 import kotlin.uuid.ExperimentalUuidApi
@@ -68,8 +67,8 @@ class ActivityBundleIntegrationTest {
         assertEquals("Expected exactly one bundle", 1, results.size)
         val bundle: ActivityBundleWithActivitiesDoc = results.single()
 
-        assertEquals("Morning Routine", bundle.main.bndl.title)
-        assertEquals(ActivityBundlePurchaseMode.FULLY_FREE, bundle.main.bndl.purchaseMode)
+        assertEquals("Morning Routine", bundle.main.main.title)
+        assertEquals(ActivityBundlePurchaseMode.FULLY_FREE, bundle.main.main.purchaseMode)
         assertEquals("Provider One", bundle.provider.title)
         assertEquals("Flexibility", bundle.category.title)
 
@@ -78,14 +77,14 @@ class ActivityBundleIntegrationTest {
         assertEquals("Flexibility", packageDoc.category.title)
 
         val activityDoc = packageDoc.activities.single()
-        assertEquals("Sunrise Stretch", activityDoc.main.title)
-        assertTrue("Activity should be enabled", activityDoc.main.enabled)
-        assertEquals(ActivityProgramType.SIMPLE, activityDoc.main.programType)
-        assertEquals(ActivityReportingType.DEFAULT, activityDoc.main.reporting)
+        assertEquals("Sunrise Stretch", activityDoc.title)
+        assertTrue("Activity should be enabled", activityDoc.enabled)
+        assertEquals(ActivityProgramType.SIMPLE, activityDoc.programType)
+        assertEquals(ActivityReportingType.DEFAULT, activityDoc.reporting)
         assertEquals(ActivityScheduleRepeat.WEEK_DAYS, activityDoc.schedule.repeat)
         assertEquals(setOf(ActivityScheduleRepeat.WEEK_DAYS), activityDoc.schedule.allowedRepeatModes)
         assertEquals(LocalDate.parse("2024-01-01"), activityDoc.schedule.startAt)
-        assertEquals(listOf(AlarmHourMinute(alarm = true, hour = 6, minute = 30)), activityDoc.schedule.timePoints)
+        assertEquals(setOf(AlarmHourMinute(alarm = true, hour = 6, minute = 30)), activityDoc.schedule.timePoints)
         assertEquals(ActivityScheduleTimeRange.MORNING, activityDoc.schedule.timeRange)
 
         // ensure nested collections are populated and no stray top-level activity list leaks out
@@ -119,7 +118,7 @@ class ActivityBundleIntegrationTest {
         assertEquals(packageCategory.title, packageDoc.category.title)
         assertEquals(activityCategory.title, activityDoc.category.title)
         assertEquals(packageCategory.docId, packageDoc.main.categoryDocId)
-        assertEquals(activityCategory.docId, activityDoc.main.categoryDocId)
+        assertEquals(activityCategory.docId, activityDoc.category.docId)
     }
 
     private suspend fun seedActivityBundleHierarchy(
@@ -180,8 +179,8 @@ class ActivityBundleIntegrationTest {
                 )
             ).execute()
 
-            database.activity.add(
-                ActivityQuery.Add.Params(
+            database.activity.addReturningId(
+                ActivityQuery.AddReturningId.Params(
                     docId = "activity-1",
                     dependsOnDocId = null,
                     groupDocId = "group-1",
@@ -203,9 +202,48 @@ class ActivityBundleIntegrationTest {
                     requiredUnlockCode = null,
                     priority = 1,
                     unlockedDays = null,
-                    reporting = ActivityReportingType.DEFAULT
+                    reporting = ActivityReportingType.DEFAULT,
+                    schedMandatoryToSetup = true,
+                    schedRepeat = ActivityScheduleRepeat.WEEK_DAYS,
+                    schedAllowedRepeatModes = setOf(ActivityScheduleRepeat.WEEK_DAYS),
+                    schedMon = true,
+                    schedTue = true,
+                    schedWed = true,
+                    schedThu = true,
+                    schedFri = true,
+                    schedSat = false,
+                    schedSun = false,
+                    schedWeek1 = true,
+                    schedWeek2 = true,
+                    schedWeek3 = true,
+                    schedWeek4 = true,
+                    schedDay0 = 1,
+                    schedDay1 = 2,
+                    schedDay2 = 3,
+                    schedDay3 = 4,
+                    schedDay4 = 5,
+                    schedStartAt = scheduleStartAt,
+                    schedStartAtEval = null,
+                    schedReadRefStartAt = null,
+                    schedWriteRefStartAt = null,
+                    schedStartAtLabel = "Start",
+                    schedRepeatAfterDays = 0,
+                    schedReadRefRepeatAfterDays = null,
+                    schedWriteRefRepeatAfterDays = null,
+                    schedRepeatAfterDaysLabel = null,
+                    schedRepeatAfterDaysMin = null,
+                    schedRepeatAfterDaysMax = null,
+                    schedAllowEditDaysDuration = true,
+                    schedDaysDuration = 1,
+                    schedReadRefDaysDuration = null,
+                    schedWriteRefDaysDuration = null,
+                    schedDaysDurationLabel = null,
+                    schedDaysDurationMin = null,
+                    schedDaysDurationMax = null,
+                    schedTimePoints = listOf(AlarmHourMinute(alarm = true, hour = 6, minute = 30)),
+                    schedTimeRange = ActivityScheduleTimeRange.MORNING
                 )
-            ).execute()
+            ).executeReturningOne()
             database.connection().prepare("SELECT program_type FROM activity WHERE doc_id = ?").use { stmt ->
                 stmt.bindText(1, "activity-1")
                 require(stmt.step())
@@ -223,51 +261,6 @@ class ActivityBundleIntegrationTest {
             } finally {
                 stmt.close()
             }
-
-            database.activitySchedule.add(
-                ActivityScheduleQuery.Add.Params(
-                    activityId = activityUuid,
-                    mandatoryToSetup = true,
-                    repeat = ActivityScheduleRepeat.WEEK_DAYS,
-                    allowedRepeatModes = setOf(ActivityScheduleRepeat.WEEK_DAYS),
-                    mon = true,
-                    tue = true,
-                    wed = true,
-                    thu = true,
-                    fri = true,
-                    sat = false,
-                    sun = false,
-                    week1 = true,
-                    week2 = true,
-                    week3 = true,
-                    week4 = true,
-                    day0 = 1,
-                    day1 = 2,
-                    day2 = 3,
-                    day3 = 4,
-                    day4 = 5,
-                    startAt = scheduleStartAt,
-                    startAtEval = null,
-                    readRefStartAt = null,
-                    writeRefStartAt = null,
-                    startAtLabel = "Start",
-                    repeatAfterDays = 0,
-                    readRefRepeatAfterDays = null,
-                    writeRefRepeatAfterDays = null,
-                    repeatAfterDaysLabel = null,
-                    repeatAfterDaysMin = null,
-                    repeatAfterDaysMax = null,
-                    allowEditDaysDuration = true,
-                    daysDuration = 1,
-                    readRefDaysDuration = null,
-                    writeRefDaysDuration = null,
-                    daysDurationLabel = null,
-                    daysDurationMin = null,
-                    daysDurationMax = null,
-                    timePoints = listOf(AlarmHourMinute(alarm = true, hour = 6, minute = 30)),
-                    timeRange = ActivityScheduleTimeRange.MORNING
-                )
-            ).execute()
         }
     }
 

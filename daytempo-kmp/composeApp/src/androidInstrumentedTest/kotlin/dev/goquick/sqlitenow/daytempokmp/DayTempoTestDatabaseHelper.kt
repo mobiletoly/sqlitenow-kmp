@@ -4,6 +4,7 @@ package dev.goquick.sqlitenow.daytempokmp
 
 import com.pluralfusion.daytempo.domain.model.ActivityBundlePurchaseMode
 import com.pluralfusion.daytempo.domain.model.ActivityBundleWithActivitiesDoc
+import com.pluralfusion.daytempo.domain.model.ActivityDoc
 import com.pluralfusion.daytempo.domain.model.ActivityIconDoc
 import com.pluralfusion.daytempo.domain.model.ActivityProgramType
 import com.pluralfusion.daytempo.domain.model.ActivityReportingType
@@ -15,6 +16,7 @@ import com.pluralfusion.daytempo.domain.model.GoalDirection
 import com.pluralfusion.daytempo.domain.model.HasStringValue
 import com.pluralfusion.daytempo.domain.model.MeasureSystem
 import com.pluralfusion.daytempo.domain.model.ActivityPackageWithActivitiesDoc
+import com.pluralfusion.daytempo.domain.model.ActivityWithProgramItemsDoc
 import com.pluralfusion.daytempo.domain.model.ProgramItemLockItemDisplay
 import com.pluralfusion.daytempo.domain.model.ProgramItemPresentation
 import com.pluralfusion.daytempo.domain.model.RegisteredValueType
@@ -91,6 +93,18 @@ object DayTempoTestDatabaseHelper {
                 sqlValueToInstalledAt = { it?.let { LocalDateTime.fromDayTempoEpochSeconds(it) } },
                 sqlValueToIcon = { Json.decodeFromString(it) },
                 sqlValueToReporting = { ActivityReportingType.from(it) },
+                schedRepeatToSqlValue = { it.value },
+                schedAllowedRepeatModesToSqlValue = { it.joinHasStringValues() },
+                schedStartAtToSqlValue = { it?.toEpochDays() ?: 0 },
+                schedTimePointsToSqlValue = { it.joinAlarmPoints() },
+                schedTimeRangeToSqlValue = { it?.value },
+                sqlValueToSchedRepeat = { ActivityScheduleRepeat.from(it) },
+                sqlValueToSchedAllowedRepeatModes = { ActivityScheduleRepeat.parseSet(it) },
+                sqlValueToSchedStartAt = { LocalDate.fromEpochDays(it) },
+                sqlValueToSchedTimePoints = { it.columnWordsSplitter().map(AlarmHourMinute.Companion::parse) },
+                sqlValueToSchedTimeRange = { it?.let { ActivityScheduleTimeRange.from(it) } },
+                activityWithProgramItemsRowMapper = { ActivityWithProgramItemsDoc.from(it) },
+                activityDetailedRowMapper = { ActivityDoc.from(it) }
             ),
             programItemAdapters = DayTempoDatabase.ProgramItemAdapters(
                 goalDirectionToSqlValue = { it.value },
@@ -101,20 +115,6 @@ object DayTempoTestDatabaseHelper {
                 sqlValueToPresentation = { ProgramItemPresentation.from(it) },
                 sqlValueToLockItemDisplay = { ProgramItemLockItemDisplay.from(it) },
                 sqlValueToInputEntries = { Json.decodeFromString(it) },
-            ),
-            activityScheduleAdapters = DayTempoDatabase.ActivityScheduleAdapters(
-                activityIdToSqlValue = { it.toByteArray() },
-                repeatToSqlValue = { it.value },
-                allowedRepeatModesToSqlValue = { it.joinHasStringValues() },
-                startAtToSqlValue = { it?.toEpochDays() ?: 0 },
-                timePointsToSqlValue = { it.joinAlarmPoints() },
-                timeRangeToSqlValue = { it?.value },
-                sqlValueToActivityId = { Uuid.fromByteArray(it) },
-                sqlValueToRepeat = { ActivityScheduleRepeat.from(it) },
-                sqlValueToAllowedRepeatModes = { ActivityScheduleRepeat.parseSet(it) },
-                sqlValueToStartAt = { LocalDate.fromEpochDays(it) },
-                sqlValueToTimePoints = { it.columnWordsSplitter().map(AlarmHourMinute.Companion::parse) },
-                sqlValueToTimeRange = { it?.let { ActivityScheduleTimeRange.from(it) } },
             ),
             dailyLogAdapters = DayTempoDatabase.DailyLogAdapters(
                 sqlValueToDate = { LocalDate.fromEpochDays(it) },

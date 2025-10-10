@@ -187,18 +187,19 @@ internal class QueryExecuteEmitter(
     ) {
         val capitalizedNamespace = queryNamespaceName(namespace)
         val resultType = resolvePublicResultTypeString(namespace, statement)
-        val paramsString = adapterParameterEmitter.buildJoinedReadParamsList(namespace, statement).joinToString(", ")
+        val joinedParams = adapterParameterEmitter.buildJoinedReadParamsList(namespace, statement).joinToString(", ")
+        val readParams = adapterParameterEmitter.buildReadStatementParamsList(namespace, statement).joinToString(", ")
         val mapAdapterName = adapterParameterEmitter.mapToAdapterParameterName(namespace, statement)
         builder.line("statement.use { statement ->")
         builder.indent(by = 2) {
             when (functionName) {
                 "executeAsList" -> {
                     if (statement.hasCollectionMapping()) {
-                        collectionMappingBuilder(this, statement, namespace, className, paramsString, mapAdapterName)
+                        collectionMappingBuilder(this, statement, namespace, className, joinedParams, mapAdapterName)
                     } else {
                         line("val results = mutableListOf<$resultType>()")
                         line("while (statement.step()) {")
-                        indent { line("results.add($capitalizedNamespace.$className.readStatementResult($paramsString))") }
+                        indent { line("results.add($capitalizedNamespace.$className.readStatementResult($readParams))") }
                         line("}")
                         line("results")
                     }
@@ -206,7 +207,7 @@ internal class QueryExecuteEmitter(
 
                 "executeAsOne" -> {
                     line("if (statement.step()) {")
-                    indent { line("$capitalizedNamespace.$className.readStatementResult($paramsString)") }
+                    indent { line("$capitalizedNamespace.$className.readStatementResult($readParams)") }
                     line("} else {")
                     indent { line("throw IllegalStateException(\"Query returned no results, but exactly one result was expected\")") }
                     line("}")
@@ -214,7 +215,7 @@ internal class QueryExecuteEmitter(
 
                 "executeAsOneOrNull" -> {
                     line("if (statement.step()) {")
-                    indent { line("$capitalizedNamespace.$className.readStatementResult($paramsString)") }
+                    indent { line("$capitalizedNamespace.$className.readStatementResult($readParams)") }
                     line("} else {")
                     indent { line("null") }
                     line("}")

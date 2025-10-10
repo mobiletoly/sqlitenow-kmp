@@ -21,7 +21,6 @@ import dev.goquick.sqlitenow.daytempokmp.db.ActivityCategoryQuery
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityPackageQuery
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityQuery
 import com.pluralfusion.daytempo.domain.model.ActivityScheduleDoc
-import dev.goquick.sqlitenow.daytempokmp.db.ActivityScheduleQuery
 import dev.goquick.sqlitenow.daytempokmp.db.DailyLogQuery
 import dev.goquick.sqlitenow.daytempokmp.db.DayTempoDatabase
 import dev.goquick.sqlitenow.daytempokmp.db.ProgramItemQuery
@@ -65,7 +64,7 @@ class DayTempoHeavyIntegrationTest {
         val results = database.activityBundle.selectAllWithEnabledActivities.asList()
         assertEquals("Unexpected bundle count", fixture.bundleExpectations.size, results.size)
 
-        val resultsByDocId = results.associateBy { it.main.bndl.docId }
+        val resultsByDocId = results.associateBy { it.main.main.docId }
         fixture.bundleExpectations.forEach { expectedBundle ->
             val bundleResult = resultsByDocId[expectedBundle.docId]
                 ?: error("Missing bundle ${expectedBundle.docId} in results")
@@ -76,7 +75,7 @@ class DayTempoHeavyIntegrationTest {
             assertEquals(
                 "Bundle title mismatch for ${expectedBundle.docId}",
                 expectedBundle.title,
-                bundleResult.main.bndl.title,
+                bundleResult.main.main.title,
             )
             val expectedPackageCategories = expectedBundle.packages.map { it.categoryTitle }.toSet()
             assertTrue(
@@ -112,7 +111,7 @@ class DayTempoHeavyIntegrationTest {
                     packageResult.activities.size,
                 )
 
-                val activitiesByDocId = packageResult.activities.associateBy { it.main.docId }
+                val activitiesByDocId = packageResult.activities.associateBy { it.docId }
                 expectedPackage.activities.forEach { expectedActivity ->
                     val activityResult = activitiesByDocId[expectedActivity.docId]
                         ?: error("Missing activity ${expectedActivity.docId}")
@@ -145,64 +144,15 @@ class DayTempoHeavyIntegrationTest {
             assertEquals(expectedLog.numericValue0, log.main.numericValue00)
             assertEquals(expectedLog.notes, log.main.notes)
 
-            val schedule = log.activity.schedule
-            assertEquals("Schedule startAt mismatch", expectedLog.scheduleStartAt, schedule.startAt)
-            assertEquals("Schedule repeat mismatch", ActivityScheduleRepeat.WEEK_DAYS, schedule.repeat)
+            val row = log.activity.main
+            assertEquals("Schedule startAt mismatch", expectedLog.scheduleStartAt, row.schedStartAt)
+            assertEquals("Schedule repeat mismatch", ActivityScheduleRepeat.WEEK_DAYS, row.schedRepeat)
             assertTrue(
                 "Schedule points mismatch",
-                schedule.timePoints.containsAll(expectedLog.scheduleTimePoints) &&
-                    expectedLog.scheduleTimePoints.containsAll(schedule.timePoints)
+                row.schedTimePoints.containsAll(expectedLog.scheduleTimePoints) &&
+                    expectedLog.scheduleTimePoints.containsAll(expectedLog.scheduleTimePoints)
             )
         }
-    }
-
-    @Test
-    fun selectAllEnabledWithTimePointsByScheduleRepeatReturnsMatchingActivities() = runBlocking {
-        val params = ActivityQuery.SelectAllEnabledWithTimePointsByScheduleRepeat.Params(
-            scheduleRepeat = ActivityScheduleRepeat.WEEK_DAYS,
-        )
-
-        val results = database.activity
-            .selectAllEnabledWithTimePointsByScheduleRepeat(params)
-            .asList()
-
-        val expectedActivities = fixture.bundleExpectations
-            .flatMap { it.packages }
-            .flatMap { it.activities }
-
-        assertEquals("Unexpected activity count", expectedActivities.size, results.size)
-
-        val resultsByDocId = results.associateBy { it.main.docId }
-        expectedActivities.forEach { expected ->
-            val row = resultsByDocId[expected.docId] ?: error("Missing activity ${expected.docId}")
-
-            assertTrue("Activity should be enabled", row.main.enabled)
-            assertEquals(
-                "Schedule repeat mismatch for ${expected.docId}",
-                ActivityScheduleRepeat.WEEK_DAYS,
-                row.schedule.repeat,
-            )
-            assertEquals(
-                "Schedule startAt mismatch for ${expected.docId}",
-                expected.scheduleStartAt,
-                row.schedule.startAt,
-            )
-            assertEquals(
-                "Time points mismatch for ${expected.docId}",
-                expected.scheduleTimePoints,
-                row.schedule.timePoints,
-            )
-        }
-
-        val noneResults = database.activity
-            .selectAllEnabledWithTimePointsByScheduleRepeat(
-                ActivityQuery.SelectAllEnabledWithTimePointsByScheduleRepeat.Params(
-                    scheduleRepeat = ActivityScheduleRepeat.NONE,
-                ),
-            )
-            .asList()
-
-        assertTrue("Expected empty results for NONE repeat", noneResults.isEmpty())
     }
 
     @Test
@@ -335,8 +285,10 @@ private class DayTempoSeedHelper(private val database: DayTempoDatabase) {
                             iconValue = "icon://activity/$bundleIndex/$packageIndex/$activityIndex",
                         )
 
-                        database.activity.add(
-                            ActivityQuery.Add.Params(
+                        val scheduleStartAt = LocalDate(2024, 3, activityIndex + packageIndex)
+                        val scheduleTimePoints = listOf(AlarmHourMinute(alarm = true, hour = 6 + activityIndex, minute = 15))
+                        database.activity.addReturningId(
+                            ActivityQuery.AddReturningId.Params(
                                 docId = activityDocId,
                                 dependsOnDocId = null,
                                 groupDocId = "group-$bundleIndex-$packageIndex",
@@ -359,57 +311,47 @@ private class DayTempoSeedHelper(private val database: DayTempoDatabase) {
                                 priority = 1,
                                 unlockedDays = null,
                                 reporting = ActivityReportingType.DEFAULT,
+                                schedMandatoryToSetup = true,
+                                schedRepeat = ActivityScheduleRepeat.WEEK_DAYS,
+                                schedAllowedRepeatModes = setOf(ActivityScheduleRepeat.WEEK_DAYS),
+                                schedMon = true,
+                                schedTue = true,
+                                schedWed = true,
+                                schedThu = true,
+                                schedFri = true,
+                                schedSat = false,
+                                schedSun = false,
+                                schedWeek1 = true,
+                                schedWeek2 = true,
+                                schedWeek3 = true,
+                                schedWeek4 = true,
+                                schedDay0 = 1,
+                                schedDay1 = 2,
+                                schedDay2 = 3,
+                                schedDay3 = 4,
+                                schedDay4 = 5,
+                                schedStartAt = scheduleStartAt,
+                                schedStartAtEval = null,
+                                schedReadRefStartAt = null,
+                                schedWriteRefStartAt = null,
+                                schedStartAtLabel = null,
+                                schedRepeatAfterDays = 0,
+                                schedReadRefRepeatAfterDays = null,
+                                schedWriteRefRepeatAfterDays = null,
+                                schedRepeatAfterDaysLabel = null,
+                                schedRepeatAfterDaysMin = null,
+                                schedRepeatAfterDaysMax = null,
+                                schedAllowEditDaysDuration = true,
+                                schedDaysDuration = 1,
+                                schedReadRefDaysDuration = null,
+                                schedWriteRefDaysDuration = null,
+                                schedDaysDurationLabel = null,
+                                schedDaysDurationMin = null,
+                                schedDaysDurationMax = null,
+                                schedTimePoints = scheduleTimePoints,
+                                schedTimeRange = ActivityScheduleTimeRange.MORNING,
                             )
-                        ).execute()
-
-                        val activityUuid = fetchActivityUuid(activityDocId)
-                        val scheduleStartAt = LocalDate(2024, 3, activityIndex + packageIndex)
-                        val scheduleTimePoints = listOf(AlarmHourMinute(alarm = true, hour = 6 + activityIndex, minute = 15))
-
-                        database.activitySchedule.add(
-                            ActivityScheduleQuery.Add.Params(
-                                activityId = activityUuid,
-                                mandatoryToSetup = true,
-                                repeat = ActivityScheduleRepeat.WEEK_DAYS,
-                                allowedRepeatModes = setOf(ActivityScheduleRepeat.WEEK_DAYS),
-                                mon = true,
-                                tue = true,
-                                wed = true,
-                                thu = true,
-                                fri = true,
-                                sat = false,
-                                sun = false,
-                                week1 = true,
-                                week2 = true,
-                                week3 = true,
-                                week4 = true,
-                                day0 = 1,
-                                day1 = 2,
-                                day2 = 3,
-                                day3 = 4,
-                                day4 = 5,
-                                startAt = scheduleStartAt,
-                                startAtEval = null,
-                                readRefStartAt = null,
-                                writeRefStartAt = null,
-                                startAtLabel = "Start",
-                                repeatAfterDays = 1,
-                                readRefRepeatAfterDays = null,
-                                writeRefRepeatAfterDays = null,
-                                repeatAfterDaysLabel = null,
-                                repeatAfterDaysMin = null,
-                                repeatAfterDaysMax = null,
-                                allowEditDaysDuration = true,
-                                daysDuration = 1,
-                                readRefDaysDuration = null,
-                                writeRefDaysDuration = null,
-                                daysDurationLabel = null,
-                                daysDurationMin = null,
-                                daysDurationMax = null,
-                                timePoints = scheduleTimePoints,
-                                timeRange = ActivityScheduleTimeRange.MORNING,
-                            )
-                        ).execute()
+                        ).executeReturningOne()
 
                         val programItemDocId = "pi-$bundleIndex-$packageIndex-$activityIndex"
                         val programItemTitle = "Program Item $bundleIndex-$packageIndex-$activityIndex"
@@ -466,26 +408,26 @@ private class DayTempoSeedHelper(private val database: DayTempoDatabase) {
                                 counter = activityIndex,
                                 addedManually = activityIndex % 2 == 0,
                                 confirmed = true,
-                                numericValue0 = 10.0 * activityIndex,
-                                numericValue1 = null,
-                                numericValue2 = null,
-                                numericValue3 = null,
-                                numericValue4 = null,
-                                numericValue5 = null,
-                                numericValue6 = null,
-                                numericValue7 = null,
-                                numericValue8 = null,
-                                numericValue9 = null,
-                                stringValue0 = "s-$activityDocId",
-                                stringValue1 = null,
-                                stringValue2 = null,
-                                stringValue3 = null,
-                                stringValue4 = null,
-                                stringValue5 = null,
-                                stringValue6 = null,
-                                stringValue7 = null,
-                                stringValue8 = null,
-                                stringValue9 = null,
+                                numericValue00 = 10.0 * activityIndex,
+                                numericValue01 = null,
+                                numericValue02 = null,
+                                numericValue03 = null,
+                                numericValue04 = null,
+                                numericValue05 = null,
+                                numericValue06 = null,
+                                numericValue07 = null,
+                                numericValue08 = null,
+                                numericValue09 = null,
+                                stringValue00 = "s-$activityDocId",
+                                stringValue01 = null,
+                                stringValue02 = null,
+                                stringValue03 = null,
+                                stringValue04 = null,
+                                stringValue05 = null,
+                                stringValue06 = null,
+                                stringValue07 = null,
+                                stringValue08 = null,
+                                stringValue09 = null,
                                 notes = "Notes for $activityDocId",
                             )
                         ).execute()

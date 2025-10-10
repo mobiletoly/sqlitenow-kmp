@@ -78,7 +78,13 @@ internal class QueryReadEmitter(
             namespace = namespace,
             className = className,
             includeParamsParameter = false,
-            adapterType = QueryFunctionScaffolder.AdapterType.RESULT_CONVERSION,
+            adapterType = QueryFunctionScaffolder.AdapterType.NONE,
+        )
+        adapterParameterEmitter.addResultConversionAdapters(
+            fnBld = fnBld,
+            namespace = namespace,
+            statement = statement,
+            includeMapAdapters = false,
         )
         val resultType = resolveJoinedResultType(namespace, statement)
         fnBld.returns(resultType)
@@ -245,11 +251,7 @@ internal class QueryReadEmitter(
     }
 
     private fun buildJoinedReadParams(namespace: String, statement: AnnotatedSelectStatement): String {
-        val params = mutableListOf("statement")
-        val mapAdapterName = adapterParameterEmitter.mapToAdapterParameterName(namespace, statement)
-        adapterParameterEmitter.resultConversionAdapterNames(namespace, statement)
-            .filter { it != mapAdapterName }
-            .forEach { params += it }
+        val params = adapterParameterEmitter.buildJoinedReadParamsList(namespace, statement)
         return params.joinToString(", ")
     }
 
