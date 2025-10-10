@@ -49,7 +49,7 @@ data class ActivityDoc(
     val groupDocId: String,
     val activityBundleDocId: String,
     val activityPackageDocId: String,
-    val firstProgramItemDocId: String,
+    val firstProgramItem: ProgramItemDoc,
     val deleted: Boolean,
     val enabled: Boolean,
     val userDefined: Boolean,
@@ -76,7 +76,7 @@ data class ActivityDoc(
             groupDocId = row.main.groupDocId,
             activityBundleDocId = row.main.activityBundleDocId,
             activityPackageDocId = row.main.activityPackageDocId,
-            firstProgramItemDocId = row.firstProgramItemDocId,
+            firstProgramItem = row.firstProgramItem,
             deleted = row.main.deleted,
             enabled = row.main.enabled,
             userDefined = row.main.userDefined,
@@ -103,7 +103,7 @@ data class ActivityDoc(
             groupDocId = "",
             activityBundleDocId = "",
             activityPackageDocId = "",
-            firstProgramItemDocId = "",
+            firstProgramItem = ProgramItemDoc.empty(),
             deleted = false,
             enabled = true,
             programType = ActivityProgramType.SIMPLE,
@@ -581,8 +581,8 @@ class ActivityBundleWithActivitiesDoc(
         fun from(row: ActivityBundleWithActivitiesRow) = ActivityBundleWithActivitiesDoc(
             main = row.detailedBundle,
             activityPackages = row.activityPackages.map { ActivityPackageWithActivitiesDoc.from(it) },
-            provider = row.provider,
-            category = row.category,
+            provider = row.detailedBundle.provider,
+            category = row.detailedBundle.category,
         )
     }
 }
@@ -598,3 +598,30 @@ data class ActivityWithProgramItemsDoc(
         )
     }
 }
+
+@OptIn(ExperimentalUuidApi::class)
+fun ProgramItemRow.Companion.empty() = ProgramItemDoc(
+    id = Uuid.NIL,
+    docId = "",
+    activityDocId = "",
+    itemId = "",
+    title = "",
+    descr = null,
+    goalValue = 1,
+    goalDailyInitial = 0,
+    goalDirection = GoalDirection.UP,
+    goalInvert = false,
+    goalAtLeast = true,
+    goalSingle = false,
+    goalHideEditor = false,
+    weekIndex = 0,
+    dayIndex = 0,
+    preStartText = "",
+    postCompleteText = "",
+    presentation = ProgramItemPresentation.DEFAULT,
+    seqItemsJson = "[]",
+    requiredUnlockCode = null,
+    hasUnlockedSeqItems = false,
+    lockItemDisplay = ProgramItemLockItemDisplay.DEFAULT,
+    inputEntries = emptyList(),
+)

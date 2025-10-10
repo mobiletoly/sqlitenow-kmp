@@ -86,6 +86,12 @@ object ResultMappingPlanner {
             .filter { it.isNotBlank() }
             .toSet()
 
+        val suppressedDynamicFields = fields
+            .asSequence()
+            .filter { it.annotations.isDynamicField && it.annotations.suppressProperty }
+            .map { it.src.fieldName }
+            .toSet()
+
         val regularFields = fields.filter { field ->
             !field.annotations.isDynamicField &&
                 !mappedColumns.contains(field.src.fieldName) &&
@@ -127,7 +133,7 @@ object ResultMappingPlanner {
             }
             .toSet()
 
-        val combinedSkipSet = (skipSet) + skipZeroColumnDuplicates
+        val combinedSkipSet = (skipSet + suppressedDynamicFields) + skipZeroColumnDuplicates
 
         return ResultMappingPlan(
             mappedColumns = mappedColumns,

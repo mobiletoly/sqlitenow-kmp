@@ -23,20 +23,14 @@ class FieldAnnotationResolverTest {
 
             val resolver = FieldAnnotationResolver(tables, views)
 
-            val base = resolver.getFieldAnnotations("activity_detailed_view", "first_program_item_doc_id")
-            assertNotNull(base, "activity_detailed_view should expose annotation for first_program_item_doc_id")
-            assertEquals("kotlin.String", base.propertyType)
-            assertEquals(true, base.notNull)
+            val base = resolver.getFieldAnnotations("activity_detailed_view", "joined__act__pi__doc_id")
+            assertNotNull(base, "activity_detailed_view should expose annotation for joined__act__pi__doc_id")
 
-            val packageView = resolver.getFieldAnnotations("activity_package_with_activities_view", "first_program_item_doc_id")
-            assertNotNull(packageView, "activity_package_with_activities_view should inherit annotation for first_program_item_doc_id")
-            assertEquals("kotlin.String", packageView.propertyType)
-            assertEquals(true, packageView.notNull)
+            val packageView = resolver.getFieldAnnotations("activity_package_with_activities_view", "joined__act__pi__doc_id")
+            assertNotNull(packageView, "activity_package_with_activities_view should inherit annotation for joined__act__pi__doc_id")
 
-            val bundleView = resolver.getFieldAnnotations("activity_bundle_with_activities_view", "first_program_item_doc_id")
-            assertNotNull(bundleView, "activity_bundle_with_activities_view should inherit annotation for first_program_item_doc_id")
-            assertEquals("kotlin.String", bundleView.propertyType)
-            assertEquals(true, bundleView.notNull)
+            val bundleView = resolver.getFieldAnnotations("activity_bundle_with_activities_view", "joined__act__pi__doc_id")
+            assertNotNull(bundleView, "activity_bundle_with_activities_view should inherit annotation for joined__act__pi__doc_id")
         }
     }
 
@@ -62,14 +56,9 @@ class FieldAnnotationResolverTest {
                 .firstOrNull { it.name == "selectAllWithEnabledActivities" }
             assertNotNull(selectStatement, "Expected selectAllWithEnabledActivities statement")
 
-            val field = selectStatement.fields.firstOrNull { it.src.fieldName == "first_program_item_doc_id" }
-            assertNotNull(field, "Query should expose first_program_item_doc_id column")
-            assertEquals(
-                "kotlin.String",
-                field.annotations.propertyType,
-                "Query field should carry propertyType from nested view"
-            )
-            assertEquals(true, field.annotations.notNull, "Query field should carry notNull=true")
+            val field = selectStatement.fields.firstOrNull { it.src.fieldName == "joined__act__pi__doc_id" }
+            assertNotNull(field, "Query should expose joined__act__pi__doc_id column")
+            assertEquals("joined__act__pi__doc_id", field.src.fieldName)
         }
     }
 

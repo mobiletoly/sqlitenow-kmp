@@ -146,7 +146,8 @@ class FieldAnnotationResolver(
                 annotations.defaultValue != null ||
                 annotations.aliasPrefix != null ||
                 annotations.mappingType != null ||
-                annotations.sourceTable != null
+                annotations.sourceTable != null ||
+                annotations.suppressProperty
     }
 
     private fun hasPropertyType(annotations: FieldAnnotationOverrides): Boolean {
@@ -170,6 +171,7 @@ class FieldAnnotationResolver(
             mappingType = primary.mappingType ?: secondary.mappingType,
             sourceTable = primary.sourceTable ?: secondary.sourceTable,
             collectionKey = primary.collectionKey ?: secondary.collectionKey,
+            suppressProperty = primary.suppressProperty || secondary.suppressProperty,
         )
     }
 

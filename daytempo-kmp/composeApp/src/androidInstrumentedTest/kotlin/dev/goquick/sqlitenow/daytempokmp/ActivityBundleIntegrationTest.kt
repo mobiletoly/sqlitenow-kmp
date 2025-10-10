@@ -12,12 +12,17 @@ import com.pluralfusion.daytempo.domain.model.ActivityReportingType
 import com.pluralfusion.daytempo.domain.model.ActivityScheduleRepeat
 import com.pluralfusion.daytempo.domain.model.ActivityScheduleTimeRange
 import com.pluralfusion.daytempo.domain.model.AlarmHourMinute
+import com.pluralfusion.daytempo.domain.model.GoalDirection
+import com.pluralfusion.daytempo.domain.model.ProgramItemInputEntry
+import com.pluralfusion.daytempo.domain.model.ProgramItemLockItemDisplay
+import com.pluralfusion.daytempo.domain.model.ProgramItemPresentation
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityBundleQuery
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityCategoryQuery
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityPackageQuery
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityQuery
 import dev.goquick.sqlitenow.daytempokmp.db.DayTempoDatabase
 import dev.goquick.sqlitenow.daytempokmp.db.ProviderQuery
+import dev.goquick.sqlitenow.daytempokmp.db.ProgramItemQuery
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 import kotlinx.coroutines.runBlocking
@@ -261,6 +266,33 @@ class ActivityBundleIntegrationTest {
             } finally {
                 stmt.close()
             }
+
+            database.programItem.add(
+                ProgramItemQuery.Add.Params(
+                    docId = "program-item-1",
+                    activityDocId = "activity-1",
+                    itemId = "item-1",
+                    title = "Sunrise Stretch Program",
+                    descr = "Program details",
+                    goalValue = 1,
+                    goalDailyInitial = 1,
+                    goalDirection = GoalDirection.UP,
+                    goalInvert = false,
+                    goalAtLeast = true,
+                    goalSingle = false,
+                    goalHideEditor = false,
+                    weekIndex = 0,
+                    dayIndex = 0,
+                    preStartText = null,
+                    postCompleteText = null,
+                    presentation = ProgramItemPresentation.DEFAULT,
+                    seqItemsJson = "{}",
+                    requiredUnlockCode = null,
+                    hasUnlockedSeqItems = false,
+                    lockItemDisplay = ProgramItemLockItemDisplay.DEFAULT,
+                    inputEntries = emptyList<ProgramItemInputEntry>(),
+                )
+            ).execute()
         }
     }
 

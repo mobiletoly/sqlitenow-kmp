@@ -39,13 +39,10 @@ internal class DataStructResultEmitter(
         val constructorBuilder = FunSpec.constructorBuilder()
         val fieldCodeGenerator = generatorContext.selectFieldGenerator
         val propertyNameGeneratorType = statement.annotations.propertyNameGenerator
-        val mappingPlan = statement.mappingPlan
 
         val collectedProps = mutableListOf<PropertySpec>()
         propertyEmitter.emitPropertiesWithInterfaceSupport(
-            fields = statement.fields,
-            mappedColumns = mappingPlan.mappedColumns,
-            dynamicFieldSkipSet = mappingPlan.skippedDynamicFieldNames,
+            statement = statement,
             propertyNameGenerator = propertyNameGeneratorType,
             implementsInterface = statement.annotations.implements,
             excludeOverrideFields = excludeOverrideFields,
@@ -76,7 +73,8 @@ internal class DataStructResultEmitter(
         columnsToInclude: List<AnnotatedCreateTableStatement.Column>
     ): TypeSpec {
         val properties = columnsToInclude.map { column ->
-            val baseType = SqliteTypeToKotlinCodeConverter.Companion.mapSqlTypeToKotlinType(column.src.dataType)
+            val baseType =
+                SqliteTypeToKotlinCodeConverter.Companion.mapSqlTypeToKotlinType(column.src.dataType)
             val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE] as? String
             val isNullable = column.isNullable()
             val kotlinType = SqliteTypeToKotlinCodeConverter.Companion.determinePropertyType(
@@ -85,7 +83,8 @@ internal class DataStructResultEmitter(
                 isNullable,
                 generatorContext.packageName
             )
-            val propertyName = PropertyNameGeneratorType.LOWER_CAMEL_CASE.convertToPropertyName(column.src.name)
+            val propertyName =
+                PropertyNameGeneratorType.LOWER_CAMEL_CASE.convertToPropertyName(column.src.name)
             PropertySpec.builder(propertyName, kotlinType)
                 .initializer(propertyName)
                 .build()

@@ -85,7 +85,8 @@ internal class ResultMappingHelper(
         val statement: AnnotatedSelectStatement get() = invocation.statement
         val sourceVariableName: String get() = invocation.sourceVar
         val baseIndentLevel: Int get() = invocation.baseIndentLevel
-        val aliasPath: List<String>? get() = aliasPathOverride ?: invocation.field.aliasPath.takeIf { it.isNotEmpty() }
+        val aliasPath: List<String>?
+            get() = aliasPathOverride ?: invocation.field.aliasPath.takeIf { it.isNotEmpty() }
     }
 
     /** Cache-friendly wrapper around JoinedPropertyNameResolver to avoid recomputing per mapping site. */
@@ -217,7 +218,8 @@ internal class ResultMappingHelper(
         }
 
         val fallbackName = candidateNames.firstOrNull().orEmpty().ifBlank { column.fieldName }
-        val resolved = statement.annotations.propertyNameGenerator.convertToPropertyName(fallbackName)
+        val resolved =
+            statement.annotations.propertyNameGenerator.convertToPropertyName(fallbackName)
         return ResolvedJoinedName(resolved, fallbackName.contains(':'))
     }
 
@@ -301,11 +303,11 @@ internal class ResultMappingHelper(
             val candidateFieldName = field.src.fieldName.substringBefore(':')
             val candidateOriginal = field.src.originalColumnName.substringBefore(':')
             val matchesField = candidateFieldName.equals(column.fieldName, ignoreCase = true) ||
-                candidateFieldName.equals(normalizedFieldName, ignoreCase = true)
+                    candidateFieldName.equals(normalizedFieldName, ignoreCase = true)
             val matchesOriginal = column.originalColumnName.isNotBlank() &&
-                candidateOriginal.equals(column.originalColumnName, ignoreCase = true)
+                    candidateOriginal.equals(column.originalColumnName, ignoreCase = true)
             val tableMatches = field.src.tableName.equals(column.tableName, ignoreCase = true) ||
-                field.src.tableName.isBlank() || column.tableName.isBlank()
+                    field.src.tableName.isBlank() || column.tableName.isBlank()
             (matchesField || matchesOriginal) && tableMatches
         }
     }
@@ -674,7 +676,8 @@ internal class ResultMappingHelper(
 
         val collectionBlocks = collectionFields.map { collectionField ->
             val propertyName = getPropertyName(collectionField, propertyNameGenerator)
-            val mapping = statement.mappingPlan.dynamicMappingsByField[collectionField.src.fieldName]
+            val mapping =
+                statement.mappingPlan.dynamicMappingsByField[collectionField.src.fieldName]
 
             if (mapping != null && mapping.columns.isNotEmpty()) {
                 val collectionExpr = generateCollectionMappingCode(
@@ -738,7 +741,8 @@ internal class ResultMappingHelper(
             }
             .map { field ->
                 val propertyName = getPropertyName(field, propertyNameGenerator)
-                val mappingPlanMapping = statement.mappingPlan.dynamicMappingsByField[field.src.fieldName]
+                val mappingPlanMapping =
+                    statement.mappingPlan.dynamicMappingsByField[field.src.fieldName]
                 val mappingCode = if (mappingPlanMapping != null) {
                     generateDynamicFieldMappingCodeFromJoined(
                         DynamicFieldInvocation(
@@ -842,8 +846,11 @@ internal class ResultMappingHelper(
             candidateSets.forEach { fields ->
                 fields.firstOrNull { field ->
                     field.src.tableName.equals(tableAliasRaw, ignoreCase = true) &&
-                        (field.src.originalColumnName.equals(columnNameRaw, ignoreCase = true) ||
-                            field.src.fieldName.equals(columnNameRaw, ignoreCase = true))
+                            (field.src.originalColumnName.equals(
+                                columnNameRaw,
+                                ignoreCase = true
+                            ) ||
+                                    field.src.fieldName.equals(columnNameRaw, ignoreCase = true))
                 }?.let { return it }
             }
         } else {
@@ -854,7 +861,7 @@ internal class ResultMappingHelper(
             candidateSets.forEach { fields ->
                 fields.firstOrNull { field ->
                     field.src.fieldName.equals(collectionKey, ignoreCase = true) ||
-                        field.src.originalColumnName.equals(collectionKey, ignoreCase = true)
+                            field.src.originalColumnName.equals(collectionKey, ignoreCase = true)
                 }?.let { return it }
             }
         }
@@ -1022,7 +1029,8 @@ internal class ResultMappingHelper(
                     generateDynamicFieldMappingCodeFromJoined(nestedRequest, nestedRowsVar)
                 },
             )
-            val constructorArgs = generateConstructorArgumentsFromMapping(mapping, constructorContext)
+            val constructorArgs =
+                generateConstructorArgumentsFromMapping(mapping, constructorContext)
             val constructorExpression = renderConstructorExpression(
                 dynamicField.annotations.propertyType,
                 constructorArgs,
@@ -1094,15 +1102,6 @@ internal class ResultMappingHelper(
             if (metadataNullable) {
                 hasMetadataNullable = true
             }
-        }
-
-        val skipByAnnotation = dynamicField.annotations.notNull == true &&
-            mapping.mappingType != AnnotationConstants.MappingType.COLLECTION
-        if (skipByAnnotation) {
-            return NullGuardMetadata(
-                requiresGuard = false,
-                relevantColumns = relevantColumns,
-            )
         }
 
         val requiresGuard = hasPropertyNullable || hasMetadataNullable
@@ -1199,7 +1198,8 @@ internal class ResultMappingHelper(
             val mapping = context.mapping
             val statement = context.statement
             val baseIndentLevel = context.baseIndentLevel
-            val propertyType = dynamicField.annotations.propertyType ?: "kotlin.collections.List<Any>"
+            val propertyType =
+                dynamicField.annotations.propertyType ?: "kotlin.collections.List<Any>"
             val elementType = extractFirstTypeArgumentOrSelf(propertyType)
             val elementSimpleName = elementType.substringAfterLast('.')
             val propertyNameGenerator = statement.annotations.propertyNameGenerator
@@ -1224,7 +1224,8 @@ internal class ResultMappingHelper(
             val requiresNested = requiresNestedConstruction(elementType)
             val rawGroupBy = mapping.groupByColumn?.takeIf { it.isNotBlank() }
                 ?: dynamicField.annotations.collectionKey?.takeIf { it.isNotBlank() }
-            val groupByProperty = rawGroupBy?.let { propertyNameGenerator.convertToPropertyName(it) }
+            val groupByProperty =
+                rawGroupBy?.let { propertyNameGenerator.convertToPropertyName(it) }
 
             val chainBuilder = CollectionMappingBuilder(builder)
             chainBuilder.emit(rowsVar) {

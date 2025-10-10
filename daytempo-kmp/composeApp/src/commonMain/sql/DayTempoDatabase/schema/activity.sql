@@ -263,13 +263,29 @@ SELECT
     cat.title AS joined__act__category__title,
     cat.icon AS joined__act__category__icon,
 
-    -- Pick ONE program_item per activity
-    -- @@{ field=first_program_item_doc_id, propertyType=kotlin.String, notNull=true }
-    (SELECT pi.doc_id
-     FROM program_item AS pi
-     WHERE pi.activity_doc_id = act.id
-     ORDER BY pi.doc_id                  -- choose the column(s) that define "first" (TODO)
-     LIMIT 1) AS first_program_item_doc_id
+    pi.id AS joined__act__pi__id,
+    pi.doc_id AS joined__act__pi__doc_id,
+    pi.activity_doc_id AS joined__act__pi__activity_doc_id,
+    pi.item_id AS joined__act__pi__item_id,
+    pi.title AS joined__act__pi__title,
+    pi.descr AS joined__act__pi__descr,
+    pi.goal_value AS joined__act__pi__goal_value,
+    pi.goal_daily_initial AS joined__act__pi__goal_daily_initial,
+    pi.goal_direction AS joined__act__pi__goal_direction,
+    pi.goal_invert AS joined__act__pi__goal_invert,
+    pi.goal_at_least AS joined__act__pi__goal_at_least,
+    pi.goal_single AS joined__act__pi__goal_single,
+    pi.goal_hide_editor AS joined__act__pi__goal_hide_editor,
+    pi.week_index AS joined__act__pi__week_index,
+    pi.day_index AS joined__act__pi__day_index,
+    pi.pre_start_text AS joined__act__pi__pre_start_text,
+    pi.post_complete_text AS joined__act__pi__post_complete_text,
+    pi.presentation AS joined__act__pi__presentation,
+    pi.seq_items_json AS joined__act__pi__seq_items_json,
+    pi.required_unlock_code AS joined__act__pi__required_unlock_code,
+    pi.has_unlocked_seq_items AS joined__act__pi__has_unlocked_seq_items,
+    pi.lock_item_display AS joined__act__pi__lock_item_display,
+    pi.input_entries AS joined__act__pi__input_entries
 
   /* @@{ dynamicField=main,
          mappingType=entity,
@@ -285,8 +301,27 @@ SELECT
          aliasPrefix=joined__act__category__
          notNull=true } */
 
+  /* @@{ dynamicField=firstProgramItem,
+         mappingType=perRow,
+         propertyType=ProgramItemRow,
+         sourceTable=pi,
+         aliasPrefix=joined__act__pi__
+         notNull=true } */
+
 FROM activity act
-    LEFT JOIN activity_category cat ON act.category_doc_id = cat.doc_id;
+    LEFT JOIN activity_category cat ON act.category_doc_id = cat.doc_id
+    LEFT JOIN program_item AS pi
+      ON pi.doc_id = (
+        SELECT pi.doc_id
+        FROM program_item AS pi
+        WHERE pi.activity_doc_id = act.doc_id     -- ← matches your FK
+        ORDER BY
+          pi.week_index,
+          pi.day_index,
+          pi.doc_id
+        LIMIT 1
+      );
+
 
 -- Activity with program items
 -- @@{ collectionKey=act__doc_id }

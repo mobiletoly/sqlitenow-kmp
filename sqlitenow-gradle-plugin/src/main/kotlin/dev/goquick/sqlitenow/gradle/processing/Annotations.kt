@@ -325,6 +325,7 @@ data class FieldAnnotationOverrides(
     val mappingType: String? = null,
     val sourceTable: String? = null,
     val collectionKey: String? = null,
+    val suppressProperty: Boolean = false,
 ) {
     companion object {
         fun parse(annotations: Map<String, Any?>): FieldAnnotationOverrides {
@@ -394,6 +395,7 @@ data class FieldAnnotationOverrides(
                 mappingType = mappingType,
                 sourceTable = sourceTable,
                 collectionKey = collectionKey,
+                suppressProperty = false,
             )
         }
     }

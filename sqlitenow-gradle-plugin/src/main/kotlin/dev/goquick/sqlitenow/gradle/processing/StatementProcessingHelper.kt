@@ -11,6 +11,7 @@ import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedStatement
 import dev.goquick.sqlitenow.gradle.sqlite.SqlSingleStatement
+import dev.goquick.sqlitenow.gradle.util.AliasPathUtils
 import java.io.File
 import java.sql.Connection
 import net.sf.jsqlparser.parser.CCJSqlParserUtil
@@ -208,7 +209,6 @@ class StatementProcessingHelper(
         if (annotationResolver != null) {
             // Build a set of already-declared dynamic field names to enforce precedence
             val declaredDynamicNames = dynamicFields.map { it.src.fieldName }.toMutableSet()
-
             // Walk through FROM + JOIN aliases and find views
             stmt.tableAliases.forEach { (alias, tableOrViewName) ->
                 val view = annotationResolver.findView(tableOrViewName)
@@ -221,12 +221,29 @@ class StatementProcessingHelper(
                     }
                     // Collect dynamic fields declared on this view and any underlying views it references
                     val inheritedDynamicFields = collectTransitiveDynamicFields(view, annotationResolver, emptyList())
+                    val aliasPrefix = computeAliasPathForAlias(stmt, alias)
+                    val preparedDynamicFields = inheritedDynamicFields.map { df ->
+                        val mergedAliasPath = mergeAliasPaths(aliasPrefix, df.aliasPath)
+                        df to mergedAliasPath
+                    }
+                    val containerPaths = preparedDynamicFields.asSequence()
+                        .filter { (descriptor, _) -> !descriptor.annotations.mappingType.isNullOrBlank() }
+                        .map { (_, mergedPath) -> mergedPath }
+                        .filter { it.size > 1 }
+                        .toList()
+                    val containerPathsLower = containerPaths.map { AliasPathUtils.lowercase(it) }
                     // For each dynamic field, inject into this SELECT unless overridden
-                    inheritedDynamicFields.forEach { df ->
+                    preparedDynamicFields.forEach { (df, mergedAliasPath) ->
                         if (!declaredDynamicNames.contains(df.name)) {
+                            val mergedLower = AliasPathUtils.lowercase(mergedAliasPath)
+                            val hasContainerAncestor = containerPathsLower.any { containerLower ->
+                                mergedLower.size > containerLower.size &&
+                                    AliasPathUtils.startsWith(mergedLower, containerLower)
+                            }
                             // Adapt view-level mapping to this SELECT context: set sourceTable to the view alias
                             val adapted = df.annotations.copy(
-                                sourceTable = alias
+                                sourceTable = alias,
+                                suppressProperty = df.annotations.suppressProperty || hasContainerAncestor
                             )
                             val dummyFieldSource = SelectStatement.FieldSource(
                                 fieldName = df.name,
@@ -235,11 +252,10 @@ class StatementProcessingHelper(
                                 dataType = "DYNAMIC",
                                 expression = null
                             )
-                            val aliasPrefix = computeAliasPathForAlias(stmt, alias)
                             val dynField = AnnotatedSelectStatement.Field(
                                 src = dummyFieldSource,
                                 annotations = adapted,
-                                aliasPath = mergeAliasPaths(aliasPrefix, df.aliasPath)
+                                aliasPath = mergedAliasPath
                             )
                             dynamicFields.add(dynField)
                             fields.add(dynField)

@@ -1,153 +1,137 @@
 package dev.goquick.sqlitenow.gradle
 
+import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
-import dev.goquick.sqlitenow.gradle.generator.data.DataStructCodeGenerator
+import com.squareup.kotlinpoet.PropertySpec
 import dev.goquick.sqlitenow.gradle.generator.data.DataStructPropertyEmitter
-import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
-import dev.goquick.sqlitenow.gradle.processing.DynamicFieldUtils
 import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationOverrides
 import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
 import dev.goquick.sqlitenow.gradle.processing.SelectFieldCodeGenerator
+import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
 import org.junit.jupiter.api.Test
-import org.mockito.Mockito
-import java.sql.Connection
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ExcludeOverrideFieldsPatternTest {
 
-    private fun makeField(
-        aliasOrLabel: String,
-        originalColumn: String = aliasOrLabel,
+    private fun regularField(
+        label: String,
+        originalColumn: String = label,
         tableAlias: String = "",
         dataType: String = "TEXT",
         propertyNameOverride: String? = null,
     ): AnnotatedSelectStatement.Field {
-        val src = Mockito.mock(SelectStatement.FieldSource::class.java)
-        Mockito.`when`(src.fieldName).thenReturn(aliasOrLabel)
-        Mockito.`when`(src.originalColumnName).thenReturn(originalColumn)
-        Mockito.`when`(src.tableName).thenReturn(tableAlias)
-        Mockito.`when`(src.dataType).thenReturn(dataType)
-
-        val ann = FieldAnnotationOverrides(
+        val source = SelectStatement.FieldSource(
+            fieldName = label,
+            tableName = tableAlias,
+            originalColumnName = originalColumn,
+            dataType = dataType
+        )
+        val overrides = FieldAnnotationOverrides(
             propertyName = propertyNameOverride,
             propertyType = null,
             notNull = null,
-            adapter = false
+            adapter = false,
+            isDynamicField = false,
+            defaultValue = null,
+            aliasPrefix = null,
+            mappingType = null,
+            sourceTable = null,
+            collectionKey = null,
+            suppressProperty = false,
         )
-        return AnnotatedSelectStatement.Field(src = src, annotations = ann)
+        return AnnotatedSelectStatement.Field(src = source, annotations = overrides)
     }
 
-    private fun newGenerator(): DataStructCodeGenerator {
-        val conn = Mockito.mock(Connection::class.java)
-        val tempDir = createTempDir(prefix = "sqlitenow-test-")
-        tempDir.deleteOnExit()
-        return DataStructCodeGenerator(
-            conn = conn,
-            queriesDir = tempDir,
-            packageName = "dev.test",
-            outputDir = tempDir,
-            statementExecutors = mutableListOf(),
-            providedCreateTableStatements = emptyList()
+    private fun buildStatement(fields: List<AnnotatedSelectStatement.Field>): AnnotatedSelectStatement {
+        val selectStatement = SelectStatement(
+            sql = "SELECT stub",
+            fromTable = null,
+            joinTables = emptyList(),
+            fields = fields.filter { !it.annotations.isDynamicField }.map { it.src },
+            namedParameters = emptyList(),
+            namedParametersToColumns = emptyMap(),
+            offsetNamedParam = null,
+            limitNamedParam = null,
+            parameterCastTypes = emptyMap(),
+            tableAliases = emptyMap(),
+            joinConditions = emptyList()
         )
+        val annotations = StatementAnnotationOverrides(
+            name = null,
+            propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
+            queryResult = null,
+            implements = "MyInterface",
+            excludeOverrideFields = null,
+            collectionKey = null
+        )
+        return AnnotatedSelectStatement(
+            name = "TestStatement",
+            src = selectStatement,
+            annotations = annotations,
+            fields = fields
+        )
+    }
+
+    private fun emitProperties(
+        statement: AnnotatedSelectStatement,
+        excludePatterns: Set<String>,
+    ): List<PropertySpec> {
+        val props = mutableListOf<PropertySpec>()
+        val adjustedStatement = statement.copy(
+            annotations = statement.annotations.copy(excludeOverrideFields = excludePatterns)
+        )
+        DataStructPropertyEmitter().emitPropertiesWithInterfaceSupport(
+            statement = adjustedStatement,
+            propertyNameGenerator = adjustedStatement.annotations.propertyNameGenerator,
+            implementsInterface = adjustedStatement.annotations.implements,
+            excludeOverrideFields = excludePatterns,
+            fieldCodeGenerator = SelectFieldCodeGenerator(),
+            constructorBuilder = FunSpec.constructorBuilder(),
+        ) { prop -> props += prop }
+        return props
     }
 
     @Test
     fun wildcardMatchesAliasAndCamelCase() {
-        // Sanity check: our pattern should exclude alias names like schedule__activity_id
-        run {
-            val re = Regex("^schedule__.*$")
-            assertTrue(re.matches("schedule__activity_id"))
-        }
-        val gen = newGenerator()
-        val fieldA = makeField(aliasOrLabel = "schedule__activity_id", originalColumn = "activity_id")
-        val fieldB = makeField(aliasOrLabel = "email")
+        val statement = buildStatement(
+            listOf(
+                regularField(label = "schedule__activity_id", originalColumn = "activity_id"),
+                regularField(label = "email")
+            )
+        )
 
-        val props = mutableListOf<com.squareup.kotlinpoet.PropertySpec>()
-        val ctor = com.squareup.kotlinpoet.FunSpec.constructorBuilder()
-        val fieldCodeGen = SelectFieldCodeGenerator()
-        val emitter = DataStructPropertyEmitter()
+        val properties = emitProperties(statement, excludePatterns = setOf("schedule__*"))
+        val scheduleProp = properties.first { it.name == "scheduleActivityId" }
+        val emailProp = properties.first { it.name == "email" }
 
-        val fields = listOf(fieldA, fieldB)
-        val skipSet = DynamicFieldUtils.computeSkipSet(fields)
-
-        emitter.emitPropertiesWithInterfaceSupport(
-            fields = fields,
-            mappedColumns = emptySet(),
-            dynamicFieldSkipSet = skipSet,
-            propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-            implementsInterface = "MyInterface",
-            excludeOverrideFields = setOf("schedule__*"),
-            fieldCodeGenerator = fieldCodeGen,
-            constructorBuilder = ctor
-        ) { p -> props += p }
-
-        // The property name for "schedule__activity_id" should be generated based on the field name
-        val propA = props.firstOrNull { it.name.contains("schedule") || it.name.contains("activity") }
-            ?: props.firstOrNull { it.name == "scheduleActivityId" }
-            ?: throw NoSuchElementException("Could not find property for schedule__activity_id. Available: ${props.map { it.name }}")
-        val propB = props.first { it.name == "email" }
-
-        // A is excluded by pattern, so no OVERRIDE
-        assertFalse(propA.modifiers.contains(KModifier.OVERRIDE))
-        // B is not excluded, so OVERRIDE is present
-        assertTrue(propB.modifiers.contains(KModifier.OVERRIDE))
+        assertFalse(scheduleProp.modifiers.contains(KModifier.OVERRIDE))
+        assertTrue(emailProp.modifiers.contains(KModifier.OVERRIDE))
     }
 
     @Test
     fun wildcardMatchesGeneratedPropertyName() {
-        val gen = newGenerator()
-        val field = makeField(aliasOrLabel = "activity_id", originalColumn = "activity_id", propertyNameOverride = "joinedScheduleActivityId")
-
-        val props = mutableListOf<com.squareup.kotlinpoet.PropertySpec>()
-        val ctor = com.squareup.kotlinpoet.FunSpec.constructorBuilder()
-        val fieldCodeGen = SelectFieldCodeGenerator()
-        val emitter = DataStructPropertyEmitter()
-
-        val fields = listOf(field)
-        val skipSet = DynamicFieldUtils.computeSkipSet(fields)
-
-        emitter.emitPropertiesWithInterfaceSupport(
-            fields = fields,
-            mappedColumns = emptySet(),
-            dynamicFieldSkipSet = skipSet,
-            propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-            implementsInterface = "MyInterface",
-            excludeOverrideFields = setOf("joinedSchedule*"),
-            fieldCodeGenerator = fieldCodeGen,
-            constructorBuilder = ctor
-        ) { p -> props += p }
-
-        val prop = props.first { it.name == "joinedScheduleActivityId" }
+        val statement = buildStatement(
+            listOf(
+                regularField(
+                    label = "activity_id",
+                    originalColumn = "activity_id",
+                    propertyNameOverride = "joinedScheduleActivityId"
+                )
+            )
+        )
+        val properties = emitProperties(statement, excludePatterns = setOf("joinedSchedule*"))
+        val prop = properties.first { it.name == "joinedScheduleActivityId" }
         assertFalse(prop.modifiers.contains(KModifier.OVERRIDE))
     }
 
     @Test
     fun exactNameExcludes() {
-        val gen = newGenerator()
-        val field = makeField(aliasOrLabel = "id")
-
-        val props = mutableListOf<com.squareup.kotlinpoet.PropertySpec>()
-        val ctor = com.squareup.kotlinpoet.FunSpec.constructorBuilder()
-        val fieldCodeGen = SelectFieldCodeGenerator()
-        val emitter = DataStructPropertyEmitter()
-
-        val fields = listOf(field)
-        val skipSet = DynamicFieldUtils.computeSkipSet(fields)
-
-        emitter.emitPropertiesWithInterfaceSupport(
-            fields = fields,
-            mappedColumns = emptySet(),
-            dynamicFieldSkipSet = skipSet,
-            propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-            implementsInterface = "MyInterface",
-            excludeOverrideFields = setOf("id"),
-            fieldCodeGenerator = fieldCodeGen,
-            constructorBuilder = ctor
-        ) { p -> props += p }
-
-        val prop = props.first { it.name == "id" }
+        val statement = buildStatement(listOf(regularField(label = "id")))
+        val properties = emitProperties(statement, excludePatterns = setOf("id"))
+        val prop = properties.first { it.name == "id" }
         assertFalse(prop.modifiers.contains(KModifier.OVERRIDE))
     }
 }

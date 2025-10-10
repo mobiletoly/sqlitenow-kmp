@@ -2,57 +2,32 @@ package dev.goquick.sqlitenow.gradle
 
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.PropertySpec
-import dev.goquick.sqlitenow.gradle.generator.data.DataStructCodeGenerator
 import dev.goquick.sqlitenow.gradle.generator.data.DataStructPropertyEmitter
-import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
-import dev.goquick.sqlitenow.gradle.processing.DynamicFieldMapper
-import dev.goquick.sqlitenow.gradle.processing.DynamicFieldUtils
 import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationOverrides
 import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
 import dev.goquick.sqlitenow.gradle.processing.SelectFieldCodeGenerator
+import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
 import org.junit.jupiter.api.Test
-import org.mockito.Mockito
-import java.sql.Connection
 import kotlin.test.assertContains
-import kotlin.test.assertTrue
 import kotlin.test.assertFalse
 
 class DynamicFieldMappingExclusionTest {
 
-    private fun newGenerator(): DataStructCodeGenerator {
-        val conn = Mockito.mock(Connection::class.java)
-        val tempDir = createTempDir(prefix = "sqlitenow-test-")
-        tempDir.deleteOnExit()
-        return DataStructCodeGenerator(
-            conn = conn,
-            queriesDir = tempDir,
-            packageName = "dev.test",
-            outputDir = tempDir,
-            statementExecutors = mutableListOf(),
-            providedCreateTableStatements = emptyList()
-        )
-    }
-
-    private fun field(
+    private fun regularField(
         label: String,
         tableName: String,
         originalColumn: String = label,
         dataType: String = "TEXT",
-    ): AnnotatedSelectStatement.Field {
-        val src = Mockito.mock(SelectStatement.FieldSource::class.java)
-        Mockito.`when`(src.fieldName).thenReturn(label)
-        Mockito.`when`(src.tableName).thenReturn(tableName)
-        Mockito.`when`(src.originalColumnName).thenReturn(originalColumn)
-        Mockito.`when`(src.dataType).thenReturn(dataType)
-        val ann = FieldAnnotationOverrides(
-            propertyName = null,
-            propertyType = null,
-            notNull = null,
-            adapter = false
+    ): SelectStatement.FieldSource {
+        return SelectStatement.FieldSource(
+            fieldName = label,
+            tableName = tableName,
+            originalColumnName = originalColumn,
+            dataType = dataType
         )
-        return AnnotatedSelectStatement.Field(src = src, annotations = ann)
     }
 
     private fun dynamicField(
@@ -60,110 +35,138 @@ class DynamicFieldMappingExclusionTest {
         mappingType: String,
         sourceTableAlias: String,
         aliasPrefix: String? = null,
-        propertyType: String = "List<Row>",
+        propertyType: String,
     ): AnnotatedSelectStatement.Field {
-        val src = Mockito.mock(SelectStatement.FieldSource::class.java)
-        Mockito.`when`(src.fieldName).thenReturn(name)
-        Mockito.`when`(src.tableName).thenReturn("")
-        Mockito.`when`(src.originalColumnName).thenReturn(name)
-        Mockito.`when`(src.dataType).thenReturn("DYNAMIC")
-
-        val ann = FieldAnnotationOverrides(
+        val src = SelectStatement.FieldSource(
+            fieldName = name,
+            tableName = "",
+            originalColumnName = name,
+            dataType = "DYNAMIC"
+        )
+        val overrides = FieldAnnotationOverrides(
             propertyName = null,
             propertyType = propertyType,
             notNull = true,
             adapter = false,
             isDynamicField = true,
+            defaultValue = null,
             aliasPrefix = aliasPrefix,
             mappingType = mappingType,
             sourceTable = sourceTableAlias,
-            collectionKey = "joined_package_doc_id"
+            collectionKey = "joined_package_doc_id",
+            suppressProperty = false,
         )
-        return AnnotatedSelectStatement.Field(src = src, annotations = ann)
+        return AnnotatedSelectStatement.Field(src = src, annotations = overrides)
+    }
+
+    private fun buildStatement(
+        regularSources: List<SelectStatement.FieldSource>,
+        dynamicFields: List<AnnotatedSelectStatement.Field>,
+        tableAliases: Map<String, String>
+    ): AnnotatedSelectStatement {
+        val annotatedRegularFields = regularSources.map { source ->
+            AnnotatedSelectStatement.Field(
+                src = source,
+                annotations = FieldAnnotationOverrides.parse(emptyMap())
+            )
+        }
+        val selectStatement = SelectStatement(
+            sql = "SELECT stub",
+            fromTable = tableAliases["person"] ?: tableAliases.values.firstOrNull(),
+            joinTables = tableAliases.keys.filterNot { it == "person" },
+            fields = regularSources,
+            namedParameters = emptyList(),
+            namedParametersToColumns = emptyMap(),
+            offsetNamedParam = null,
+            limitNamedParam = null,
+            parameterCastTypes = emptyMap(),
+            tableAliases = tableAliases,
+            joinConditions = emptyList()
+        )
+        val annotations = StatementAnnotationOverrides(
+            name = null,
+            propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
+            queryResult = null,
+            implements = null,
+            excludeOverrideFields = null,
+            collectionKey = null
+        )
+        return AnnotatedSelectStatement(
+            name = "TestStatement",
+            src = selectStatement,
+            annotations = annotations,
+            fields = annotatedRegularFields + dynamicFields
+        )
+    }
+
+    private fun emitProperties(statement: AnnotatedSelectStatement): List<PropertySpec> {
+        val ctor = FunSpec.constructorBuilder()
+        val props = mutableListOf<PropertySpec>()
+        DataStructPropertyEmitter().emitPropertiesWithInterfaceSupport(
+            statement = statement,
+            propertyNameGenerator = statement.annotations.propertyNameGenerator,
+            implementsInterface = statement.annotations.implements,
+            excludeOverrideFields = statement.annotations.excludeOverrideFields,
+            fieldCodeGenerator = SelectFieldCodeGenerator(),
+            constructorBuilder = ctor,
+        ) { prop -> props += prop }
+        return props
     }
 
     @Test
     fun excludesMappedColumnsFromResult_forCollection() {
-        val gen = newGenerator()
-
-        val fields = listOf(
-            field(label = "id", tableName = "person", originalColumn = "id", dataType = "INTEGER"),
-            field(label = "joined_package_doc_id", tableName = "packages", originalColumn = "doc_id"),
-            field(label = "joined_package_title", tableName = "packages", originalColumn = "title"),
-            dynamicField(
-                name = "packageDocs",
-                mappingType = AnnotationConstants.MAPPING_TYPE_COLLECTION,
-                sourceTableAlias = "pkg",
-                aliasPrefix = "joined_package_",
-                propertyType = "kotlin.collections.List<ActivityPackageQuery.SharedResult.Row>"
-            )
+        val regularSources = listOf(
+            regularField(label = "id", tableName = "person", originalColumn = "id", dataType = "INTEGER"),
+            regularField(label = "joined_package_doc_id", tableName = "packages", originalColumn = "doc_id"),
+            regularField(label = "joined_package_title", tableName = "packages", originalColumn = "title"),
+        )
+        val dynamic = dynamicField(
+            name = "packageDocs",
+            mappingType = AnnotationConstants.MAPPING_TYPE_COLLECTION,
+            sourceTableAlias = "pkg",
+            aliasPrefix = "joined_package_",
+            propertyType = "kotlin.collections.List<ActivityPackageQuery.SharedResult.Row>"
         )
 
-        val tableAliases = mapOf("pkg" to "packages")
-        val mapped = DynamicFieldMapper.getMappedColumns(fields, tableAliases)
-        val skipSet = DynamicFieldUtils.computeSkipSet(fields)
-        assertTrue(mapped.contains("joined_package_doc_id"))
-        assertTrue(mapped.contains("joined_package_title"))
+        val statement = buildStatement(
+            regularSources = regularSources,
+            dynamicFields = listOf(dynamic),
+            tableAliases = mapOf("person" to "person", "pkg" to "packages")
+        )
 
-        val ctor = FunSpec.constructorBuilder()
-        val props = mutableListOf<PropertySpec>()
-        val emitter = DataStructPropertyEmitter()
-        emitter.emitPropertiesWithInterfaceSupport(
-            fields = fields,
-            mappedColumns = mapped,
-            dynamicFieldSkipSet = skipSet,
-            propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-            implementsInterface = null,
-            excludeOverrideFields = null,
-            fieldCodeGenerator = SelectFieldCodeGenerator(),
-            constructorBuilder = ctor
-        ) { p -> props += p }
+        val properties = emitProperties(statement)
+        val names = properties.map { it.name }.toSet()
 
-        val names = props.map { it.name }.toSet()
-        // Dynamic field itself should be present
         assertContains(names, "packageDocs")
-        // Mapped columns should be excluded from main result
         assertFalse(names.contains("joinedPackageDocId"))
         assertFalse(names.contains("joinedPackageTitle"))
-        // Unrelated column remains
         assertContains(names, "id")
     }
 
     @Test
     fun excludesMappedColumns_fromPerRow() {
-        val gen = newGenerator()
-        val fields = listOf(
-            field(label = "id", tableName = "person", originalColumn = "id", dataType = "INTEGER"),
-            field(label = "joined_package_doc_id", tableName = "packages", originalColumn = "doc_id"),
-            field(label = "joined_package_title", tableName = "packages", originalColumn = "title"),
-            dynamicField(
-                name = "packageDoc",
-                mappingType = AnnotationConstants.MAPPING_TYPE_PER_ROW,
-                sourceTableAlias = "pkg",
-                aliasPrefix = "joined_package_",
-                propertyType = "ActivityPackageQuery.SharedResult.Row"
-            )
+        val regularSources = listOf(
+            regularField(label = "id", tableName = "person", originalColumn = "id", dataType = "INTEGER"),
+            regularField(label = "joined_package_doc_id", tableName = "packages", originalColumn = "doc_id"),
+            regularField(label = "joined_package_title", tableName = "packages", originalColumn = "title"),
+        )
+        val dynamic = dynamicField(
+            name = "packageDoc",
+            mappingType = AnnotationConstants.MAPPING_TYPE_PER_ROW,
+            sourceTableAlias = "pkg",
+            aliasPrefix = "joined_package_",
+            propertyType = "ActivityPackageQuery.SharedResult.Row"
         )
 
-        val tableAliases = mapOf("pkg" to "packages")
-        val mapped = DynamicFieldMapper.getMappedColumns(fields, tableAliases)
-        val skipSet = DynamicFieldUtils.computeSkipSet(fields)
+        val statement = buildStatement(
+            regularSources = regularSources,
+            dynamicFields = listOf(dynamic),
+            tableAliases = mapOf("person" to "person", "pkg" to "packages")
+        )
 
-        val ctor = FunSpec.constructorBuilder()
-        val props = mutableListOf<PropertySpec>()
-        val emitter = DataStructPropertyEmitter()
-        emitter.emitPropertiesWithInterfaceSupport(
-            fields = fields,
-            mappedColumns = mapped,
-            dynamicFieldSkipSet = skipSet,
-            propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-            implementsInterface = null,
-            excludeOverrideFields = null,
-            fieldCodeGenerator = SelectFieldCodeGenerator(),
-            constructorBuilder = ctor
-        ) { p -> props += p }
+        val properties = emitProperties(statement)
+        val names = properties.map { it.name }.toSet()
 
-        val names = props.map { it.name }.toSet()
         assertContains(names, "packageDoc")
         assertFalse(names.contains("joinedPackageDocId"))
         assertFalse(names.contains("joinedPackageTitle"))

@@ -63,6 +63,7 @@ CREATE TABLE program_item (
 CREATE INDEX idx_programItem_activityDocId ON program_item(activity_doc_id);
 CREATE INDEX idx_programItem_weekIndex ON program_item(week_index);
 CREATE INDEX idx_programItem_dayIndex ON program_item(day_index);
+CREATE INDEX IF NOT EXISTS idx_programItem_activityWeekDayDocId ON program_item(activity_doc_id, week_index, day_index, doc_id);
 
 CREATE VIEW program_item_to_join AS
 SELECT
