@@ -68,6 +68,7 @@ private val ALLOWED_FIELD_KEYS = setOf(
     AnnotationConstants.MAPPING_TYPE,
     AnnotationConstants.SOURCE_TABLE,
     AnnotationConstants.COLLECTION_KEY,
+    AnnotationConstants.SQL_TYPE_HINT,
     AnnotationConstants.IS_DYNAMIC_FIELD,
 )
 
@@ -323,6 +324,7 @@ data class FieldAnnotationOverrides(
     val mappingType: String? = null,
     val sourceTable: String? = null,
     val collectionKey: String? = null,
+    val sqlTypeHint: String? = null,
     val suppressProperty: Boolean = false,
 ) {
     companion object {
@@ -331,6 +333,7 @@ data class FieldAnnotationOverrides(
 
             val propertyType = annotations[AnnotationConstants.PROPERTY_TYPE] as? String
             val adapterValue = annotations[AnnotationConstants.ADAPTER] as? String
+            val sqlTypeHint = annotations[AnnotationConstants.SQL_TYPE_HINT] as? String
 
             // Validate adapter value if present
             if (annotations.containsKey(AnnotationConstants.ADAPTER)) {
@@ -393,6 +396,7 @@ data class FieldAnnotationOverrides(
                 mappingType = mappingType,
                 sourceTable = sourceTable,
                 collectionKey = collectionKey,
+                sqlTypeHint = sqlTypeHint,
                 suppressProperty = false,
             )
         }

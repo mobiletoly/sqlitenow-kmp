@@ -133,4 +133,43 @@ class AggregateViewInferenceTest {
         )
         assertTrue(annotatedTable.columns.isEmpty())
     }
+
+    @Test
+    fun sqlTypeHintOverridesMetadataType() {
+        val viewSql = """
+            CREATE VIEW item_metrics_view AS
+            SELECT
+                item_type,
+                COUNT(*) AS total_count,
+                GROUP_CONCAT(name, ',') AS grouped_names
+            FROM item
+            GROUP BY item_type;
+        """.trimIndent()
+
+        val createView = CCJSqlParserUtil.parse(viewSql) as CreateView
+        val viewStatement = CreateViewStatement.parse(viewSql, createView, conn)
+        val annotatedView = AnnotatedCreateViewStatement.parse(
+            name = "ItemMetricsView",
+            createViewStatement = viewStatement,
+            topComments = emptyList(),
+            innerComments = listOf("-- @@{ field=grouped_names, sqlTypeHint=TEXT, notNull=true }"),
+        )
+
+        val helper = StatementProcessingHelper(
+            conn = conn,
+            annotationResolver = FieldAnnotationResolver(
+                createTableStatements = emptyList(),
+                createViewStatements = listOf(annotatedView)
+            )
+        )
+
+        val querySql = "SELECT * FROM item_metrics_view;"
+        val queryFile = Files.createTempFile("item_metrics_query_hint", ".sql").toFile()
+        queryFile.writeText(querySql)
+
+        val annotated = helper.processQueryFile(queryFile) as AnnotatedSelectStatement
+        val groupedField = annotated.fields.first { it.src.fieldName.equals("grouped_names", ignoreCase = true) }
+        assertEquals("TEXT", groupedField.src.dataType)
+        assertEquals(false, groupedField.src.isNullable)
+    }
 }

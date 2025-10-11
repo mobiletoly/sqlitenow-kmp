@@ -142,6 +142,7 @@ class FieldAnnotationResolver(
                 annotations.propertyType != null ||
                 annotations.adapter == true ||
                 annotations.notNull != null ||
+                annotations.sqlTypeHint != null ||
                 annotations.isDynamicField ||
                 annotations.defaultValue != null ||
                 annotations.aliasPrefix != null ||
@@ -171,6 +172,7 @@ class FieldAnnotationResolver(
             mappingType = primary.mappingType ?: secondary.mappingType,
             sourceTable = primary.sourceTable ?: secondary.sourceTable,
             collectionKey = primary.collectionKey ?: secondary.collectionKey,
+            sqlTypeHint = primary.sqlTypeHint ?: secondary.sqlTypeHint,
             suppressProperty = primary.suppressProperty || secondary.suppressProperty,
         )
     }

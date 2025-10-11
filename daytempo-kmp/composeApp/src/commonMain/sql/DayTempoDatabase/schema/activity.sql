@@ -191,6 +191,7 @@ CREATE INDEX idx_activity_deleteWhenExpired ON activity(delete_when_expired);
 CREATE INDEX idx_activity_categoryDocId ON activity(category_doc_id);
 CREATE INDEX idx_activity_monthlyGlanceView ON activity(monthly_glance_view);
 CREATE INDEX idx_activity_requiredUnlockCode ON activity(required_unlock_code);
+CREATE INDEX idx_activity_packageEnabledDeletedTitle ON activity(activity_package_doc_id, enabled, deleted, title);
 
 -- Activity with with category and schedule
 CREATE VIEW activity_detailed_view AS

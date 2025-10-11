@@ -40,5 +40,8 @@ object FieldAnnotationMerger {
         if (fieldAnnotations.sourceTable != null) {
             targetAnnotations[AnnotationConstants.SOURCE_TABLE] = fieldAnnotations.sourceTable
         }
+        if (fieldAnnotations.sqlTypeHint != null) {
+            targetAnnotations[AnnotationConstants.SQL_TYPE_HINT] = fieldAnnotations.sqlTypeHint
+        }
     }
 }

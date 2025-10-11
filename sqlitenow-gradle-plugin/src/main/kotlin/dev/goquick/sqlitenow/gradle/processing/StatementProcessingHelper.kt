@@ -14,6 +14,7 @@ import dev.goquick.sqlitenow.gradle.sqlite.SqlSingleStatement
 import dev.goquick.sqlitenow.gradle.util.AliasPathUtils
 import java.io.File
 import java.sql.Connection
+import java.util.Locale
 import net.sf.jsqlparser.parser.CCJSqlParserUtil
 import net.sf.jsqlparser.statement.delete.Delete
 import net.sf.jsqlparser.statement.insert.Insert
@@ -169,12 +170,20 @@ class StatementProcessingHelper(
                 stmt,
                 annotationResolver
             )
+            val columnWithHint = annotations.sqlTypeHint?.takeIf { it.isNotBlank() }?.let { hint ->
+                enrichedColumn.copy(dataType = hint.uppercase(Locale.ROOT))
+            } ?: enrichedColumn
+            val columnWithNullability = when (annotations.notNull) {
+                true -> columnWithHint.copy(isNullable = false)
+                false -> columnWithHint.copy(isNullable = true)
+                null -> columnWithHint
+            }
             val aliasPath = column.tableName.takeIf { it.isNotBlank() }?.let { alias ->
                 computeAliasPathForAlias(stmt, alias)
             } ?: emptyList()
             fields.add(
                 AnnotatedSelectStatement.Field(
-                    src = enrichedColumn,
+                    src = columnWithNullability,
                     annotations = annotations,
                     aliasPath = aliasPath
                 )

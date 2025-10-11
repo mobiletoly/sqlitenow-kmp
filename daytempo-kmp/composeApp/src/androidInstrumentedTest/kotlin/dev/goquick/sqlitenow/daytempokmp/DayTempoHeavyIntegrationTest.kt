@@ -135,21 +135,21 @@ class DayTempoHeavyIntegrationTest {
 
         assertEquals("Unexpected daily log count", fixture.dailyLogExpectations.size, logs.size)
 
-        val logsByDocId = logs.associateBy { it.main.docId }
+        val logsByDocId = logs.associateBy { it.docId }
         fixture.dailyLogExpectations.forEach { expectedLog ->
             val log = logsByDocId[expectedLog.docId] ?: error("Missing daily log ${expectedLog.docId}")
 
-            assertEquals("Activity doc mismatch", expectedLog.activityDocId, log.activity.main.docId)
-            assertEquals("Program item doc mismatch", expectedLog.programItemDocId, log.programItem.docId)
-            assertEquals(expectedLog.numericValue0, log.main.numericValue00)
-            assertEquals(expectedLog.notes, log.main.notes)
+            assertEquals("Activity doc mismatch", expectedLog.activityDocId, log.activity.docId)
+            assertEquals("Program item doc mismatch", expectedLog.programItemDocId, log.activity.firstProgramItem.docId)
+            assertEquals(expectedLog.numericValue0, log.numericValues[0])
+            assertEquals(expectedLog.notes, log.notes)
 
-            val row = log.activity.main
-            assertEquals("Schedule startAt mismatch", expectedLog.scheduleStartAt, row.schedStartAt)
-            assertEquals("Schedule repeat mismatch", ActivityScheduleRepeat.WEEK_DAYS, row.schedRepeat)
+            val row = log.activity
+            assertEquals("Schedule startAt mismatch", expectedLog.scheduleStartAt, row.schedule.startAt)
+            assertEquals("Schedule repeat mismatch", ActivityScheduleRepeat.WEEK_DAYS, row.schedule.repeat)
             assertTrue(
                 "Schedule points mismatch",
-                row.schedTimePoints.containsAll(expectedLog.scheduleTimePoints) &&
+                row.schedule.timePoints.containsAll(expectedLog.scheduleTimePoints) &&
                     expectedLog.scheduleTimePoints.containsAll(expectedLog.scheduleTimePoints)
             )
         }
@@ -174,7 +174,7 @@ class DayTempoHeavyIntegrationTest {
         val expectedLogs = fixture.dailyLogExpectations.filter { it.activityDocId in includedActivities }
         assertEquals(expectedLogs.size, results.size)
 
-        val resultDocIds = results.map { it.main.docId }.toSet()
+        val resultDocIds = results.map { it.docId }.toSet()
         assertEquals(expectedLogs.map { it.docId }.toSet(), resultDocIds)
 
         val emptyResults = database.dailyLog

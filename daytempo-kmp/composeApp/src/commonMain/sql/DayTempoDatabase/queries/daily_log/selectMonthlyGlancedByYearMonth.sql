@@ -1,4 +1,4 @@
--- @@{ queryResult=DailyLogDetailedRow }
+-- @@{ queryResult=DailyLogDetailedRow, mapTo=com.pluralfusion.daytempo.domain.model.DailyLogDoc }
 WITH range AS (
   SELECT
     (julianday(printf('%04d-%02d-01', CAST(:year AS INTEGER), CAST(:month AS INTEGER))) - julianday('1970-01-01')) AS start_days,

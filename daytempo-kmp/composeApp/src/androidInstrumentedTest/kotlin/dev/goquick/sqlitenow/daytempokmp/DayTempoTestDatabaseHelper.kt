@@ -10,6 +10,7 @@ import com.pluralfusion.daytempo.domain.model.ActivityProgramType
 import com.pluralfusion.daytempo.domain.model.ActivityReportingType
 import com.pluralfusion.daytempo.domain.model.ActivityScheduleRepeat
 import com.pluralfusion.daytempo.domain.model.ActivityScheduleTimeRange
+import com.pluralfusion.daytempo.domain.model.ActivityStatus
 import com.pluralfusion.daytempo.domain.model.AlarmHourMinute
 import com.pluralfusion.daytempo.domain.model.Gender
 import com.pluralfusion.daytempo.domain.model.GoalDirection
@@ -17,6 +18,7 @@ import com.pluralfusion.daytempo.domain.model.HasStringValue
 import com.pluralfusion.daytempo.domain.model.MeasureSystem
 import com.pluralfusion.daytempo.domain.model.ActivityPackageWithActivitiesDoc
 import com.pluralfusion.daytempo.domain.model.ActivityWithProgramItemsDoc
+import com.pluralfusion.daytempo.domain.model.DailyLogDoc
 import com.pluralfusion.daytempo.domain.model.ProgramItemLockItemDisplay
 import com.pluralfusion.daytempo.domain.model.ProgramItemPresentation
 import com.pluralfusion.daytempo.domain.model.RegisteredValueType
@@ -82,6 +84,10 @@ object DayTempoTestDatabaseHelper {
                 promoScr2ToSqlValue = { it?.let { Json.encodeToString(it) } },
                 promoScr3ToSqlValue = { it?.let { Json.encodeToString(it) } },
                 activityBundleWithActivitiesRowMapper = ActivityBundleWithActivitiesDoc::from,
+                sqlValueToTitles = { it.columnWordsSplitter(separator = "\t") },
+                sqlValueToStatuses = { it.columnWordsSplitter(separator = "\t")
+                    .mapTo(LinkedHashSet()) { ActivityStatus.valueOf(it) }
+                },
             ),
             activityAdapters = DayTempoDatabase.ActivityAdapters(
                 iconToSqlValue = { Json.encodeToString(it) },
@@ -119,16 +125,20 @@ object DayTempoTestDatabaseHelper {
             dailyLogAdapters = DayTempoDatabase.DailyLogAdapters(
                 sqlValueToDate = { LocalDate.fromEpochDays(it) },
                 dateToSqlValue = { it.toEpochDays() },
+                dailyLogDetailedRowMapper = { DailyLogDoc.from(it) },
             )
         )
     }
 }
 
-private fun String.columnWordsSplitter(): Set<String> =
-    if (isBlank()) emptySet() else split("~").map(String::trim).filter(String::isNotEmpty).toSet()
+private fun String.columnWordsSplitter(separator: String = "~"): Set<String> =
+    if (isBlank()) emptySet() else split(separator)
+        .map(String::trim)
+        .filter(String::isNotEmpty)
+        .toCollection(LinkedHashSet())
 
-private fun Collection<String>.columnWordsJoiner(): String =
-    joinToString(separator = "~")
+private fun Collection<String>.columnWordsJoiner(separator: String = "~"): String =
+    joinToString(separator)
 
 @OptIn(ExperimentalTime::class)
 private fun LocalDateTime.toDayTempoEpochSeconds(): Long =

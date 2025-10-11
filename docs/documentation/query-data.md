@@ -181,6 +181,7 @@ You can override any schema-level annotation in a query (including property name
 nullability etc). It means that **SELECT** annotations have higher priorities than annotations
 in **CREATE TABLE**.
 
+
 ### Reusing Result Classes
 
 You can point multiple queries at the same generated data class by giving them the same
@@ -232,6 +233,35 @@ val personList: List<PersonQuery.SelectAll.Result> = db.person
     .selectAll(PersonQuery.SelectAll.Params(ids = listOf(1L, 2L, 3L)))
     .asList()
 ```
+
+
+### Helping the Generator with `sqlTypeHint`
+
+SQLite exposes reliable column metadata only for fields that map directly to table columns. When
+a SELECT result comes from an expression—such as `CAST(...)`, a `GROUP_CONCAT`, or a nested view
+column—the JDBC driver often reports the type as `NUMERIC` and marks it nullable even if the SQL
+clearly returns text or a non-null value. The generator uses that metadata to choose statement
+getters (`getLong`, `getText`, …) and to decide whether adapters receive nullable values. To keep
+the emitted code aligned with your SQL, you can override the inferred type with `sqlTypeHint` and,
+optionally, `notNull`:
+
+```sql
+SELECT
+    -- @@{ field=address_summary, sqlTypeHint=TEXT, notNull=true,
+    --     propertyType=kotlin.String }
+    (
+        SELECT GROUP_CONCAT(pa.street || ' ' || pa.city, ', ')
+        FROM person_address pa
+        WHERE pa.person_id = p.id
+    ) AS address_summary
+FROM Person p;
+```
+
+This forces the generator to treat `address_summary` as a non-null TEXT column, producing
+`statement.getText(...)` and a `(String) -> String` adapter instead of the default
+`statement.getLong(...)`/`String?`. Use `sqlTypeHint` whenever computed columns (or view fields
+through `SELECT *`) show up with the wrong getter or nullability in the generated sources.
+
 
 ## Next Steps
 

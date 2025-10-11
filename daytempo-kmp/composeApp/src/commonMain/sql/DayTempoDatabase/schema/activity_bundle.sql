@@ -111,10 +111,9 @@ SELECT
            notNull=true } */
 
 FROM activity_bundle_to_join bndl
-    LEFT JOIN provider_to_join prov ON bndl.bundle__provider_doc_id = prov.provider__doc_id
     LEFT JOIN activity_package_to_join pkg ON bndl.bundle__doc_id = pkg.package__activity_bundle_doc_id
+    LEFT JOIN provider_to_join prov ON bndl.bundle__provider_doc_id = prov.provider__doc_id
     LEFT JOIN activity_category cat ON pkg.package__category_doc_id = cat.doc_id;
-
 
 -- Detailed activity bundle with packages
 -- @@{ collectionKey=bundle__doc_id }
@@ -123,23 +122,23 @@ SELECT
     bndl.*,
     pkg.*
 
-    /* @@{ dynamicField=detailedBundle,
+    /* @@{ dynamicField=bndl,
            mappingType=entity,
            propertyType=ActivityBundleDetailedRow,
            sourceTable=bndl,
            aliasPrefix=bundle__
            notNull=true } */
 
-    /* @@{ dynamicField=activityPackages,
+    /* @@{ dynamicField=pkgs,
            mappingType=collection,
-           propertyType=List<ActivityPackageRow>,
+           propertyType=List<ActivityPackageDetailedRow>,
            sourceTable=pkg,
            collectionKey=package__doc_id,
            aliasPrefix=package__
            notNull=true } */
 
 FROM activity_bundle_detailed_view bndl
-    LEFT JOIN activity_package_to_join pkg ON bndl.bundle__doc_id = pkg.package__activity_bundle_doc_id;
+    LEFT JOIN activity_package_detailed_view pkg ON bndl.bundle__doc_id = pkg.package__activity_bundle_doc_id;
 
 
 -- Activity bundle with detailed packages
@@ -149,14 +148,14 @@ SELECT
     bndl.*,
     pkg.*
 
-    /* @@{ dynamicField=detailedBundle,
+    /* @@{ dynamicField=bndl,
            mappingType=entity,
            propertyType=ActivityBundleDetailedRow,
            sourceTable=bndl,
            aliasPrefix=bundle__
            notNull=true } */
 
-    /* @@{ dynamicField=activityPackages,
+    /* @@{ dynamicField=pkgs,
            mappingType=collection,
            propertyType=List<ActivityPackageWithActivitiesRow>,
            sourceTable=pkg,

@@ -21,6 +21,7 @@ import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlin.compareTo
 import kotlin.text.category
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
@@ -34,10 +35,8 @@ typealias ActivityBundleWithPackagesDoc = ActivityBundleWithPackagesRow
 typealias ActivityCategoryDoc = ActivityCategoryRow
 typealias ActivityPackageDoc = ActivityPackageRow
 //typealias ActivityScheduleDoc = ActivityScheduleRow
-typealias DailyLogDoc = DailyLogRow
 typealias DailyLogDetailedDoc = DailyLogDetailedRow
 typealias ProviderDoc = ProviderRow
-typealias ProgramItemDoc = ProgramItemRow
 
 const val ACTIVITY_PRIORITY_LOW = 0
 const val ACTIVITY_PRIORITY_NORMAL = 1
@@ -76,7 +75,7 @@ data class ActivityDoc(
             groupDocId = row.main.groupDocId,
             activityBundleDocId = row.main.activityBundleDocId,
             activityPackageDocId = row.main.activityPackageDocId,
-            firstProgramItem = row.firstProgramItem,
+            firstProgramItem = ProgramItemDoc.from(row.firstProgramItem),
             deleted = row.main.deleted,
             enabled = row.main.enabled,
             userDefined = row.main.userDefined,
@@ -579,10 +578,10 @@ class ActivityBundleWithActivitiesDoc(
 ) {
     companion object {
         fun from(row: ActivityBundleWithActivitiesRow) = ActivityBundleWithActivitiesDoc(
-            main = row.detailedBundle,
-            activityPackages = row.activityPackages.map { ActivityPackageWithActivitiesDoc.from(it) },
-            provider = row.detailedBundle.provider,
-            category = row.detailedBundle.category,
+            main = row.bndl,
+            activityPackages = row.pkgs.map { ActivityPackageWithActivitiesDoc.from(it) },
+            provider = row.bndl.provider,
+            category = row.bndl.category,
         )
     }
 }
@@ -594,34 +593,190 @@ data class ActivityWithProgramItemsDoc(
     companion object {
         fun from(row: ActivityWithProgramItemsRow) = ActivityWithProgramItemsDoc(
             activity = ActivityDoc.from(row.main),
-            programItems = row.programItems,
+            programItems = row.programItems.map { ProgramItemDoc.from(it) },
         )
     }
 }
 
-@OptIn(ExperimentalUuidApi::class)
-fun ProgramItemRow.Companion.empty() = ProgramItemDoc(
-    id = Uuid.NIL,
-    docId = "",
-    activityDocId = "",
-    itemId = "",
-    title = "",
-    descr = null,
-    goalValue = 1,
-    goalDailyInitial = 0,
-    goalDirection = GoalDirection.UP,
-    goalInvert = false,
-    goalAtLeast = true,
-    goalSingle = false,
-    goalHideEditor = false,
-    weekIndex = 0,
-    dayIndex = 0,
-    preStartText = "",
-    postCompleteText = "",
-    presentation = ProgramItemPresentation.DEFAULT,
-    seqItemsJson = "[]",
-    requiredUnlockCode = null,
-    hasUnlockedSeqItems = false,
-    lockItemDisplay = ProgramItemLockItemDisplay.DEFAULT,
-    inputEntries = emptyList(),
+data class DailyLogDoc(
+    val docId: String,
+    val parentDailyLogDocId: String?,
+    val groupDocId: String?,
+    val activity: ActivityDoc,
+    val date: LocalDate,
+    val appliedWeekInd: Int,
+    val appliedDayInd: Int,
+    val counter: Int,
+    val addedManually: Boolean,
+    val confirmed: Boolean,
+    val notes: String?,
+    val numericValues: List<Double>,
+    val stringValues: List<String>,
+) {
+    fun hasGoal() = this.activity.programType != ActivityProgramType.MARKER && this.activity.firstProgramItem.goal.value != -1
+
+    companion object {
+        fun from(row: DailyLogDetailedRow) = DailyLogDoc(
+            docId = row.main.docId,
+            parentDailyLogDocId = row.main.parentDailyLogDocId,
+            groupDocId = row.main.groupDocId,
+            activity = ActivityDoc.from(row.activity),
+            date = row.main.date,
+            appliedWeekInd = row.main.appliedWeekInd,
+            appliedDayInd = row.main.appliedDayInd,
+            counter = row.main.counter,
+            addedManually = row.main.addedManually,
+            confirmed = row.main.confirmed,
+            notes = row.main.notes,
+            numericValues = buildList {
+                val entries = row.programItem.inputEntries
+                if (entries.isNotEmpty()) add(row.main.numericValue00 ?: 0.0)
+                if (entries.size > 1) add(row.main.numericValue01 ?: 0.0)
+                if (entries.size > 2) add(row.main.numericValue02 ?: 0.0)
+                if (entries.size > 3) add(row.main.numericValue03 ?: 0.0)
+                if (entries.size > 4) add(row.main.numericValue04 ?: 0.0)
+                if (entries.size > 5) add(row.main.numericValue05 ?: 0.0)
+                if (entries.size > 6) add(row.main.numericValue06 ?: 0.0)
+                if (entries.size > 7) add(row.main.numericValue07 ?: 0.0)
+                if (entries.size > 8) add(row.main.numericValue08 ?: 0.0)
+                if (entries.size > 9) add(row.main.numericValue09 ?: 0.0)
+            },
+            stringValues = buildList {
+                val entries = row.programItem.inputEntries
+                if (entries.isNotEmpty()) add(row.main.stringValue00 ?: "")
+                if (entries.size > 1) add(row.main.stringValue01 ?: "")
+                if (entries.size > 2) add(row.main.stringValue02 ?: "")
+                if (entries.size > 3) add(row.main.stringValue03 ?: "")
+                if (entries.size > 4) add(row.main.stringValue04 ?: "")
+                if (entries.size > 5) add(row.main.stringValue05 ?: "")
+                if (entries.size > 6) add(row.main.stringValue06 ?: "")
+                if (entries.size > 7) add(row.main.stringValue07 ?: "")
+                if (entries.size > 8) add(row.main.stringValue08 ?: "")
+                if (entries.size > 9) add(row.main.stringValue09 ?: "")
+            },
+        )
+    }
+}
+
+data class ProgramItemDoc(
+    val docId: String,
+    val activityDocId: String,
+    val itemId: String,
+    val title: String,
+    val descr: String?,
+    val goal: ProgramItemGoal,
+    val weekIndex: Int,
+    val dayIndex: Int,
+    val preStartText: String?,
+    val postCompleteText: String?,
+    val presentation: ProgramItemPresentation,
+    val seqItemsJson: String,
+    val requiredUnlockCode: String?,
+    val hasUnlockedSeqItems: Boolean,
+    val lockItemDisplay: ProgramItemLockItemDisplay,
+    val inputEntries: List<ProgramItemInputEntry>,
+) {
+    companion object {
+        fun from(row: ProgramItemRow) = ProgramItemDoc(
+            docId = row.docId,
+            activityDocId = row.activityDocId,
+            itemId = row.itemId,
+            title = row.title ?: "",
+            descr = row.descr,
+            goal = ProgramItemGoal(
+                value = row.goalValue,
+                dailyInitial = row.goalDailyInitial,
+                direction = row.goalDirection,
+                invert = row.goalInvert,
+                atLeast = row.goalAtLeast,
+                single = row.goalSingle,
+                hideEditor = row.goalHideEditor,
+            ),
+            weekIndex = row.weekIndex,
+            dayIndex = row.dayIndex,
+            preStartText = row.preStartText,
+            postCompleteText = row.postCompleteText,
+            presentation = row.presentation ?: ProgramItemPresentation.DEFAULT,
+            seqItemsJson = row.seqItemsJson,
+            requiredUnlockCode = row.requiredUnlockCode,
+            hasUnlockedSeqItems = row.hasUnlockedSeqItems,
+            lockItemDisplay = row.lockItemDisplay,
+            inputEntries = row.inputEntries,
+        )
+
+        fun empty() = ProgramItemDoc(
+            docId = "",
+            activityDocId = "",
+            itemId = "",
+            title = "",
+            descr = null,
+            goal = ProgramItemGoal(
+                value = 1,
+                dailyInitial = 0,
+                direction = GoalDirection.UP,
+                invert = false,
+                atLeast = true,
+                single = false,
+                hideEditor = false,
+            ),
+            weekIndex = 0,
+            dayIndex = 0,
+            preStartText = "",
+            postCompleteText = "",
+            presentation = ProgramItemPresentation.DEFAULT,
+            seqItemsJson = "[]",
+            requiredUnlockCode = null,
+            hasUnlockedSeqItems = false,
+            lockItemDisplay = ProgramItemLockItemDisplay.DEFAULT,
+            inputEntries = emptyList(),
+        )
+
+    }
+}
+
+data class ProgramItemGoal(
+    val value: Int,
+    val dailyInitial: Int,
+    val direction: GoalDirection,
+    val invert: Boolean,
+    val atLeast: Boolean,
+    val single: Boolean,
+    val hideEditor: Boolean,
+) {
+    sealed class Target {
+        class MustBe(val counter: Int) : Target()
+        class NoMoreThan(val counter: Int) : Target()
+        class AtLeast(val counter: Int) : Target()
+        data object MustComplete : Target()
+        data object MustNotComplete : Target()
+    }
+
+    fun target(): Target {
+        return when {
+            invert && value == 0 -> Target.MustBe(0)
+            invert && single -> Target.MustNotComplete
+            invert -> Target.NoMoreThan(value)
+            atLeast && single -> Target.MustComplete
+            atLeast -> Target.AtLeast(value)
+            else -> Target.MustBe(value)
+        }
+    }
+
+    enum class Status(val value: String) {
+        @SerialName("PENDING")
+        PENDING("pending"),
+
+        @SerialName("COMPLETED")
+        COMPLETED("completed"),
+
+        @SerialName("FAILED")
+        FAILED("failed");
+    }
+}
+
+data class PackageActivitySummary(
+    val count: Int,
+    val titles: Set<String>,
+    val statuses: Set<ActivityStatus>,
+    val areAllGroupDocIdsSame: Boolean,
 )

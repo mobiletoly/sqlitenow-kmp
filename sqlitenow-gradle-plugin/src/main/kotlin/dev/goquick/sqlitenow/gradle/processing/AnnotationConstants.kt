@@ -13,6 +13,7 @@ object AnnotationConstants {
     const val ALIAS_PREFIX = "aliasPrefix"
     const val MAPPING_TYPE = "mappingType"
     const val SOURCE_TABLE = "sourceTable"
+    const val SQL_TYPE_HINT = "sqlTypeHint"
 
     // Statement-level annotations
     const val NAME = "name"
