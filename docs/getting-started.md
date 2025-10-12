@@ -258,18 +258,6 @@ db.person
     )
 ```
 
-The statement runs as soon as you call `add(...)`. Prefer a DSL? Each generated `Params` class ships with a builder:
-
-```kotlin
-db.person.add {
-    firstName = "John"
-    lastName = "Doe"
-    email = "john.doe@example.com"
-    phone = "123-456-7890"
-    birthDate = LocalDate(1990, 1, 1)
-}
-```
-
 ### Reactive Queries
 
 SQLiteNow supports reactive queries with Flow:

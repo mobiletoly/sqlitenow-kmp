@@ -145,30 +145,19 @@ db.person.deleteByIds(
 )
 ```
 
-Prefer a DSL over `Params` constructors? Every generated `Params` class includes a builder:
+Returning statements expose `list`, `one`, and `oneOrNull` helpers:
 
 ```kotlin
-db.person.add {
-    firstName = "John"
-    lastName = "Doe"
-    email = "john@example.com"
-    phone = "+1234567890"
-    birthDate = LocalDate(1990, 1, 1)
-}
-```
+val insertParams = PersonQuery.AddReturning.Params(
+    firstName = "Alice",
+    lastName = "Smith",
+    email = "alice@example.com",
+    phone = null,
+    birthDate = LocalDate(1992, 5, 15),
+)
 
-Missing required properties trigger an error at runtime, so the builder remains safe while trimming boilerplate.
-
-Returning statements expose list/one/oneOrNull helpers:
-
-```kotlin
-val inserted = db.person.add.one {
-    firstName = "Alice"
-    lastName = "Smith"
-    email = "alice@example.com"
-}
-
-val allRows = db.person.add.list(insertParams)
+val inserted = db.person.add.one(insertParams)
+val allRows = db.person.add(insertParams)       // operator fun invoke -> List
 val maybeRow = db.person.add.oneOrNull(insertParams)
 ```
 

@@ -943,9 +943,8 @@ class DatabaseCodeGenerator(
         val paramsType = ClassName(packageName, queryNamespaceName(namespace))
             .nestedClass(className)
             .nestedClass("Params")
-        val builderType = paramsType.nestedClass("Builder")
         val propertyType = ClassName("dev.goquick.sqlitenow.core", "ExecuteStatement")
-            .parameterizedBy(paramsType, builderType)
+            .parameterizedBy(paramsType)
 
         val initializer = buildExecuteStatementInitializer(
             statement = statement,
@@ -993,12 +992,7 @@ class DatabaseCodeGenerator(
                 }
                 b.line("ref.notifyTablesChanged($capitalizedNamespace.$className.affectedTables)")
             }
-            b.line("},")
-            b.line("buildFromBuilder = { builder ->")
-            b.indent {
-                b.line("$capitalizedNamespace.$className.Params.Builder().apply(builder).build()")
-            }
-            b.line("},")
+            b.line("}")
         }
         b.line(")")
         return b.build()
@@ -1053,11 +1047,10 @@ class DatabaseCodeGenerator(
         val paramsType = ClassName(packageName, queryNamespaceName(namespace))
             .nestedClass(className)
             .nestedClass("Params")
-        val builderType = paramsType.nestedClass("Builder")
         val resultType = SharedResultTypeUtils.createResultTypeNameForExecute(packageName, namespace, statement)
 
         val propertyType = ClassName("dev.goquick.sqlitenow.core", "ExecuteReturningStatement")
-            .parameterizedBy(paramsType, resultType, builderType)
+            .parameterizedBy(paramsType, resultType)
 
         val initializer = buildExecuteReturningInitializer(
             statement = statement,
@@ -1145,12 +1138,7 @@ class DatabaseCodeGenerator(
                 b.line("ref.notifyTablesChanged($capitalizedNamespace.$className.affectedTables)")
                 b.line("result")
             }
-            b.line("},")
-            b.line("buildFromBuilder = { builder ->")
-            b.indent {
-                b.line("$capitalizedNamespace.$className.Params.Builder().apply(builder).build()")
-            }
-            b.line("},")
+            b.line("}")
         }
         b.line(")")
         return b.build()

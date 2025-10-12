@@ -536,8 +536,8 @@ class DatabaseCodeGeneratorTest {
             "Should have addWithParams property"
         )
         assertTrue(
-            fileContent.contains("ExecuteStatement<PersonQuery.AddWithParams.Params, PersonQuery.AddWithParams.Params.Builder>"),
-            "Should expose ExecuteStatement with builder type"
+            fileContent.contains("ExecuteStatement<PersonQuery.AddWithParams.Params>"),
+            "Should expose ExecuteStatement with params type"
         )
         assertTrue(
             fileContent.contains("val updateById:"),
@@ -554,16 +554,12 @@ class DatabaseCodeGeneratorTest {
             "Should instantiate ExecuteStatement wrapper"
         )
         assertTrue(
-            fileContent.contains("buildFromBuilder = { builder ->"),
-            "Should expose builder-based parameter construction"
-        )
-        assertTrue(
             fileContent.contains("ExecuteReturningStatement("),
             "Should instantiate ExecuteReturningStatement wrapper"
         )
         assertTrue(
-            fileContent.contains("ExecuteReturningStatement<PersonQuery.AddReturning.Params, PersonAddReturningResult, PersonQuery.AddReturning.Params.Builder>"),
-            "Should expose ExecuteReturningStatement with builder type"
+            fileContent.contains("ExecuteReturningStatement<PersonQuery.AddReturning.Params, PersonAddReturningResult>"),
+            "Should expose ExecuteReturningStatement with params and result types"
         )
 
         // Should have table change notifications

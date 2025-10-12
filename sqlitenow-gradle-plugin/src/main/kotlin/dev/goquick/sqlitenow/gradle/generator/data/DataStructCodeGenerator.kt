@@ -2,7 +2,6 @@ package dev.goquick.sqlitenow.gradle.generator.data
 
 import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
-import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
@@ -317,70 +316,7 @@ open class DataStructCodeGenerator(
             properties = paramCollectedProps
         )
 
-        val builderClass = generateParameterBuilder(
-            statement = statement,
-            descriptors = descriptors
-        )
-
-        paramClassBuilder.addType(builderClass)
-
         return paramClassBuilder.build()
-    }
-
-    /**
-     * Generates a Params.Builder class that supports DSL-style parameter construction.
-     */
-    private fun generateParameterBuilder(
-        statement: AnnotatedStatement,
-        descriptors: List<ParameterDescriptor>,
-    ): TypeSpec {
-        val builderClass = TypeSpec.classBuilder("Builder")
-            .addKdoc("Builder for ${statement.name} query parameters.")
-
-        descriptors.forEach { descriptor ->
-            val builderPropertyType = if (descriptor.isNullable) {
-                descriptor.type
-            } else {
-                descriptor.type.copy(nullable = true)
-            }
-
-            val propertyBuilder = PropertySpec.builder(descriptor.propertyName, builderPropertyType)
-                .mutable(true)
-                .initializer("null")
-
-            builderClass.addProperty(propertyBuilder.build())
-        }
-
-        val buildFunction = FunSpec.builder("build")
-            .returns(ClassName("", "Params"))
-            .addKdoc("Builds an instance of Params.")
-
-        val buildBody = CodeBlock.builder()
-            .add("return Params(\n")
-            .indent()
-
-        descriptors.forEachIndexed { index, descriptor ->
-            val propertyName = descriptor.propertyName
-            if (descriptor.isNullable) {
-                buildBody.add("%L = %L", propertyName, propertyName)
-            } else {
-                val message = "Parameter '$propertyName' must be provided."
-                buildBody.add("%L = %L ?: error(%S)", propertyName, propertyName, message)
-            }
-            if (index < descriptors.lastIndex) {
-                buildBody.add(",\n")
-            } else {
-                buildBody.add("\n")
-            }
-        }
-
-        buildBody.unindent()
-        buildBody.add(")\n")
-        buildFunction.addCode(buildBody.build())
-
-        builderClass.addFunction(buildFunction.build())
-
-        return builderClass.build()
     }
 
     /**
