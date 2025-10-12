@@ -26,7 +26,6 @@ import com.pluralfusion.daytempo.domain.model.TemperatureSystem
 import dev.goquick.sqlitenow.core.util.EnumByValueLookup
 import dev.goquick.sqlitenow.daytempokmp.db.DayTempoDatabase
 import dev.goquick.sqlitenow.daytempokmp.db.VersionBasedDatabaseMigrations
-import kotlinx.datetime.Instant
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
@@ -36,6 +35,7 @@ import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.json.Json
 import kotlin.collections.LinkedHashSet
 import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 

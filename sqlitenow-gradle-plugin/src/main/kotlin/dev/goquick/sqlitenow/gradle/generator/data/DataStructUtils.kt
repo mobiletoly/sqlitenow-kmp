@@ -106,7 +106,7 @@ internal object DataStructUtils {
             is ClassName -> if (type.packageName == "kotlin" && PRIMITIVE_ARRAY_SIMPLE_NAMES.contains(type.simpleName)) ArrayKind.PRIMITIVE else ArrayKind.NONE
             is ParameterizedTypeName -> {
                 val raw = type.rawType
-                if (raw is ClassName && raw.packageName == "kotlin" && raw.simpleName == "Array") ArrayKind.GENERIC else ArrayKind.NONE
+                if (raw.packageName == "kotlin" && raw.simpleName == "Array") ArrayKind.GENERIC else ArrayKind.NONE
             }
             else -> ArrayKind.NONE
         }

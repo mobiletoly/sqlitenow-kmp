@@ -344,7 +344,7 @@ internal class ResultMappingHelper(
     }
 
     fun extractFirstTypeArgumentOrSelf(typeName: String): String {
-        return GenericTypeParser.Companion.extractFirstTypeArgument(typeName) ?: typeName
+        return GenericTypeParser.Companion.extractFirstTypeArgument(typeName)
     }
 
     /** Render constructor arguments for simple dynamic mappings that do not require nested DTO rebuilding. */
@@ -500,7 +500,7 @@ internal class ResultMappingHelper(
                 }
 
             val resolvedNameFromSource = mapping.sourceTableAlias
-                ?.takeIf { it.isNotBlank() }
+                .takeIf { it.isNotBlank() }
                 ?.let { alias ->
                     findOriginalColumnPropertyName(strippedBaseName, alias, statement)
                 }
@@ -958,7 +958,7 @@ internal class ResultMappingHelper(
 
             val propertyType = field.annotations.propertyType
             val nestedType = propertyType?.let { type ->
-                val innerType = GenericTypeParser.Companion.extractFirstTypeArgument(type) ?: type
+                val innerType = GenericTypeParser.Companion.extractFirstTypeArgument(type)
                 normalizeType(innerType)
             }
 
@@ -1010,7 +1010,23 @@ internal class ResultMappingHelper(
             val baseIndentLevel = request.baseIndentLevel
 
             val notNull = dynamicField.annotations.notNull == true
-            val guardMetadata = computeNullGuardMetadata(request)
+            val mappingType = dynamicField.annotations.mappingType
+                ?.let { AnnotationConstants.MappingType.fromString(it) }
+            val aliasPrefix = request.mapping.aliasPrefix.orEmpty()
+            val hasNestedColumns = aliasPrefix.isNotEmpty() && request.mapping.columns.any {
+                // Columns that reference deeper joined aliases carry the alias prefix later in the
+                // field name (e.g., joined__pkg__category__). Those should still perform null-guards.
+                DynamicFieldUtils.isNestedAlias(it.fieldName, aliasPrefix)
+            }
+            val skipNullGuardForEntity =
+                mappingType == AnnotationConstants.MappingType.ENTITY &&
+                    notNull &&
+                    !hasNestedColumns
+            val guardMetadata = if (skipNullGuardForEntity) {
+                NullGuardMetadata(requiresGuard = false, relevantColumns = emptyList())
+            } else {
+                computeNullGuardMetadata(request)
+            }
             val needsNullGuard = guardMetadata.requiresGuard
 
             val useRowVariable = needsNullGuard && rowsVar != null
@@ -1079,7 +1095,6 @@ internal class ResultMappingHelper(
     }
 
     private fun computeNullGuardMetadata(invocation: DynamicFieldInvocation): NullGuardMetadata {
-        val dynamicField = invocation.field
         val mapping = invocation.mapping
         val relevantColumns = mapping.columns.filterNot { column ->
             DynamicFieldUtils.isNestedAlias(column.fieldName, mapping.aliasPrefix)
@@ -1091,30 +1106,48 @@ internal class ResultMappingHelper(
             )
         }
 
-        var hasPropertyNullable = false
-        var hasMetadataNullable = false
+        val sourceAlias = invocation.mapping.sourceTableAlias.lowercase()
+        val resolvedSourceTable = sourceAlias.let { alias ->
+            invocation.statement.src.tableAliases[alias]?.lowercase() ?: alias
+        }
+        val rootAlias = invocation.statement.src.tableAliases.keys.firstOrNull()?.lowercase()
+            ?: invocation.statement.src.fromTable?.lowercase()
+
+        fun shouldTreatAsJoin(column: SelectStatement.FieldSource): Boolean {
+            val tableName = column.tableName.lowercase()
+            val isJoinAlias = sourceAlias != rootAlias
+            if (isJoinAlias) return true
+            if (tableName.isBlank()) return false
+            if (tableName == resolvedSourceTable) return false
+            return true
+        }
+
+        val guardedColumns = mutableListOf<SelectStatement.FieldSource>()
         relevantColumns.forEach { column ->
             val propertyNullable = isTargetPropertyNullable(invocation.statement, column)
             val metadataNullable = column.isNullable
-            if (propertyNullable) {
-                hasPropertyNullable = true
+
+            val shouldGuard = when {
+                propertyNullable -> true
+                metadataNullable && shouldTreatAsJoin(column) -> true
+                else -> false
             }
-            if (metadataNullable) {
-                hasMetadataNullable = true
+
+            if (shouldGuard) {
+                guardedColumns += column
             }
         }
 
-        val requiresGuard = hasPropertyNullable || hasMetadataNullable
+        val requiresGuard = guardedColumns.isNotEmpty()
         return NullGuardMetadata(
             requiresGuard = requiresGuard,
-            relevantColumns = relevantColumns,
+            relevantColumns = guardedColumns,
         )
     }
 
     private inner class NullGuardBuilder {
         fun build(config: NullGuardConfig): String {
             val invocation = config.invocation
-            val mapping = invocation.mapping
             val relevantColumns = config.relevantColumns
             if (relevantColumns.isEmpty()) {
                 return config.constructorExpression
