@@ -329,9 +329,9 @@ class QueryCodeGeneratorTest {
         // Verify that extension function is generated without params parameter
         assertTrue(fileContent.contains("suspend fun UserQuery.GetAll.executeAsList(conn: SafeSQLiteConnection): List<UserGetAllResult>"),
                   "Should contain GetAll.executeAsList extension function without params parameter and with suspend modifier")
-        assertTrue(fileContent.contains("fun UserQuery.GetAll.bindStatementParams(statement: SQLiteStatement)"),
+        assertTrue(fileContent.contains("fun UserQuery.GetAll.bindStatementParams(statement: SqliteStatement)"),
                   "Should contain GetAll.bindStatementParams extension function without params parameter")
-        assertTrue(fileContent.contains("fun UserQuery.GetAll.readStatementResult(statement: SQLiteStatement"),
+        assertTrue(fileContent.contains("fun UserQuery.GetAll.readStatementResult(statement: SqliteStatement"),
                   "Should contain GetAll.readStatementResult extension function")
 
         // Should not contain params parameter for statements without named parameters

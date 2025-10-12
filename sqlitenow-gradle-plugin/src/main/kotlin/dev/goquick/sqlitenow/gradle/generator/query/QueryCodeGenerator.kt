@@ -124,6 +124,7 @@ internal class QueryCodeGenerator(
             )
             .addImport("kotlinx.serialization", "encodeToString")
             .addImport("kotlinx.serialization.json", "Json")
+            .addImport("dev.goquick.sqlitenow.core.sqlite", "use")
 
         if (!debug) {
             fileBuilder.addImport("kotlinx.coroutines", "withContext")

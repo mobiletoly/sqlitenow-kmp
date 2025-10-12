@@ -34,6 +34,12 @@ kotlin {
         }
     }
 
+    js(IR) {
+        browser {
+            binaries.executable()
+        }
+    }
+
 //    task("testClasses")
 
     sourceSets {
@@ -45,11 +51,9 @@ kotlin {
             implementation(compose.materialIconsExtended)
             implementation(compose.components.resources)
             implementation(compose.components.uiToolingPreview)
-            implementation(libs.sqlite.bundled)
             implementation(libs.kotlinx.datetime)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.kotlinx.serialization.cbor)
-            implementation(libs.sqlite.bundled)
 
             implementation(project(":library"))
             implementation(libs.ktor.client.core)
@@ -72,6 +76,14 @@ kotlin {
 
         iosMain.dependencies {
             implementation(libs.ktor.client.darwin)
+        }
+
+        jsMain.dependencies {
+            implementation(compose.runtime)
+            implementation(compose.foundation)
+            implementation(compose.material)
+            implementation(compose.ui)
+            implementation(devNpm("copy-webpack-plugin", "11.0.0"))
         }
     }
 }

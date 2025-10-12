@@ -16,6 +16,7 @@ import com.pluralfusion.daytempo.domain.model.GoalDirection
 import com.pluralfusion.daytempo.domain.model.ProgramItemInputEntry
 import com.pluralfusion.daytempo.domain.model.ProgramItemLockItemDisplay
 import com.pluralfusion.daytempo.domain.model.ProgramItemPresentation
+import dev.goquick.sqlitenow.core.sqlite.use
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityBundleQuery
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityCategoryQuery
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityPackageQuery

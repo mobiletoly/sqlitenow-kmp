@@ -1,6 +1,8 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import dev.goquick.sqlitenow.core.sqlite.getColumnNames
+import dev.goquick.sqlitenow.core.sqlite.use
 
 data class ColumnInfo(
     val name: String,

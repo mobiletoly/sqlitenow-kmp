@@ -1,6 +1,7 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import dev.goquick.sqlitenow.core.sqlite.use
 import dev.goquick.sqlitenow.common.sqliteNowLogger
 import io.ktor.client.*
 import io.ktor.client.call.*

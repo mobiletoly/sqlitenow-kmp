@@ -34,7 +34,6 @@ kotlin {
             implementation(libs.kotlinx.datetime)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.kotlinx.serialization.cbor)
-            implementation(libs.sqlite.bundled)
             implementation(libs.kermit)
 
             implementation(project(":library"))
@@ -44,6 +43,7 @@ kotlin {
             implementation(libs.androidx.activityCompose)
             implementation(libs.compose.ui.tooling)
             implementation(libs.compose.ui.toolingPreview)
+            implementation(libs.sqlite.bundled)
         }
     }
 }
@@ -77,8 +77,8 @@ android {
     }
 
     buildFeatures {
-        compose = true
         buildConfig = true
+        compose = true
     }
 
     lint {

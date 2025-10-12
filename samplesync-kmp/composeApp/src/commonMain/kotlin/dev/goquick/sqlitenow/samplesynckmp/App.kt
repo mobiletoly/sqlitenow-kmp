@@ -34,7 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.sqlite.SQLiteException
+import dev.goquick.sqlitenow.core.sqlite.SqliteException
 import dev.goquick.sqlitenow.common.PlatformType
 import dev.goquick.sqlitenow.common.platform
 import dev.goquick.sqlitenow.common.resolveDatabasePath
@@ -64,7 +64,6 @@ import io.ktor.client.plugins.defaultRequest
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -322,9 +321,9 @@ fun App() {
     val commentsRefreshTrigger = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
 
     val baseUrl = if (platform() == PlatformType.ANDROID) {
-        "http://10.0.2.2:8080"
+        "http://10.0.2.2:8090"
     } else {
-        "http://127.0.0.1:8080"
+        "http://127.0.0.1:8090"
     }
 
     LaunchedEffect(Unit) {
@@ -994,7 +993,7 @@ suspend fun addRandomPerson(onError: (String) -> Unit) {
                 notes = "", // TODO
             )
         )
-    } catch (e: SQLiteException) {
+    } catch (e: SqliteException) {
         appLog.e(e) { "Failed to add person (SQLite)" }
         // Check if duplicate
         if (e.message?.contains("UNIQUE constraint failed") == true) {
@@ -1016,7 +1015,7 @@ suspend fun deletePerson(personId: ByteArray, onError: (String) -> Unit = {}) {
                 id = personId
             )
         )
-    } catch (e: SQLiteException) {
+    } catch (e: SqliteException) {
         appLog.e(e) { "Failed to delete person (SQLite)" }
         onError("Failed to delete person: ${e.message}")
     } catch (e: Exception) {
@@ -1049,7 +1048,7 @@ suspend fun randomizePerson(person: PersonRow, onError: (String) -> Unit = {}) {
                 )
             )
         }
-    } catch (e: SQLiteException) {
+    } catch (e: SqliteException) {
         appLog.e(e) { "Failed to update person (SQLite)" }
         onError("Failed to update person: ${e.message}")
     } catch (e: Exception) {

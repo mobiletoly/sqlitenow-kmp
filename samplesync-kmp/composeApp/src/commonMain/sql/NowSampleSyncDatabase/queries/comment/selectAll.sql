@@ -7,3 +7,4 @@ SELECT
     tags
 FROM comment
 WHERE person_id = :personId
+ORDER BY created_at DESC

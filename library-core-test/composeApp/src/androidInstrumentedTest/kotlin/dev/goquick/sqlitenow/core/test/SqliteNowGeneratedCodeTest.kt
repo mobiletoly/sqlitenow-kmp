@@ -1,6 +1,7 @@
 package dev.goquick.sqlitenow.core.test
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.goquick.sqlitenow.core.sqlite.use
 import dev.goquick.sqlitenow.core.test.db.LibraryTestDatabase
 import dev.goquick.sqlitenow.core.test.db.PersonQuery
 import dev.goquick.sqlitenow.core.test.db.PersonRow

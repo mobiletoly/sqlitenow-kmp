@@ -79,7 +79,7 @@ internal class QueryFunctionScaffolder(
         fnBld.receiver(receiverType)
         val statementParam = ParameterSpec.builder(
             name = "statement",
-            ClassName("androidx.sqlite", "SQLiteStatement"),
+            ClassName("dev.goquick.sqlitenow.core.sqlite", "SqliteStatement"),
         ).build()
         fnBld.addParameter(statementParam)
         if (includeParamsParameter && getNamedParameters(statement).isNotEmpty()) {

@@ -32,6 +32,12 @@ kotlin {
         }
     }
 
+    js(IR) {
+        browser {
+            binaries.executable()
+        }
+    }
+
 //    task("testClasses")
 
     sourceSets {
@@ -42,11 +48,9 @@ kotlin {
             implementation(compose.material)
             implementation(compose.components.resources)
             implementation(compose.components.uiToolingPreview)
-            implementation(libs.sqlite.bundled)
             implementation(libs.kotlinx.datetime)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.kotlinx.serialization.cbor)
-            implementation(libs.sqlite.bundled)
             implementation(libs.kermit)
 
             implementation(project(":library"))
@@ -60,6 +64,14 @@ kotlin {
 
         getByName("desktopMain").dependencies {
             implementation(compose.desktop.currentOs)
+        }
+
+        jsMain.dependencies {
+            implementation(compose.runtime)
+            implementation(compose.foundation)
+            implementation(compose.material)
+            implementation(compose.ui)
+            implementation(devNpm("copy-webpack-plugin", "11.0.0"))
         }
     }
 }

@@ -1,6 +1,5 @@
 package dev.goquick.sqlitenow.core
 
-import androidx.sqlite.execSQL
 import kotlinx.coroutines.test.runTest
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -120,10 +119,10 @@ class SqliteNowDatabaseTest {
         assertEquals("Transaction completed", result)
 
         // Verify that the row was inserted
-        val statement = database.connection().ref.prepare("SELECT COUNT(*) FROM test_table;")
+        val statement = database.connection().prepare("SELECT COUNT(*) FROM test_table;")
         try {
             statement.step()
-            val count = statement.getInt(0)
+            val count = statement.getLong(0)
             assertEquals(1, count, "Row should be inserted after successful transaction")
         } finally {
             statement.close()
@@ -166,7 +165,7 @@ class SqliteNowDatabaseTest {
         val statement = database.connection().prepare("SELECT COUNT(*) FROM test_table;")
         try {
             statement.step()
-            val count = statement.getInt(0)
+            val count = statement.getLong(0).toInt()
             assertEquals(0, count, "Row should not be inserted after transaction rollback")
         } finally {
             statement.close()

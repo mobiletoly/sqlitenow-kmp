@@ -1,8 +1,5 @@
 package dev.goquick.sqlitenow.core
 
-import androidx.sqlite.driver.bundled.BundledSQLiteDriver
-import androidx.sqlite.driver.bundled.SQLITE_OPEN_CREATE
-import androidx.sqlite.driver.bundled.SQLITE_OPEN_READWRITE
 import co.touchlab.kermit.Severity
 import dev.goquick.sqlitenow.common.SqliteNowLogger
 import dev.goquick.sqlitenow.common.originalSqliteNowLogger
@@ -24,9 +21,13 @@ import kotlin.concurrent.Volatile
 /**
  * Base class for generated database classes.
  */
-open class SqliteNowDatabase {
-    private val dbName: String
-    private val migration: DatabaseMigrations
+open class SqliteNowDatabase private constructor(
+    private val dbName: String,
+    private val migration: DatabaseMigrations,
+    private val debug: Boolean,
+    private val connectionProvider: SqliteConnectionProvider,
+    private val adjustLogger: Boolean,
+) {
     private lateinit var conn: SafeSQLiteConnection
 
     // Table change notification system
@@ -43,20 +44,42 @@ open class SqliteNowDatabase {
      * @param migration The migration object to apply migrations, in most cases you must pass
      *                  generated migration class VersionBasedDatabaseMigrations() here.
      */
-    constructor(dbName: String, migration: DatabaseMigrations) {
-        this.dbName = dbName
-        this.migration = migration
-    }
+    constructor(
+        dbName: String,
+        migration: DatabaseMigrations,
+        connectionProvider: SqliteConnectionProvider = BundledSqliteConnectionProvider,
+    ) : this(
+        dbName = dbName,
+        migration = migration,
+        debug = false,
+        connectionProvider = connectionProvider,
+        adjustLogger = false,
+    )
 
     /**
      * Optional constructor that allows enabling verbose debug logging.
      * When debug is true, increases logger verbosity to Debug; otherwise uses default Info level.
      */
-    constructor(dbName: String, migration: DatabaseMigrations, debug: Boolean) : this(dbName, migration) {
-        sqliteNowLogger = if (originalSqliteNowLogger == sqliteNowLogger) {
-            SqliteNowLogger(if (debug) Severity.Debug else Severity.Info)
-        } else {
-            sqliteNowLogger
+    constructor(
+        dbName: String,
+        migration: DatabaseMigrations,
+        debug: Boolean,
+        connectionProvider: SqliteConnectionProvider = BundledSqliteConnectionProvider,
+    ) : this(
+        dbName = dbName,
+        migration = migration,
+        debug = debug,
+        connectionProvider = connectionProvider,
+        adjustLogger = true,
+    )
+
+    init {
+        if (adjustLogger) {
+            sqliteNowLogger = if (originalSqliteNowLogger == sqliteNowLogger) {
+                SqliteNowLogger(if (debug) Severity.Debug else Severity.Info)
+            } else {
+                sqliteNowLogger
+            }
         }
     }
 
@@ -86,11 +109,7 @@ open class SqliteNowDatabase {
 
         val dbFileExists = validateFileExists(dbName)
 
-        val realConn = BundledSQLiteDriver().open(
-            fileName = dbName,
-            flags = SQLITE_OPEN_CREATE or SQLITE_OPEN_READWRITE
-        )
-        conn = SafeSQLiteConnection(realConn)
+        conn = connectionProvider.openConnection(dbName, debug)
         preInit(conn)
 
         transaction {
@@ -120,7 +139,7 @@ open class SqliteNowDatabase {
         val statement = conn.prepare("PRAGMA user_version;")
         return try {
             statement.step()
-            statement.getInt(0)
+            statement.getLong(0).toInt()
         } finally {
             statement.close()
         }

@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "dev.goquick.sqlitenow"
-version = "0.3.0"
+version = "0.4.0-SNAPSHOT"
 
 kotlin {
     jvm()
@@ -22,13 +22,23 @@ kotlin {
         }
     }
 
+    js(IR) {
+        nodejs {
+            testTask {
+                useMocha {
+                    timeout = "30s"
+                }
+            }
+        }
+        binaries.library()
+    }
+
     iosX64()
     iosArm64()
     iosSimulatorArm64()
 
     sourceSets {
         commonMain.dependencies {
-            api(libs.sqlite.bundled)
             api(libs.kotlinx.coroutines.core)
             api(libs.kotlinx.datetime)
             api(libs.kotlinx.serialization.json)
@@ -49,14 +59,22 @@ kotlin {
         }
 
         jvmMain.dependencies {
+            implementation(libs.sqlite.bundled)
         }
 
         androidMain.dependencies {
+            implementation(libs.sqlite.bundled)
             implementation(libs.ktor.client.okhttp)
         }
 
         iosMain.dependencies {
+            implementation(libs.sqlite.bundled)
             implementation(libs.ktor.client.darwin)
+        }
+
+        jsMain.dependencies {
+            implementation(libs.ktor.client.js)
+            implementation(npm("sql.js", "1.13.0"))
         }
     }
 }

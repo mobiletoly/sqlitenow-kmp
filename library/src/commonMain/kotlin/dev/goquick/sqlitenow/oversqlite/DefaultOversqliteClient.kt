@@ -2,6 +2,8 @@ package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.common.sqliteNowLogger
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
+import dev.goquick.sqlitenow.core.sqlite.use
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.sync.Semaphore
@@ -351,7 +353,7 @@ class DefaultOversqliteClient(
         // Derive PK strictly from payload
         val pkElem = normalized[pkCol] ?: return
         val pkPrim = pkElem.jsonPrimitive
-        val pkBind: (Int, androidx.sqlite.SQLiteStatement) -> Unit = { idx, st ->
+        val pkBind: (Int, SqliteStatement) -> Unit = { idx, st ->
             if (pkIsBlob) {
                 // Server sends UUID string, convert to bytes for BLOB storage
                 val bytes = uuidStringToBytes(pkPrim.content)

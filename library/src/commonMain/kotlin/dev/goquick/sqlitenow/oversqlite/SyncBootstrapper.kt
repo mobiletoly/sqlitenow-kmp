@@ -2,6 +2,7 @@ package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.common.sqliteNowLogger
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import dev.goquick.sqlitenow.core.sqlite.use
 
 /**
  * Handles the bootstrapping process for sync operations.

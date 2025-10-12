@@ -15,7 +15,7 @@ import java.io.File
 
 /**
  * Generates Kotlin code for executing SQL migration statements.
- * The generated code will include a function that accepts an androidx.sqlite.SQLiteConnection
+ * The generated code will include a function that accepts a SafeSQLiteConnection
  * parameter and executes all the SQL statements from the migrations.
  */
 internal class MigratorCodeGenerator(
@@ -220,7 +220,6 @@ internal class MigratorCodeGenerator(
                     .build()
             )
             .addImport("dev.goquick.sqlitenow.core", "SafeSQLiteConnection")
-            .addImport("androidx.sqlite", "execSQL")
             .addImport("dev.goquick.sqlitenow.core", "DatabaseMigrations")
 
         if (debug) {

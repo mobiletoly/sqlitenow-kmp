@@ -1,6 +1,5 @@
 package dev.goquick.sqlitenow.core
 
-import androidx.sqlite.execSQL
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlin.test.AfterTest
@@ -64,7 +63,7 @@ class TransactionSafetyTest {
         val st = database.connection().prepare("SELECT COUNT(*) FROM t")
         try {
             st.step()
-            assertEquals(2, st.getInt(0))
+            assertEquals(2, st.getLong(0).toInt())
         } finally {
             st.close()
         }
@@ -99,7 +98,7 @@ class TransactionSafetyTest {
         try {
             st.step()
             // Since we do not use savepoints, the outer transaction is rolled back as well
-            assertEquals(0, st.getInt(0))
+            assertEquals(0, st.getLong(0).toInt())
         } finally {
             st.close()
         }

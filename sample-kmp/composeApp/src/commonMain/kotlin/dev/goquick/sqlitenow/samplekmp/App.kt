@@ -6,12 +6,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.AlertDialog
 import androidx.compose.material.Button
 import androidx.compose.material.ButtonDefaults
@@ -33,7 +35,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.sqlite.SQLiteException
 import dev.goquick.sqlitenow.common.resolveDatabasePath
 import dev.goquick.sqlitenow.core.util.fromSqliteDate
 import dev.goquick.sqlitenow.core.util.fromSqliteTimestamp
@@ -47,6 +48,7 @@ import dev.goquick.sqlitenow.samplekmp.db.PersonQuery
 import dev.goquick.sqlitenow.samplekmp.db.PersonRow
 import dev.goquick.sqlitenow.samplekmp.db.PersonWithAddressRow
 import dev.goquick.sqlitenow.samplekmp.db.VersionBasedDatabaseMigrations
+import dev.goquick.sqlitenow.core.sqlite.SqliteException
 import dev.goquick.sqlitenow.samplekmp.model.PersonNote
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -143,197 +145,208 @@ fun App() {
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
+        try {
+            db.open()
+            db.connection().execSQL("PRAGMA foreign_keys = ON;")
 
-        // TODO .open() is here just for demo purposes. In your app you should open it in some other place
-        db.open()
-        db.connection().execSQL("PRAGMA foreign_keys = ON;")
-
-        // Listen for real-time changes from Person/SelectAll query
         db.person
             .selectAll(
                 PersonQuery.SelectAll.Params(
-                    limit = -1,
+                    limit = Int.MAX_VALUE.toLong(),
                     offset = 0
                 )
             )
-            .asFlow()
-            .map { personList ->
-                personList.map { person ->
-                    person.copy(myLastName = person.myLastName.uppercase())
+                .asFlow()
+                .map { personList ->
+                    personList.map { person ->
+                        person.copy(myLastName = person.myLastName.uppercase())
+                    }
                 }
-            }
-            .collectLatest {
-                // This code runs on Dispatchers.Main (UI)
-                persons = it
-                isLoading = false
-            }
+                .collectLatest {
+                    persons = it
+                    isLoading = false
+                }
+        } catch (t: Throwable) {
+            println("Init coroutine failed: $t")
+            errorMessage = t.message ?: "Unknown error"
+            isLoading = false
+        }
     }
 
     LaunchedEffect(Unit) {
-        delay(1000)
-        db.person
-            .selectAllWithAddresses(
-                PersonQuery.SelectAllWithAddresses.Params(
-                    limit = 20,
-                    offset = 0
+        try {
+            delay(1000)
+            db.person
+                .selectAllWithAddresses(
+                    PersonQuery.SelectAllWithAddresses.Params(
+                        limit = 20,
+                        offset = 0
+                    )
                 )
-            )
-            .asFlow()
-            .collectLatest { personWithAddressList: List<PersonWithAddressRow> ->
-                for (person in personWithAddressList) {
-                    println("----> Person: ${person.myFirstName} ${person.myLastName} - <${person.personPhone}> <${person.personBirthDate}>")
-                    for (address in person.addresses) {
-                        println("    ----> Address: $address")
-                    }
-                    for (comment in person.comments) {
-                        println("    ----> Comment: $comment")
+                .asFlow()
+                .collectLatest { personWithAddressList: List<PersonWithAddressRow> ->
+                    for (person in personWithAddressList) {
+                        println("----> Person: $person")
                     }
                 }
-            }
+        } catch (t: Throwable) {
+            println("Secondary coroutine failed: $t")
+            errorMessage = t.message ?: "Unknown error"
+        }
     }
 
     MaterialTheme {
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .background(MaterialTheme.colors.background)
         ) {
-            // Header
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Column {
-                    Text(
-                        text = "SQLiteNow Showcase",
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colors.primary
-                    )
-                    Text(
-                        text = "Real-time reactive database",
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f)
-                    )
-                }
-
-                Text(
-                    text = "${persons.size} persons",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colors.secondary
-                )
-            }
-
-            // Add Person Button
-            Button(
-                onClick = {
-                    coroutineScope.launch {
-                        addRandomPerson { error ->
-                            errorMessage = error
-                        }
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(
-                    backgroundColor = MaterialTheme.colors.primary
-                )
-            ) {
-                Text("Add Random Person", fontSize = 16.sp)
-            }
-
-            // Loading State
-            if (isLoading) {
-                Box(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator()
-                }
-            }
-
-            // Persons List
-            if (persons.isEmpty() && !isLoading) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    elevation = 4.dp,
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(32.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Column {
+                            Text(
+                                text = "SQLiteNow Showcase",
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colors.primary
+                            )
+                            Text(
+                                text = "Real-time reactive database",
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f)
+                            )
+                        }
+
                         Text(
-                            text = "No persons yet",
-                            fontSize = 18.sp,
+                            text = "${persons.size} persons",
+                            fontSize = 16.sp,
                             fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f)
-                        )
-                        Text(
-                            text = "Add your first person to get started",
-                            fontSize = 14.sp,
-                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f)
+                            color = MaterialTheme.colors.secondary
                         )
                     }
                 }
-            } else {
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier
-                        .verticalScroll(rememberScrollState())
-                ) {
-                    persons.forEach { person ->
-                        PersonCard(
-                            person = person,
-                            onRandomize = {
-                                coroutineScope.launch {
-                                    randomizePerson(it) { error ->
-                                        errorMessage = error
-                                    }
-                                }
-                            },
-                            onDelete = { personToDelete ->
-                                coroutineScope.launch {
-                                    deletePerson(personToDelete.id) { error ->
-                                        errorMessage = error
-                                    }
+
+                item {
+                    Button(
+                        onClick = {
+                            coroutineScope.launch {
+                                runCatchingAsync(errorHandler = { errorMessage = it }) {
+                                    addRandomPerson { error -> errorMessage = error }
                                 }
                             }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            backgroundColor = MaterialTheme.colors.primary
                         )
+                    ) {
+                        Text("Add Random Person", fontSize = 16.sp)
                     }
                 }
-            }
-        }
 
-        // Error Dialog
-        errorMessage?.let { error ->
-            AlertDialog(
-                onDismissRequest = { errorMessage = null },
-                title = {
-                    Text(
-                        text = "Database Error",
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colors.error
-                    )
-                },
-                text = {
-                    Text(
-                        text = error,
-                        fontSize = 14.sp
-                    )
-                },
-                confirmButton = {
-                    TextButton(
-                        onClick = { errorMessage = null }
-                    ) {
-                        Text("OK")
+                when {
+                    isLoading -> {
+                        item {
+                            Box(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator()
+                            }
+                        }
                     }
-                },
-                backgroundColor = MaterialTheme.colors.surface,
-                contentColor = MaterialTheme.colors.onSurface
-            )
+
+                    persons.isEmpty() -> {
+                        item {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                elevation = 4.dp,
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(32.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        text = "No persons yet",
+                                        fontSize = 18.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f)
+                                    )
+                                    Text(
+                                        text = "Add your first person to get started",
+                                        fontSize = 14.sp,
+                                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    else -> {
+                        items(persons, key = { it.id }) { person ->
+                            PersonCard(
+                                person = person,
+                                onRandomize = {
+                                    coroutineScope.launch {
+                                        runCatchingAsync(errorHandler = { errorMessage = it }) {
+                                            randomizePerson(it) { error -> errorMessage = error }
+                                        }
+                                    }
+                                },
+                                onDelete = { personToDelete ->
+                                    coroutineScope.launch {
+                                        runCatchingAsync(errorHandler = { errorMessage = it }) {
+                                            deletePerson(personToDelete.id) { error -> errorMessage = error }
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+
+                item {
+                    Spacer(modifier = Modifier.height(24.dp))
+                }
+            }
+
+            errorMessage?.let { error ->
+                AlertDialog(
+                    onDismissRequest = { errorMessage = null },
+                    title = {
+                        Text(
+                            text = "Database Error",
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colors.error
+                        )
+                    },
+                    text = {
+                        Text(
+                            text = error,
+                            fontSize = 14.sp
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = { errorMessage = null }
+                        ) {
+                            Text("OK")
+                        }
+                    },
+                    backgroundColor = MaterialTheme.colors.surface,
+                    contentColor = MaterialTheme.colors.onSurface
+                )
+            }
         }
     }
 }
@@ -441,9 +454,20 @@ fun PersonCard(
     }
 }
 
+private suspend fun runCatchingAsync(
+    errorHandler: (String) -> Unit,
+    block: suspend () -> Unit
+) {
+    try {
+        block()
+    } catch (t: Throwable) {
+        println("Operation failed: $t")
+        errorHandler(t.message ?: "Unknown error")
+    }
+}
+
 // Helper function to add a random person
 suspend fun addRandomPerson(onError: (String) -> Unit) {
-
     val firstName = firstNames.random()
     val lastName = lastNames.random()
     val email = "${firstName.lowercase()}.${lastName.lowercase()}@${domains.random()}"
@@ -475,7 +499,7 @@ suspend fun addRandomPerson(onError: (String) -> Unit) {
             )
         )
         println(results)
-    } catch (e: SQLiteException) {
+    } catch (e: SqliteException) {
         e.printStackTrace()
         // Check if duplicate
         if (e.message?.contains("UNIQUE constraint failed") == true) {
@@ -497,7 +521,7 @@ suspend fun deletePerson(personId: Long, onError: (String) -> Unit = {}) {
                 ids = listOf(personId)
             )
         )
-    } catch (e: SQLiteException) {
+    } catch (e: SqliteException) {
         e.printStackTrace()
         onError("Failed to delete person: ${e.message}")
     } catch (e: Exception) {
@@ -527,7 +551,7 @@ suspend fun randomizePerson(person: PersonRow, onError: (String) -> Unit = {}) {
                 )
             )
         }
-    } catch (e: SQLiteException) {
+    } catch (e: SqliteException) {
         e.printStackTrace()
         onError("Failed to update person: ${e.message}")
     } catch (e: Exception) {
