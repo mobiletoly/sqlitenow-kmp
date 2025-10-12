@@ -3,10 +3,18 @@ package dev.goquick.sqlitenow.core.test
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.core.test.db.LibraryTestDatabase
 import dev.goquick.sqlitenow.core.test.db.PersonQuery
+import dev.goquick.sqlitenow.core.test.db.PersonRow
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.datetime.LocalDate
 import org.junit.After
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -146,6 +154,52 @@ class SqliteNowGeneratedCodeTest {
             // Test asOneOrNull with no results
             val noPerson = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 1, offset = 10)).asOneOrNull()
             assertNull("Should get null when no results", noPerson)
+        }
+    }
+
+    @Test
+    fun testAsFlowEmitsOnTableChanges() {
+        runBlocking {
+            database.open()
+            database.enableTableChangeNotifications()
+
+            val selectParams = PersonQuery.SelectAll.Params(limit = 10, offset = 0)
+            val flow = database.person.selectAll(selectParams).asFlow()
+
+            val emissions = mutableListOf<List<PersonRow>>()
+            val firstEmission = CompletableDeferred<Unit>()
+
+            val collector = launch {
+                flow.take(2).collect { rows ->
+                    emissions += rows
+                    if (!firstEmission.isCompleted) {
+                        firstEmission.complete(Unit)
+                    }
+                }
+            }
+
+            withTimeout(5_000) {
+                firstEmission.await()
+                database.person.add.one(
+                    PersonQuery.Add.Params(
+                        email = "flow@example.com",
+                        firstName = "Flowy",
+                        lastName = "Listener",
+                        phone = null,
+                        birthDate = LocalDate(1995, 12, 25),
+                    ),
+                )
+                collector.join()
+            }
+
+            assertEquals("Flow should emit initial and updated results", 2, emissions.size)
+            assertTrue("Initial emission should be empty", emissions.first().isEmpty())
+
+            val updatedRows = emissions.last()
+            assertEquals("Updated emission should contain one row", 1, updatedRows.size)
+            val insertedRow = updatedRows.first()
+            assertEquals("Flowy", insertedRow.myFirstName)
+            assertEquals("Listener", insertedRow.myLastName)
         }
     }
 

@@ -327,6 +327,9 @@ class DatabaseCodeGenerator(
         fileBuilder.addImport("dev.goquick.sqlitenow.core", "ExecuteStatement")
         fileBuilder.addImport("dev.goquick.sqlitenow.core", "ExecuteReturningStatement")
         fileBuilder.addImport("kotlinx.coroutines.flow", "Flow")
+        if (debug) {
+            fileBuilder.addImport("dev.goquick.sqlitenow.common", "sqliteNowLogger")
+        }
 
         val databaseClass = generateMainDatabaseClass()
         fileBuilder.addType(databaseClass)
@@ -478,10 +481,31 @@ class DatabaseCodeGenerator(
                     )
                     .returns(ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteClient"))
                     .addStatement("val cfg = buildOversqliteConfig(schema, uploadLimit, downloadLimit, verboseLogs)")
-                    .addStatement(
-                        "return %T(db = this.connection(), config = cfg, http = httpClient, resolver = resolver, tablesUpdateListener = { notifyTablesChanged(it) })",
-                        ClassName("dev.goquick.sqlitenow.oversqlite", "DefaultOversqliteClient")
-                    )
+                    .apply {
+                        val clientClass = ClassName("dev.goquick.sqlitenow.oversqlite", "DefaultOversqliteClient")
+                        if (debug) {
+                            addStatement(
+                                """
+                                    return %T(
+                                        db = this.connection(),
+                                        config = cfg,
+                                        http = httpClient,
+                                        resolver = resolver,
+                                        tablesUpdateListener = { tables ->
+                                            sqliteNowLogger.d { "notifyTablesChanged -> " + tables.joinToString(", ") }
+                                            notifyTablesChanged(tables)
+                                        }
+                                    )
+                                """.trimIndent(),
+                                clientClass,
+                            )
+                        } else {
+                            addStatement(
+                                "return %T(db = this.connection(), config = cfg, http = httpClient, resolver = resolver, tablesUpdateListener = { notifyTablesChanged(it) })",
+                                clientClass,
+                            )
+                        }
+                    }
                     .build()
             )
         }
@@ -964,6 +988,9 @@ class DatabaseCodeGenerator(
                 }
                 b.line(")")
                 b.line("// Notify listeners that tables have changed")
+                if (debug) {
+                    b.line("sqliteNowLogger.d { \"notifyTablesChanged -> \" + $capitalizedNamespace.$className.affectedTables.joinToString(\", \") }")
+                }
                 b.line("ref.notifyTablesChanged($capitalizedNamespace.$className.affectedTables)")
             }
             b.line("},")
@@ -1003,6 +1030,9 @@ class DatabaseCodeGenerator(
         }
         body.line(")")
         body.line("// Notify listeners that tables have changed")
+        if (debug) {
+            body.line("sqliteNowLogger.d { \"notifyTablesChanged -> \" + $capitalizedNamespace.$className.affectedTables.joinToString(\", \") }")
+        }
         body.line("ref.notifyTablesChanged($capitalizedNamespace.$className.affectedTables)")
 
         return FunSpec.builder(functionName)
@@ -1073,6 +1103,9 @@ class DatabaseCodeGenerator(
                 }
                 b.line(")")
                 b.line("// Notify listeners that tables have changed")
+                if (debug) {
+                    b.line("sqliteNowLogger.d { \"notifyTablesChanged -> \" + $capitalizedNamespace.$className.affectedTables.joinToString(\", \") }")
+                }
                 b.line("ref.notifyTablesChanged($capitalizedNamespace.$className.affectedTables)")
                 b.line("result")
             }
@@ -1088,6 +1121,9 @@ class DatabaseCodeGenerator(
                 }
                 b.line(")")
                 b.line("// Notify listeners that tables have changed")
+                if (debug) {
+                    b.line("sqliteNowLogger.d { \"notifyTablesChanged -> \" + $capitalizedNamespace.$className.affectedTables.joinToString(\", \") }")
+                }
                 b.line("ref.notifyTablesChanged($capitalizedNamespace.$className.affectedTables)")
                 b.line("result")
             }
@@ -1103,6 +1139,9 @@ class DatabaseCodeGenerator(
                 }
                 b.line(")")
                 b.line("// Notify listeners that tables have changed")
+                if (debug) {
+                    b.line("sqliteNowLogger.d { \"notifyTablesChanged -> \" + $capitalizedNamespace.$className.affectedTables.joinToString(\", \") }")
+                }
                 b.line("ref.notifyTablesChanged($capitalizedNamespace.$className.affectedTables)")
                 b.line("result")
             }
@@ -1151,6 +1190,9 @@ class DatabaseCodeGenerator(
             }
             bodyBuilder.line(")")
             bodyBuilder.line("// Notify listeners that tables have changed")
+            if (debug) {
+                bodyBuilder.line("sqliteNowLogger.d { \"notifyTablesChanged -> \" + $capitalizedNamespace.$className.affectedTables.joinToString(\", \") }")
+            }
             bodyBuilder.line("ref.notifyTablesChanged($capitalizedNamespace.$className.affectedTables)")
             bodyBuilder.line("return result")
             return bodyBuilder.build()

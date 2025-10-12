@@ -8,11 +8,15 @@ import dev.goquick.sqlitenow.common.SqliteNowLogger
 import dev.goquick.sqlitenow.common.originalSqliteNowLogger
 import dev.goquick.sqlitenow.common.sqliteNowLogger
 import dev.goquick.sqlitenow.common.validateFileExists
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.concurrent.Volatile
@@ -28,6 +32,7 @@ open class SqliteNowDatabase {
     // Table change notification system
     private val tableChangeFlows = mutableMapOf<String, MutableSharedFlow<Unit>>()
     private val tableChangesFlowMutex = Mutex()
+    private val tableChangeScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     @Volatile
     private var enableTableChangeNotifications = false
@@ -180,8 +185,19 @@ open class SqliteNowDatabase {
      * @param affectedTables Set of table names that were modified
      */
     protected fun notifyTablesChanged(affectedTables: Set<String>) {
-        affectedTables.map { it.lowercase() }.forEach { tableName ->
-            tableChangeFlows[tableName]?.tryEmit(Unit)
+        if (!enableTableChangeNotifications || affectedTables.isEmpty()) return
+
+        tableChangeScope.launch {
+            val flowsToNotify = tableChangesFlowMutex.withLock {
+                affectedTables.asSequence()
+                    .map { tableChangeFlows[it.lowercase()] }
+                    .filterNotNull()
+                    .toList()
+            }
+
+            flowsToNotify.forEach { flow ->
+                flow.emit(Unit)
+            }
         }
     }
 
@@ -220,6 +236,7 @@ open class SqliteNowDatabase {
         affectedTables: Set<String>,
         queryExecutor: suspend () -> T
     ): Flow<T> = flow {
+        enableTableChangeNotifications()
         // Emit initial result
         emit(queryExecutor())
 

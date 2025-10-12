@@ -43,16 +43,13 @@ import dev.goquick.sqlitenow.core.util.toSqliteDate
 import dev.goquick.sqlitenow.core.util.toSqliteTimestamp
 import dev.goquick.sqlitenow.samplekmp.db.AddressType
 import dev.goquick.sqlitenow.samplekmp.db.NowSampleDatabase
-import dev.goquick.sqlitenow.samplekmp.db.PersonAddressQuery
 import dev.goquick.sqlitenow.samplekmp.db.PersonQuery
 import dev.goquick.sqlitenow.samplekmp.db.PersonRow
 import dev.goquick.sqlitenow.samplekmp.db.PersonWithAddressRow
 import dev.goquick.sqlitenow.samplekmp.db.VersionBasedDatabaseMigrations
 import dev.goquick.sqlitenow.samplekmp.model.PersonNote
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalDate
@@ -165,8 +162,7 @@ fun App() {
                     person.copy(myLastName = person.myLastName.uppercase())
                 }
             }
-            .flowOn(Dispatchers.IO)     // DB and mapper code above runs on Dispatchers.IO
-            .collect {
+            .collectLatest {
                 // This code runs on Dispatchers.Main (UI)
                 persons = it
                 isLoading = false
@@ -183,8 +179,7 @@ fun App() {
                 )
             )
             .asFlow()
-            .flowOn(Dispatchers.IO) // DB runs on Dispatchers.IO
-            .collect { personWithAddressList: List<PersonWithAddressRow> ->
+            .collectLatest { personWithAddressList: List<PersonWithAddressRow> ->
                 for (person in personWithAddressList) {
                     println("----> Person: ${person.myFirstName} ${person.myLastName} - <${person.personPhone}> <${person.personBirthDate}>")
                     for (address in person.addresses) {

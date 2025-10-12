@@ -69,7 +69,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalDate
@@ -348,7 +347,6 @@ fun App() {
                     person.copy(myLastName = person.myLastName.uppercase())
                 }
             }
-            .flowOn(Dispatchers.IO)     // DB and mapper code above runs on Dispatchers.IO
             .collect {
                 // This code runs on Dispatchers.Main (UI)
                 persons = it
@@ -811,7 +809,6 @@ fun PersonCard(
                         db.comment
                             .selectAll(CommentQuery.SelectAll.Params(personId = person.id))
                             .asFlow()
-                            .flowOn(Dispatchers.IO)
                             .collect { commentList ->
                                 comments = commentList
                             }

@@ -24,7 +24,6 @@ fun PersonList() {
         database.person
             .selectAll(PersonQuery.SelectAll.Params(limit = -1, offset = 0))
             .asFlow()               // Reactive flow
-            .flowOn(Dispatchers.IO) // DB work on IO thread
             .collect { personList ->
                 persons = personList
                 isLoading = false
@@ -56,7 +55,6 @@ LaunchedEffect(Unit) {
                 )
             }
         }
-        .flowOn(Dispatchers.IO)
         .collect { transformedPersons ->
             persons = transformedPersons
         }
@@ -78,7 +76,7 @@ fun PersonWithComments(personId: ByteArray) {
             database.person
                 .selectById(PersonQuery.SelectById.Params(id = personId))
                 .asFlow()
-                .flowOn(Dispatchers.IO)
+                .cancellable()
                 .collect { personResult ->
                     person = personResult.firstOrNull()
                 }
@@ -88,7 +86,7 @@ fun PersonWithComments(personId: ByteArray) {
             database.comment
                 .selectByPersonId(CommentQuery.SelectByPersonId.Params(personId = personId))
                 .asFlow()
-                .flowOn(Dispatchers.IO)
+                .cancellable()
                 .collect { commentList ->
                     comments = commentList
                 }
@@ -100,7 +98,7 @@ fun PersonWithComments(personId: ByteArray) {
 ## Performance tips
 
 - Use `LaunchedEffect` in Compose to automatically cancel collectors when the composable leaves composition.
-- Apply `flowOn(Dispatchers.IO)` so database work runs off the main thread.
+- Database work is already executed on the database’s single-thread dispatcher, so there’s no need to add `flowOn(Dispatchers.IO)`.
 - Debounce high-frequency updates with `.debounce(100)` if needed.
 - Scope queries as tightly as possible instead of broad `SELECT *` operations.
 

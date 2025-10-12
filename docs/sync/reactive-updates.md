@@ -37,7 +37,6 @@ fun SyncAwarePersonList() {
     // Standard reactive query - no sync-specific code needed
     LaunchedEffect(Unit) {
         database.person.selectAll().asFlow()
-            .flowOn(Dispatchers.IO)
             .collect { persons = it }  // Updates during sync operations
     }
 

@@ -80,6 +80,16 @@ open class DataStructCodeGenerator(
         }
     }
 
+    private val createViewStatementsByName: Map<String, AnnotatedCreateViewStatement> =
+        createViewStatements.associateBy { it.src.viewName.lowercase() }
+
+    private val viewTableDependencies: Map<String, Set<String>> by lazy {
+        createViewStatements.associate { view ->
+            val resolved = resolveViewDependencies(view.src.viewName.lowercase(), mutableSetOf())
+            view.src.viewName.lowercase() to resolved
+        }
+    }
+
     private val annotationResolver =
         FieldAnnotationResolver(createTableStatements, createViewStatements)
     private val fileGenerationHelper = FileGenerationHelper(packageName, outputDir)
@@ -477,6 +487,19 @@ open class DataStructCodeGenerator(
      * Returns a set of table names that are used in the statement (main table and joined tables).
      */
     private fun getAffectedTablesFromStatement(statement: AnnotatedStatement): Set<String> {
+        fun expandTables(tables: Set<String>): Set<String> {
+            val expanded = mutableSetOf<String>()
+            tables.forEach { table ->
+                val key = table.lowercase()
+                expanded += key
+                val viewDeps = viewTableDependencies[key]
+                if (viewDeps != null) {
+                    expanded += viewDeps
+                }
+            }
+            return expanded
+        }
+
         return when (statement) {
             is AnnotatedSelectStatement -> {
                 val tables = mutableSetOf<String>()
@@ -484,12 +507,12 @@ open class DataStructCodeGenerator(
                 statement.src.fromTable?.let { tables.add(it) }
                 // Add joined tables
                 tables.addAll(statement.src.joinTables)
-                tables
+                expandTables(tables)
             }
 
             is AnnotatedExecuteStatement -> {
                 // For INSERT/UPDATE/DELETE, return the main table
-                setOf(statement.src.table)
+                expandTables(setOf(statement.src.table))
             }
 
             is AnnotatedCreateTableStatement -> {
@@ -503,6 +526,26 @@ open class DataStructCodeGenerator(
                 emptySet()
             }
         }
+    }
+
+    private fun resolveViewDependencies(
+        viewName: String,
+        seen: MutableSet<String>,
+    ): Set<String> {
+        if (!seen.add(viewName)) return emptySet()
+        val view = createViewStatementsByName[viewName] ?: return emptySet()
+        val dependencies = mutableSetOf<String>()
+        val select = view.src.selectStatement
+        val referencedTables = buildList {
+            select.fromTable?.let { add(it) }
+            addAll(select.joinTables)
+        }
+        referencedTables.forEach { table ->
+            val key = table.lowercase()
+            dependencies += key
+            dependencies += resolveViewDependencies(key, seen)
+        }
+        return dependencies
     }
 
     /**
