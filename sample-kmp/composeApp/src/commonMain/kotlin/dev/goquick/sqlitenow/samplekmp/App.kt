@@ -469,8 +469,8 @@ suspend fun addRandomPerson(onError: (String) -> Unit) {
     } else null
 
     try {
-        val results = db.person.add(
-            PersonQuery.Add.Params(
+        val results = db.person.addReturning.list(
+            PersonQuery.AddReturning.Params(
                 firstName = firstName,
                 lastName = lastName,
                 email = email,
@@ -478,7 +478,7 @@ suspend fun addRandomPerson(onError: (String) -> Unit) {
                 birthDate = birthDate,
                 notes = notes,
             )
-        ).executeReturningList()
+        )
         println(results)
     } catch (e: SQLiteException) {
         e.printStackTrace()
@@ -501,7 +501,7 @@ suspend fun deletePerson(personId: Long, onError: (String) -> Unit = {}) {
             PersonQuery.DeleteByIds.Params(
                 ids = listOf(personId)
             )
-        ).execute()
+        )
     } catch (e: SQLiteException) {
         e.printStackTrace()
         onError("Failed to delete person: ${e.message}")
@@ -530,7 +530,7 @@ suspend fun randomizePerson(person: PersonRow, onError: (String) -> Unit = {}) {
                     birthDate = birthDate,
                     notes = notes
                 )
-            ).execute()
+            )
         }
     } catch (e: SQLiteException) {
         e.printStackTrace()

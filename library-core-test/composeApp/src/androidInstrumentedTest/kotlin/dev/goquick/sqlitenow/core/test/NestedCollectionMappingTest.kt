@@ -47,16 +47,16 @@ class NestedCollectionMappingTest {
     @Test
     fun testNestedCollectionsWithFullData() = runBlocking {
         // Create a person with comprehensive nested data
-        val person = database.person.add(PersonQuery.Add.Params(
+        val person = database.person.add.one(PersonQuery.Add.Params(
             firstName = "John",
             lastName = "Doe",
             email = "john.doe@example.com",
             phone = "555-1234",
             birthDate = LocalDate(1990, 5, 15)
-        )).executeReturningOne()
+        ))
 
         // Create multiple addresses
-        val homeAddress = database.personAddress.addReturning(PersonAddressQuery.AddReturning.Params(
+        val homeAddress = database.personAddress.addReturning.one(PersonAddressQuery.AddReturning.Params(
             personId = person.id,
             addressType = AddressType.HOME,
             street = "123 Main St",
@@ -65,9 +65,9 @@ class NestedCollectionMappingTest {
             postalCode = "62701",
             country = "USA",
             isPrimary = true
-        )).executeReturningOne()
+        ))
 
-        val workAddress = database.personAddress.addReturning(PersonAddressQuery.AddReturning.Params(
+        val workAddress = database.personAddress.addReturning.one(PersonAddressQuery.AddReturning.Params(
             personId = person.id,
             addressType = AddressType.WORK,
             street = "456 Business Ave",
@@ -76,7 +76,7 @@ class NestedCollectionMappingTest {
             postalCode = "62702",
             country = "USA",
             isPrimary = false
-        )).executeReturningOne()
+        ))
 
         // Create multiple comments
         val comment1 = database.comment.add(CommentQuery.Add.Params(
@@ -84,38 +84,38 @@ class NestedCollectionMappingTest {
             comment = "First comment about John",
             createdAt = LocalDateTime(2024, 1, 15, 10, 30, 0),
             tags = listOf("personal", "introduction")
-        )).execute()
+        ))
 
         val comment2 = database.comment.add(CommentQuery.Add.Params(
             personId = person.id,
             comment = "Second comment with more details",
             createdAt = LocalDateTime(2024, 2, 20, 14, 45, 30),
             tags = listOf("detailed", "follow-up", "important")
-        )).execute()
+        ))
 
         // Create multiple categories
-        val techCategory = database.category.add(CategoryQuery.Add.Params(
+        val techCategory = database.category.add.one(CategoryQuery.Add.Params(
             name = "Technology",
             description = "Tech-related category"
-        )).executeReturningOne()
+        ))
 
-        val businessCategory = database.category.add(CategoryQuery.Add.Params(
+        val businessCategory = database.category.add.one(CategoryQuery.Add.Params(
             name = "Business",
             description = "Business-related category"
-        )).executeReturningOne()
+        ))
 
         // Link person to categories
-        database.personCategory.add(PersonCategoryQuery.Add.Params(
+        database.personCategory.add.one(PersonCategoryQuery.Add.Params(
             personId = person.id,
             categoryId = techCategory.id,
             isPrimary = true
-        )).executeReturningOne()
+        ))
 
-        database.personCategory.add(PersonCategoryQuery.Add.Params(
+        database.personCategory.add.one(PersonCategoryQuery.Add.Params(
             personId = person.id,
             categoryId = businessCategory.id,
             isPrimary = false
-        )).executeReturningOne()
+        ))
 
         // Test the nested collections query
         val result = database.person.selectWithNestedCollections(
@@ -171,16 +171,16 @@ class NestedCollectionMappingTest {
     @Test
     fun testNestedCollectionsWithPartialData() = runBlocking {
         // Create a person with only some nested data
-        val person = database.person.add(PersonQuery.Add.Params(
+        val person = database.person.add.one(PersonQuery.Add.Params(
             firstName = "Jane",
             lastName = "Smith",
             email = "jane.smith@example.com",
             phone = null,
             birthDate = null
-        )).executeReturningOne()
+        ))
 
         // Add only one address and one comment, no categories
-        database.personAddress.addReturning(PersonAddressQuery.AddReturning.Params(
+        database.personAddress.addReturning.one(PersonAddressQuery.AddReturning.Params(
             personId = person.id,
             addressType = AddressType.HOME,
             street = "789 Oak St",
@@ -189,14 +189,14 @@ class NestedCollectionMappingTest {
             postalCode = "62703",
             country = "USA",
             isPrimary = true
-        )).executeReturningOne()
+        ))
 
         database.comment.add(CommentQuery.Add.Params(
             personId = person.id,
             comment = "Single comment for Jane",
             createdAt = LocalDateTime(2024, 3, 10, 9, 15, 0),
             tags = listOf("single")
-        )).execute()
+        ))
 
         // Test the nested collections query
         val result = database.person.selectWithNestedCollections(
@@ -225,13 +225,13 @@ class NestedCollectionMappingTest {
     @Test
     fun testNestedCollectionsWithEmptyCollections() = runBlocking {
         // Create a person with no nested data
-        val person = database.person.add(PersonQuery.Add.Params(
+        val person = database.person.add.one(PersonQuery.Add.Params(
             firstName = "Bob",
             lastName = "Johnson",
             email = "bob.johnson@example.com",
             phone = "555-9999",
             birthDate = LocalDate(1985, 12, 25)
-        )).executeReturningOne()
+        ))
 
         // Test the nested collections query with no related data
         val result = database.person.selectWithNestedCollections(
@@ -269,16 +269,16 @@ class NestedCollectionMappingTest {
     @Test
     fun testNestedCollectionsDistinctBy() = runBlocking {
         // Test that distinctBy works correctly to avoid duplicate entries
-        val person = database.person.add(PersonQuery.Add.Params(
+        val person = database.person.add.one(PersonQuery.Add.Params(
             firstName = "Alice",
             lastName = "Wilson",
             email = "alice.wilson@example.com",
             phone = "555-7777",
             birthDate = LocalDate(1992, 8, 10)
-        )).executeReturningOne()
+        ))
 
         // Create address
-        val address = database.personAddress.addReturning(PersonAddressQuery.AddReturning.Params(
+        val address = database.personAddress.addReturning.one(PersonAddressQuery.AddReturning.Params(
             personId = person.id,
             addressType = AddressType.HOME,
             street = "321 Pine St",
@@ -287,31 +287,31 @@ class NestedCollectionMappingTest {
             postalCode = "62704",
             country = "USA",
             isPrimary = true
-        )).executeReturningOne()
+        ))
 
         // Create multiple categories that could cause duplicate address entries
-        val category1 = database.category.add(CategoryQuery.Add.Params(
+        val category1 = database.category.add.one(CategoryQuery.Add.Params(
             name = "Category1",
             description = "First category"
-        )).executeReturningOne()
+        ))
 
-        val category2 = database.category.add(CategoryQuery.Add.Params(
+        val category2 = database.category.add.one(CategoryQuery.Add.Params(
             name = "Category2",
             description = "Second category"
-        )).executeReturningOne()
+        ))
 
         // Link person to both categories
-        database.personCategory.add(PersonCategoryQuery.Add.Params(
+        database.personCategory.add.one(PersonCategoryQuery.Add.Params(
             personId = person.id,
             categoryId = category1.id,
             isPrimary = true
-        )).executeReturningOne()
+        ))
 
-        database.personCategory.add(PersonCategoryQuery.Add.Params(
+        database.personCategory.add.one(PersonCategoryQuery.Add.Params(
             personId = person.id,
             categoryId = category2.id,
             isPrimary = false
-        )).executeReturningOne()
+        ))
 
         // Test the nested collections query
         val result = database.person.selectWithNestedCollections(
@@ -334,13 +334,13 @@ class NestedCollectionMappingTest {
     @Test
     fun testNestedCollectionsWithComplexJsonData() = runBlocking {
         // Test nested collections with complex JSON data in tags
-        val person = database.person.add(PersonQuery.Add.Params(
+        val person = database.person.add.one(PersonQuery.Add.Params(
             firstName = "Charlie",
             lastName = "Brown",
             email = "charlie.brown@example.com",
             phone = "555-8888",
             birthDate = LocalDate(1988, 4, 1)
-        )).executeReturningOne()
+        ))
 
         // Create comments with complex JSON tags
         val complexTags1 = listOf(
@@ -367,14 +367,14 @@ class NestedCollectionMappingTest {
             comment = "Comment with complex tags and special characters: 'test', \"quotes\", & symbols",
             createdAt = LocalDateTime(2024, 4, 1, 12, 0, 0),
             tags = complexTags1
-        )).execute()
+        ))
 
         database.comment.add(CommentQuery.Add.Params(
             personId = person.id,
             comment = "Another comment with different complex tags",
             createdAt = LocalDateTime(2024, 4, 2, 15, 30, 0),
             tags = complexTags2
-        )).execute()
+        ))
 
         // Test the nested collections query
         val result = database.person.selectWithNestedCollections(
@@ -407,18 +407,18 @@ class NestedCollectionMappingTest {
     @Test
     fun testNestedCollectionsPerformanceWithLargeDataset() = runBlocking {
         // Test performance and correctness with larger dataset (2 addresses, 5 comments, 4 categories)
-        val person = database.person.add(PersonQuery.Add.Params(
+        val person = database.person.add.one(PersonQuery.Add.Params(
             firstName = "David",
             lastName = "Performance",
             email = "david.performance@example.com",
             phone = "555-0000",
             birthDate = LocalDate(1980, 1, 1)
-        )).executeReturningOne()
+        ))
 
         // Create multiple addresses
         val addressTypes = listOf(AddressType.HOME, AddressType.WORK)
         addressTypes.forEachIndexed { index, addressType ->
-            database.personAddress.addReturning(PersonAddressQuery.AddReturning.Params(
+            database.personAddress.addReturning.one(PersonAddressQuery.AddReturning.Params(
                 personId = person.id,
                 addressType = addressType,
                 street = "Street $index",
@@ -427,7 +427,7 @@ class NestedCollectionMappingTest {
                 postalCode = "ZIP$index",
                 country = "Country $index",
                 isPrimary = index == 0
-            )).executeReturningOne()
+            ))
         }
 
         // Create multiple comments
@@ -437,21 +437,21 @@ class NestedCollectionMappingTest {
                 comment = "Performance test comment $index with detailed content",
                 createdAt = LocalDateTime(2024, 1, index + 1, 10, 0, 0),
                 tags = listOf("performance", "test", "comment$index", "large-dataset")
-            )).execute()
+            ))
         }
 
         // Create multiple categories
         repeat(4) { index ->
-            val category = database.category.add(CategoryQuery.Add.Params(
+            val category = database.category.add.one(CategoryQuery.Add.Params(
                 name = "Performance Category $index",
                 description = "Category $index for performance testing"
-            )).executeReturningOne()
+            ))
 
-            database.personCategory.add(PersonCategoryQuery.Add.Params(
+            database.personCategory.add.one(PersonCategoryQuery.Add.Params(
                 personId = person.id,
                 categoryId = category.id,
                 isPrimary = index == 0
-            )).executeReturningOne()
+            ))
         }
 
         // Test the nested collections query
@@ -493,16 +493,16 @@ class NestedCollectionMappingTest {
     @Test
     fun testNestedCollectionsWithNullValues() = runBlocking {
         // Test nested collections with various null values
-        val person = database.person.add(PersonQuery.Add.Params(
+        val person = database.person.add.one(PersonQuery.Add.Params(
             firstName = "Emma",
             lastName = "Null",
             email = "emma.null@example.com",
             phone = null, // Null phone
             birthDate = null // Null birth date
-        )).executeReturningOne()
+        ))
 
         // Create address with some null fields
-        database.personAddress.addReturning(PersonAddressQuery.AddReturning.Params(
+        database.personAddress.addReturning.one(PersonAddressQuery.AddReturning.Params(
             personId = person.id,
             addressType = AddressType.HOME,
             street = "123 Null St",
@@ -511,7 +511,7 @@ class NestedCollectionMappingTest {
             postalCode = null, // Null postal code
             country = "USA",
             isPrimary = true
-        )).executeReturningOne()
+        ))
 
         // Create comment with null tags
         database.comment.add(CommentQuery.Add.Params(
@@ -519,19 +519,19 @@ class NestedCollectionMappingTest {
             comment = "Comment with null tags",
             createdAt = LocalDateTime(2024, 5, 1, 10, 0, 0),
             tags = null // Null tags
-        )).execute()
+        ))
 
         // Create category with null description
-        val category = database.category.add(CategoryQuery.Add.Params(
+        val category = database.category.add.one(CategoryQuery.Add.Params(
             name = "Null Category",
             description = null // Null description
-        )).executeReturningOne()
+        ))
 
-        database.personCategory.add(PersonCategoryQuery.Add.Params(
+        database.personCategory.add.one(PersonCategoryQuery.Add.Params(
             personId = person.id,
             categoryId = category.id,
             isPrimary = true
-        )).executeReturningOne()
+        ))
 
         // Test the nested collections query
         val result = database.person.selectWithNestedCollections(
@@ -570,16 +570,16 @@ class NestedCollectionMappingTest {
     @Test
     fun testNestedCollectionsDataConsistency() = runBlocking {
         // Test data consistency across multiple queries
-        val person = database.person.add(PersonQuery.Add.Params(
+        val person = database.person.add.one(PersonQuery.Add.Params(
             firstName = "Frank",
             lastName = "Consistent",
             email = "frank.consistent@example.com",
             phone = "555-1111",
             birthDate = LocalDate(1995, 6, 20)
-        )).executeReturningOne()
+        ))
 
         // Create test data
-        val address = database.personAddress.addReturning(PersonAddressQuery.AddReturning.Params(
+        val address = database.personAddress.addReturning.one(PersonAddressQuery.AddReturning.Params(
             personId = person.id,
             addressType = AddressType.WORK,
             street = "999 Consistency Blvd",
@@ -588,14 +588,14 @@ class NestedCollectionMappingTest {
             postalCode = "99999",
             country = "Consistent Country",
             isPrimary = true
-        )).executeReturningOne()
+        ))
 
         val comment = database.comment.add(CommentQuery.Add.Params(
             personId = person.id,
             comment = "Consistency test comment",
             createdAt = LocalDateTime(2024, 6, 20, 16, 45, 0),
             tags = listOf("consistency", "test", "verification")
-        )).execute()
+        ))
 
         // Query using nested collections
         val nestedResult = database.person.selectWithNestedCollections(
@@ -627,16 +627,16 @@ class NestedCollectionMappingTest {
     @Test
     fun testNestedCollectionsQueryRestrictions() = runBlocking {
         // Test that nested collection queries have proper restrictions
-        val person = database.person.add(PersonQuery.Add.Params(
+        val person = database.person.add.one(PersonQuery.Add.Params(
             firstName = "Grace",
             lastName = "Restricted",
             email = "grace.restricted@example.com",
             phone = "555-2222",
             birthDate = LocalDate(1987, 9, 12)
-        )).executeReturningOne()
+        ))
 
         // Add some test data
-        database.personAddress.addReturning(PersonAddressQuery.AddReturning.Params(
+        database.personAddress.addReturning.one(PersonAddressQuery.AddReturning.Params(
             personId = person.id,
             addressType = AddressType.HOME,
             street = "777 Restriction St",
@@ -645,7 +645,7 @@ class NestedCollectionMappingTest {
             postalCode = "77777",
             country = "Restricted Country",
             isPrimary = true
-        )).executeReturningOne()
+        ))
 
         // Test that asList() works correctly
         val listResult = database.person.selectWithNestedCollections(
@@ -655,41 +655,33 @@ class NestedCollectionMappingTest {
         assertEquals(1, listResult.size)
         assertEquals("Grace", listResult.first().myFirstName)
 
-        // Test that asOne() throws UnsupportedOperationException for collection queries
-        try {
-            database.person.selectWithNestedCollections(
-                PersonQuery.SelectWithNestedCollections.Params(personId = person.id)
-            ).asOne()
-            assertTrue("Expected UnsupportedOperationException for asOne() on collection query", false)
-        } catch (e: UnsupportedOperationException) {
-            // Expected behavior
-            assertTrue("Correctly threw UnsupportedOperationException", true)
-        }
+        val selectRunners = database.person.selectWithNestedCollections(
+            PersonQuery.SelectWithNestedCollections.Params(personId = person.id)
+        )
 
-        // Test that asOneOrNull() throws UnsupportedOperationException for collection queries
-        try {
-            database.person.selectWithNestedCollections(
-                PersonQuery.SelectWithNestedCollections.Params(personId = person.id)
-            ).asOneOrNull()
-            assertTrue("Expected UnsupportedOperationException for asOneOrNull() on collection query", false)
-        } catch (e: UnsupportedOperationException) {
-            // Expected behavior
-            assertTrue("Correctly threw UnsupportedOperationException", true)
-        }
+        // Test that asOne() returns the same projection as asList().single()
+        val asOneResult = selectRunners.asOne()
+        assertEquals("Grace", asOneResult.myFirstName)
+        assertEquals(listResult.first().addresses.size, asOneResult.addresses.size)
+
+        // Test that asOneOrNull() mirrors asOne()
+        val asOneOrNullResult = selectRunners.asOneOrNull()
+        assertNotNull(asOneOrNullResult)
+        assertEquals("Grace", asOneOrNullResult?.myFirstName)
     }
 
     @Test
     fun testPerRowMappingBasic() = runBlocking {
         // Test mappingType=perRow - maps data from JOIN tables to nested objects
-        val person = database.person.add(PersonQuery.Add.Params(
+        val person = database.person.add.one(PersonQuery.Add.Params(
             firstName = "PerRowBasic",
             lastName = "Test",
             email = "perrowbasic@example.com",
             phone = "555-6666",
             birthDate = LocalDate(1987, 9, 25)
-        )).executeReturningOne()
+        ))
 
-        val address = database.personAddress.addReturning(PersonAddressQuery.AddReturning.Params(
+        val address = database.personAddress.addReturning.one(PersonAddressQuery.AddReturning.Params(
             personId = person.id,
             addressType = AddressType.HOME,
             street = "789 PerRow Lane",
@@ -698,7 +690,7 @@ class NestedCollectionMappingTest {
             postalCode = "67890",
             country = "PerRow Country",
             isPrimary = true
-        )).executeReturningOne()
+        ))
 
         // Test perRow mapping - this uses JOIN tables to create nested objects
         val result = database.person.selectWithPerRowMapping(
@@ -725,13 +717,13 @@ class NestedCollectionMappingTest {
     @Test
     fun testEntityMappingFromSingleTable() = runBlocking {
         // Test mappingType=entity - maps columns from main FROM table (no JOINs required)
-        val person = database.person.add(PersonQuery.Add.Params(
+        val person = database.person.add.one(PersonQuery.Add.Params(
             firstName = "Entity",
             lastName = "Test",
             email = "entity@example.com",
             phone = "555-4444",
             birthDate = LocalDate(1988, 7, 12)
-        )).executeReturningOne()
+        ))
 
         // Test entity mapping - this works without any JOINs
         // The entity mapping takes columns from the main person table and maps them to a nested object
@@ -757,15 +749,15 @@ class NestedCollectionMappingTest {
     @Test
     fun testPerRowVsEntityMappingDifference() = runBlocking {
         // Test the key difference between perRow and entity mapping
-        val person = database.person.add(PersonQuery.Add.Params(
+        val person = database.person.add.one(PersonQuery.Add.Params(
             firstName = "Comparison",
             lastName = "Test",
             email = "comparison@example.com",
             phone = "555-5555",
             birthDate = LocalDate(1991, 11, 5)
-        )).executeReturningOne()
+        ))
 
-        val address = database.personAddress.addReturning(PersonAddressQuery.AddReturning.Params(
+        val address = database.personAddress.addReturning.one(PersonAddressQuery.AddReturning.Params(
             personId = person.id,
             addressType = AddressType.WORK,
             street = "456 Comparison Ave",
@@ -774,7 +766,7 @@ class NestedCollectionMappingTest {
             postalCode = "54321",
             country = "Comparison Country",
             isPrimary = false
-        )).executeReturningOne()
+        ))
 
         // Test perRow mapping - this uses JOIN tables to create nested objects
         val perRowResult = database.person.selectWithPerRowMapping(

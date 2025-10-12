@@ -39,13 +39,13 @@ class BasicCollectionTest {
             database.open()
 
             // Setup: Create a person with multiple addresses
-            val person = database.person.add(PersonQuery.Add.Params(
+            val person = database.person.add.one(PersonQuery.Add.Params(
                 firstName = "John",
                 lastName = "Doe",
                 email = "john.doe@example.com",
                 phone = "555-0123",
                 birthDate = LocalDate(1990, 5, 15)
-            )).executeReturningOne()
+            ))
 
             database.personAddress.add(PersonAddressQuery.Add.Params(
                 personId = person.id,
@@ -56,7 +56,7 @@ class BasicCollectionTest {
                 postalCode = "62701",
                 country = "USA",
                 isPrimary = true
-            )).execute()
+            ))
 
             database.personAddress.add(PersonAddressQuery.Add.Params(
                 personId = person.id,
@@ -67,7 +67,7 @@ class BasicCollectionTest {
                 postalCode = "62702",
                 country = "USA",
                 isPrimary = false
-            )).execute()
+            ))
 
             // Test: Query person with addresses collection
             val results = database.person.selectAllWithAddresses(PersonQuery.SelectAllWithAddresses.Params(
@@ -102,13 +102,13 @@ class BasicCollectionTest {
             database.open()
 
             // Setup: Create a person with no addresses
-            val person = database.person.add(PersonQuery.Add.Params(
+            val person = database.person.add.one(PersonQuery.Add.Params(
                 firstName = "Jane",
                 lastName = "Smith",
                 email = "jane.smith@example.com",
                 phone = null,
                 birthDate = null
-            )).executeReturningOne()
+            ))
 
             // Test: Query person with addresses collection
             val results = database.person.selectAllWithAddresses(PersonQuery.SelectAllWithAddresses.Params(
@@ -134,13 +134,13 @@ class BasicCollectionTest {
             database.open()
 
             // Setup: Create person with addresses
-            val person = database.person.add(PersonQuery.Add.Params(
+            val person = database.person.add.one(PersonQuery.Add.Params(
                 firstName = "Query",
                 lastName = "Restrictions",
                 email = "restrictions@example.com",
                 phone = "555-RESTRICT",
                 birthDate = LocalDate(1992, 8, 25)
-            )).executeReturningOne()
+            ))
 
             database.personAddress.add(PersonAddressQuery.Add.Params(
                 personId = person.id,
@@ -151,29 +151,25 @@ class BasicCollectionTest {
                 postalCode = "75001",
                 country = "USA",
                 isPrimary = true
-            )).execute()
+            ))
 
-            // Test: Collection queries don't support asOne() and asOneOrNull()
+            // Test: Collection queries support single-row helpers when the result size allows it
             val selectRunners = database.person.selectAllWithAddresses(PersonQuery.SelectAllWithAddresses.Params(
                 limit = 10,
                 offset = 0
             ))
 
-            // Verify: asOne() throws UnsupportedOperationException
-            try {
-                selectRunners.asOne()
-                fail("Expected UnsupportedOperationException for asOne() on collection query")
-            } catch (e: UnsupportedOperationException) {
-                assertTrue(e.message?.contains("asOne() is not supported for collection mapping queries") == true)
-            }
+            // Verify: asOne() hydrates the same projection as asList().single()
+            val asOneResult = selectRunners.asOne()
+            assertEquals(person.id, asOneResult.personId)
+            assertEquals("Query", asOneResult.myFirstName)
+            assertEquals(1, asOneResult.addresses.size)
 
-            // Verify: asOneOrNull() throws UnsupportedOperationException
-            try {
-                selectRunners.asOneOrNull()
-                fail("Expected UnsupportedOperationException for asOneOrNull() on collection query")
-            } catch (e: UnsupportedOperationException) {
-                assertTrue(e.message?.contains("asOneOrNull() is not supported for collection mapping queries") == true)
-            }
+            // Verify: asOneOrNull() succeeds and mirrors asOne()
+            val asOneOrNullResult = selectRunners.asOneOrNull()
+            assertNotNull(asOneOrNullResult)
+            assertEquals(person.id, asOneOrNullResult?.personId)
+            assertEquals(asOneResult.addresses.size, asOneOrNullResult?.addresses?.size)
 
             // Verify: asList() works correctly
             val results = selectRunners.asList()
@@ -187,7 +183,7 @@ class BasicCollectionTest {
         runBlocking {
             database.open()
 
-            val doe = database.person.add(
+            val doe = database.person.add.one(
                 PersonQuery.Add.Params(
                     firstName = "Alice",
                     lastName = "Doe",
@@ -195,9 +191,9 @@ class BasicCollectionTest {
                     phone = null,
                     birthDate = null,
                 ),
-            ).executeReturningOne()
+            )
 
-            val smith = database.person.add(
+            val smith = database.person.add.one(
                 PersonQuery.Add.Params(
                     firstName = "Bob",
                     lastName = "Smith",
@@ -205,9 +201,9 @@ class BasicCollectionTest {
                     phone = null,
                     birthDate = null,
                 ),
-            ).executeReturningOne()
+            )
 
-            database.person.add(
+            database.person.add.one(
                 PersonQuery.Add.Params(
                     firstName = "Charlie",
                     lastName = "Excluded",
@@ -215,7 +211,7 @@ class BasicCollectionTest {
                     phone = null,
                     birthDate = null,
                 ),
-            ).executeReturningOne()
+            )
 
             val params = PersonQuery.SelectAllByLastNames.Params(
                 lastNames = listOf("Doe", "Smith"),

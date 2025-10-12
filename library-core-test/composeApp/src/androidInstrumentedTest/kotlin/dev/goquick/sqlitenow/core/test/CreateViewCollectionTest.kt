@@ -42,24 +42,24 @@ class CreateViewCollectionTest {
     @Test
     fun testCreateViewWithComplexCollections() = runBlocking {
         // Create comprehensive test data
-        val person = database.person.add(PersonQuery.Add.Params(
+        val person = database.person.add.one(PersonQuery.Add.Params(
             firstName = "ViewTest",
             lastName = "User",
             email = "viewtest@example.com",
             phone = "555-VIEW",
             birthDate = LocalDate(1985, 6, 15)
-        )).executeReturningOne()
+        ))
 
         // Create multiple categories
-        val category1 = database.category.add(CategoryQuery.Add.Params(
+        val category1 = database.category.add.one(CategoryQuery.Add.Params(
             name = "Primary Category",
             description = "Main category for testing"
-        )).executeReturningOne()
+        ))
 
-        val category2 = database.category.add(CategoryQuery.Add.Params(
+        val category2 = database.category.add.one(CategoryQuery.Add.Params(
             name = "Secondary Category", 
             description = "Additional category for testing"
-        )).executeReturningOne()
+        ))
 
         // Create multiple addresses
         database.personAddress.add(PersonAddressQuery.Add.Params(
@@ -71,7 +71,7 @@ class CreateViewCollectionTest {
             postalCode = "12345",
             country = "USA",
             isPrimary = true
-        )).execute()
+        ))
 
         database.personAddress.add(PersonAddressQuery.Add.Params(
             personId = person.id,
@@ -82,20 +82,20 @@ class CreateViewCollectionTest {
             postalCode = "67890",
             country = "USA",
             isPrimary = false
-        )).execute()
+        ))
 
         // Create person-category relationships
-        database.personCategory.add(PersonCategoryQuery.Add.Params(
+        database.personCategory.add.one(PersonCategoryQuery.Add.Params(
             personId = person.id,
             categoryId = category1.id,
             isPrimary = true
-        )).executeReturningOne()
+        ))
 
-        database.personCategory.add(PersonCategoryQuery.Add.Params(
+        database.personCategory.add.one(PersonCategoryQuery.Add.Params(
             personId = person.id,
             categoryId = category2.id,
             isPrimary = false
-        )).executeReturningOne()
+        ))
 
         // Test CREATE VIEW with complex collection mapping
         // The CREATE VIEW should have been created during database migration
@@ -131,18 +131,18 @@ class CreateViewCollectionTest {
     @Test
     fun testViewDataIntegrity() = runBlocking {
         // Create test data
-        val person = database.person.add(PersonQuery.Add.Params(
+        val person = database.person.add.one(PersonQuery.Add.Params(
             firstName = "Integrity",
             lastName = "Test",
             email = "integrity@example.com",
             phone = "555-TEST",
             birthDate = LocalDate(1990, 12, 25)
-        )).executeReturningOne()
+        ))
 
-        val category = database.category.add(CategoryQuery.Add.Params(
+        val category = database.category.add.one(CategoryQuery.Add.Params(
             name = "Test Category",
             description = "For integrity testing"
-        )).executeReturningOne()
+        ))
 
         database.personAddress.add(PersonAddressQuery.Add.Params(
             personId = person.id,
@@ -153,13 +153,13 @@ class CreateViewCollectionTest {
             postalCode = "11111",
             country = "USA",
             isPrimary = true
-        )).execute()
+        ))
 
-        database.personCategory.add(PersonCategoryQuery.Add.Params(
+        database.personCategory.add.one(PersonCategoryQuery.Add.Params(
             personId = person.id,
             categoryId = category.id,
             isPrimary = true
-        )).executeReturningOne()
+        ))
 
         // Test that the view data integrity by verifying our collections work correctly
         // Since the CREATE VIEW was created, we can test that our data relationships are intact
@@ -209,33 +209,33 @@ class CreateViewCollectionTest {
 
         // Create 5 persons
         repeat(5) { i ->
-            val person = database.person.add(PersonQuery.Add.Params(
+            val person = database.person.add.one(PersonQuery.Add.Params(
                 firstName = "Person$i",
                 lastName = "LastName$i",
                 email = "person$i@example.com",
                 phone = "555-000$i",
                 birthDate = LocalDate(1980 + i, 1, 1)
-            )).executeReturningOne()
+            ))
             persons.add(person)
         }
 
         // Create 3 categories
         repeat(3) { i ->
-            val category = database.category.add(CategoryQuery.Add.Params(
+            val category = database.category.add.one(CategoryQuery.Add.Params(
                 name = "Category$i",
                 description = "Description for category $i"
-            )).executeReturningOne()
+            ))
             categories.add(category)
         }
 
         // Create relationships: each person belongs to all categories
         persons.forEach { person ->
             categories.forEachIndexed { index, category ->
-                database.personCategory.add(PersonCategoryQuery.Add.Params(
+                database.personCategory.add.one(PersonCategoryQuery.Add.Params(
                     personId = person.id,
                     categoryId = category.id,
                     isPrimary = index == 0
-                )).executeReturningOne()
+                ))
             }
 
             // Add 2 addresses per person
@@ -248,7 +248,7 @@ class CreateViewCollectionTest {
                 postalCode = "12345",
                 country = "USA",
                 isPrimary = true
-            )).execute()
+            ))
 
             database.personAddress.add(PersonAddressQuery.Add.Params(
                 personId = person.id,
@@ -259,7 +259,7 @@ class CreateViewCollectionTest {
                 postalCode = "67890",
                 country = "USA",
                 isPrimary = false
-            )).execute()
+            ))
         }
 
         // Test view performance by verifying our collection queries work efficiently with larger datasets

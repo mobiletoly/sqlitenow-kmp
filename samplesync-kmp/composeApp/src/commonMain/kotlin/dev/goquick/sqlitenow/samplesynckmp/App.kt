@@ -996,7 +996,7 @@ suspend fun addRandomPerson(onError: (String) -> Unit) {
                 isActive = isActive,
                 notes = "", // TODO
             )
-        ).execute()
+        )
     } catch (e: SQLiteException) {
         appLog.e(e) { "Failed to add person (SQLite)" }
         // Check if duplicate
@@ -1018,7 +1018,7 @@ suspend fun deletePerson(personId: ByteArray, onError: (String) -> Unit = {}) {
             PersonQuery.DeleteById.Params(
                 id = personId
             )
-        ).execute()
+        )
     } catch (e: SQLiteException) {
         appLog.e(e) { "Failed to delete person (SQLite)" }
         onError("Failed to delete person: ${e.message}")
@@ -1050,7 +1050,7 @@ suspend fun randomizePerson(person: PersonRow, onError: (String) -> Unit = {}) {
                     isActive = person.isActive,
                     notes = notes
                 )
-            ).execute()
+            )
         }
     } catch (e: SQLiteException) {
         appLog.e(e) { "Failed to update person (SQLite)" }
@@ -1086,7 +1086,7 @@ suspend fun addRandomAddress(personId: ByteArray, onError: (String) -> Unit = {}
                 country = country,
                 isPrimary = isPrimary,
             )
-        ).execute()
+        )
     } catch (e: Exception) {
         appLog.e(e) { "Failed to add address" }
         onError("Failed to add address: ${e.message}")
@@ -1107,7 +1107,7 @@ suspend fun addRandomComment(personId: ByteArray, onError: (String) -> Unit = {}
                 createdAt = created,
                 tags = emptyList(),
             )
-        ).execute()
+        )
     } catch (e: Exception) {
         appLog.e(e) { "Failed to add comment" }
         onError("Failed to add comment: ${e.message}")

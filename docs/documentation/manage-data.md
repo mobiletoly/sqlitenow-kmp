@@ -109,43 +109,67 @@ object PersonQuery {
 As you can see Params class is generated automatically based on the SQL query parameters.
 SQLiteNow automatically handles Collection parameters for IN clauses.
 
-## Execution Methods
+## Executing Modifications
 
-All data modification queries use the `execute()` method:
-
-### execute()
-Executes the INSERT, UPDATE, or DELETE operation:
+All generated execute statements run immediately when you call them — no extra `execute()` step required.
 
 ```kotlin
-// Insert new person
+// Insert a new person
 db.person.add(
     PersonQuery.Add.Params(
         firstName = "John",
         lastName = "Doe",
         email = "john@example.com",
         phone = "+1234567890",
-        birthDate = LocalDate(1990, 1, 1)
+        birthDate = LocalDate(1990, 1, 1),
     )
-).execute()
+)
 ```
 
 ```kotlin
-// Update email
+// Update an email address
 db.person.updateEmail(
     PersonQuery.UpdateEmail.Params(
         id = 1,
-        email = "newemail@example.com"
+        email = "newemail@example.com",
     )
-).execute()
+)
 ```
 
 ```kotlin
-// Delete multiple persons by IDs
+// Delete multiple people by ID
 db.person.deleteByIds(
     PersonQuery.DeleteByIds.Params(
-        ids = listOf(1L, 2L, 3L)
+        ids = listOf(1L, 2L, 3L),
     )
-).execute()
+)
+```
+
+Prefer a DSL over `Params` constructors? Every generated `Params` class includes a builder:
+
+```kotlin
+db.person.add {
+    firstName = "John"
+    lastName = "Doe"
+    email = "john@example.com"
+    phone = "+1234567890"
+    birthDate = LocalDate(1990, 1, 1)
+}
+```
+
+Missing required properties trigger an error at runtime, so the builder remains safe while trimming boilerplate.
+
+Returning statements expose list/one/oneOrNull helpers:
+
+```kotlin
+val inserted = db.person.add.one {
+    firstName = "Alice"
+    lastName = "Smith"
+    email = "alice@example.com"
+}
+
+val allRows = db.person.add.list(insertParams)
+val maybeRow = db.person.add.oneOrNull(insertParams)
 ```
 
 ## Next Steps

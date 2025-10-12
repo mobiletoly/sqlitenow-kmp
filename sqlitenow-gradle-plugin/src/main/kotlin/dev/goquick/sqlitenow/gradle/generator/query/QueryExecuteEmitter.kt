@@ -206,19 +206,63 @@ internal class QueryExecuteEmitter(
                 }
 
                 "executeAsOne" -> {
-                    line("if (statement.step()) {")
-                    indent { line("$capitalizedNamespace.$className.readStatementResult($readParams)") }
-                    line("} else {")
-                    indent { line("throw IllegalStateException(\"Query returned no results, but exactly one result was expected\")") }
-                    line("}")
+                    if (statement.hasCollectionMapping()) {
+                        line("val results = run {")
+                        indent {
+                            collectionMappingBuilder(
+                                this,
+                                statement,
+                                namespace,
+                                className,
+                                joinedParams,
+                                mapAdapterName,
+                            )
+                        }
+                        line("}")
+                        line("when {")
+                        indent {
+                            line("results.isEmpty() -> throw IllegalStateException(\"Query returned no results, but exactly one result was expected\")")
+                            line("results.size > 1 -> throw IllegalStateException(\"Query returned more than one result, but exactly one result was expected\")")
+                            line("else -> results.first()")
+                        }
+                        line("}")
+                    } else {
+                        line("if (statement.step()) {")
+                        indent { line("$capitalizedNamespace.$className.readStatementResult($readParams)") }
+                        line("} else {")
+                        indent { line("throw IllegalStateException(\"Query returned no results, but exactly one result was expected\")") }
+                        line("}")
+                    }
                 }
 
                 "executeAsOneOrNull" -> {
-                    line("if (statement.step()) {")
-                    indent { line("$capitalizedNamespace.$className.readStatementResult($readParams)") }
-                    line("} else {")
-                    indent { line("null") }
-                    line("}")
+                    if (statement.hasCollectionMapping()) {
+                        line("val results = run {")
+                        indent {
+                            collectionMappingBuilder(
+                                this,
+                                statement,
+                                namespace,
+                                className,
+                                joinedParams,
+                                mapAdapterName,
+                            )
+                        }
+                        line("}")
+                        line("when {")
+                        indent {
+                            line("results.isEmpty() -> null")
+                            line("results.size > 1 -> throw IllegalStateException(\"Query returned more than one result, but at most one result was expected\")")
+                            line("else -> results.first()")
+                        }
+                        line("}")
+                    } else {
+                        line("if (statement.step()) {")
+                        indent { line("$capitalizedNamespace.$className.readStatementResult($readParams)") }
+                        line("} else {")
+                        indent { line("null") }
+                        line("}")
+                    }
                 }
             }
         }

@@ -44,7 +44,7 @@ class CategoryReturningClauseTest {
                 description = "All things tech-related"
             )
 
-            val insertedCategory = database.category.add(categoryParams).executeReturningOne()
+            val insertedCategory = database.category.add.one(categoryParams)
 
             // Verify returned data
             assertNotNull("Inserted category should not be null", insertedCategory)
@@ -67,7 +67,7 @@ class CategoryReturningClauseTest {
                 description = null
             )
 
-            val insertedCategory = database.category.add(categoryParams).executeReturningOne()
+            val insertedCategory = database.category.add.one(categoryParams)
 
             // Verify returned data handles null correctly
             assertNotNull("Inserted category should not be null", insertedCategory)
@@ -89,7 +89,7 @@ class CategoryReturningClauseTest {
                 description = "Testing LocalDateTime adapter"
             )
 
-            val insertedCategory = database.category.add(categoryParams).executeReturningOne()
+            val insertedCategory = database.category.add.one(categoryParams)
 
             // Verify LocalDateTime type adapter worked correctly
             assertNotNull("Created at should not be null", insertedCategory.createdAt)
@@ -112,7 +112,7 @@ class CategoryReturningClauseTest {
             )
 
             // Insert with RETURNING
-            val insertedCategory = database.category.add(categoryParams).executeReturningOne()
+            val insertedCategory = database.category.add.one(categoryParams)
 
             // Select the same category
             val selectedCategories = database.category.selectAll.asList()
@@ -140,7 +140,7 @@ class CategoryReturningClauseTest {
                 description = "First category"
             )
 
-            val insertedFirst = database.category.add(firstCategory).executeReturningOne()
+            val insertedFirst = database.category.add.one(firstCategory)
             assertTrue("First insert ID should be positive", insertedFirst.id > 0)
             assertEquals("First insert name should match", "Unique Test", insertedFirst.name)
 
@@ -151,7 +151,7 @@ class CategoryReturningClauseTest {
             )
 
             try {
-                database.category.add(duplicateCategory).executeReturningOne()
+                database.category.add.one(duplicateCategory)
                 fail("Should have thrown exception due to UNIQUE constraint violation")
             } catch (e: Exception) {
                 // Expected behavior - UNIQUE constraint should prevent duplicate names
@@ -177,7 +177,7 @@ class CategoryReturningClauseTest {
             val insertedCategories = mutableListOf<CategoryAddResult>()
 
             categories.forEach { params ->
-                val inserted = database.category.add(params).executeReturningOne()
+                val inserted = database.category.add.one(params)
                 insertedCategories.add(inserted)
             }
 
@@ -220,7 +220,7 @@ class CategoryReturningClauseTest {
                 description = "Testing field name and type mapping"
             )
 
-            val insertedCategory = database.category.add(categoryParams).executeReturningOne()
+            val insertedCategory = database.category.add.one(categoryParams)
 
             // Verify field mapping worked correctly
             assertNotNull("Category should not be null", insertedCategory)
@@ -248,7 +248,7 @@ class CategoryReturningClauseTest {
                     description = "Invalid category"
                 )
 
-                database.category.add(invalidParams).executeReturningOne()
+                database.category.add.one(invalidParams)
                 // If we get here, the empty name was allowed, which is fine
                 // The test mainly ensures no crashes occur
             } catch (e: Exception) {
@@ -264,7 +264,7 @@ class CategoryReturningClauseTest {
             )
 
             try {
-                val result = database.category.add(longNameParams).executeReturningOne()
+                val result = database.category.add.one(longNameParams)
                 // If successful, verify the data was stored correctly
                 assertEquals("Long name should be preserved", longName, result.name)
             } catch (e: Exception) {

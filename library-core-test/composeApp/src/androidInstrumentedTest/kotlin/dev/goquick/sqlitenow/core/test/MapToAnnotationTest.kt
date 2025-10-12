@@ -41,7 +41,7 @@ class MapToAnnotationTest {
                 phone = null,
                 birthDate = LocalDate(1992, 4, 20),
             )
-            val inserted = database.person.add(params).executeReturningOne()
+            val inserted = database.person.add.one(params)
 
             val summaries = database.person.selectAllAsc.asList()
 
@@ -63,7 +63,7 @@ class MapToAnnotationTest {
                 phone = null,
                 birthDate = LocalDate(1993, 5, 15),
             )
-            val inserted = database.person.add(params).executeReturningOne()
+            val inserted = database.person.add.one(params)
 
             val summaries = database.person.selectAllDesc.asList()
 
@@ -78,7 +78,7 @@ class MapToAnnotationTest {
         runBlocking {
             database.open()
 
-            database.person.add(
+            database.person.add.one(
                 PersonQuery.Add.Params(
                     email = "agg-1@example.com",
                     firstName = "Amy",
@@ -86,8 +86,8 @@ class MapToAnnotationTest {
                     phone = null,
                     birthDate = LocalDate(1990, 1, 1),
                 )
-            ).executeReturningOne()
-            database.person.add(
+            )
+            database.person.add.one(
                 PersonQuery.Add.Params(
                     email = "agg-2@example.com",
                     firstName = "Brian",
@@ -95,7 +95,7 @@ class MapToAnnotationTest {
                     phone = null,
                     birthDate = LocalDate(1991, 2, 2),
                 )
-            ).executeReturningOne()
+            )
 
             val stats: PersonAggregateSummary = database.person.selectAggregatedStats.asOne()
             assertEquals(2L, stats.totalCount)

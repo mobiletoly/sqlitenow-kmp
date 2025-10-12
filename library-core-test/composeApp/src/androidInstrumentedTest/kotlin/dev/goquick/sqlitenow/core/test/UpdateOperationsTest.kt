@@ -19,7 +19,7 @@ import org.junit.runner.RunWith
 
 /**
  * Comprehensive integration tests for SQLiteNow UPDATE operations.
- * Tests all aspects of UPDATE operations using ExecuteRunners.
+ * Ensures ExecuteStatement wrappers cover UPDATE scenarios.
  */
 @RunWith(AndroidJUnit4::class)
 class UpdateOperationsTest {
@@ -44,13 +44,13 @@ class UpdateOperationsTest {
             database.open()
             
             // First insert a person to update
-            val originalPerson = database.person.add(PersonQuery.Add.Params(
+            val originalPerson = database.person.add.one(PersonQuery.Add.Params(
                 email = "basic-update@example.com",
                 firstName = "Original",
                 lastName = "Name",
                 phone = "+1111111111",
                 birthDate = LocalDate(1990, 1, 1)
-            )).executeReturningOne()
+            ))
             
             // Update the person
             val updateParams = PersonQuery.UpdateById.Params(
@@ -62,7 +62,7 @@ class UpdateOperationsTest {
                 id = originalPerson.id
             )
             
-            database.person.updateById(updateParams).execute()
+            database.person.updateById(updateParams)
             
             // Verify the update
             val updatedPerson = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0))
@@ -86,13 +86,13 @@ class UpdateOperationsTest {
             database.open()
             
             // Insert person with all fields populated
-            val originalPerson = database.person.add(PersonQuery.Add.Params(
+            val originalPerson = database.person.add.one(PersonQuery.Add.Params(
                 email = "null-update@example.com",
                 firstName = "Original",
                 lastName = "WithValues",
                 phone = "+3333333333",
                 birthDate = LocalDate(1985, 5, 15)
-            )).executeReturningOne()
+            ))
             
             // Update to null values
             val updateParams = PersonQuery.UpdateById.Params(
@@ -104,7 +104,7 @@ class UpdateOperationsTest {
                 id = originalPerson.id
             )
             
-            database.person.updateById(updateParams).execute()
+            database.person.updateById(updateParams)
             
             // Verify null update
             val updatedPerson = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0))
@@ -126,13 +126,13 @@ class UpdateOperationsTest {
             database.open()
             
             // Insert person with null values
-            val originalPerson = database.person.add(PersonQuery.Add.Params(
+            val originalPerson = database.person.add.one(PersonQuery.Add.Params(
                 email = "from-null-update@example.com",
                 firstName = "Original",
                 lastName = "WithNulls",
                 phone = null,
                 birthDate = null
-            )).executeReturningOne()
+            ))
             
             // Update from null to actual values
             val updateParams = PersonQuery.UpdateById.Params(
@@ -144,7 +144,7 @@ class UpdateOperationsTest {
                 id = originalPerson.id
             )
             
-            database.person.updateById(updateParams).execute()
+            database.person.updateById(updateParams)
             
             // Verify update from null
             val updatedPerson = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0))
@@ -166,13 +166,13 @@ class UpdateOperationsTest {
             database.open()
             
             // Insert person with all fields
-            val originalPerson = database.person.add(PersonQuery.Add.Params(
+            val originalPerson = database.person.add.one(PersonQuery.Add.Params(
                 email = "partial-update@example.com",
                 firstName = "Original",
                 lastName = "Partial",
                 phone = "+5555555555",
                 birthDate = LocalDate(1988, 3, 12)
-            )).executeReturningOne()
+            ))
             
             // Update only some fields (SQLiteNow requires all fields in UpdateById, but we can test the effect)
             val updateParams = PersonQuery.UpdateById.Params(
@@ -184,7 +184,7 @@ class UpdateOperationsTest {
                 id = originalPerson.id
             )
             
-            database.person.updateById(updateParams).execute()
+            database.person.updateById(updateParams)
             
             // Verify partial update
             val updatedPerson = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0))
@@ -216,7 +216,7 @@ class UpdateOperationsTest {
             )
             
             // Execute update (should not throw exception, but affect 0 rows)
-            database.person.updateById(updateParams).execute()
+            database.person.updateById(updateParams)
             
             // Verify no records were affected
             val allPersons = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0)).asList()
@@ -232,13 +232,13 @@ class UpdateOperationsTest {
             // Insert multiple persons
             val insertedPersons = mutableListOf<PersonAddResult>()
             for (i in 1..5) {
-                val person = database.person.add(PersonQuery.Add.Params(
+                val person = database.person.add.one(PersonQuery.Add.Params(
                     email = "batch-update-$i@example.com",
                     firstName = "Batch$i",
                     lastName = "Original",
                     phone = "+${i.toString().padStart(10, '0')}",
                     birthDate = LocalDate(1990 + i, i, i)
-                )).executeReturningOne()
+                ))
                 insertedPersons.add(person)
             }
             
@@ -253,7 +253,7 @@ class UpdateOperationsTest {
                     id = person.id
                 )
                 
-                database.person.updateById(updateParams).execute()
+                database.person.updateById(updateParams)
             }
             
             // Verify all updates
@@ -279,13 +279,13 @@ class UpdateOperationsTest {
             database.open()
             
             // Insert person and address
-            val person = database.person.add(PersonQuery.Add.Params(
+            val person = database.person.add.one(PersonQuery.Add.Params(
                 email = "complex-update@example.com",
                 firstName = "Complex",
                 lastName = "Update",
                 phone = "+6666666666",
                 birthDate = LocalDate(1993, 6, 18)
-            )).executeReturningOne()
+            ))
             
             database.personAddress.add(PersonAddressQuery.Add.Params(
                 personId = person.id,
@@ -296,7 +296,7 @@ class UpdateOperationsTest {
                 postalCode = "12345",
                 country = "Original Country",
                 isPrimary = false
-            )).execute()
+            ))
             
             // Update address with different enum value and boolean
             val addresses = database.personAddress.selectAll.asList()
@@ -314,7 +314,7 @@ class UpdateOperationsTest {
                 id = addressToUpdate.id
             )
             
-            database.personAddress.updateById(updateParams).execute()
+            database.personAddress.updateById(updateParams)
             
             // Verify complex type updates
             val updatedAddresses = database.personAddress.selectAll.asList()
@@ -337,13 +337,13 @@ class UpdateOperationsTest {
             database.open()
             
             // Insert person with normal date
-            val person = database.person.add(PersonQuery.Add.Params(
+            val person = database.person.add.one(PersonQuery.Add.Params(
                 email = "datetime-edge-update@example.com",
                 firstName = "DateTime",
                 lastName = "Edge",
                 phone = "+7777777777",
                 birthDate = LocalDate(1990, 6, 15)
-            )).executeReturningOne()
+            ))
             
             // Test updating to edge case dates
             val edgeCaseDates = listOf(
@@ -364,7 +364,7 @@ class UpdateOperationsTest {
                     id = person.id
                 )
                 
-                database.person.updateById(updateParams).execute()
+                database.person.updateById(updateParams)
                 
                 // Verify edge case date update
                 val updatedPerson = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0))
@@ -384,13 +384,13 @@ class UpdateOperationsTest {
             database.open()
             
             // Insert person with short strings
-            val person = database.person.add(PersonQuery.Add.Params(
+            val person = database.person.add.one(PersonQuery.Add.Params(
                 email = "short@example.com",
                 firstName = "Short",
                 lastName = "Name",
                 phone = "+1234567890",
                 birthDate = LocalDate(1985, 4, 10)
-            )).executeReturningOne()
+            ))
             
             // Update with very long strings
             val longEmail = "very-long-updated-email-address-that-exceeds-normal-length-limits@very-long-updated-domain.example.com"
@@ -407,7 +407,7 @@ class UpdateOperationsTest {
                 id = person.id
             )
             
-            database.person.updateById(updateParams).execute()
+            database.person.updateById(updateParams)
             
             // Verify long string updates
             val updatedPerson = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0))
@@ -428,21 +428,21 @@ class UpdateOperationsTest {
             database.open()
             
             // Insert two persons
-            val person1 = database.person.add(PersonQuery.Add.Params(
+            val person1 = database.person.add.one(PersonQuery.Add.Params(
                 email = "constraint1@example.com",
                 firstName = "Constraint1",
                 lastName = "Test",
                 phone = "+8888888888",
                 birthDate = LocalDate(1987, 7, 25)
-            )).executeReturningOne()
+            ))
             
-            val person2 = database.person.add(PersonQuery.Add.Params(
+            val person2 = database.person.add.one(PersonQuery.Add.Params(
                 email = "constraint2@example.com",
                 firstName = "Constraint2",
                 lastName = "Test",
                 phone = "+9999999999",
                 birthDate = LocalDate(1988, 8, 26)
-            )).executeReturningOne()
+            ))
             
             // Update person1 with valid data
             val validUpdateParams = PersonQuery.UpdateById.Params(
@@ -454,7 +454,7 @@ class UpdateOperationsTest {
                 id = person1.id
             )
             
-            database.person.updateById(validUpdateParams).execute()
+            database.person.updateById(validUpdateParams)
             
             // Verify valid update succeeded
             val updatedPerson1 = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0))

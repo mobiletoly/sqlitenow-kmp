@@ -51,7 +51,7 @@ class TypeAdaptersTest {
                 birthDate = testDate
             )
 
-            val insertedPerson = database.person.add(person).executeReturningOne()
+            val insertedPerson = database.person.add.one(person)
 
             // Verify LocalDate adapter worked correctly in INSERT RETURNING
             assertEquals("Birth date should match in RETURNING", testDate, insertedPerson.birthDate)
@@ -73,7 +73,7 @@ class TypeAdaptersTest {
                 birthDate = null
             )
 
-            val insertedPersonWithNull = database.person.add(personWithNullDate).executeReturningOne()
+            val insertedPersonWithNull = database.person.add.one(personWithNullDate)
             assertNull("Birth date should be null in RETURNING", insertedPersonWithNull.birthDate)
 
             // Verify null date in SELECT
@@ -100,7 +100,7 @@ class TypeAdaptersTest {
                 birthDate = LocalDate(1995, 3, 15)
             )
             
-            val insertedPerson = database.person.add(person).executeReturningOne()
+            val insertedPerson = database.person.add.one(person)
             
             // Verify LocalDateTime adapter worked correctly
             assertNotNull("Created at should not be null", insertedPerson.createdAt)
@@ -115,7 +115,7 @@ class TypeAdaptersTest {
                 tags = listOf("test", "datetime")
             )
 
-            val insertedComment = database.comment.add(comment).execute()
+            val insertedComment = database.comment.add(comment)
             
             // Verify by selecting the comment
             val selectedComments = database.comment.selectAll(CommentQuery.SelectAll.Params(personId = insertedPerson.id)).asList()
@@ -136,13 +136,13 @@ class TypeAdaptersTest {
             )
             
             // First insert a person
-            val person = database.person.add(PersonQuery.Add.Params(
+            val person = database.person.add.one(PersonQuery.Add.Params(
                 email = "enum-test@example.com",
                 firstName = "Enum",
                 lastName = "Test",
                 phone = "+3333333333",
                 birthDate = LocalDate(1988, 8, 20)
-            )).executeReturningOne()
+            ))
             
             addressTypes.forEachIndexed { index, addressType ->
                 val address = PersonAddressQuery.Add.Params(
@@ -156,7 +156,7 @@ class TypeAdaptersTest {
                     isPrimary = index == 0
                 )
 
-                database.personAddress.add(address).execute()
+                database.personAddress.add(address)
             }
             
             // Test selecting by address type
@@ -178,13 +178,13 @@ class TypeAdaptersTest {
             val testTags = listOf("kotlin", "multiplatform", "sqlite", "testing")
             
             // First insert a person
-            val person = database.person.add(PersonQuery.Add.Params(
+            val person = database.person.add.one(PersonQuery.Add.Params(
                 email = "json-test@example.com",
                 firstName = "Json",
                 lastName = "Test",
                 phone = "+4444444444",
                 birthDate = LocalDate(1992, 12, 5)
-            )).executeReturningOne()
+            ))
             
             // Insert comment with tags
             val comment = CommentQuery.Add.Params(
@@ -194,7 +194,7 @@ class TypeAdaptersTest {
                 tags = testTags
             )
 
-            database.comment.add(comment).execute()
+            database.comment.add(comment)
             
             // Verify JSON adapter worked correctly by selecting the comment
             val selectedComments = database.comment.selectAll(CommentQuery.SelectAll.Params(personId = person.id)).asList()
@@ -214,7 +214,7 @@ class TypeAdaptersTest {
                 tags = null
             )
 
-            database.comment.add(commentWithNullTags).execute()
+            database.comment.add(commentWithNullTags)
 
             // Test with empty tags list
             val commentWithEmptyTags = CommentQuery.Add.Params(
@@ -224,7 +224,7 @@ class TypeAdaptersTest {
                 tags = emptyList()
             )
 
-            database.comment.add(commentWithEmptyTags).execute()
+            database.comment.add(commentWithEmptyTags)
 
             // Verify by selecting all comments
             val allComments = database.comment.selectAll(CommentQuery.SelectAll.Params(personId = person.id)).asList()
@@ -254,7 +254,7 @@ class TypeAdaptersTest {
                 birthDate = null // LocalDate? - should be null through adapter
             )
             
-            val insertedPerson = database.person.add(person).executeReturningOne()
+            val insertedPerson = database.person.add.one(person)
             
             // Verify null handling
             assertNull("Phone should be null", insertedPerson.phone)
@@ -286,13 +286,13 @@ class TypeAdaptersTest {
             val testTags = listOf("consistency", "test", "adapters")
             
             // Insert person
-            val person = database.person.add(PersonQuery.Add.Params(
+            val person = database.person.add.one(PersonQuery.Add.Params(
                 email = "consistency@example.com",
                 firstName = "Consistency",
                 lastName = "Test",
                 phone = "+5555555555",
                 birthDate = testDate
-            )).executeReturningOne()
+            ))
             
             // Insert comment
             database.comment.add(CommentQuery.Add.Params(
@@ -300,7 +300,7 @@ class TypeAdaptersTest {
                 comment = "Consistency test comment",
                 createdAt = testDateTime,
                 tags = testTags
-            )).execute()
+            ))
 
             // Insert address
             database.personAddress.add(PersonAddressQuery.Add.Params(
@@ -312,7 +312,7 @@ class TypeAdaptersTest {
                 postalCode = "12345",
                 country = "Test Country",
                 isPrimary = true
-            )).execute()
+            ))
             
             // Now select all data and verify consistency
             val selectedPersons = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0)).asList()
@@ -353,13 +353,13 @@ class TypeAdaptersTest {
             )
             
             extremeDates.forEachIndexed { index, date ->
-                val person = database.person.add(PersonQuery.Add.Params(
+                val person = database.person.add.one(PersonQuery.Add.Params(
                     email = "extreme-date-$index@example.com",
                     firstName = "ExtremeDate$index",
                     lastName = "Test",
                     phone = "+666666666$index",
                     birthDate = date
-                )).executeReturningOne()
+                ))
                 
                 assertEquals("Extreme date $index should be preserved", date, person.birthDate)
             }
@@ -367,20 +367,20 @@ class TypeAdaptersTest {
             // Test extreme datetime values
             val extremeDateTime = LocalDateTime(1970, 1, 1, 0, 0, 1) // Near Unix epoch
             
-            val person = database.person.add(PersonQuery.Add.Params(
+            val person = database.person.add.one(PersonQuery.Add.Params(
                 email = "extreme-datetime@example.com",
                 firstName = "ExtremeDateTime",
                 lastName = "Test",
                 phone = "+7777777777",
                 birthDate = LocalDate(1990, 1, 1)
-            )).executeReturningOne()
+            ))
             
             database.comment.add(CommentQuery.Add.Params(
                 personId = person.id,
                 comment = "Extreme datetime test",
                 createdAt = extremeDateTime,
                 tags = listOf("extreme", "datetime")
-            )).execute()
+            ))
 
             val selectedComments = database.comment.selectAll(CommentQuery.SelectAll.Params(personId = person.id)).asList()
             val comment = selectedComments.find { it.comment == "Extreme datetime test" }

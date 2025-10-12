@@ -171,7 +171,7 @@ val httpClient = HttpClient {
 val syncClient = db.newOversqliteClient(
     schema = "myapp",
     httpClient = httpClient,
-    resolver = ServerWinsResolver // or ClientWinsResolver
+    resolver = ServerWinsResolver
 )
 
 // Bootstrap new device

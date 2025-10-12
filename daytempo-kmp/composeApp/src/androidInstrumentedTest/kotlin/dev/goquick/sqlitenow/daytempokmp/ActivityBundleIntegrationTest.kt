@@ -143,7 +143,7 @@ class ActivityBundleIntegrationTest {
                     docId = "provider-1",
                     title = "Provider One"
                 )
-            ).execute()
+            )
 
             addCategory(packageCategory)
             if (activityCategory.docId != packageCategory.docId) {
@@ -169,7 +169,7 @@ class ActivityBundleIntegrationTest {
                     promoScr2 = null,
                     promoScr3 = null,
                 )
-            ).execute()
+            )
 
             database.activityPackage.add(
                 ActivityPackageQuery.Add.Params(
@@ -182,9 +182,9 @@ class ActivityBundleIntegrationTest {
                     categoryDocId = packageCategory.docId,
                     icon = ActivityIconDoc(format = Format.IMAGE, value = "icon://pkg", tint = null)
                 )
-            ).execute()
+            )
 
-            database.activity.addReturningId(
+            database.activity.addReturningId.one(
                 ActivityQuery.AddReturningId.Params(
                     docId = "activity-1",
                     dependsOnDocId = null,
@@ -248,7 +248,7 @@ class ActivityBundleIntegrationTest {
                     schedTimePoints = listOf(AlarmHourMinute(alarm = true, hour = 6, minute = 30)),
                     schedTimeRange = ActivityScheduleTimeRange.MORNING
                 )
-            ).executeReturningOne()
+            )
             database.connection().prepare("SELECT program_type FROM activity WHERE doc_id = ?").use { stmt ->
                 stmt.bindText(1, "activity-1")
                 require(stmt.step())
@@ -292,7 +292,7 @@ class ActivityBundleIntegrationTest {
                     lockItemDisplay = ProgramItemLockItemDisplay.DEFAULT,
                     inputEntries = emptyList<ProgramItemInputEntry>(),
                 )
-            ).execute()
+            )
         }
     }
 
@@ -303,6 +303,6 @@ class ActivityBundleIntegrationTest {
                 title = category.title,
                 icon = ActivityIconDoc(format = Format.IMAGE, value = category.iconValue, tint = null)
             )
-        ).execute()
+        )
     }
 }

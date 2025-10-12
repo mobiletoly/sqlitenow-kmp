@@ -1,7 +1,8 @@
 package dev.goquick.sqlitenow.gradle.generator.data
 
-import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.AnnotationSpec
+import com.squareup.kotlinpoet.ClassName
+import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
@@ -175,11 +176,11 @@ open class DataStructCodeGenerator(
                 if (statement.annotations.queryResult != null) {
                     sharedResultsWithContext[statement.annotations.queryResult] = statement
                 }
-                val queryObject = generateQueryObject(statement)
+                val queryObject = generateQueryObject(namespace, packageName, statement)
                 namespaceObject.addType(queryObject)
             },
             onExecuteStatement = { statement: AnnotatedExecuteStatement ->
-                val queryObject = generateQueryObject(statement)
+                val queryObject = generateQueryObject(namespace, packageName, statement)
                 namespaceObject.addType(queryObject)
             }
         )
@@ -207,7 +208,11 @@ open class DataStructCodeGenerator(
     }
 
     /** Generates a query-specific object (e.g., Person.SelectWeird) containing SQL, Params, and Result. */
-    private fun generateQueryObject(statement: AnnotatedStatement): TypeSpec {
+    private fun generateQueryObject(
+        namespace: String,
+        packageName: String,
+        statement: AnnotatedStatement,
+    ): TypeSpec {
         val className = statement.getDataClassName()
 
         val queryObjectBuilder = TypeSpec.objectBuilder(className)
@@ -233,10 +238,8 @@ open class DataStructCodeGenerator(
         queryObjectBuilder.addProperty(affectedTablesProperty)
 
         // Add Params data class if the statement has parameters
-        val namedParameters = StatementUtils.getNamedParameters(statement)
-        if (namedParameters.isNotEmpty()) {
-            val paramsDataClass = generateParameterDataClass(statement)
-            queryObjectBuilder.addType(paramsDataClass)
+        generateParameterDefinitions(statement)?.let { paramsType ->
+            queryObjectBuilder.addType(paramsType)
         }
 
         return queryObjectBuilder.build()
@@ -254,18 +257,29 @@ open class DataStructCodeGenerator(
         )
     }
 
+    private data class ParameterDescriptor(
+        val propertyName: String,
+        val type: TypeName,
+        val isNullable: Boolean,
+    )
+
     /**
-     * Generates a parameter data class for statements with named parameters.
+     * Generates parameter data structures (Params + Builder) for statements with named parameters.
      */
-    private fun generateParameterDataClass(statement: AnnotatedStatement): TypeSpec {
+    private fun generateParameterDefinitions(
+        statement: AnnotatedStatement,
+    ): TypeSpec? {
+        val uniqueParams = StatementUtils.getAllNamedParameters(statement)
+        if (uniqueParams.isEmpty()) return null
+
         val paramClassBuilder = TypeSpec.classBuilder("Params")
             .addModifiers(KModifier.DATA)
             .addKdoc("Data class for ${statement.name} query parameters.")
         val paramConstructorBuilder = FunSpec.constructorBuilder()
         val propertyNameGeneratorType = statement.annotations.propertyNameGenerator
 
-        val uniqueParams = StatementUtils.getAllNamedParameters(statement)
         val paramCollectedProps = mutableListOf<PropertySpec>()
+        val descriptors = mutableListOf<ParameterDescriptor>()
         uniqueParams.forEach { paramName ->
             val propertyName = propertyNameGeneratorType.convertToPropertyName(paramName)
             val propertyType = inferParameterType(paramName, statement)
@@ -278,6 +292,12 @@ open class DataStructCodeGenerator(
                 .build()
             paramCollectedProps.add(property)
             paramClassBuilder.addProperty(property)
+
+            descriptors += ParameterDescriptor(
+                propertyName = propertyName,
+                type = propertyType,
+                isNullable = propertyType.isNullable,
+            )
         }
 
         paramClassBuilder.primaryConstructor(paramConstructorBuilder.build())
@@ -286,7 +306,71 @@ open class DataStructCodeGenerator(
             className = "Params",
             properties = paramCollectedProps
         )
+
+        val builderClass = generateParameterBuilder(
+            statement = statement,
+            descriptors = descriptors
+        )
+
+        paramClassBuilder.addType(builderClass)
+
         return paramClassBuilder.build()
+    }
+
+    /**
+     * Generates a Params.Builder class that supports DSL-style parameter construction.
+     */
+    private fun generateParameterBuilder(
+        statement: AnnotatedStatement,
+        descriptors: List<ParameterDescriptor>,
+    ): TypeSpec {
+        val builderClass = TypeSpec.classBuilder("Builder")
+            .addKdoc("Builder for ${statement.name} query parameters.")
+
+        descriptors.forEach { descriptor ->
+            val builderPropertyType = if (descriptor.isNullable) {
+                descriptor.type
+            } else {
+                descriptor.type.copy(nullable = true)
+            }
+
+            val propertyBuilder = PropertySpec.builder(descriptor.propertyName, builderPropertyType)
+                .mutable(true)
+                .initializer("null")
+
+            builderClass.addProperty(propertyBuilder.build())
+        }
+
+        val buildFunction = FunSpec.builder("build")
+            .returns(ClassName("", "Params"))
+            .addKdoc("Builds an instance of Params.")
+
+        val buildBody = CodeBlock.builder()
+            .add("return Params(\n")
+            .indent()
+
+        descriptors.forEachIndexed { index, descriptor ->
+            val propertyName = descriptor.propertyName
+            if (descriptor.isNullable) {
+                buildBody.add("%L = %L", propertyName, propertyName)
+            } else {
+                val message = "Parameter '$propertyName' must be provided."
+                buildBody.add("%L = %L ?: error(%S)", propertyName, propertyName, message)
+            }
+            if (index < descriptors.lastIndex) {
+                buildBody.add(",\n")
+            } else {
+                buildBody.add("\n")
+            }
+        }
+
+        buildBody.unindent()
+        buildBody.add(")\n")
+        buildFunction.addCode(buildBody.build())
+
+        builderClass.addFunction(buildFunction.build())
+
+        return builderClass.build()
     }
 
     /**

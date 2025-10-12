@@ -165,14 +165,12 @@ internal class QueryCodeGenerator(
                 fileBuilder.addFunction(
                     queryExecuteEmitter.generateSelectQueryFunction(namespace, statement, "executeAsList")
                 )
-                if (!statement.hasCollectionMapping()) {
-                    fileBuilder.addFunction(
-                        queryExecuteEmitter.generateSelectQueryFunction(namespace, statement, "executeAsOne")
-                    )
-                    fileBuilder.addFunction(
-                        queryExecuteEmitter.generateSelectQueryFunction(namespace, statement, "executeAsOneOrNull")
-                    )
-                }
+                fileBuilder.addFunction(
+                    queryExecuteEmitter.generateSelectQueryFunction(namespace, statement, "executeAsOne")
+                )
+                fileBuilder.addFunction(
+                    queryExecuteEmitter.generateSelectQueryFunction(namespace, statement, "executeAsOneOrNull")
+                )
             }
 
             is AnnotatedExecuteStatement -> {

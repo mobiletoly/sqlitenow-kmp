@@ -51,7 +51,7 @@ class ParameterBindingTest {
                 birthDate = LocalDate(1990, 5, 15)
             )
             
-            val insertedPerson = database.person.add(testPerson).executeReturningOne()
+            val insertedPerson = database.person.add.one(testPerson)
             
             // Verify all parameters were bound correctly
             assertEquals("Email parameter should be bound correctly", "param-binding@example.com", insertedPerson.email)
@@ -86,7 +86,7 @@ class ParameterBindingTest {
                 birthDate = null // Test null date parameter
             )
             
-            val insertedPerson = database.person.add(personWithNulls).executeReturningOne()
+            val insertedPerson = database.person.add.one(personWithNulls)
             
             // Verify null parameters were bound correctly
             assertEquals("Email should be bound", "null-params@example.com", insertedPerson.email)
@@ -114,36 +114,36 @@ class ParameterBindingTest {
             database.open()
             
             // Insert multiple persons for testing collection parameters
-            val person1 = database.person.add(PersonQuery.Add.Params(
+            val person1 = database.person.add.one(PersonQuery.Add.Params(
                 email = "collection1@example.com",
                 firstName = "Collection1",
                 lastName = "Test",
                 phone = "+1111111111",
                 birthDate = LocalDate(1985, 1, 1)
-            )).executeReturningOne()
+            ))
             
-            val person2 = database.person.add(PersonQuery.Add.Params(
+            val person2 = database.person.add.one(PersonQuery.Add.Params(
                 email = "collection2@example.com",
                 firstName = "Collection2",
                 lastName = "Test",
                 phone = "+2222222222",
                 birthDate = LocalDate(1986, 2, 2)
-            )).executeReturningOne()
+            ))
             
-            val person3 = database.person.add(PersonQuery.Add.Params(
+            val person3 = database.person.add.one(PersonQuery.Add.Params(
                 email = "collection3@example.com",
                 firstName = "Collection3",
                 lastName = "Test",
                 phone = "+3333333333",
                 birthDate = LocalDate(1987, 3, 3)
-            )).executeReturningOne()
+            ))
             
             // Test collection parameter binding with DELETE
             val deleteParams = PersonQuery.DeleteByIds.Params(
                 ids = listOf(person1.id, person3.id) // Delete person1 and person3, keep person2
             )
             
-            database.person.deleteByIds(deleteParams).execute()
+            database.person.deleteByIds(deleteParams)
             
             // Verify collection parameter binding worked correctly
             val remainingPersons = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0)).asList()
@@ -159,13 +159,13 @@ class ParameterBindingTest {
             database.open()
             
             // Test type conversion parameter binding with custom types
-            val person = database.person.add(PersonQuery.Add.Params(
+            val person = database.person.add.one(PersonQuery.Add.Params(
                 email = "type-conversion@example.com",
                 firstName = "TypeConversion",
                 lastName = "Test",
                 phone = "+4444444444",
                 birthDate = LocalDate(1992, 6, 15)
-            )).executeReturningOne()
+            ))
             
             // Test enum type conversion in parameter binding
             val address = PersonAddressQuery.Add.Params(
@@ -179,7 +179,7 @@ class ParameterBindingTest {
                 isPrimary = true // Boolean parameter
             )
             
-            database.personAddress.add(address).execute()
+            database.personAddress.add(address)
             
             // Verify enum parameter binding by selecting
             val homeAddresses = database.personAddress.selectAllByAddressType(
@@ -200,7 +200,7 @@ class ParameterBindingTest {
                 tags = testTags // List<String> parameter
             )
             
-            database.comment.add(comment).execute()
+            database.comment.add(comment)
             
             // Verify JSON parameter binding
             val comments = database.comment.selectAll(CommentQuery.SelectAll.Params(personId = person.id)).asList()
@@ -223,7 +223,7 @@ class ParameterBindingTest {
                 birthDate = LocalDate(1988, 12, 31)
             )
             
-            val insertedPerson = database.person.add(specialCharsPerson).executeReturningOne()
+            val insertedPerson = database.person.add.one(specialCharsPerson)
             
             // Verify special characters were handled correctly in parameter binding
             assertEquals("Email with + should be bound correctly", "special+chars@example.com", insertedPerson.email)
@@ -250,7 +250,7 @@ class ParameterBindingTest {
                 tags = specialTags
             )
             
-            database.comment.add(comment).execute()
+            database.comment.add(comment)
             
             // Verify special characters in JSON were handled correctly
             val comments = database.comment.selectAll(CommentQuery.SelectAll.Params(personId = insertedPerson.id)).asList()
@@ -269,13 +269,13 @@ class ParameterBindingTest {
             database.open()
             
             // Test that parameter binding maintains type safety
-            val person = database.person.add(PersonQuery.Add.Params(
+            val person = database.person.add.one(PersonQuery.Add.Params(
                 email = "type-safety@example.com",
                 firstName = "TypeSafety",
                 lastName = "Test",
                 phone = "+5555555555",
                 birthDate = LocalDate(1995, 8, 20)
-            )).executeReturningOne()
+            ))
             
             // Test that Long parameters are handled correctly
             val updateParams = PersonQuery.UpdateById.Params(
@@ -287,7 +287,7 @@ class ParameterBindingTest {
                 id = person.id // Long parameter
             )
             
-            database.person.updateById(updateParams).execute()
+            database.person.updateById(updateParams)
             
             // Verify the update worked with correct type binding
             val updatedPersons = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0))
@@ -315,7 +315,7 @@ class ParameterBindingTest {
                 isPrimary = false // Boolean parameter - should be bound as 0 in SQLite
             )
             
-            database.personAddress.add(address).execute()
+            database.personAddress.add(address)
             
             // Verify Boolean parameter binding
             val addresses = database.personAddress.selectAll.asList()
@@ -332,13 +332,13 @@ class ParameterBindingTest {
             // Insert multiple persons for pagination testing
             val persons = mutableListOf<PersonAddResult>()
             for (i in 1..10) {
-                val person = database.person.add(PersonQuery.Add.Params(
+                val person = database.person.add.one(PersonQuery.Add.Params(
                     email = "pagination$i@example.com",
                     firstName = "Person$i",
                     lastName = "Test",
                     phone = "+${i.toString().padStart(10, '0')}",
                     birthDate = LocalDate(1990 + i, 1, 1)
-                )).executeReturningOne()
+                ))
                 persons.add(person)
             }
             

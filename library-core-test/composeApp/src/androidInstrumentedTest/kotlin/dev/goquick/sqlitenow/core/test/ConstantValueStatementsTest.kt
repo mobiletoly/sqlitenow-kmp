@@ -43,7 +43,7 @@ class ConstantValueStatementsTest {
         runBlocking {
             database.open()
 
-            val person = database.person.add(
+            val person = database.person.add.one(
                 PersonQuery.Add.Params(
                     email = "constant@example.com",
                     firstName = "Constant",
@@ -51,16 +51,16 @@ class ConstantValueStatementsTest {
                     phone = "+1000000000",
                     birthDate = LocalDate(1995, 1, 1)
                 )
-            ).executeReturningOne()
+            )
 
-            val insertedAddress = database.personAddress.addWithConstants(
+            val insertedAddress = database.personAddress.addWithConstants.one(
                 PersonAddressQuery.AddWithConstants.Params(
                     personId = person.id,
                     addressType = AddressType.HOME,
                     street = "123 Constant Ave",
                     city = "Literal City"
                 )
-            ).executeReturningOne()
+            )
 
             assertEquals(person.id, insertedAddress.personId)
             assertEquals(AddressType.HOME, insertedAddress.addressType)
@@ -69,12 +69,12 @@ class ConstantValueStatementsTest {
             assertNull("State should be null on insert", insertedAddress.state)
             assertNotNull("Created at should be populated from CURRENT_TIMESTAMP", insertedAddress.createdAt)
 
-            val updatedAddress = database.personAddress.updateConstantFlags(
+            val updatedAddress = database.personAddress.updateConstantFlags.one(
                 PersonAddressQuery.UpdateConstantFlags.Params(
                     state = "CA",
                     addressId = insertedAddress.id
                 )
-            ).executeReturningOne()
+            )
 
             assertEquals("CA", updatedAddress.state)
             assertEquals("CA", updatedAddress.country)
@@ -104,7 +104,7 @@ class ConstantValueStatementsTest {
                 PersonAddressQuery.DeleteSecondaryByPerson.Params(
                     personId = person.id
                 )
-            ).execute()
+            )
 
             val remaining = database.personAddress.selectWithConstantColumns(
                 PersonAddressQuery.SelectWithConstantColumns.Params(

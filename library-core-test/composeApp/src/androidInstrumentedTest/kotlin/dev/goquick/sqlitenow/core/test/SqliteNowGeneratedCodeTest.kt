@@ -91,7 +91,7 @@ class SqliteNowGeneratedCodeTest {
             )
 
             // Test basic insert operation (without focusing on RETURNING details)
-            val insertedPerson = database.person.add(testPerson).executeReturningOne()
+            val insertedPerson = database.person.add.one(testPerson)
 
             assertNotNull("Inserted person should not be null", insertedPerson)
             assertTrue("ID should be positive", insertedPerson.id > 0)
@@ -122,8 +122,8 @@ class SqliteNowGeneratedCodeTest {
                 birthDate = LocalDate(1992, 8, 10)
             )
             
-            database.person.add(testPerson1).executeReturningOne()
-            database.person.add(testPerson2).executeReturningOne()
+            database.person.add.one(testPerson1)
+            database.person.add.one(testPerson2)
             
             // Test asList using generated SelectRunners
             val allPersons = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0)).asList()
@@ -165,7 +165,7 @@ class SqliteNowGeneratedCodeTest {
                 birthDate = testDate
             )
             
-            val insertedPerson = database.person.add(testPerson).executeReturningOne()
+            val insertedPerson = database.person.add.one(testPerson)
             
             // Verify type adapters worked correctly
             assertEquals("Birth date should be preserved through adapters", testDate, insertedPerson.birthDate)
@@ -190,7 +190,7 @@ class SqliteNowGeneratedCodeTest {
                 birthDate = null // Test null date parameter
             )
 
-            val insertedPerson = database.person.add(testPerson).executeReturningOne()
+            val insertedPerson = database.person.add.one(testPerson)
 
             // Verify null parameters were handled correctly by generated code
             assertNull("Phone should be null", insertedPerson.phone)
@@ -233,9 +233,9 @@ class SqliteNowGeneratedCodeTest {
                 birthDate = LocalDate(2000, 12, 31)
             )
             
-            database.person.add(person1).executeReturningOne()
-            database.person.add(person2).executeReturningOne()
-            database.person.add(person3).executeReturningOne()
+            database.person.add.one(person1)
+            database.person.add.one(person2)
+            database.person.add.one(person3)
             
             // Test date range query using generated code
             val rangeParams = PersonQuery.SelectAllByBirthdayRange.Params(

@@ -18,7 +18,7 @@ import org.junit.runner.RunWith
 
 /**
  * Comprehensive integration tests for SQLiteNow INSERT operations.
- * Tests all aspects of INSERT operations using ExecuteRunners and ExecuteReturningRunners.
+ * Validates ExecuteStatement and ExecuteReturningStatement wrappers end-to-end.
  */
 @RunWith(AndroidJUnit4::class)
 class InsertOperationsTest {
@@ -50,7 +50,7 @@ class InsertOperationsTest {
                 birthDate = LocalDate(1990, 1, 1)
             )
             
-            val insertedPerson = database.person.add(insertParams).executeReturningOne()
+            val insertedPerson = database.person.add.one(insertParams)
             
             // Verify all fields were inserted correctly
             assertTrue("ID should be positive", insertedPerson.id > 0)
@@ -76,7 +76,7 @@ class InsertOperationsTest {
                 birthDate = null // Test null birth date
             )
             
-            val insertedPerson = database.person.add(insertParams).executeReturningOne()
+            val insertedPerson = database.person.add.one(insertParams)
             
             // Verify null values were handled correctly
             assertTrue("ID should be positive", insertedPerson.id > 0)
@@ -103,7 +103,7 @@ class InsertOperationsTest {
                 birthDate = LocalDate(1985, 5, 15)
             )
             
-            val firstInsert = database.person.add(originalParams).executeReturningOne()
+            val firstInsert = database.person.add.one(originalParams)
             
             // Second insert with same email (should trigger ON CONFLICT DO UPDATE)
             val upsertParams = PersonQuery.Add.Params(
@@ -114,7 +114,7 @@ class InsertOperationsTest {
                 birthDate = LocalDate(1986, 6, 16)
             )
             
-            val upsertedPerson = database.person.add(upsertParams).executeReturningOne()
+            val upsertedPerson = database.person.add.one(upsertParams)
             
             // Verify upsert behavior
             assertEquals("Should be same ID (updated, not new record)", firstInsert.id, upsertedPerson.id)
@@ -147,7 +147,7 @@ class InsertOperationsTest {
                     birthDate = LocalDate(1990 + i, i, i)
                 )
                 
-                val insertedPerson = database.person.add(params).executeReturningOne()
+                val insertedPerson = database.person.add.one(params)
                 insertedPersons.add(insertedPerson)
                 
                 // Verify each insert
@@ -177,13 +177,13 @@ class InsertOperationsTest {
             database.open()
             
             // Insert person first
-            val person = database.person.add(PersonQuery.Add.Params(
+            val person = database.person.add.one(PersonQuery.Add.Params(
                 email = "complex-types@example.com",
                 firstName = "Complex",
                 lastName = "Types",
                 phone = "+3333333333",
                 birthDate = LocalDate(1992, 8, 25)
-            )).executeReturningOne()
+            ))
             
             // Insert comment with JSON array (List<String>)
             val complexTags = listOf(
@@ -199,7 +199,7 @@ class InsertOperationsTest {
                 tags = complexTags
             )
             
-            database.comment.add(commentParams).execute()
+            database.comment.add(commentParams)
             
             // Insert address with enum type
             val addressParams = PersonAddressQuery.Add.Params(
@@ -213,7 +213,7 @@ class InsertOperationsTest {
                 isPrimary = true
             )
             
-            database.personAddress.add(addressParams).execute()
+            database.personAddress.add(addressParams)
             
             // Verify complex types were inserted correctly
             val comments = database.comment.selectAll(CommentQuery.SelectAll.Params(personId = person.id)).asList()
@@ -256,7 +256,7 @@ class InsertOperationsTest {
                     birthDate = date
                 )
                 
-                val insertedPerson = database.person.add(params).executeReturningOne()
+                val insertedPerson = database.person.add.one(params)
                 insertedPersons.add(insertedPerson)
                 
                 assertEquals("Birth date should match for person $index", date, insertedPerson.birthDate)
@@ -273,7 +273,7 @@ class InsertOperationsTest {
                 tags = listOf("edge", "datetime", "unix-epoch")
             )
             
-            database.comment.add(commentParams).execute()
+            database.comment.add(commentParams)
             
             // Verify edge case datetime
             val comments = database.comment.selectAll(CommentQuery.SelectAll.Params(personId = person.id)).asList()
@@ -301,7 +301,7 @@ class InsertOperationsTest {
                 birthDate = LocalDate(1988, 7, 14)
             )
             
-            val insertedPerson = database.person.add(params).executeReturningOne()
+            val insertedPerson = database.person.add.one(params)
             
             // Verify long strings were inserted correctly
             assertEquals("Long email should match", longEmail, insertedPerson.email)
@@ -320,7 +320,7 @@ class InsertOperationsTest {
                 tags = longTags
             )
             
-            database.comment.add(commentParams).execute()
+            database.comment.add(commentParams)
             
             // Verify long comment and tags
             val comments = database.comment.selectAll(CommentQuery.SelectAll.Params(personId = insertedPerson.id)).asList()
@@ -344,7 +344,7 @@ class InsertOperationsTest {
                 birthDate = LocalDate(1995, 3, 10)
             )
             
-            val insertedPerson = database.person.add(validParams).executeReturningOne()
+            val insertedPerson = database.person.add.one(validParams)
             assertTrue("Valid insert should succeed", insertedPerson.id > 0)
             
             // Test foreign key constraint with address
@@ -359,7 +359,7 @@ class InsertOperationsTest {
                 isPrimary = false
             )
             
-            database.personAddress.add(validAddressParams).execute()
+            database.personAddress.add(validAddressParams)
             
             // Verify address was inserted with correct foreign key
             val addresses = database.personAddress.selectAll.asList()
@@ -374,7 +374,7 @@ class InsertOperationsTest {
                 tags = listOf("constraint", "foreign-key", "valid")
             )
             
-            database.comment.add(validCommentParams).execute()
+            database.comment.add(validCommentParams)
             
             // Verify comment was inserted with correct foreign key
             val comments = database.comment.selectAll(CommentQuery.SelectAll.Params(personId = insertedPerson.id)).asList()

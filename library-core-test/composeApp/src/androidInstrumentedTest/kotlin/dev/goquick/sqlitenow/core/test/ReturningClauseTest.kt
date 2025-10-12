@@ -15,7 +15,7 @@ import org.junit.runner.RunWith
 
 /**
  * Integration tests specifically for SQLiteNow RETURNING clause functionality.
- * Tests ExecuteReturningRunners with executeReturningList(), executeReturningOne(), executeReturningOneOrNull().
+ * Exercises ExecuteReturningStatement helpers (list/one/oneOrNull variants).
  */
 @RunWith(AndroidJUnit4::class)
 class ReturningClauseTest {
@@ -39,7 +39,7 @@ class ReturningClauseTest {
         runBlocking {
             database.open()
             
-            // Test executeReturningOne with INSERT RETURNING
+            // Test .one helper with INSERT RETURNING
             val testPerson = PersonQuery.Add.Params(
                 email = "returning-one@example.com",
                 firstName = "ReturningOne",
@@ -48,7 +48,7 @@ class ReturningClauseTest {
                 birthDate = LocalDate(1990, 1, 15)
             )
             
-            val insertedPerson = database.person.add(testPerson).executeReturningOne()
+            val insertedPerson = database.person.add.one(testPerson)
             
             assertNotNull("Inserted person should not be null", insertedPerson)
             assertTrue("ID should be positive", insertedPerson.id > 0)
@@ -67,7 +67,7 @@ class ReturningClauseTest {
         runBlocking {
             database.open()
             
-            // Test executeReturningList with INSERT RETURNING (single insert returns list with one item)
+            // Test .list helper with INSERT RETURNING (single insert returns list with one item)
             val testPerson = PersonQuery.Add.Params(
                 email = "returning-list@example.com",
                 firstName = "ReturningList",
@@ -76,7 +76,7 @@ class ReturningClauseTest {
                 birthDate = LocalDate(1985, 5, 20)
             )
             
-            val insertedList = database.person.add(testPerson).executeReturningList()
+            val insertedList = database.person.add.list(testPerson)
             
             assertEquals("Should return list with one item", 1, insertedList.size)
             
@@ -96,7 +96,7 @@ class ReturningClauseTest {
         runBlocking {
             database.open()
             
-            // Test executeReturningOneOrNull with successful INSERT RETURNING
+            // Test .oneOrNull helper with successful INSERT RETURNING
             val testPerson = PersonQuery.Add.Params(
                 email = "returning-or-null@example.com",
                 firstName = "ReturningOrNull",
@@ -105,7 +105,7 @@ class ReturningClauseTest {
                 birthDate = LocalDate(1992, 8, 10)
             )
             
-            val insertedPerson = database.person.add(testPerson).executeReturningOneOrNull()
+            val insertedPerson = database.person.add.oneOrNull(testPerson)
             
             assertNotNull("Should return person", insertedPerson)
             assertEquals("First name should match", "ReturningOrNull", insertedPerson!!.firstName)
@@ -130,7 +130,7 @@ class ReturningClauseTest {
                 birthDate = null // Test null date parameter
             )
             
-            val insertedPerson = database.person.add(testPerson).executeReturningOne()
+            val insertedPerson = database.person.add.one(testPerson)
             
             // Verify null parameters were handled correctly in RETURNING
             assertNull("Phone should be null", insertedPerson.phone)
@@ -161,7 +161,7 @@ class ReturningClauseTest {
                 birthDate = testDate
             )
             
-            val insertedPerson = database.person.add(testPerson).executeReturningOne()
+            val insertedPerson = database.person.add.one(testPerson)
             
             // Verify type adapters worked correctly in RETURNING
             assertEquals("Birth date should be preserved through adapters", testDate, insertedPerson.birthDate)
@@ -192,7 +192,7 @@ class ReturningClauseTest {
             )
             
             // Insert with RETURNING
-            val insertedPerson = database.person.add(testPerson).executeReturningOne()
+            val insertedPerson = database.person.add.one(testPerson)
             
             // Select the same person
             val selectedPersons = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0))
@@ -228,7 +228,7 @@ class ReturningClauseTest {
             )
             
             // First insert
-            val firstInsert = database.person.add(originalPerson).executeReturningOne()
+            val firstInsert = database.person.add.one(originalPerson)
             assertTrue("First insert ID should be positive", firstInsert.id > 0)
             assertEquals("First insert first name should match", "Original", firstInsert.firstName)
             
@@ -241,7 +241,7 @@ class ReturningClauseTest {
                 birthDate = LocalDate(1991, 7, 21)
             )
             
-            val secondInsert = database.person.add(updatedPerson).executeReturningOne()
+            val secondInsert = database.person.add.one(updatedPerson)
             
             // Should return the updated row
             assertEquals("Should be same ID (updated, not new)", firstInsert.id, secondInsert.id)
@@ -271,7 +271,7 @@ class ReturningClauseTest {
                 birthDate = LocalDate(1990, 1, 1)
             )
 
-            val insertedPerson = database.person.add(originalPerson).executeReturningOne()
+            val insertedPerson = database.person.add.one(originalPerson)
             assertTrue("Inserted person ID should be positive", insertedPerson.id > 0)
 
             // Now update with RETURNING
@@ -284,7 +284,7 @@ class ReturningClauseTest {
                 id = insertedPerson.id
             )
 
-            val updatedPerson = database.person.updateByIdReturning(updatedData).executeReturningOne()
+            val updatedPerson = database.person.updateByIdReturning.one(updatedData)
 
             // Verify the returned data matches the update
             assertEquals("ID should remain the same", insertedPerson.id, updatedPerson.id)
@@ -320,7 +320,7 @@ class ReturningClauseTest {
                 birthDate = LocalDate(1985, 12, 25)
             )
 
-            val insertedPerson = database.person.add(originalPerson).executeReturningOne()
+            val insertedPerson = database.person.add.one(originalPerson)
             assertTrue("Inserted person ID should be positive", insertedPerson.id > 0)
 
             // Verify person exists before deletion
@@ -331,7 +331,7 @@ class ReturningClauseTest {
 
             // Now delete with RETURNING
             val deleteParams = PersonQuery.DeleteByIdReturning.Params(id = insertedPerson.id)
-            val deletedPerson = database.person.deleteByIdReturning(deleteParams).executeReturningOne()
+            val deletedPerson = database.person.deleteByIdReturning.one(deleteParams)
 
             // Verify the returned data matches the deleted person
             assertEquals("ID should match", insertedPerson.id, deletedPerson.id)
@@ -366,7 +366,7 @@ class ReturningClauseTest {
                 isPrimary = true
             )
 
-            val insertedAddress = database.personAddress.addReturning(originalAddress).executeReturningOne()
+            val insertedAddress = database.personAddress.addReturning.one(originalAddress)
             assertTrue("Inserted address ID should be positive", insertedAddress.id > 0)
 
             // Update with RETURNING
@@ -382,7 +382,7 @@ class ReturningClauseTest {
                 id = insertedAddress.id
             )
 
-            val updatedAddress = database.personAddress.updateByIdReturning(updatedData).executeReturningOne()
+            val updatedAddress = database.personAddress.updateByIdReturning.one(updatedData)
 
             // Verify type adapters worked correctly
             assertEquals("Address type should be converted correctly", AddressType.WORK, updatedAddress.addressType)
@@ -409,12 +409,12 @@ class ReturningClauseTest {
                 isPrimary = false
             )
 
-            val insertedAddress = database.personAddress.addReturning(originalAddress).executeReturningOne()
+            val insertedAddress = database.personAddress.addReturning.one(originalAddress)
             assertTrue("Inserted address ID should be positive", insertedAddress.id > 0)
 
             // Delete with RETURNING
             val deleteParams = PersonAddressQuery.DeleteByIdReturning.Params(id = insertedAddress.id)
-            val deletedAddress = database.personAddress.deleteByIdReturning(deleteParams).executeReturningOne()
+            val deletedAddress = database.personAddress.deleteByIdReturning.one(deleteParams)
 
             // Verify type adapters worked correctly in RETURNING
             assertEquals("Address type should be converted correctly", AddressType.WORK, deletedAddress.addressType)
@@ -457,9 +457,9 @@ class ReturningClauseTest {
                 birthDate = LocalDate(1992, 3, 3)
             )
 
-            val insertedPerson1 = database.person.add(person1).executeReturningOne()
-            val insertedPerson2 = database.person.add(person2).executeReturningOne()
-            val insertedPerson3 = database.person.add(person3).executeReturningOne()
+            val insertedPerson1 = database.person.add.one(person1)
+            val insertedPerson2 = database.person.add.one(person2)
+            val insertedPerson3 = database.person.add.one(person3)
 
             // Use the generated updateByLastNameReturning method to update multiple rows
             val updateParams = PersonQuery.UpdateByLastNameReturning.Params(
@@ -468,7 +468,7 @@ class ReturningClauseTest {
             )
 
             // Execute the multi-row update with RETURNING
-            val updatedPersons = database.person.updateByLastNameReturning(updateParams).executeReturningList()
+            val updatedPersons = database.person.updateByLastNameReturning.list(updateParams)
 
             // Verify we got 3 updated records back
             assertEquals("Should return 3 updated records", 3, updatedPersons.size)
@@ -524,9 +524,9 @@ class ReturningClauseTest {
                 birthDate = LocalDate(1987, 6, 6)
             )
 
-            val insertedPerson1 = database.person.add(person1).executeReturningOne()
-            val insertedPerson2 = database.person.add(person2).executeReturningOne()
-            val insertedPerson3 = database.person.add(person3).executeReturningOne()
+            val insertedPerson1 = database.person.add.one(person1)
+            val insertedPerson2 = database.person.add.one(person2)
+            val insertedPerson3 = database.person.add.one(person3)
 
             // Verify persons exist before deletion
             val beforeDelete = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0))
@@ -540,7 +540,7 @@ class ReturningClauseTest {
             )
 
             // Execute the multi-row delete with RETURNING
-            val deletedPersons = database.person.deleteByLastNameReturning(deleteParams).executeReturningList()
+            val deletedPersons = database.person.deleteByLastNameReturning.list(deleteParams)
 
             // Verify we got 3 deleted records back
             assertEquals("Should return 3 deleted records", 3, deletedPersons.size)
@@ -606,9 +606,9 @@ class ReturningClauseTest {
                 isPrimary = false
             )
 
-            val insertedAddress1 = database.personAddress.addReturning(address1).executeReturningOne()
-            val insertedAddress2 = database.personAddress.addReturning(address2).executeReturningOne()
-            val insertedAddress3 = database.personAddress.addReturning(address3).executeReturningOne()
+            val insertedAddress1 = database.personAddress.addReturning.one(address1)
+            val insertedAddress2 = database.personAddress.addReturning.one(address2)
+            val insertedAddress3 = database.personAddress.addReturning.one(address3)
 
             // Use the generated updateByCityReturning method to update multiple rows
             val updateParams = PersonAddressQuery.UpdateByCityReturning.Params(
@@ -618,7 +618,7 @@ class ReturningClauseTest {
             )
 
             // Execute the multi-row update with RETURNING and type adapters
-            val updatedAddresses = database.personAddress.updateByCityReturning(updateParams).executeReturningList()
+            val updatedAddresses = database.personAddress.updateByCityReturning.list(updateParams)
 
             // Verify we got 3 updated records back
             assertEquals("Should return 3 updated records", 3, updatedAddresses.size)

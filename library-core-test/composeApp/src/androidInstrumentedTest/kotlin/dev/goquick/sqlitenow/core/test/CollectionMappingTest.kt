@@ -38,25 +38,25 @@ class CollectionMappingTest {
     @Test
     fun testPerRowMapping() = runBlocking {
         // Create test data
-        val person = database.person.add(PersonQuery.Add.Params(
+        val person = database.person.add.one(PersonQuery.Add.Params(
             firstName = "John",
             lastName = "Doe",
             email = "john.doe@example.com",
             phone = "555-1234",
             birthDate = LocalDate(1990, 1, 15)
-        )).executeReturningOne()
+        ))
 
-        val category = database.category.add(CategoryQuery.Add.Params(
+        val category = database.category.add.one(CategoryQuery.Add.Params(
             name = "Technology",
             description = "Tech-related category"
-        )).executeReturningOne()
+        ))
 
         // Create person-category relationship
-        database.personCategory.add(PersonCategoryQuery.Add.Params(
+        database.personCategory.add.one(PersonCategoryQuery.Add.Params(
             personId = person.id,
             categoryId = category.id,
             isPrimary = true
-        )).executeReturningOne()
+        ))
 
         // Test perRow mapping - should map joined data to a single nested object
         val result = database.category.selectWithPersonPerRow(
@@ -78,39 +78,39 @@ class CollectionMappingTest {
     @Test
     fun testCollectionMapping() = runBlocking {
         // Create test data
-        val person1 = database.person.add(PersonQuery.Add.Params(
+        val person1 = database.person.add.one(PersonQuery.Add.Params(
             firstName = "Alice",
             lastName = "Smith",
             email = "alice@example.com",
             phone = "555-1111",
             birthDate = LocalDate(1985, 3, 20)
-        )).executeReturningOne()
+        ))
 
-        val person2 = database.person.add(PersonQuery.Add.Params(
+        val person2 = database.person.add.one(PersonQuery.Add.Params(
             firstName = "Bob",
             lastName = "Johnson",
             email = "bob@example.com",
             phone = "555-2222",
             birthDate = LocalDate(1992, 7, 10)
-        )).executeReturningOne()
+        ))
 
-        val category = database.category.add(CategoryQuery.Add.Params(
+        val category = database.category.add.one(CategoryQuery.Add.Params(
             name = "Engineering",
             description = "Engineering team category"
-        )).executeReturningOne()
+        ))
 
         // Create person-category relationships
-        database.personCategory.add(PersonCategoryQuery.Add.Params(
+        database.personCategory.add.one(PersonCategoryQuery.Add.Params(
             personId = person1.id,
             categoryId = category.id,
             isPrimary = true
-        )).executeReturningOne()
+        ))
 
-        database.personCategory.add(PersonCategoryQuery.Add.Params(
+        database.personCategory.add.one(PersonCategoryQuery.Add.Params(
             personId = person2.id,
             categoryId = category.id,
             isPrimary = false
-        )).executeReturningOne()
+        ))
 
         // Test collection mapping - should group multiple joined records into List<T>
         val result = database.category.selectWithPersonsCollection(
@@ -139,10 +139,10 @@ class CollectionMappingTest {
     @Test
     fun testEmptyCollectionMapping() = runBlocking {
         // Create category without any associated persons
-        val category = database.category.add(CategoryQuery.Add.Params(
+        val category = database.category.add.one(CategoryQuery.Add.Params(
             name = "Empty Category",
             description = "Category with no persons"
-        )).executeReturningOne()
+        ))
 
         // Test collection mapping with no related records
         val result = database.category.selectWithPersonsCollection(
@@ -161,102 +161,92 @@ class CollectionMappingTest {
     @Test
     fun testCollectionQueryRestrictions() = runBlocking {
         // Create test data
-        val person = database.person.add(PersonQuery.Add.Params(
+        val person = database.person.add.one(PersonQuery.Add.Params(
             firstName = "Test",
             lastName = "User",
             email = "test@example.com",
             phone = "555-0000",
             birthDate = LocalDate(1990, 1, 1)
-        )).executeReturningOne()
+        ))
 
-        val category = database.category.add(CategoryQuery.Add.Params(
+        val category = database.category.add.one(CategoryQuery.Add.Params(
             name = "Test Category",
             description = "For testing restrictions"
-        )).executeReturningOne()
+        ))
 
-        database.personCategory.add(PersonCategoryQuery.Add.Params(
+        database.personCategory.add.one(PersonCategoryQuery.Add.Params(
             personId = person.id,
             categoryId = category.id,
             isPrimary = true
-        )).executeReturningOne()
+        ))
+
+        val selectRunners = database.category.selectWithPersonsCollection(
+            CategoryQuery.SelectWithPersonsCollection.Params(categoryId = category.id)
+        )
 
         // Test that collection queries support asList()
-        val listResult = database.category.selectWithPersonsCollection(
-            CategoryQuery.SelectWithPersonsCollection.Params(categoryId = category.id)
-        ).asList()
-
+        val listResult = selectRunners.asList()
         assertEquals(1, listResult.size)
         assertEquals(1, listResult.first().persons.size)
 
-        // Verify that asOne() and asOneOrNull() throw UnsupportedOperationException for collection queries
-        try {
-            database.category.selectWithPersonsCollection(
-                CategoryQuery.SelectWithPersonsCollection.Params(categoryId = category.id)
-            ).asOne()
-            assertTrue("Expected UnsupportedOperationException for asOne() on collection query", false)
-        } catch (e: UnsupportedOperationException) {
-            // Expected behavior
-            assertTrue(true)
-        }
+        // Verify asOne() hydrates the same row
+        val asOneResult = selectRunners.asOne()
+        assertEquals(category.id, asOneResult.categoryId)
+        assertEquals(listResult.first().persons.size, asOneResult.persons.size)
 
-        try {
-            database.category.selectWithPersonsCollection(
-                CategoryQuery.SelectWithPersonsCollection.Params(categoryId = category.id)
-            ).asOneOrNull()
-            assertTrue("Expected UnsupportedOperationException for asOneOrNull() on collection query", false)
-        } catch (e: UnsupportedOperationException) {
-            // Expected behavior
-            assertTrue(true)
-        }
+        // Verify asOneOrNull() mirrors asOne()
+        val asOneOrNullResult = selectRunners.asOneOrNull()
+        assertNotNull(asOneOrNullResult)
+        assertEquals(category.id, asOneOrNullResult?.categoryId)
     }
 
     @Test
     fun testManyToManyRelationships() = runBlocking {
         // Create multiple persons and categories to test many-to-many relationships
-        val dev1 = database.person.add(PersonQuery.Add.Params(
+        val dev1 = database.person.add.one(PersonQuery.Add.Params(
             firstName = "Developer",
             lastName = "One",
             email = "dev1@example.com",
             phone = "555-1001",
             birthDate = LocalDate(1988, 5, 15)
-        )).executeReturningOne()
+        ))
 
-        val dev2 = database.person.add(PersonQuery.Add.Params(
+        val dev2 = database.person.add.one(PersonQuery.Add.Params(
             firstName = "Developer",
             lastName = "Two",
             email = "dev2@example.com",
             phone = "555-1002",
             birthDate = LocalDate(1991, 8, 22)
-        )).executeReturningOne()
+        ))
 
-        val frontendCategory = database.category.add(CategoryQuery.Add.Params(
+        val frontendCategory = database.category.add.one(CategoryQuery.Add.Params(
             name = "Frontend",
             description = "Frontend development"
-        )).executeReturningOne()
+        ))
 
-        val backendCategory = database.category.add(CategoryQuery.Add.Params(
+        val backendCategory = database.category.add.one(CategoryQuery.Add.Params(
             name = "Backend",
             description = "Backend development"
-        )).executeReturningOne()
+        ))
 
         // Create many-to-many relationships
-        database.personCategory.add(PersonCategoryQuery.Add.Params(
+        database.personCategory.add.one(PersonCategoryQuery.Add.Params(
             personId = dev1.id,
             categoryId = frontendCategory.id,
             isPrimary = true
-        )).executeReturningOne()
+        ))
 
-        database.personCategory.add(PersonCategoryQuery.Add.Params(
+        database.personCategory.add.one(PersonCategoryQuery.Add.Params(
             personId = dev1.id,
             categoryId = backendCategory.id,
             isPrimary = false
-        )).executeReturningOne()
+        ))
 
-        database.personCategory.add(PersonCategoryQuery.Add.Params(
+        database.personCategory.add.one(PersonCategoryQuery.Add.Params(
             personId = dev2.id,
             categoryId = frontendCategory.id,
             isPrimary = true
-        )).executeReturningOne()
+        ))
 
         // Test frontend category has both developers
         val frontendResult = database.category.selectWithPersonsCollection(

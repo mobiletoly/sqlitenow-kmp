@@ -235,8 +235,8 @@ class DatabaseCodeGeneratorTest {
         )
         assertTrue(fileContent.contains("override fun asFlow()"), "Should contain asFlow() method in SelectRunners")
         assertTrue(
-            fileContent.contains("val insertWithAdapters"),
-            "Should contain insertWithAdapters ExecuteRunners property"
+            fileContent.contains("ExecuteStatement<"),
+            "Should contain ExecuteStatement wrapper"
         )
 
         // Verify adapter wrapper classes
@@ -450,8 +450,8 @@ class DatabaseCodeGeneratorTest {
     }
 
     @Test
-    @DisplayName("Test DatabaseCodeGenerator generates ExecuteRunners objects instead of individual execute methods")
-    fun testExecuteRunnersGeneration() {
+    @DisplayName("Test DatabaseCodeGenerator generates ExecuteStatement wrappers for execute statements")
+    fun testExecuteStatementGeneration() {
         // Create test SQL files with EXECUTE statements
         val personDir = File(queriesDir, "person")
         personDir.mkdirs()
@@ -477,6 +477,13 @@ class DatabaseCodeGeneratorTest {
             """
             -- @@{name=UpdateById}
             UPDATE users SET name = :name WHERE id = :id;
+        """.trimIndent()
+        )
+
+        File(personDir, "addReturning.sql").writeText(
+            """
+            -- @@{name=AddReturning}
+            INSERT INTO users (name) VALUES (:name) RETURNING id, name;
         """.trimIndent()
         )
 
@@ -507,11 +514,13 @@ class DatabaseCodeGeneratorTest {
 
         val fileContent = databaseFile.readText()
 
-        // Should NOT have individual execute methods like addSimpleExecute, addWithParamsExecute, etc.
-        assertFalse(
+        // Non-parameterized statements should generate suspend functions
+        assertTrue(
             fileContent.contains("suspend fun addSimple("),
-            "Should NOT generate individual addSimple method"
+            "Should generate addSimple suspend function for statements without parameters"
         )
+
+        // Parameterized statements should not generate direct suspend functions
         assertFalse(
             fileContent.contains("suspend fun addWithParams("),
             "Should NOT generate individual addWithParams method"
@@ -521,34 +530,40 @@ class DatabaseCodeGeneratorTest {
             "Should NOT generate individual updateById method"
         )
 
-        // Should have ExecuteRunners properties
+        // Should have ExecuteStatement properties for parameterized statements
         assertTrue(
-            fileContent.contains("val addSimple"),
-            "Should have addSimple property"
-        )
-        assertTrue(
-            fileContent.contains("val addWithParams"),
+            fileContent.contains("val addWithParams:"),
             "Should have addWithParams property"
         )
         assertTrue(
-            fileContent.contains("val updateById"),
+            fileContent.contains("ExecuteStatement<PersonQuery.AddWithParams.Params, PersonQuery.AddWithParams.Params.Builder>"),
+            "Should expose ExecuteStatement with builder type"
+        )
+        assertTrue(
+            fileContent.contains("val updateById:"),
             "Should have updateById property"
         )
-
-        // Should have ExecuteRunners object expressions
         assertTrue(
-            fileContent.contains("object : ExecuteRunners"),
-            "Should contain ExecuteRunners object expressions"
-        )
-        assertTrue(
-            fileContent.contains("override suspend fun execute()"),
-            "Should contain execute() method implementation"
+            fileContent.contains("val addReturning:"),
+            "Should have addReturning property"
         )
 
-        // Should have function type for parameterized queries
+        // Should reference ExecuteStatement helper
         assertTrue(
-            fileContent.contains("{ params ->") && fileContent.contains("object : ExecuteRunners"),
-            "Should have lambda function for parameterized execute queries"
+            fileContent.contains("ExecuteStatement("),
+            "Should instantiate ExecuteStatement wrapper"
+        )
+        assertTrue(
+            fileContent.contains("buildFromBuilder = { builder ->"),
+            "Should expose builder-based parameter construction"
+        )
+        assertTrue(
+            fileContent.contains("ExecuteReturningStatement("),
+            "Should instantiate ExecuteReturningStatement wrapper"
+        )
+        assertTrue(
+            fileContent.contains("ExecuteReturningStatement<PersonQuery.AddReturning.Params, PersonAddReturningResult, PersonQuery.AddReturning.Params.Builder>"),
+            "Should expose ExecuteReturningStatement with builder type"
         )
 
         // Should have table change notifications

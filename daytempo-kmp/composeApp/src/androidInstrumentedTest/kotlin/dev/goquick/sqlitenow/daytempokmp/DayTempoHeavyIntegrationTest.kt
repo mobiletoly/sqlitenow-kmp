@@ -128,6 +128,69 @@ class DayTempoHeavyIntegrationTest {
     }
 
     @Test
+    fun selectAllWithPackagesByIdReturnsExpectedBundle() = runBlocking {
+        val expectedBundle = fixture.bundleExpectations.first()
+
+        val bundleRow = database.activityBundle
+            .selectAllWithPackagesById(
+                ActivityBundleQuery.SelectAllWithPackagesById.Params(
+                    docId = expectedBundle.docId,
+                ),
+            )
+            .asOneOrNull()
+            ?: error("Bundle ${expectedBundle.docId} not found")
+
+        assertEquals(
+            "Bundle docId mismatch",
+            expectedBundle.docId,
+            bundleRow.bndl.main.docId,
+        )
+        assertEquals(
+            "Bundle title mismatch",
+            expectedBundle.title,
+            bundleRow.bndl.main.title,
+        )
+        val expectedBundleCategoryTitles = expectedBundle.packages.map { it.categoryTitle }.toSet()
+        assertTrue(
+            "Bundle category title should align with one of the package categories",
+            expectedBundleCategoryTitles.contains(bundleRow.bndl.category.title),
+        )
+
+        val packageRow = bundleRow.pkgs.firstOrNull()
+            ?: error("Expected at least one package for bundle ${expectedBundle.docId}")
+
+        val packageExpectationsByDocId = expectedBundle.packages.associateBy { it.docId }
+        val expectedPackage = packageExpectationsByDocId[packageRow.main.docId]
+            ?: error("Package ${packageRow.main.docId} not seeded for bundle ${expectedBundle.docId}")
+
+        assertEquals(
+            "Package title mismatch",
+            expectedPackage.title,
+            packageRow.main.title,
+        )
+        assertEquals(
+            "Package category mismatch",
+            expectedPackage.categoryTitle,
+            packageRow.category.title,
+        )
+        assertEquals(
+            "Activity summary count mismatch",
+            expectedPackage.activities.size,
+            packageRow.activitySummary.count,
+        )
+        val expectedActivityTitles = expectedPackage.activities.map { it.title }.toSet()
+        assertEquals(
+            "Activity summary titles mismatch",
+            expectedActivityTitles,
+            packageRow.activitySummary.titles,
+        )
+        assertTrue(
+            "All activities should share the same group doc id",
+            packageRow.activitySummary.areAllGroupDocIdsSame,
+        )
+    }
+
+    @Test
     fun selectAllDetailedByDateReturnsProgramItemsAndSchedules() = runBlocking {
         val logs = database.dailyLog.selectAllDetailedByDate(
             DailyLogQuery.SelectAllDetailedByDate.Params(date = fixture.dailyLogDate)
@@ -218,7 +281,7 @@ private class DayTempoSeedHelper(private val database: DayTempoDatabase) {
                     docId = "provider-main",
                     title = "Provider Main",
                 )
-            ).execute()
+            )
 
             for (bundleIndex in 1..bundleCount) {
                 val bundleDocId = "bundle-$bundleIndex"
@@ -248,7 +311,7 @@ private class DayTempoSeedHelper(private val database: DayTempoDatabase) {
                         promoScr2 = null,
                         promoScr3 = null,
                     )
-                ).execute()
+                )
 
                 val packageExpectations = mutableListOf<PackageExpectation>()
 
@@ -272,7 +335,7 @@ private class DayTempoSeedHelper(private val database: DayTempoDatabase) {
                             categoryDocId = packageCategory.docId,
                             icon = packageCategory.icon,
                         )
-                    ).execute()
+                    )
 
                     val activityExpectations = mutableListOf<ActivityExpectation>()
 
@@ -287,7 +350,7 @@ private class DayTempoSeedHelper(private val database: DayTempoDatabase) {
 
                         val scheduleStartAt = LocalDate(2024, 3, activityIndex + packageIndex)
                         val scheduleTimePoints = listOf(AlarmHourMinute(alarm = true, hour = 6 + activityIndex, minute = 15))
-                        database.activity.addReturningId(
+                        database.activity.addReturningId.one(
                             ActivityQuery.AddReturningId.Params(
                                 docId = activityDocId,
                                 dependsOnDocId = null,
@@ -351,7 +414,7 @@ private class DayTempoSeedHelper(private val database: DayTempoDatabase) {
                                 schedTimePoints = scheduleTimePoints,
                                 schedTimeRange = ActivityScheduleTimeRange.MORNING,
                             )
-                        ).executeReturningOne()
+                        )
 
                         val programItemDocId = "pi-$bundleIndex-$packageIndex-$activityIndex"
                         val programItemTitle = "Program Item $bundleIndex-$packageIndex-$activityIndex"
@@ -393,7 +456,7 @@ private class DayTempoSeedHelper(private val database: DayTempoDatabase) {
                                     )
                                 ),
                             )
-                        ).execute()
+                        )
 
                         database.dailyLog.add(
                             DailyLogQuery.Add.Params(
@@ -430,7 +493,7 @@ private class DayTempoSeedHelper(private val database: DayTempoDatabase) {
                                 stringValue09 = null,
                                 notes = "Notes for $activityDocId",
                             )
-                        ).execute()
+                        )
 
                         activityExpectations += ActivityExpectation(
                             docId = activityDocId,
@@ -487,7 +550,7 @@ private class DayTempoSeedHelper(private val database: DayTempoDatabase) {
                 title = title,
                 icon = icon,
             )
-        ).execute()
+        )
         return CategoryRecord(docId = docId, title = title, icon = icon)
     }
 
