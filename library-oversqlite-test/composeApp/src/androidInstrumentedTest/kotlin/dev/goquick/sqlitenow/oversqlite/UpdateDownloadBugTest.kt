@@ -15,9 +15,9 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
-import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import dev.goquick.sqlitenow.core.sqlite.use
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Test
@@ -42,7 +42,7 @@ class UpdateDownloadBugTest {
         val userId = "user-bug-${UUID.randomUUID().toString().substring(0, 8)}"
         val deviceId = "device-bug-test"
 
-        val db = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
+        val db = newInMemoryDb()
         createBusinessTables(db)
 
         val client = createSyncTestClient(

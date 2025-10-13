@@ -15,10 +15,9 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
-import androidx.sqlite.SQLiteConnection
-import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import dev.goquick.sqlitenow.core.sqlite.use
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
@@ -45,9 +44,7 @@ class SimpleUpdateSyncDebuggingTest {
      * Creates a test client with sync enabled
      */
     private suspend fun createTestClient(userId: String, deviceId: String): TestClient {
-        val driver = BundledSQLiteDriver()
-        val connection: SQLiteConnection = driver.open(":memory:")
-        val db = SafeSQLiteConnection(connection)
+        val db = newInMemoryDb()
 
         createBusinessTables(db)
 

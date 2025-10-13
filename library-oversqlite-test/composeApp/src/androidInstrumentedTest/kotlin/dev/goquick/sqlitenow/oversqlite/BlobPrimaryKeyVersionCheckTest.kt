@@ -15,10 +15,10 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
-import androidx.sqlite.SQLiteStatement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
-import androidx.sqlite.driver.bundled.BundledSQLiteDriver
+import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
+import dev.goquick.sqlitenow.core.sqlite.use
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -30,7 +30,7 @@ class BlobPrimaryKeyVersionCheckTest {
         println("\n🐛 REPRODUCING BLOB PRIMARY KEY VERSION CHECK BUG")
         println("Issue: Version check uses wrong PK format for BLOB columns during post-upload lookback")
 
-        val db = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
+        val db = newInMemoryDb()
         
         // Create a table with BLOB primary key (like the person table in the logs)
         db.execSQL("""
@@ -110,7 +110,7 @@ class BlobPrimaryKeyVersionCheckTest {
         println("  for BLOB primary keys, just like it does when updating the metadata")
     }
 
-    private suspend inline fun SafeSQLiteConnection.execSQL(sql: String, block: (SQLiteStatement) -> Unit = {}) {
+    private suspend inline fun SafeSQLiteConnection.execSQL(sql: String, block: (SqliteStatement) -> Unit = {}) {
         prepare(sql).use { st ->
             block(st)
             st.step()

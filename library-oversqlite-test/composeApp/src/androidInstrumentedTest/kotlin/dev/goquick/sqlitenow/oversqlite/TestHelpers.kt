@@ -15,7 +15,9 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
+import dev.goquick.sqlitenow.core.BundledSqliteConnectionProvider
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import dev.goquick.sqlitenow.core.sqlite.use
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.auth.Auth
 import io.ktor.client.plugins.auth.providers.BearerTokens
@@ -33,6 +35,12 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 const val skipAllOversqliteTest = false
+
+internal suspend fun newInMemoryDb(debug: Boolean = false): SafeSQLiteConnection =
+    BundledSqliteConnectionProvider.openConnection(":memory:", debug)
+
+internal fun blockingNewInMemoryDb(debug: Boolean = false): SafeSQLiteConnection =
+    runBlocking { newInMemoryDb(debug) }
 
 // Deterministic resolver for tests: ensures convergence by using lexicographic ordering
 // This prevents ping-pong conflicts between devices by making consistent decisions

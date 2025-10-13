@@ -16,8 +16,6 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import android.content.Context
-import androidx.sqlite.SQLiteConnection
-import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
@@ -33,7 +31,7 @@ import java.util.UUID
 class AndroidOversqliteClientTest {
 
     private lateinit var context: Context
-    private lateinit var db: SQLiteConnection
+    private lateinit var db: SafeSQLiteConnection
 
     @Before
     fun setUp() {
@@ -42,14 +40,14 @@ class AndroidOversqliteClientTest {
         }
 
         context = ApplicationProvider.getApplicationContext()
-        db = BundledSQLiteDriver().open(":memory:")
+        db = blockingNewInMemoryDb()
     }
 
     @Test
     fun sync_once_helper_bi_directional_flow() = runBlockingTest {
         // Two devices
-        val dbA = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
-        val dbB = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
+        val dbA = newInMemoryDb()
+        val dbB = newInMemoryDb()
 
         createBusinessTables(dbA)
         createBusinessTables(dbB)
@@ -129,7 +127,7 @@ class AndroidOversqliteClientTest {
 
     @Test
     fun bootstrap_creates_metadata_and_triggers_and_tracks_changes() = runBlockingTest {
-        val db = SafeSQLiteConnection(this.db)
+        val db = this.db
         // Create business tables
         createBusinessTables(db)
 
@@ -195,9 +193,9 @@ class AndroidOversqliteClientTest {
     @Test
     fun hydration_and_multi_sync_cycles_across_two_devices() = runBlockingTest {
         // Device A DB
-        val dbA = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
+        val dbA = newInMemoryDb()
         // Device B DB
-        val dbB = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
+        val dbB = newInMemoryDb()
 
         // Create business schema in both
         createBusinessTables(dbA)
@@ -307,7 +305,7 @@ class AndroidOversqliteClientTest {
 
 
         // Device A (initial install)
-        val dbA = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
+        val dbA = newInMemoryDb()
         createBusinessTables(dbA)
         val userSub = "user-real-" + UUID.randomUUID().toString().substring(0, 8)
         val devA = "device-A-real"
@@ -344,7 +342,7 @@ class AndroidOversqliteClientTest {
         assertEquals(0, count(dbA, "_sync_pending", "1=1"))
 
         // Simulate uninstall -> New device B with fresh DB
-        val dbB = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
+        val dbB = newInMemoryDb()
         createBusinessTables(dbB)
         val devB = "device-B-real"
         val clientB = createSyncTestClient(
@@ -382,7 +380,7 @@ class AndroidOversqliteClientTest {
         assertEquals(0, count(dbB, "_sync_pending", "1=1"))
 
         // Simulate uninstall again -> New device C
-        val dbC = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
+        val dbC = newInMemoryDb()
         createBusinessTables(dbC)
         val devC = "device-C-real"
         val clientC = createSyncTestClient(

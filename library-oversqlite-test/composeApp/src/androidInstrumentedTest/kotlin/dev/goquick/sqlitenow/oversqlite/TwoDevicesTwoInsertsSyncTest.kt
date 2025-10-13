@@ -15,9 +15,9 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
-import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import dev.goquick.sqlitenow.core.sqlite.use
 import kotlinx.coroutines.delay
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -40,8 +40,8 @@ class TwoDevicesTwoInsertsSyncTest {
 
 
         // Two device DBs
-        val db1 = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
-        val db2 = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
+        val db1 = newInMemoryDb()
+        val db2 = newInMemoryDb()
         createBusinessTables(db1)
         createBusinessTables(db2)
 
@@ -120,8 +120,8 @@ class TwoDevicesTwoInsertsSyncTest {
         runBlockingTest {
 
 
-            val db1 = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
-            val db2 = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
+            val db1 = newInMemoryDb()
+            val db2 = newInMemoryDb()
             createBusinessTables(db1)
             createBusinessTables(db2)
 
@@ -184,8 +184,8 @@ class TwoDevicesTwoInsertsSyncTest {
     fun one_user_two_devices_delete_resurrection_bug() = runBlockingTest {
 
 
-        val db1 = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
-        val db2 = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
+        val db1 = newInMemoryDb()
+        val db2 = newInMemoryDb()
         createBusinessTables(db1)
         createBusinessTables(db2)
 
@@ -289,8 +289,8 @@ class TwoDevicesTwoInsertsSyncTest {
     fun one_user_two_devices_update_lost_bug() = runBlockingTest {
 
 
-        val db1 = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
-        val db2 = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
+        val db1 = newInMemoryDb()
+        val db2 = newInMemoryDb()
         createBusinessTables(db1)
         createBusinessTables(db2)
 
@@ -422,8 +422,8 @@ class TwoDevicesTwoInsertsSyncTest {
 
 
         // Two device DBs
-        val db1 = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
-        val db2 = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
+        val db1 = newInMemoryDb()
+        val db2 = newInMemoryDb()
         createBusinessTables(db1)
         createBusinessTables(db2)
 
@@ -484,4 +484,3 @@ class TwoDevicesTwoInsertsSyncTest {
         assertEquals("Device 2 users count", 2, finalC2)
     }
 }
-

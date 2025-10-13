@@ -15,10 +15,10 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
-import androidx.sqlite.SQLiteStatement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
-import androidx.sqlite.driver.bundled.BundledSQLiteDriver
+import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
+import dev.goquick.sqlitenow.core.sqlite.use
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.Assert.assertTrue
@@ -44,7 +44,7 @@ class RepeatedDeleteUploadBugTest {
         val userId = "user-delete-${UUID.randomUUID().toString().substring(0, 8)}"
         val deviceId = "device-delete-test"
 
-        val db = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
+        val db = newInMemoryDb()
 
         // Create table with BLOB primary key (like the real app where the bug occurs)
         // This matches the person table structure from the sample app
@@ -168,7 +168,7 @@ class RepeatedDeleteUploadBugTest {
         }
     }
 
-    private suspend inline fun SafeSQLiteConnection.execSQL(sql: String, block: (SQLiteStatement) -> Unit = {}) {
+    private suspend inline fun SafeSQLiteConnection.execSQL(sql: String, block: (SqliteStatement) -> Unit = {}) {
         prepare(sql).use { st ->
             block(st)
             st.step()

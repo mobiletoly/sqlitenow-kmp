@@ -15,7 +15,6 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
-import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import io.ktor.client.HttpClient
@@ -47,7 +46,7 @@ class SlowNetworkDbConcurrencyTest {
     }
 
     private suspend fun createDb(): SafeSQLiteConnection {
-        val db = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
+        val db = newInMemoryDb()
         createBusinessTables(db)
         return db
     }

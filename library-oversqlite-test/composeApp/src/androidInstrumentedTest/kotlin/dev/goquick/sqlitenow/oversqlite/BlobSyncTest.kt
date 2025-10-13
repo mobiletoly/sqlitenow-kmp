@@ -15,9 +15,9 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
-import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import dev.goquick.sqlitenow.core.sqlite.use
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonObject
@@ -42,7 +42,7 @@ class BlobSyncTest {
     }
 
     private suspend fun createDb(): SafeSQLiteConnection {
-        val db = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
+        val db = newInMemoryDb()
         // Create a table with a BLOB column
         db.execSQL("""
             CREATE TABLE files (

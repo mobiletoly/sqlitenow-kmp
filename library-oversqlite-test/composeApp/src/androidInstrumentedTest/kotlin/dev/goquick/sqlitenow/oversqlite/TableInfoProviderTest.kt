@@ -15,7 +15,6 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
-import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import org.junit.Assert.assertEquals
@@ -37,7 +36,7 @@ class TableInfoProviderTest {
 
     @Test
     fun parses_regular_table_schema() = runBlockingTest {
-        val db = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
+        val db = newInMemoryDb()
 
         db.execSQL(
             """
@@ -71,7 +70,7 @@ class TableInfoProviderTest {
 
     @Test
     fun detects_blob_primary_key() = runBlockingTest {
-        val db = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
+        val db = newInMemoryDb()
 
         db.execSQL(
             """
@@ -97,4 +96,3 @@ class TableInfoProviderTest {
         assertEquals(ti.primaryKeyIsBlob, ti2.primaryKeyIsBlob)
     }
 }
-

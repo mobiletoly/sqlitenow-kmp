@@ -15,9 +15,9 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
-import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import dev.goquick.sqlitenow.core.sqlite.use
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -42,7 +42,7 @@ class SimpleConcurrentSyncTest {
     // Business schema is provided by TestHelpers.createBusinessTables(db)
 
     private suspend fun createTestDatabase(): SafeSQLiteConnection {
-        val db = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
+        val db = newInMemoryDb()
         createBusinessTables(db)
         return db
     }

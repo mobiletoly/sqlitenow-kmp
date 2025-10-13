@@ -15,10 +15,10 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
-import androidx.sqlite.SQLiteStatement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
-import androidx.sqlite.driver.bundled.BundledSQLiteDriver
+import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
+import dev.goquick.sqlitenow.core.sqlite.use
 import org.junit.Test
 import org.junit.runner.RunWith
 import kotlin.uuid.ExperimentalUuidApi
@@ -32,7 +32,7 @@ class PostUploadLookbackBugFixVerificationTest {
         println("\n🔧 VERIFYING POST-UPLOAD LOOKBACK BUG FIX")
         println("Testing that version check now uses correct primary key format for BLOB columns")
 
-        val db = SafeSQLiteConnection(BundledSQLiteDriver().open(":memory:"))
+        val db = newInMemoryDb()
         
         // Create test table with BLOB primary key (like the person table in the logs)
         db.execSQL("""
@@ -126,7 +126,7 @@ class PostUploadLookbackBugFixVerificationTest {
         println("  - Result: Proper version comparison prevents older changes from overwriting newer ones")
     }
 
-    private suspend inline fun SafeSQLiteConnection.execSQL(sql: String, block: (SQLiteStatement) -> Unit = {}) {
+    private suspend inline fun SafeSQLiteConnection.execSQL(sql: String, block: (SqliteStatement) -> Unit = {}) {
         prepare(sql).use { st ->
             block(st)
             st.step()

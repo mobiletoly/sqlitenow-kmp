@@ -16,10 +16,9 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import android.content.Context
-import androidx.sqlite.SQLiteConnection
-import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.goquick.sqlitenow.core.BundledSqliteConnectionProvider
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.auth.Auth
@@ -52,13 +51,13 @@ class AndroidOversqliteStressTest {
     @Test
     fun scenario_multi_user_delete_should_not_resurrect() = runBlocking {
         val context: Context = ApplicationProvider.getApplicationContext()
-        fun openDb(name: String): SQLiteConnection {
+        suspend fun openDb(name: String): SafeSQLiteConnection {
             val file = context.cacheDir.resolve(name).absolutePath
-            return BundledSQLiteDriver().open(file)
+            return BundledSqliteConnectionProvider.openConnection(file, debug = false)
         }
 
-        val dbA = SafeSQLiteConnection(openDb("muA.db"))
-        val dbB = SafeSQLiteConnection(openDb("muB.db"))
+        val dbA = openDb("muA.db")
+        val dbB = openDb("muB.db")
 
         createBusinessTables(dbA); createBusinessTables(dbB)
 
@@ -113,13 +112,13 @@ class AndroidOversqliteStressTest {
         val context: Context = ApplicationProvider.getApplicationContext()
 
         // Use file-backed DBs in cache dir to simulate restart/persistence
-        fun openDb(name: String): SQLiteConnection {
+        suspend fun openDb(name: String): SafeSQLiteConnection {
             val file = context.cacheDir.resolve(name).absolutePath
-            return BundledSQLiteDriver().open(file)
+            return BundledSqliteConnectionProvider.openConnection(file, debug = false)
         }
 
-        val dbA = SafeSQLiteConnection(openDb("stressA.db"))
-        val dbB = SafeSQLiteConnection(openDb("stressB.db"))
+        val dbA = openDb("stressA.db")
+        val dbB = openDb("stressB.db")
 
 
         createBusinessTables(dbA)

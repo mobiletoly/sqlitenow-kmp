@@ -16,11 +16,10 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import android.content.Context
-import androidx.sqlite.SQLiteConnection
-import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import dev.goquick.sqlitenow.core.sqlite.use
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -36,7 +35,6 @@ import org.junit.runner.RunWith
 class CustomPrimaryKeyTest {
 
     private lateinit var context: Context
-    private lateinit var rawDb: SQLiteConnection
     private lateinit var db: SafeSQLiteConnection
     private lateinit var client: DefaultOversqliteClient
 
@@ -47,8 +45,7 @@ class CustomPrimaryKeyTest {
         }
 
         context = ApplicationProvider.getApplicationContext()
-        rawDb = BundledSQLiteDriver().open(":memory:")
-        db = SafeSQLiteConnection(rawDb)
+        db = blockingNewInMemoryDb()
         runBlockingTest {
             setupTestTables()
         }
