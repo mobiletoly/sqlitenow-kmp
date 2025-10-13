@@ -29,6 +29,13 @@ open class SqliteNowDatabase private constructor(
     private val adjustLogger: Boolean,
 ) {
     private lateinit var conn: SafeSQLiteConnection
+    var connectionConfig: SqliteConnectionConfig = SqliteConnectionConfig()
+        set(value) {
+            if (::conn.isInitialized) {
+                throw IllegalStateException("Cannot update connectionConfig after open()")
+            }
+            field = value
+        }
 
     // Table change notification system
     private val tableChangeFlows = mutableMapOf<String, MutableSharedFlow<Unit>>()
@@ -109,7 +116,7 @@ open class SqliteNowDatabase private constructor(
 
         val dbFileExists = validateFileExists(dbName)
 
-        conn = connectionProvider.openConnection(dbName, debug)
+        conn = connectionProvider.openConnection(dbName, debug, connectionConfig)
         preInit(conn)
 
         transaction {

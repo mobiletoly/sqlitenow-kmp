@@ -8,6 +8,7 @@ actual class SqliteConnection internal constructor(
     private val database: SqlJsDatabase,
 ) {
     private var transactionDepth = 0
+    private var exportedBytesCache: ByteArray? = null
 
     actual fun execSQL(sql: String) {
         wrapSqlite {
@@ -18,11 +19,12 @@ actual class SqliteConnection internal constructor(
                 normalized.startsWith("ROLLBACK", ignoreCase = true) -> if (transactionDepth > 0) transactionDepth--
             }
             database.exec(sql)
+            invalidateExportCache()
         }
     }
 
     actual fun prepare(sql: String): SqliteStatement = wrapSqlite {
-        SqliteStatement(database.prepare(sql))
+        SqliteStatement(this, database.prepare(sql))
     }
 
     actual fun inTransaction(): Boolean = transactionDepth > 0
@@ -30,10 +32,31 @@ actual class SqliteConnection internal constructor(
     actual fun close() {
         wrapSqlite { database.close() }
         transactionDepth = 0
+        exportedBytesCache = null
+    }
+
+    internal fun exportToByteArray(): ByteArray {
+        val cached = exportedBytesCache
+        if (cached != null) return cached
+        val bytes = wrapSqlite {
+            val dyn = database.asDynamic()
+            val exported = when {
+                dyn.export != undefined -> dyn.export()
+                else -> throw SqliteException("SQL.js database does not support export()")
+            }
+            (exported as Uint8Array).toByteArray()
+        }
+        exportedBytesCache = bytes
+        return bytes
+    }
+
+    internal fun invalidateExportCache() {
+        exportedBytesCache = null
     }
 }
 
 actual class SqliteStatement internal constructor(
+    private val parent: SqliteConnection,
     private val statement: SqlJsStatement,
 ) {
     private companion object {
@@ -50,6 +73,7 @@ actual class SqliteStatement internal constructor(
         boundValues[index] = value
         bindingsDirty = true
         currentRow = null
+        parent.invalidateExportCache()
     }
 
     private fun applyBindingsIfNecessary() {
@@ -61,6 +85,7 @@ actual class SqliteStatement internal constructor(
         }
         wrapSqlite { statement.bind(values.unsafeCast<Array<dynamic>>()) }
         bindingsDirty = false
+        parent.invalidateExportCache()
     }
 
     actual fun bindBlob(index: Int, value: ByteArray) = setBinding(index, value.toUint8Array())
@@ -146,6 +171,7 @@ actual class SqliteStatement internal constructor(
             if (hasRow) {
                 currentRow = statement.get(null, useBigIntConfig).unsafeCast<Array<dynamic>>()
             }
+            parent.invalidateExportCache()
             hasRow
         }
     }
@@ -154,6 +180,7 @@ actual class SqliteStatement internal constructor(
         wrapSqlite { statement.reset() }
         bindingsDirty = true
         currentRow = null
+        parent.invalidateExportCache()
     }
 
     actual fun clearBindings() {
@@ -161,11 +188,13 @@ actual class SqliteStatement internal constructor(
         bindingsDirty = true
         currentRow = null
         wrapSqlite { statement.bind(emptyArray<Any?>().unsafeCast<Array<dynamic>>()) }
+        parent.invalidateExportCache()
     }
 
     actual fun close() {
         wrapSqlite { statement.free() }
         currentRow = null
+        parent.invalidateExportCache()
     }
 }
 
@@ -202,24 +231,4 @@ private fun SqlJsStatement.columnName(index: Int): String {
         }
         else -> throw SqliteException("Unable to determine column name for index $index")
     }
-}
-
-private fun ByteArray.toUint8Array(): Uint8Array {
-    val array = Uint8Array(size)
-    val dyn = array.asDynamic()
-    for (i in indices) {
-        val value = this[i].toInt() and 0xFF
-        dyn[i] = value
-    }
-    return array
-}
-
-private fun Uint8Array.toByteArray(): ByteArray {
-    val result = ByteArray(length)
-    val dyn = this.asDynamic()
-    for (i in 0 until length) {
-        val value = (dyn[i] as Number).toInt()
-        result[i] = (value and 0xFF).toByte()
-    }
-    return result
 }

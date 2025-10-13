@@ -16,6 +16,9 @@ import kotlinx.coroutines.withContext
 class SafeSQLiteConnection(
     val ref: SqliteConnection,
     val debug: Boolean = false,
+    private val dbName: String? = null,
+    private val persistence: SqlitePersistence? = null,
+    private val autoFlushPersistence: Boolean = true,
 ) {
     val dispatcher: CoroutineDispatcher = sqliteConnectionDispatcher()
 
@@ -42,6 +45,7 @@ class SafeSQLiteConnection(
         sqliteNowLogger.d { "SafeSQLiteConnection.execSQL: $sql" }
         withContext(dispatcher) {
             ref.execSQL(sql)
+            persistSnapshotIfNeeded()
         }
     }
 
@@ -56,6 +60,7 @@ class SafeSQLiteConnection(
     suspend fun close() {
         withContext(dispatcher) {
             sqliteNowLogger.d { "SafeSQLiteConnection.close" }
+            persistSnapshot(force = true)
             ref.close()
         }
     }
@@ -99,7 +104,29 @@ class SafeSQLiteConnection(
             }
         }
     }
+
+    private suspend fun persistSnapshotIfNeeded() {
+        if (!autoFlushPersistence) return
+        if (persistence == null || dbName == null) return
+        if (ref.inTransaction()) return
+        persistSnapshot(force = false)
+    }
+
+private suspend fun persistSnapshot(force: Boolean) {
+        val persistence = persistence ?: return
+        val dbName = dbName ?: return
+        if (!force && (!autoFlushPersistence || ref.inTransaction())) return
+        val bytes = exportConnectionBytes(ref) ?: return
+        try {
+            persistence.persist(dbName, bytes)
+        } catch (t: Throwable) {
+            sqliteNowLogger.e(t) { "Failed to persist database snapshot for $dbName" }
+            if (force) throw t
+        }
+    }
 }
+
+internal expect fun exportConnectionBytes(connection: SqliteConnection): ByteArray?
 
 /**
  * Transaction modes supported by SQLite.

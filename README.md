@@ -24,6 +24,13 @@ Full documentation is available in the https://mobiletoly.github.io/sqlitenow-km
 
 ## Key Features
 
+### Supported Platforms
+
+- Android (Kotlin/JVM via AndroidX bundled SQLite driver)
+- iOS (Kotlin/Native with bundled SQLite)
+- JVM desktop/server targets
+- JavaScript (browser) via SQL.js with optional IndexedDB persistence
+
 ### Type-Safe SQL Generation
 
 - **Pure SQL Control** - Write your queries in SQL files, get type-safe Kotlin code

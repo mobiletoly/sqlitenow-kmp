@@ -1,5 +1,6 @@
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 plugins {
     id(libs.plugins.androidLibrary.get().pluginId)
@@ -20,6 +21,12 @@ kotlin {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_11)
         }
+    }
+
+    compilerOptions {
+        languageVersion.set(KotlinVersion.KOTLIN_2_2)
+        freeCompilerArgs.addAll("-Xmulti-dollar-interpolation")
+        freeCompilerArgs.addAll("-Xexpect-actual-classes")
     }
 
     js(IR) {

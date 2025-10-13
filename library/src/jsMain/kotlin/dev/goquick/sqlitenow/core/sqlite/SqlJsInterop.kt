@@ -47,8 +47,8 @@ internal suspend fun loadSqlJsModule(): SqlJsModule {
                     when (fileName) {
                         "sql-wasm.wasm" -> {
                             val isNodeRuntime = js(
-                                "typeof process !== 'undefined' && process.versions && process.versions.node"
-                            ).unsafeCast<Boolean?>() == true
+                                "typeof process !== 'undefined' && process.versions != null && process.versions.node != null"
+                            ).unsafeCast<Boolean>()
                             if (isNodeRuntime) {
                                 js("require('path').resolve(require.resolve('sql.js/dist/sql-wasm.wasm'))").unsafeCast<String>()
                             } else {

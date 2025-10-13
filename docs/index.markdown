@@ -21,6 +21,12 @@ tablets, and other devices.
 
 ## Key Features
 
+### Supported Platforms
+- Android (Kotlin/JVM via AndroidX bundled SQLite driver)
+- iOS (Kotlin/Native with bundled SQLite)
+- JVM desktop/server targets
+- JavaScript (browser) using SQL.js with optional IndexedDB persistence
+
 ### Type-Safe SQL Generation
 - **Pure SQL Control** - Write your queries in SQL files, get type-safe Kotlin code
 - **Comment-based Annotations** - Control code generation using simple `-- @@{ annotations }`
