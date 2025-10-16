@@ -44,6 +44,11 @@ Understand how to manage database schema changes over time.
 
 [Migration →]({{ site.baseurl }}/documentation/migration/)
 
+### Platform Guides
+Learn about platform-specific behavior and configuration tips.
+
+[Kotlin/JS Integration →]({{ site.baseurl }}/documentation/kotlin-js/)
+
 ## Quick Navigation
 
 <div class="doc-nav-grid">
@@ -75,6 +80,11 @@ Understand how to manage database schema changes over time.
   <a href="{{ site.baseurl }}/documentation/migration/" class="doc-nav-card">
     <h3>🔄 Migration</h3>
     <p>Manage database schema changes and version upgrades</p>
+  </a>
+
+  <a href="{{ site.baseurl }}/documentation/kotlin-js/" class="doc-nav-card">
+    <h3>🌐 Kotlin/JS Integration</h3>
+    <p>Understand persistence, snapshots, and configuration for browser builds</p>
   </a>
 
   <a href="{{ site.baseurl }}/recipes/" class="doc-nav-card">
