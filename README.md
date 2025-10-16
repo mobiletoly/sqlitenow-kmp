@@ -150,7 +150,7 @@ Simply annotate your tables with `enableSync=true` and the sync system handles t
 -- Enable sync for this table
 -- @@{ enableSync=true }
 CREATE TABLE person (
-    id INTEGER PRIMARY KEY,
+    id TEXT PRIMARY KEY NOT NULL,
     first_name TEXT NOT NULL,
     last_name TEXT NOT NULL,
     email TEXT UNIQUE,
