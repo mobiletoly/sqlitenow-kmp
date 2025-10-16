@@ -22,6 +22,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SqliteJsPersistenceTest {
@@ -88,6 +89,33 @@ class SqliteJsPersistenceTest {
             }
         } finally {
             second.close()
+        }
+    }
+
+    @Test
+    fun manualFlushSupportsAutoFlushDisabled() = runTest {
+        val persistence = InMemoryPersistence()
+        val connection = BundledSqliteConnectionProvider.openConnection(
+            dbName = "js-manual-flush.db",
+            debug = false,
+            config = SqliteConnectionConfig(
+                persistence = persistence,
+                autoFlushPersistence = false,
+            ),
+        )
+
+        try {
+            connection.execSQL("CREATE TABLE IF NOT EXISTS counter(id INTEGER PRIMARY KEY, value INTEGER);")
+            connection.execSQL("INSERT INTO counter(id, value) VALUES (1, 42);")
+
+            assertNull(persistence.stored, "Auto-flush disabled should not persist snapshot automatically")
+
+        connection.persistSnapshotNow()
+
+            val stored = assertNotNull(persistence.stored, "Manual flush should persist snapshot")
+            assertTrue(stored.isNotEmpty(), "Persisted bytes should not be empty")
+        } finally {
+            connection.close()
         }
     }
 

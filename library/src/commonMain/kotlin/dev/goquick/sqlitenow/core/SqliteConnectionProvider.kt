@@ -15,6 +15,8 @@
  */
 package dev.goquick.sqlitenow.core
 
+import dev.goquick.sqlitenow.common.sqliteNowLogger
+import dev.goquick.sqlitenow.core.persistence.SnapshotPersistenceController
 import dev.goquick.sqlitenow.core.sqlite.SqliteConnection
 
 /**
@@ -44,13 +46,36 @@ object BundledSqliteConnectionProvider : SqliteConnectionProvider {
         config: SqliteConnectionConfig,
     ): SafeSQLiteConnection {
         val persistence = config.persistence?.takeUnless { dbName.isInMemoryPath() }
-        val connection = openBundledSqliteConnection(dbName, debug, config.copy(persistence = persistence))
+        val restoredBytes = if (persistence != null) {
+            try {
+                persistence.load(dbName)
+            } catch (t: Throwable) {
+                sqliteNowLogger.w(t) { "Failed to load persisted snapshot for $dbName" }
+                null
+            }
+        } else {
+            null
+        }
+        val connection = openBundledSqliteConnection(
+            dbName = dbName,
+            debug = debug,
+            initialBytes = restoredBytes,
+            config = config.copy(persistence = persistence),
+        )
+        val persistenceController = if (persistence != null) {
+            SnapshotPersistenceController(
+                persistence = persistence,
+                dbName = dbName,
+                autoFlush = config.autoFlushPersistence,
+                restoredFromSnapshot = restoredBytes != null,
+            )
+        } else {
+            NoopPersistenceController()
+        }
         return SafeSQLiteConnection(
             ref = connection,
             debug = debug,
-            dbName = dbName,
-            persistence = persistence,
-            autoFlushPersistence = config.autoFlushPersistence,
+            persistenceController = persistenceController,
         )
     }
 }
@@ -58,6 +83,7 @@ object BundledSqliteConnectionProvider : SqliteConnectionProvider {
 internal expect suspend fun openBundledSqliteConnection(
     dbName: String,
     debug: Boolean,
+    initialBytes: ByteArray?,
     config: SqliteConnectionConfig,
 ): SqliteConnection
 

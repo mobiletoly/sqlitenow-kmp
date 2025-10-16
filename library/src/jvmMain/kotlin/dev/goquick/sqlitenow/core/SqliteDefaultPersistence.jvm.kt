@@ -15,21 +15,4 @@
  */
 package dev.goquick.sqlitenow.core
 
-import androidx.sqlite.driver.bundled.BundledSQLiteDriver
-import androidx.sqlite.driver.bundled.SQLITE_OPEN_CREATE
-import androidx.sqlite.driver.bundled.SQLITE_OPEN_READWRITE
-import dev.goquick.sqlitenow.core.sqlite.SqliteConnection
-
-@Suppress("UNUSED_PARAMETER")
-internal actual suspend fun openBundledSqliteConnection(
-    dbName: String,
-    debug: Boolean,
-    initialBytes: ByteArray?,
-    config: SqliteConnectionConfig,
-): SqliteConnection {
-    val delegate = BundledSQLiteDriver().open(
-        fileName = dbName,
-        flags = SQLITE_OPEN_CREATE or SQLITE_OPEN_READWRITE,
-    )
-    return SqliteConnection(delegate)
-}
+internal actual fun sqliteDefaultPersistence(dbName: String): SqlitePersistence? = null

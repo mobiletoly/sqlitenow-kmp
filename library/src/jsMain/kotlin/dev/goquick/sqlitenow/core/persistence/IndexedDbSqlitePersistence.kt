@@ -137,36 +137,37 @@ class IndexedDbSqlitePersistence(
 
     private fun convertResultToBytes(value: dynamic): ByteArray? {
         if (value == null || jsTypeOf(value) == "undefined") return null
-        return when (value) {
-            is ByteArray -> value
-            is Uint8Array -> value.toByteArray()
-            is ArrayBuffer -> value.toByteArray()
-            else -> {
-                val buffer = asArrayBuffer(value)
-                if (buffer != null) {
-                    buffer.toByteArray()
-                } else {
-                    val dyn = value.asDynamic()
-                    val constructorName = if (isDefined(dyn)) {
-                        val ctor = dyn.constructor
-                        if (isDefined(ctor)) {
-                            val ctorName = ctor.name
-                            if (isDefined(ctorName)) {
-                                ctorName.unsafeCast<String>()
-                            } else {
-                                jsTypeOf(value)
-                            }
-                        } else {
-                            jsTypeOf(value)
-                        }
-                    } else {
-                        jsTypeOf(value)
-                    }
-                    logger.warn("[SqliteNow][IndexedDB] Unsupported value type $constructorName")
-                    null
-                }
-            }
+
+        // If it's already a ByteArray, return it
+        if (value is ByteArray) {
+            return value
         }
+
+        // Try to convert via ArrayBuffer (most reliable approach for typed arrays)
+        val buffer = asArrayBuffer(value)
+        if (buffer != null) {
+            return buffer.toByteArray()
+        }
+
+        // Log the unsupported type for debugging
+        val dyn = value.asDynamic()
+        val constructorName = if (isDefined(dyn)) {
+            val ctor = dyn.constructor
+            if (isDefined(ctor)) {
+                val ctorName = ctor.name
+                if (isDefined(ctorName)) {
+                    ctorName.unsafeCast<String>()
+                } else {
+                    jsTypeOf(value)
+                }
+            } else {
+                jsTypeOf(value)
+            }
+        } else {
+            jsTypeOf(value)
+        }
+        logger.warn("[SqliteNow][IndexedDB] Unsupported value type: $constructorName, jsType: ${jsTypeOf(value)}")
+        return null
     }
 
     private fun hasObjectStore(db: dynamic, name: String): Boolean {

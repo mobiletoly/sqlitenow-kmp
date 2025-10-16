@@ -28,20 +28,26 @@ import kotlinx.coroutines.withContext
  * This is necessary because many SQLite driver implementations are not thread-safe and can cause issues when used concurrently
  * from multiple coroutines.
  */
-class SafeSQLiteConnection(
+class SafeSQLiteConnection internal constructor(
     val ref: SqliteConnection,
     val debug: Boolean = false,
-    private val dbName: String? = null,
-    private val persistence: SqlitePersistence? = null,
-    private val autoFlushPersistence: Boolean = true,
+    private val persistenceController: PersistenceController = NoopPersistenceController(),
 ) {
     val dispatcher: CoroutineDispatcher = sqliteConnectionDispatcher()
+    private var activeTransactionDepth: Int = 0
+
+    internal val restoredFromSnapshot: Boolean
+        get() = persistenceController.restoredFromSnapshot
+
+    private fun isInTransaction(): Boolean = activeTransactionDepth > 0 || ref.inTransaction()
 
     suspend fun <T> withContextAndTrace(block: suspend () -> T): T {
         val creationTrace = Throwable().stackTraceToString().replace("\n\n", "\n")
         return try {
             withContext(dispatcher) {
-                block()
+                val result = block()
+                persistenceController.onOperationComplete(ref, isInTransaction())
+                result
             }
         } catch (e: Exception) {
             // Combine the original creation trace and the actual exception trace
@@ -60,7 +66,7 @@ class SafeSQLiteConnection(
         sqliteNowLogger.d { "SafeSQLiteConnection.execSQL: $sql" }
         withContext(dispatcher) {
             ref.execSQL(sql)
-            persistSnapshotIfNeeded()
+            persistenceController.onOperationComplete(ref, isInTransaction())
         }
     }
 
@@ -75,7 +81,7 @@ class SafeSQLiteConnection(
     suspend fun close() {
         withContext(dispatcher) {
             sqliteNowLogger.d { "SafeSQLiteConnection.close" }
-            persistSnapshot(force = true)
+            persistenceController.onClose(ref)
             ref.close()
         }
     }
@@ -94,49 +100,50 @@ class SafeSQLiteConnection(
      */
     suspend fun <T> transaction(mode: TransactionMode = TransactionMode.DEFERRED, block: suspend () -> T): T {
         return withContext(dispatcher) {
-            if (ref.inTransaction()) {
-                // Already in a transaction: just run the block safely on the same dispatcher
-                block()
-            } else {
+            val alreadyInTransaction = activeTransactionDepth > 0 || ref.inTransaction()
+            if (!alreadyInTransaction) {
                 when (mode) {
                     TransactionMode.DEFERRED -> ref.execSQL("BEGIN")
                     TransactionMode.IMMEDIATE -> ref.execSQL("BEGIN IMMEDIATE")
                     TransactionMode.EXCLUSIVE -> ref.execSQL("BEGIN EXCLUSIVE")
                 }
-                try {
-                    val result = block()
+            }
+            activeTransactionDepth++
+            try {
+                val result = block()
+                if (!alreadyInTransaction) {
                     ref.execSQL("COMMIT")
-                    result
-                } catch (e: Exception) {
+                    persistenceController.onTransactionCommitted(ref)
+                }
+                result
+            } catch (e: Exception) {
+                if (!alreadyInTransaction) {
                     try {
                         ref.execSQL("ROLLBACK")
                     } catch (_: Exception) {
                         // ignore rollback errors
                     }
-                    sqliteNowLogger.e(e) { "Transaction failed: ${e.message}" }
-                    throw e
                 }
+                sqliteNowLogger.e(e) { "Transaction failed: ${e.message}" }
+                throw e
+            } finally {
+                activeTransactionDepth--
             }
         }
     }
 
-    private suspend fun persistSnapshotIfNeeded() {
-        if (!autoFlushPersistence) return
-        if (persistence == null || dbName == null) return
-        if (ref.inTransaction()) return
-        persistSnapshot(force = false)
-    }
-
-private suspend fun persistSnapshot(force: Boolean) {
-        val persistence = persistence ?: return
-        val dbName = dbName ?: return
-        if (!force && (!autoFlushPersistence || ref.inTransaction())) return
-        val bytes = exportConnectionBytes(ref) ?: return
-        try {
-            persistence.persist(dbName, bytes)
-        } catch (t: Throwable) {
-            sqliteNowLogger.e(t) { "Failed to persist database snapshot for $dbName" }
-            if (force) throw t
+    /**
+     * Forces the current database snapshot to be persisted when persistence is configured.
+     * Throws if invoked while a transaction is active to avoid flushing inconsistent state.
+     * This call makes sense only for JS target and does nothing on other targets, so it
+     * is safe to call unconditionally.
+     */
+    internal suspend fun persistSnapshotNow() {
+        withContext(dispatcher) {
+            if (activeTransactionDepth > 0 || ref.inTransaction()) {
+                throw IllegalStateException("Cannot flush persistence while a transaction is active")
+            }
+            persistenceController.flush(ref)
         }
     }
 }

@@ -19,7 +19,7 @@ import co.touchlab.kermit.Severity
 import dev.goquick.sqlitenow.common.SqliteNowLogger
 import dev.goquick.sqlitenow.common.originalSqliteNowLogger
 import dev.goquick.sqlitenow.common.sqliteNowLogger
-import dev.goquick.sqlitenow.common.validateFileExists
+import dev.goquick.sqlitenow.core.sqlite.use
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -44,7 +44,9 @@ open class SqliteNowDatabase private constructor(
     private val adjustLogger: Boolean,
 ) {
     private lateinit var conn: SafeSQLiteConnection
-    var connectionConfig: SqliteConnectionConfig = SqliteConnectionConfig()
+    var connectionConfig: SqliteConnectionConfig = SqliteConnectionConfig(
+        persistence = sqliteDefaultPersistence(dbName),
+    )
         set(value) {
             if (::conn.isInitialized) {
                 throw IllegalStateException("Cannot update connectionConfig after open()")
@@ -109,12 +111,7 @@ open class SqliteNowDatabase private constructor(
      * @return The database connection
      * @throws IllegalStateException if the database is not open
      */
-    fun connection(): SafeSQLiteConnection {
-        if (!::conn.isInitialized) {
-            throw IllegalStateException("Database connection not initialized. Call open() first.")
-        }
-        return conn
-    }
+    fun connection(): SafeSQLiteConnection = requireConnectionInitialized()
 
     /**
      * Opens a database connection and applies migrations.
@@ -129,18 +126,12 @@ open class SqliteNowDatabase private constructor(
             throw IllegalStateException("Database connection already initialized")
         }
 
-        val dbFileExists = validateFileExists(dbName)
-
         conn = connectionProvider.openConnection(dbName, debug, connectionConfig)
         preInit(conn)
+        ensureBootstrapUserVersion()
 
         transaction {
-            val currentVersion = if (!dbFileExists) {
-                setUserVersion(-1)
-                -1
-            } else {
-                getUserVersion()
-            }
+            val currentVersion = getUserVersion()
 
             // Apply migrations starting from the current version
             val newVersion = migration.applyMigration(conn, currentVersion)
@@ -154,11 +145,8 @@ open class SqliteNowDatabase private constructor(
      * Gets the current user_version from the database.
      */
     internal suspend fun getUserVersion(): Int {
-        if (!::conn.isInitialized) {
-            throw IllegalStateException("Database connection not initialized. Call open() first.")
-        }
-
-        val statement = conn.prepare("PRAGMA user_version;")
+        val connection = requireConnectionInitialized()
+        val statement = connection.prepare("PRAGMA user_version;")
         return try {
             statement.step()
             statement.getLong(0).toInt()
@@ -171,11 +159,7 @@ open class SqliteNowDatabase private constructor(
      * Sets the user_version in the database.
      */
     internal suspend fun setUserVersion(version: Int) {
-        if (!::conn.isInitialized) {
-            throw IllegalStateException("Database connection not initialized. Call open() first.")
-        }
-
-        conn.execSQL("PRAGMA user_version = $version;")
+        requireConnectionInitialized().execSQL("PRAGMA user_version = $version;")
     }
 
     /**
@@ -188,11 +172,8 @@ open class SqliteNowDatabase private constructor(
      * @throws Exception Any exception thrown by the block
      */
     suspend fun <T> transaction(mode: TransactionMode = TransactionMode.DEFERRED, block: suspend () -> T): T {
-        if (!::conn.isInitialized) {
-            throw IllegalStateException("Database connection not initialized. Call open() first.")
-        }
         // Delegate to SafeSQLiteConnection to ensure nested transactions are handled safely
-        return conn.transaction(mode, block)
+        return requireConnectionInitialized().transaction(mode, block)
     }
 
     /**
@@ -217,6 +198,34 @@ open class SqliteNowDatabase private constructor(
         if (::conn.isInitialized) {
             conn.close()
         }
+    }
+
+    /**
+     * Forces any external persistence layer to store the current database snapshot.
+     *
+     * Targets that back databases with a real file system (Android/iOS/JVM) persist changes
+     * automatically, so calling this function is a no-op and safe to call.
+     * It is primarily useful for the Kotlin/JS runtime when an external persistence
+     * implementation (for example, `IndexedDbSqlitePersistence`) is configured and
+     * `autoFlushPersistence` is disabled.
+     */
+    suspend fun persistSnapshotNow() {
+        requireConnectionInitialized().persistSnapshotNow()
+    }
+
+    private suspend fun ensureBootstrapUserVersion() {
+        val connection = conn
+        val currentVersion = connection.readUserVersion()
+        if (currentVersion != 0) return
+        if (connection.hasUserTables() || connection.restoredFromSnapshot) return
+        connection.execSQL("PRAGMA user_version = -1;")
+    }
+
+    private fun requireConnectionInitialized(): SafeSQLiteConnection {
+        if (!::conn.isInitialized) {
+            throw IllegalStateException("Database connection not initialized. Call open() first.")
+        }
+        return conn
     }
 
     /**
@@ -297,4 +306,21 @@ interface DatabaseMigrations {
      * @return The new version of the database
      */
     suspend fun applyMigration(conn: SafeSQLiteConnection, currentVersion: Int): Int
+}
+
+private suspend fun SafeSQLiteConnection.readUserVersion(): Int {
+    val statement = prepare("PRAGMA user_version;")
+    statement.use {
+        it.step()
+        return it.getLong(0).toInt()
+    }
+}
+
+private suspend fun SafeSQLiteConnection.hasUserTables(): Boolean {
+    val statement = prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' LIMIT 1",
+    )
+    statement.use {
+        return it.step()
+    }
 }

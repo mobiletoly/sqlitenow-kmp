@@ -21,27 +21,18 @@ import dev.goquick.sqlitenow.core.sqlite.loadSqlJsModule
 import dev.goquick.sqlitenow.core.sqlite.toUint8Array
 import kotlin.js.console
 
+@Suppress("UNUSED_PARAMETER")
 internal actual suspend fun openBundledSqliteConnection(
     dbName: String,
     debug: Boolean,
+    initialBytes: ByteArray?,
     config: SqliteConnectionConfig,
 ): SqliteConnection {
     val module = loadSqlJsModule()
-    val persistence = config.persistence
-    val restoredBytes = if (persistence != null) {
-        try {
-            persistence.load(dbName)
-        } catch (t: Throwable) {
-            console.warn("[SqlJs] Failed to load persisted snapshot for $dbName", t)
-            null
-        }
-    } else {
-        null
-    }
 
-    val dataArg = restoredBytes?.toUint8Array()
+    val dataArg = initialBytes?.toUint8Array()
     if (dataArg != null) {
-        console.log("[SqlJs] Opening $dbName from persisted snapshot (${restoredBytes.size} bytes)")
+        console.log("[SqlJs] Opening $dbName from persisted snapshot (${initialBytes.size} bytes)")
     } else {
         console.log("[SqlJs] Opening $dbName with empty in-memory database")
     }
