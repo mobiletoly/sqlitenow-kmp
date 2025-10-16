@@ -1,18 +1,3 @@
-/*
- * Copyright 2025 Anatoliy Pochkin
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package dev.goquick.sqlitenow.gradle
 
 import dev.goquick.sqlitenow.gradle.context.ColumnLookup
@@ -300,7 +285,7 @@ class ViewColumnLookupTest {
         val birthDateField = annotatedView.fields.find { it.src.fieldName == "birth_date" }
         assertNotNull(birthDateField, "Should find birth_date field")
 
-        assertEquals("myBirthDateAAA", birthDateField!!.annotations.propertyName, "Should have custom property name")
+        assertEquals("myBirthDateAAA", birthDateField.annotations.propertyName, "Should have custom property name")
         assertEquals(
             "kotlinx.datetime.LocalDateTime",
             birthDateField.annotations.propertyType,
@@ -429,7 +414,7 @@ class ViewColumnLookupTest {
         assertNotNull(column, "Should find column for birthDateParam")
 
         // Verify that only original table annotations are present (no VIEW annotations merged)
-        assertEquals("tableValue", column!!.annotations["tableAnnotation"], "Should have original table annotation")
+        assertEquals("tableValue", column.annotations["tableAnnotation"], "Should have original table annotation")
         assertEquals(
             null,
             column.annotations[AnnotationConstants.PROPERTY_NAME],
@@ -559,7 +544,7 @@ class ViewColumnLookupTest {
         // Verify that VIEW annotations are merged
         assertEquals(
             "myCustomBirthDate",
-            birthDateField!!.annotations.propertyName,
+            birthDateField.annotations.propertyName,
             "Should have VIEW's custom property name"
         )
         assertEquals(
@@ -720,7 +705,7 @@ class ViewColumnLookupTest {
         // SELECT statement annotations should override VIEW annotations
         assertEquals(
             "selectPropertyName",
-            birthDateField!!.annotations.propertyName,
+            birthDateField.annotations.propertyName,
             "SELECT statement propertyName should override VIEW propertyName"
         )
         assertEquals(

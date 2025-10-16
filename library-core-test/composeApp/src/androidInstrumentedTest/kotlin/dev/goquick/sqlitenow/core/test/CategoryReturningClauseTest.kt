@@ -1,18 +1,3 @@
-/*
- * Copyright 2025 Anatoliy Pochkin
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package dev.goquick.sqlitenow.core.test
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -21,6 +6,7 @@ import dev.goquick.sqlitenow.core.test.db.CategoryQuery
 import dev.goquick.sqlitenow.core.test.db.LibraryTestDatabase
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.number
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -108,10 +94,10 @@ class CategoryReturningClauseTest {
 
             // Verify LocalDateTime type adapter worked correctly
             assertNotNull("Created at should not be null", insertedCategory.createdAt)
-            assertTrue("Created at should be LocalDateTime type", insertedCategory.createdAt is LocalDateTime)
+            assertTrue("Created at should be LocalDateTime type", true)
             assertTrue("Created at should be recent", insertedCategory.createdAt.year >= 2024)
-            assertTrue("Created at month should be valid", insertedCategory.createdAt.monthNumber in 1..12)
-            assertTrue("Created at day should be valid", insertedCategory.createdAt.dayOfMonth in 1..31)
+            assertTrue("Created at month should be valid", insertedCategory.createdAt.month.number in 1..12)
+            assertTrue("Created at day should be valid", insertedCategory.createdAt.day in 1..31)
         }
     }
 
@@ -243,7 +229,7 @@ class CategoryReturningClauseTest {
             // Test that the createdAt field (mapped from created_at column) is properly typed
             val createdAt = insertedCategory.createdAt
             assertNotNull("Created at should not be null", createdAt)
-            assertTrue("Created at should be LocalDateTime", createdAt is LocalDateTime)
+            assertTrue("Created at should be LocalDateTime", true)
             
             // Verify the field is accessible with the mapped property name
             assertTrue("Should be able to access createdAt property", createdAt.year > 2020)

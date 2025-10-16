@@ -1,29 +1,14 @@
-/*
- * Copyright 2025 Anatoliy Pochkin
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package dev.goquick.sqlitenow.gradle
 
 import org.junit.jupiter.api.Test
 import java.io.File
+import kotlin.io.path.createTempDirectory
 import kotlin.test.assertTrue
-import kotlin.test.assertFalse
 
 class CollectionMappingGenerationTest {
     @Test
     fun generates_grouping_and_distinct_for_collection_mapping() {
-        val root = createTempDir(prefix = "coll-map-int-")
+        val root = createTempDirectory(prefix = "coll-map-int-").toFile()
         val schemaDir = File(root, "schema").apply { mkdirs() }
         val queriesDir = File(root, "queries").apply { mkdirs() }
 
@@ -101,7 +86,7 @@ class CollectionMappingGenerationTest {
 
     @Test
     fun per_row_dynamic_field_is_included_alongside_collection() {
-        val root = createTempDir(prefix = "perrow-map-int-")
+        val root = createTempDirectory(prefix = "perrow-map-int-").toFile()
         val schemaDir = File(root, "schema").apply { mkdirs() }
         val queriesDir = File(root, "queries").apply { mkdirs() }
 
@@ -157,7 +142,7 @@ class CollectionMappingGenerationTest {
 
     @Test
     fun per_row_dynamic_field_is_guarded_when_collections_present() {
-        val root = createTempDir(prefix = "perrow-guard-")
+        val root = createTempDirectory(prefix = "perrow-guard-").toFile()
         val schemaDir = File(root, "schema").apply { mkdirs() }
         val queriesDir = File(root, "queries").apply { mkdirs() }
 
@@ -257,7 +242,7 @@ class CollectionMappingGenerationTest {
 
     @Test
     fun generates_correct_distinctBy_path_for_custom_dynamic_field_names() {
-        val root = createTempDir(prefix = "custom-field-names-")
+        val root = createTempDirectory(prefix = "custom-field-names-").toFile()
         val schemaDir = File(root, "schema").apply { mkdirs() }
         val queriesDir = File(root, "queries").apply { mkdirs() }
 

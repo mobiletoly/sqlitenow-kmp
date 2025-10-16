@@ -1,18 +1,3 @@
-/*
- * Copyright 2025 Anatoliy Pochkin
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package dev.goquick.sqlitenow.gradle
 
 import com.squareup.kotlinpoet.ClassName
@@ -38,7 +23,7 @@ class ImportGenerationTest {
         )
 
         assertTrue(customType is ClassName, "Custom type should be a ClassName")
-        val className = customType as ClassName
+        val className = customType
 
         // The package name should be the provided package name
         assertEquals("com.example.db", className.packageName, "Package name should be the provided package name")
@@ -55,7 +40,7 @@ class ImportGenerationTest {
         )
 
         assertTrue(customType is ClassName, "Custom type should be a ClassName")
-        val className = customType as ClassName
+        val className = customType
 
         // The package name should be preserved for different-package classes
         assertEquals("com.example", className.packageName, "Package name should be preserved for different-package classes")
@@ -88,30 +73,9 @@ class ImportGenerationTest {
             isNullable = false
         )
 
-        val listType = SqliteTypeToKotlinCodeConverter.determinePropertyType(
-            baseType = String::class.asTypeName(),
-            propertyType = "List<String>",
-            isNullable = false
-        )
-
         assertTrue(stringType is ClassName, "String type should be a ClassName")
-        val stringClassName = stringType as ClassName
+        val stringClassName = stringType
         assertEquals("kotlin", stringClassName.packageName, "String should have kotlin package")
         assertEquals("String", stringClassName.simpleName, "Simple name should be String")
-    }
-
-    @Test
-    fun testAdapterConfigUsesPackageName() {
-        // Test that AdapterConfig correctly uses package name for custom types
-        val createTableStatements = emptyList<AnnotatedCreateTableStatement>()
-        val columnLookup = ColumnLookup(createTableStatements, emptyList())
-        val packageName = "com.example.db"
-
-        // Create AdapterConfig with package name
-        val adapterConfig = AdapterConfig(columnLookup, createTableStatements, packageName)
-
-        // Verify that the AdapterConfig was created successfully with package name
-        // This test mainly verifies that our constructor changes work correctly
-        assertTrue(true, "AdapterConfig should be created successfully with package name parameter")
     }
 }

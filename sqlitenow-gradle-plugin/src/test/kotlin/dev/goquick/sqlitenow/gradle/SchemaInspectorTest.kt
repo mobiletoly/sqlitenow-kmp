@@ -1,18 +1,3 @@
-/*
- * Copyright 2025 Anatoliy Pochkin
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package dev.goquick.sqlitenow.gradle
 
 import dev.goquick.sqlitenow.gradle.sqlinspect.SchemaInspector
@@ -208,19 +193,19 @@ class SchemaInspectorTest {
 
         // Execute CREATE TABLE statements
         val createdTables = inspector.getCreateTableStatements(conn)
-        kotlin.test.assertEquals(1, createdTables.size)
+        assertEquals(1, createdTables.size)
 
         // Execute CREATE VIEW statements; should not throw despite file order
         val createdViews = inspector.getCreateViewStatements(conn)
-        kotlin.test.assertEquals(2, createdViews.size)
+        assertEquals(2, createdViews.size)
 
         // Verify both views exist in the database
         conn.createStatement().use { st ->
             st.executeQuery("SELECT name FROM sqlite_master WHERE type='view' AND name='activity_category_for_join'").use { rs ->
-                kotlin.test.assertTrue(rs.next(), "activity_category_for_join should be created")
+                assertTrue(rs.next(), "activity_category_for_join should be created")
             }
             st.executeQuery("SELECT name FROM sqlite_master WHERE type='view' AND name='view_a'").use { rs ->
-                kotlin.test.assertTrue(rs.next(), "view_a should be created")
+                assertTrue(rs.next(), "view_a should be created")
             }
         }
     }

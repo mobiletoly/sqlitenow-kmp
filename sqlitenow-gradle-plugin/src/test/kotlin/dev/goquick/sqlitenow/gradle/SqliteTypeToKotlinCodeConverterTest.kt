@@ -1,18 +1,3 @@
-/*
- * Copyright 2025 Anatoliy Pochkin
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package dev.goquick.sqlitenow.gradle
 
 import com.squareup.kotlinpoet.ClassName
@@ -106,7 +91,7 @@ class SqliteTypeToKotlinCodeConverterTest {
 
         val resultType = SqliteTypeToKotlinCodeConverter.determinePropertyType(baseType, propertyType, isNullable)
         assertTrue(resultType is ParameterizedTypeName, "Result should be a ParameterizedTypeName")
-        val parameterizedType = resultType as ParameterizedTypeName
+        val parameterizedType = resultType
         assertEquals("kotlin.collections.List", parameterizedType.rawType.toString())
         assertEquals(1, parameterizedType.typeArguments.size)
         assertEquals("kotlin.String", parameterizedType.typeArguments[0].toString())
@@ -121,7 +106,7 @@ class SqliteTypeToKotlinCodeConverterTest {
 
         val resultType = SqliteTypeToKotlinCodeConverter.determinePropertyType(baseType, propertyType, isNullable)
         assertTrue(resultType is ParameterizedTypeName, "Result should be a ParameterizedTypeName")
-        val parameterizedType = resultType as ParameterizedTypeName
+        val parameterizedType = resultType
         assertEquals("kotlin.collections.Map", parameterizedType.rawType.toString())
         assertEquals(2, parameterizedType.typeArguments.size)
         assertEquals("kotlin.String", parameterizedType.typeArguments[0].toString())
@@ -142,7 +127,7 @@ class SqliteTypeToKotlinCodeConverterTest {
 
         val resultType = SqliteTypeToKotlinCodeConverter.determinePropertyType(baseType, propertyType, isNullable)
         assertTrue(resultType is ParameterizedTypeName, "Result should be a ParameterizedTypeName")
-        val parameterizedType = resultType as ParameterizedTypeName
+        val parameterizedType = resultType
         assertEquals("com.example.CustomList", parameterizedType.rawType.toString())
         assertEquals(1, parameterizedType.typeArguments.size)
         assertEquals("kotlin.String", parameterizedType.typeArguments[0].toString())

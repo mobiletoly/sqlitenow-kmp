@@ -1,18 +1,3 @@
-/*
- * Copyright 2025 Anatoliy Pochkin
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package dev.goquick.sqlitenow.oversqlite
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -671,44 +656,6 @@ class HeavyConcurrentSyncTest {
         // Cleanup
         client1.close()
         client2.close()
-    }
-
-    /**
-     * Helper method to dump debug information about DELETE operations
-     */
-    private suspend fun dumpDeleteDebugInfo(db: SafeSQLiteConnection, deviceId: String) {
-        println("\n=== DELETE DEBUG INFO for $deviceId ===")
-
-        // Debug trigger logging removed for production readiness
-        println("Recent DELETE trigger logs: (disabled for production)")
-
-        // Check pending DELETE operations
-        db.prepare("SELECT table_name, pk_uuid, op, base_version FROM _sync_pending WHERE op='DELETE'")
-            .use { st ->
-                println("Pending DELETE operations:")
-                while (st.step()) {
-                    val table = st.getText(0)
-                    val pk = st.getText(1)
-                    val op = st.getText(2)
-                    val baseVersion = st.getLong(3)
-                    println("  $op $table:${pk.take(8)} (base_version=$baseVersion)")
-                }
-            }
-
-        // Check sync row meta for deleted records
-        db.prepare("SELECT table_name, pk_uuid, server_version, deleted FROM _sync_row_meta WHERE deleted=1 LIMIT 10")
-            .use { st ->
-                println("Deleted records in _sync_row_meta:")
-                while (st.step()) {
-                    val table = st.getText(0)
-                    val pk = st.getText(1)
-                    val serverVersion = st.getLong(2)
-                    val deleted = st.getLong(3)
-                    println("  $table:${pk.take(8)} server_version=$serverVersion deleted=$deleted")
-                }
-            }
-
-        println("=== END DELETE DEBUG INFO ===\n")
     }
 
     @Test

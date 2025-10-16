@@ -1,18 +1,3 @@
-/*
- * Copyright 2025 Anatoliy Pochkin
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package dev.goquick.sqlitenow.oversqlite
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -97,23 +82,5 @@ class BlobPrimaryKeyVersionCheckTest {
         // Verify the bug
         assert(buggyVersionCheck == null) { "Buggy version check should return null (not found)" }
         assert(correctVersionCheck == 1L) { "Correct version check should return server_version=1" }
-
-        println("\n🎯 BUG CONFIRMED:")
-        println("  - When using UUID string format: version check returns null (record not found)")
-        println("  - When using hex format: version check returns correct server_version=1")
-        println("  - This causes the system to think there's no existing record")
-        println("  - Which triggers conflict resolution instead of normal version checking")
-        println("  - Leading to the older INSERT being applied over the newer UPDATE")
-
-        println("\n🔧 THE FIX:")
-        println("  In handleNormalApply(), the version check query should convert UUID string to hex")
-        println("  for BLOB primary keys, just like it does when updating the metadata")
-    }
-
-    private suspend inline fun SafeSQLiteConnection.execSQL(sql: String, block: (SqliteStatement) -> Unit = {}) {
-        prepare(sql).use { st ->
-            block(st)
-            st.step()
-        }
     }
 }

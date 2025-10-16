@@ -1,29 +1,15 @@
-/*
- * Copyright 2025 Anatoliy Pochkin
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package dev.goquick.sqlitenow.gradle
 
 import org.junit.jupiter.api.Test
 import java.io.File
+import kotlin.io.path.createTempDirectory
 import kotlin.test.assertTrue
 
 class ViewDynamicFieldsIntegrationTest {
     @Test
     fun generates_code_for_select_from_view_with_dynamic_fields() {
         // Arrange: create a temporary SQL directory with schema + queries
-        val root = createTempDir(prefix = "view-dyn-int-")
+        val root = createTempDirectory(prefix = "view-dyn-int-").toFile()
         val schemaDir = File(root, "schema").apply { mkdirs() }
         val queriesDir = File(root, "queries").apply { mkdirs() }
 

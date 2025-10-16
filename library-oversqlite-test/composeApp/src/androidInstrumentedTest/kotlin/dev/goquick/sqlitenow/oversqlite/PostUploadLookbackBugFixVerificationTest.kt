@@ -1,18 +1,3 @@
-/*
- * Copyright 2025 Anatoliy Pochkin
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package dev.goquick.sqlitenow.oversqlite
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -124,13 +109,6 @@ class PostUploadLookbackBugFixVerificationTest {
         println("  - Before: Version check used UUID string format for BLOB primary keys")
         println("  - After: Version check converts UUID string to hex format for BLOB primary keys")
         println("  - Result: Proper version comparison prevents older changes from overwriting newer ones")
-    }
-
-    private suspend inline fun SafeSQLiteConnection.execSQL(sql: String, block: (SqliteStatement) -> Unit = {}) {
-        prepare(sql).use { st ->
-            block(st)
-            st.step()
-        }
     }
 
     private suspend fun getPrimaryKeyInfo(db: SafeSQLiteConnection, tableName: String): Pair<String, String> {

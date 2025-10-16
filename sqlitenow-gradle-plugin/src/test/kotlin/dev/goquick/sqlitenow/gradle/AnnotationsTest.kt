@@ -1,18 +1,3 @@
-/*
- * Copyright 2025 Anatoliy Pochkin
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package dev.goquick.sqlitenow.gradle
 
 import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter.Companion.KOTLIN_STDLIB_TYPES
@@ -253,10 +238,6 @@ class AnnotationsTest {
     fun `test CREATE TABLE scenario - custom type without explicit adapter`() {
         // This simulates: @@{field=birth_date, propertyType=kotlinx.datetime.LocalDate}
         // Should automatically infer adapter=true for custom type
-        val annotations = mapOf(
-            AnnotationConstants.FIELD to "birth_date",
-            AnnotationConstants.PROPERTY_TYPE to "kotlinx.datetime.LocalDate"
-        )
 
         val fieldAnnotations = extractFieldAssociatedAnnotations(
             listOf(
@@ -444,7 +425,7 @@ class AnnotationsTest {
                 )
             )
             assertEquals(true, false, "Should have thrown exception for invalid adapter value")
-        } catch (e: IllegalArgumentException) {
+        } catch (_: IllegalArgumentException) {
             assertTrue(true)
         }
     }
@@ -458,7 +439,7 @@ class AnnotationsTest {
             )
             FieldAnnotationOverrides.parse(annotations)
             assertEquals(true, false, "Should have thrown exception for null adapter value")
-        } catch (e: IllegalArgumentException) {
+        } catch (_: IllegalArgumentException) {
             assertTrue(true)
         }
     }

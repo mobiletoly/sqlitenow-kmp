@@ -1,18 +1,3 @@
-/*
- * Copyright 2025 Anatoliy Pochkin
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package dev.goquick.sqlitenow.gradle
 
 import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
@@ -21,19 +6,18 @@ import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationResolver
 import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
 import dev.goquick.sqlitenow.gradle.processing.SelectFieldCodeGenerator
-import dev.goquick.sqlitenow.gradle.processing.StatementProcessingHelper
 import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.processing.StatementProcessingHelper
 import dev.goquick.sqlitenow.gradle.sqlinspect.CreateTableStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.CreateViewStatement
-import java.nio.file.Files
-import java.sql.Connection
-import java.sql.DriverManager
 import net.sf.jsqlparser.parser.CCJSqlParserUtil
-import net.sf.jsqlparser.statement.create.table.CreateTable
 import net.sf.jsqlparser.statement.create.view.CreateView
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import java.nio.file.Files
+import java.sql.Connection
+import java.sql.DriverManager
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull

@@ -1,29 +1,14 @@
-/*
- * Copyright 2025 Anatoliy Pochkin
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 @file:OptIn(ExperimentalUuidApi::class)
 
 package dev.goquick.sqlitenow.daytempokmp
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.pluralfusion.daytempo.domain.model.ActivityBundlePurchaseMode
-import com.pluralfusion.daytempo.domain.model.ActivityBundleWithActivitiesDoc
 import com.pluralfusion.daytempo.domain.model.ActivityIconDoc
 import com.pluralfusion.daytempo.domain.model.ActivityIconDoc.Format
 import com.pluralfusion.daytempo.domain.model.ActivityProgramType
 import com.pluralfusion.daytempo.domain.model.ActivityReportingType
+import com.pluralfusion.daytempo.domain.model.ActivityScheduleDoc
 import com.pluralfusion.daytempo.domain.model.ActivityScheduleRepeat
 import com.pluralfusion.daytempo.domain.model.ActivityScheduleTimeRange
 import com.pluralfusion.daytempo.domain.model.AlarmHourMinute
@@ -36,13 +21,10 @@ import dev.goquick.sqlitenow.daytempokmp.db.ActivityBundleQuery
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityCategoryQuery
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityPackageQuery
 import dev.goquick.sqlitenow.daytempokmp.db.ActivityQuery
-import com.pluralfusion.daytempo.domain.model.ActivityScheduleDoc
 import dev.goquick.sqlitenow.daytempokmp.db.DailyLogQuery
 import dev.goquick.sqlitenow.daytempokmp.db.DayTempoDatabase
 import dev.goquick.sqlitenow.daytempokmp.db.ProgramItemQuery
 import dev.goquick.sqlitenow.daytempokmp.db.ProviderQuery
-import kotlin.uuid.ExperimentalUuidApi
-import kotlin.uuid.Uuid
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
@@ -52,6 +34,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
 
 @RunWith(AndroidJUnit4::class)
 class DayTempoHeavyIntegrationTest {
