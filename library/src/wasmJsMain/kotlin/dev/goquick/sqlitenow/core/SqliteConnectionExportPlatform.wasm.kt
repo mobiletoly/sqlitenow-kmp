@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 Anatoliy Pochkin
+ * Copyright 2025 Toly Pochkin
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,17 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import androidx.compose.ui.ExperimentalComposeUiApi
-import androidx.compose.ui.window.ComposeViewport
-import dev.goquick.sqlitenow.samplekmp.App
-import dev.goquick.sqlitenow.samplekmp.db
-import kotlinx.browser.document
-import org.w3c.dom.HTMLElement
+package dev.goquick.sqlitenow.core
 
-@OptIn(ExperimentalComposeUiApi::class)
-fun main() {
-    val root = document.getElementById("root") as HTMLElement
-    ComposeViewport(viewportContainer = root) {
-        App()
-    }
+import dev.goquick.sqlitenow.core.sqlite.SqliteConnection
+
+internal actual fun SqliteConnection.exportSnapshotBytes(): ByteArray? {
+    return exportToByteArray()
 }

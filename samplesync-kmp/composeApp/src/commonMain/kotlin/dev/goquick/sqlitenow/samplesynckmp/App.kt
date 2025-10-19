@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 Anatoliy Pochkin
+ * Copyright 2025 Toly Pochkin
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -332,13 +332,14 @@ fun App() {
     var signingIn by remember { mutableStateOf(false) }
     var deviceId by remember { mutableStateOf("") }
     var reportMessage by remember { mutableStateOf<String?>(null) }
+    var isDatabaseOpen by remember { mutableStateOf(false) }
     val syncTrigger = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
     val commentsRefreshTrigger = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
 
     val baseUrl = if (platform() == PlatformType.ANDROID) {
-        "http://10.0.2.2:8090"
+        "http://10.0.2.2:8080"
     } else {
-        "http://127.0.0.1:8090"
+        "http://127.0.0.1:8080"
     }
 
     LaunchedEffect(Unit) {
@@ -346,6 +347,7 @@ fun App() {
         // TODO .open() is here just for demo purposes. In your app you should open it in some other place
         db.open()
         db.connection().execSQL("PRAGMA foreign_keys = ON;")
+        isDatabaseOpen = true
 
         // Listen for real-time changes from Person/SelectAll query
         db.person
@@ -369,7 +371,10 @@ fun App() {
     }
 
     // Load persisted auth and device id, and restore signed-in session if token exists.
-    LaunchedEffect(Unit) {
+    LaunchedEffect(isDatabaseOpen) {
+        if (!isDatabaseOpen) {
+            return@LaunchedEffect
+        }
         // Ensure device id exists
         val existingDevice = AuthPrefs.get(AuthKeys.DeviceId)
         val did = existingDevice ?: generateDeviceId().also { AuthPrefs.set(AuthKeys.DeviceId, it) }

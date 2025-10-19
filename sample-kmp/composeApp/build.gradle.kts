@@ -1,5 +1,7 @@
 import org.gradle.api.tasks.JavaExec
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
+import org.gradle.language.jvm.tasks.ProcessResources
+import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 import org.jetbrains.kotlin.gradle.targets.jvm.KotlinJvmTarget
 
 plugins {
@@ -12,6 +14,8 @@ plugins {
 }
 
 kotlin {
+    applyDefaultHierarchyTemplate()
+
     androidTarget()
 
     jvm("desktop")
@@ -36,6 +40,12 @@ kotlin {
         browser {
             binaries.executable()
         }
+    }
+
+    @OptIn(ExperimentalWasmDsl::class)
+    wasmJs {
+        browser()
+        binaries.executable()
     }
 
 //    task("testClasses")
@@ -71,7 +81,15 @@ kotlin {
             implementation(compose.foundation)
             implementation(compose.material)
             implementation(compose.ui)
-            implementation(devNpm("copy-webpack-plugin", "11.0.0"))
+            implementation(npm("sql.js", "1.13.0"))
+        }
+
+        wasmJsMain.dependencies {
+            implementation(compose.runtime)
+            implementation(compose.foundation)
+            implementation(compose.material)
+            implementation(compose.ui)
+            implementation(npm("sql.js", "1.13.0"))
         }
     }
 }
@@ -144,7 +162,19 @@ sqliteNow {
     databases {
         create("NowSampleDatabase") {
             packageName = "dev.goquick.sqlitenow.samplekmp.db"
-            debug = true
+            debug = false
         }
     }
+}
+
+val libraryProject = project(":library")
+val librarySqlJsResource = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sqlitenow-sqljs.js")
+val librarySqlWasmBinary = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sql-wasm.wasm")
+val libraryIndexedDbResource = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sqlitenow-indexeddb.js")
+
+tasks.named<ProcessResources>("wasmJsProcessResources") {
+    dependsOn(libraryProject.tasks.named("wasmJsProcessResources"))
+    from(librarySqlJsResource)
+    from(librarySqlWasmBinary)
+    from(libraryIndexedDbResource)
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 Anatoliy Pochkin
+ * Copyright 2025 Toly Pochkin
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,10 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package dev.goquick.sqlitenow.core
+package dev.goquick.sqlitenow.common
 
-import dev.goquick.sqlitenow.core.sqlite.SqliteConnection
+actual fun resolveDatabasePath(dbName: String): String = dbName
 
-internal actual fun exportConnectionBytes(connection: SqliteConnection): ByteArray? {
-    return connection.exportToByteArray()
-}
+internal actual fun validateFileExists(path: String): Boolean = false
+
+actual fun platform(): PlatformType = PlatformType.JS

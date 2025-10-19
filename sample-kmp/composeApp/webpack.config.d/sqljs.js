@@ -1,36 +1,35 @@
-const path = require("path");
-const CopyWebpackPlugin = require("copy-webpack-plugin");
+const webpackVersion = (() => {
+  try {
+    return require("webpack/package.json").version || "";
+  } catch (_) {
+    return "";
+  }
+})();
+const isWebpack5 = webpackVersion.startsWith("5");
 
 config.resolve = config.resolve || {};
-config.resolve.fallback = Object.assign(config.resolve.fallback || {}, {
+config.resolve.fallback = Object.assign({}, config.resolve.fallback, {
   fs: false,
   path: false,
   crypto: false,
-  "wasi_snapshot_preview1": false,
-  env: false,
 });
-
-config.experiments = config.experiments || {};
-config.experiments.asyncWebAssembly = true;
+config.resolve.alias = Object.assign({}, config.resolve.alias, {
+  "sql.js": "sql.js/dist/sql-wasm.js",
+});
 
 config.module = config.module || {};
 config.module.rules = Array.isArray(config.module.rules) ? config.module.rules : [];
 config.module.rules.push({
-  test: /\.wasm$/,
+  test: /sql-wasm\.wasm$/,
   type: "asset/resource",
-  generator: {
-    filename: "[name][ext]"
-  }
 });
 
-config.plugins = config.plugins || [];
-config.plugins.push(
-  new CopyWebpackPlugin({
-    patterns: [
-      {
-        from: path.resolve(__dirname, "../../node_modules/sql.js/dist/sql-wasm.wasm"),
-        to: ".",
-      },
-    ],
-  })
-);
+if (isWebpack5) {
+  config.experiments = Object.assign({}, config.experiments, {
+    asyncWebAssembly: true,
+  });
+}
+
+if (config.name && String(config.name).toLowerCase().includes("wasm")) {
+  config.target = "web";
+}

@@ -1,4 +1,6 @@
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
+import org.gradle.language.jvm.tasks.ProcessResources
+import org.jetbrains.kotlin.gradle.targets.js.dsl.ExperimentalWasmDsl
 
 plugins {
     id(libs.plugins.kotlinMultiplatform.get().pluginId)
@@ -10,6 +12,8 @@ plugins {
 }
 
 kotlin {
+    applyDefaultHierarchyTemplate()
+
     androidTarget {
         compilations.all {
             this@androidTarget.compilerOptions {
@@ -38,6 +42,12 @@ kotlin {
         browser {
             binaries.executable()
         }
+    }
+
+    @OptIn(ExperimentalWasmDsl::class)
+    wasmJs {
+        browser()
+        binaries.executable()
     }
 
 //    task("testClasses")
@@ -84,6 +94,16 @@ kotlin {
             implementation(compose.material)
             implementation(compose.ui)
             implementation(devNpm("copy-webpack-plugin", "11.0.0"))
+            implementation(npm("sql.js", "1.13.0"))
+        }
+
+        wasmJsMain.dependencies {
+            implementation(compose.runtime)
+            implementation(compose.foundation)
+            implementation(compose.material)
+            implementation(compose.ui)
+            implementation(devNpm("copy-webpack-plugin", "11.0.0"))
+            implementation(npm("sql.js", "1.13.0"))
         }
     }
 }
@@ -139,4 +159,16 @@ sqliteNow {
             packageName = "dev.goquick.sqlitenow.samplesynckmp.db"
         }
     }
+}
+
+val libraryProject = project(":library")
+val librarySqlJsResource = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sqlitenow-sqljs.js")
+val librarySqlWasmBinary = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sql-wasm.wasm")
+val libraryIndexedDbResource = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sqlitenow-indexeddb.js")
+
+tasks.named<ProcessResources>("wasmJsProcessResources") {
+    dependsOn(libraryProject.tasks.named("wasmJsProcessResources"))
+    from(librarySqlJsResource)
+    from(librarySqlWasmBinary)
+    from(libraryIndexedDbResource)
 }

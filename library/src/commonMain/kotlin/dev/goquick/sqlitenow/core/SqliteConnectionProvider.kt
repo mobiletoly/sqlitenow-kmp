@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 Anatoliy Pochkin
+ * Copyright 2025 Toly Pochkin
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,7 +48,13 @@ object BundledSqliteConnectionProvider : SqliteConnectionProvider {
         val persistence = config.persistence?.takeUnless { dbName.isInMemoryPath() }
         val restoredBytes = if (persistence != null) {
             try {
-                persistence.load(dbName)
+                val bytes = persistence.load(dbName)
+                if (bytes != null) {
+                    println("[SqliteNow] Restored ${bytes.size} bytes for $dbName")
+                } else {
+                    println("[SqliteNow] No persisted snapshot for $dbName")
+                }
+                bytes
             } catch (t: Throwable) {
                 sqliteNowLogger.w(t) { "Failed to load persisted snapshot for $dbName" }
                 null

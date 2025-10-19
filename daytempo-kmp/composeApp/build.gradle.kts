@@ -105,7 +105,7 @@ sqliteNow {
     databases {
         create("DayTempoDatabase") {
             packageName = "dev.goquick.sqlitenow.daytempokmp.db"
-            debug = true
+            debug = false
         }
     }
 }

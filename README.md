@@ -30,6 +30,7 @@ Full documentation is available in the https://mobiletoly.github.io/sqlitenow-km
 - iOS (Kotlin/Native with bundled SQLite)
 - JVM desktop/server targets
 - JavaScript (browser) via SQL.js with optional IndexedDB persistence
+- Kotlin/Wasm (browser) using the same SQL.js runtime with automatic OPFS or IndexedDB persistence
 
 ### Type-Safe SQL Generation
 
@@ -37,8 +38,8 @@ Full documentation is available in the https://mobiletoly.github.io/sqlitenow-km
 - **Comment-based Annotations** - Control code generation using simple `-- @@{ annotations }`
   comments in your SQL.
 - **No IDE Plugin Required** - Works with any editor, uses Gradle plugin for code generation
-- **Kotlin Multiplatform** - Supports all KMP targets
-  using [androidx.sqlite](https://developer.android.com/kotlin/multiplatform/sqlite) driver
+- **Kotlin Multiplatform** - Targets Android, iOS, JVM, JavaScript, and Kotlin/Wasm browsers
+  using [androidx.sqlite](https://developer.android.com/kotlin/multiplatform/sqlite) driver plus SQL.js where appropriate
 - **SQLite Focused** - Optimized specifically for SQLite features and capabilities
 - **Migration support** - Migration scripts are supported to manage database schema changes
 

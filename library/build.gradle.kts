@@ -1,6 +1,10 @@
+import org.gradle.api.file.DuplicatesStrategy
+import org.gradle.api.tasks.Copy
+import org.gradle.language.jvm.tasks.ProcessResources
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
+import org.jetbrains.kotlin.gradle.targets.js.dsl.ExperimentalWasmDsl
 
 plugins {
     id(libs.plugins.androidLibrary.get().pluginId)
@@ -10,9 +14,10 @@ plugins {
 }
 
 group = "dev.goquick.sqlitenow"
-version = "0.4.0"
+version = "0.5.0-SNAPSHOT"
 
 kotlin {
+    applyDefaultHierarchyTemplate()
     jvm()
 
     androidTarget {
@@ -37,6 +42,12 @@ kotlin {
                 }
             }
         }
+        binaries.library()
+    }
+
+    @OptIn(ExperimentalWasmDsl::class)
+    wasmJs {
+        browser()
         binaries.library()
     }
 
@@ -79,9 +90,25 @@ kotlin {
             implementation(libs.ktor.client.darwin)
         }
 
+        val webMain by getting {
+            dependencies {
+                implementation(npm("sql.js", "1.13.0"))
+            }
+        }
+
         jsMain.dependencies {
             implementation(libs.ktor.client.js)
-            implementation(npm("sql.js", "1.13.0"))
+            implementation("org.jetbrains.kotlinx:kotlinx-browser:0.5.0")
+        }
+
+        val wasmJsMain by getting {
+            languageSettings {
+                optIn("kotlin.js.ExperimentalWasmJsInterop")
+            }
+            dependencies {
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core-wasm-js:1.10.2")
+            }
+            resources.srcDir("src/wasmJsMain/resources")
         }
     }
 }
@@ -90,6 +117,21 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEa
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_11)
     }
+}
+
+val sqlJsModuleDir = rootProject.layout.buildDirectory.dir("js/node_modules/sql.js/dist")
+val wasmSqlJsResourceDir = layout.buildDirectory.dir("generated/sqljs/wasm")
+
+val copySqlJsWasmForWasm by tasks.registering(Copy::class) {
+    dependsOn(rootProject.tasks.named("kotlinNpmInstall"))
+    from(sqlJsModuleDir.map { it.file("sql-wasm.wasm") })
+    into(wasmSqlJsResourceDir)
+}
+
+tasks.named<ProcessResources>("wasmJsProcessResources") {
+    dependsOn(copySqlJsWasmForWasm)
+    from(wasmSqlJsResourceDir)
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
 android {

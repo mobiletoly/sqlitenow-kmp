@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 Anatoliy Pochkin
+ * Copyright 2025 Toly Pochkin
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,8 +15,14 @@
  */
 package dev.goquick.sqlitenow.core
 
-import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.Dispatchers
+internal actual fun sqliteDefaultPersistence(dbName: String): SqlitePersistence? {
+    if (dbName.isBlank() || dbName.isInMemoryPath()) return null
+    return chooseDefaultWebPersistence(dbName)
+}
 
-internal actual fun sqliteConnectionDispatcher(): CoroutineDispatcher = Dispatchers.Default
-internal actual fun sqliteNetworkDispatcher(): CoroutineDispatcher = Dispatchers.Default
+internal expect fun chooseDefaultWebPersistence(dbName: String): SqlitePersistence
+internal expect fun forceWebPersistenceOverride(override: Boolean?)
+
+private fun String.isInMemoryPath(): Boolean {
+    return this == ":memory:" || startsWith(":memory:") || startsWith(":temp:")
+}

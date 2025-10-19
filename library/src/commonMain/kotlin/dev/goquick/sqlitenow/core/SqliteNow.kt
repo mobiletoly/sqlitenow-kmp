@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 Anatoliy Pochkin
+ * Copyright 2025 Toly Pochkin
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,6 +35,11 @@ import kotlin.concurrent.Volatile
 
 /**
  * Base class for generated database classes.
+ *
+ * The generated types build on this implementation across every supported Kotlin target:
+ * Android/JVM, iOS/Native, JavaScript, and Kotlin/Wasm. On browser targets the runtime
+ * uses SQL.js under the hood (with optional IndexedDB snapshots) while native targets rely
+ * on the bundled SQLite driver.
  */
 open class SqliteNowDatabase private constructor(
     private val dbName: String,
@@ -171,7 +176,10 @@ open class SqliteNowDatabase private constructor(
      * @return The result of the block
      * @throws Exception Any exception thrown by the block
      */
-    suspend fun <T> transaction(mode: TransactionMode = TransactionMode.DEFERRED, block: suspend () -> T): T {
+    suspend fun <T> transaction(
+        mode: TransactionMode = TransactionMode.DEFERRED,
+        block: suspend () -> T
+    ): T {
         // Delegate to SafeSQLiteConnection to ensure nested transactions are handled safely
         return requireConnectionInitialized().transaction(mode, block)
     }

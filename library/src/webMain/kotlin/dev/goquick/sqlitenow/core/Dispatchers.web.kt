@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 Anatoliy Pochkin
+ * Copyright 2025 Toly Pochkin
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,15 +15,8 @@
  */
 package dev.goquick.sqlitenow.core
 
-import dev.goquick.sqlitenow.core.persistence.IndexedDbSqlitePersistence
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 
-internal actual fun sqliteDefaultPersistence(dbName: String): SqlitePersistence? {
-    if (dbName.isBlank() || dbName.isInMemoryPath()) return null
-    val storageName = "SqliteNow"
-    val storeName = "sqlite-databases"
-    return IndexedDbSqlitePersistence(storageName = storageName, storeName = storeName)
-}
-
-private fun String.isInMemoryPath(): Boolean {
-    return this == ":memory:" || startsWith(":memory:") || startsWith(":temp:")
-}
+internal actual fun sqliteConnectionDispatcher(): CoroutineDispatcher = Dispatchers.Default
+internal actual fun sqliteNetworkDispatcher(): CoroutineDispatcher = Dispatchers.Default

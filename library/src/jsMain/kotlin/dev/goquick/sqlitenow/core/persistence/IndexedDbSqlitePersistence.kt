@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 Anatoliy Pochkin
+ * Copyright 2025 Toly Pochkin
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -138,18 +138,15 @@ class IndexedDbSqlitePersistence(
     private fun convertResultToBytes(value: dynamic): ByteArray? {
         if (value == null || jsTypeOf(value) == "undefined") return null
 
-        // If it's already a ByteArray, return it
         if (value is ByteArray) {
             return value
         }
 
-        // Try to convert via ArrayBuffer (most reliable approach for typed arrays)
         val buffer = asArrayBuffer(value)
         if (buffer != null) {
             return buffer.toByteArray()
         }
 
-        // Log the unsupported type for debugging
         val dyn = value.asDynamic()
         val constructorName = if (isDefined(dyn)) {
             val ctor = dyn.constructor
@@ -198,32 +195,37 @@ private suspend fun awaitRequest(request: dynamic): dynamic = suspendCancellable
 @OptIn(ExperimentalCoroutinesApi::class)
 private suspend fun awaitTransaction(transaction: dynamic): Unit = suspendCancellableCoroutine { cont ->
     val resumeError: (dynamic) -> Unit = { error ->
-        cont.resumeWithException(dynamicError(error, "IndexedDB transaction failure"))
+        val throwable = dynamicError(error, "IndexedDB transaction error")
+        cont.resumeWithException(throwable)
     }
     transaction.oncomplete = { cont.resume(Unit) }
-    transaction.onerror = { resumeError(transaction.error) }
-    transaction.onabort = { resumeError(transaction.error) }
+    transaction.onerror = resumeError
+    transaction.onabort = resumeError
 }
 
-private fun dynamicError(error: dynamic, fallback: String): Throwable {
-    if (error == null || jsTypeOf(error) == "undefined") return RuntimeException(fallback)
-    if (error is Throwable) return error
-    val message: String = when {
-        error is String -> error
-        isDefined(error) && isDefined(error.message) -> error.message.unsafeCast<String>()
-        else -> "$error"
+private fun dynamicError(error: dynamic, prefix: String): Throwable {
+    val message = when {
+        error == null -> prefix
+        error.message != undefined -> "$prefix: ${error.message}"
+        error.name != undefined -> "$prefix: ${error.name}"
+        else -> "$prefix: ${error.toString()}"
     }
-    return RuntimeException(message)
+    return IllegalStateException(message)
 }
 
 private fun asArrayBuffer(value: dynamic): ArrayBuffer? {
+    if (value == null || jsTypeOf(value) == "undefined") return null
+
+    if (value is ArrayBuffer) return value
+    if (value is Uint8Array) return value.buffer
+
+    val dyn = value.asDynamic()
     return when {
-        value == null || jsTypeOf(value) == "undefined" -> null
-        value is ArrayBuffer -> value
-        value is Uint8Array -> value.buffer.unsafeCast<ArrayBuffer>()
-        value.buffer != undefined -> value.buffer.unsafeCast<ArrayBuffer>()
+        dyn.buffer != undefined -> dyn.buffer.unsafeCast<ArrayBuffer>()
         else -> null
     }
 }
 
-private fun isDefined(value: dynamic): Boolean = jsTypeOf(value) != "undefined"
+private fun isDefined(value: dynamic): Boolean {
+    return value != null && jsTypeOf(value) != "undefined"
+}

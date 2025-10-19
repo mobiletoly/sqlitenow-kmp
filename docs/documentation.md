@@ -49,6 +49,8 @@ Learn about platform-specific behavior and configuration tips.
 
 [Kotlin/JS Integration →]({{ site.baseurl }}/documentation/kotlin-js/)
 
+[Kotlin/Wasm Integration →]({{ site.baseurl }}/documentation/kotlin-wasm/)
+
 ## Quick Navigation
 
 <div class="doc-nav-grid">
@@ -85,6 +87,11 @@ Learn about platform-specific behavior and configuration tips.
   <a href="{{ site.baseurl }}/documentation/kotlin-js/" class="doc-nav-card">
     <h3>🌐 Kotlin/JS Integration</h3>
     <p>Understand persistence, snapshots, and configuration for browser builds</p>
+  </a>
+
+  <a href="{{ site.baseurl }}/documentation/kotlin-wasm/" class="doc-nav-card">
+    <h3>🛰️ Kotlin/Wasm Integration</h3>
+    <p>Load sql.js from Wasm, wire IndexedDB snapshots, and run browser tests</p>
   </a>
 
   <a href="{{ site.baseurl }}/recipes/" class="doc-nav-card">
