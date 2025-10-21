@@ -14,7 +14,7 @@ plugins {
 }
 
 group = "dev.goquick.sqlitenow"
-version = "0.5.0-SNAPSHOT"
+version = "0.5.0"
 
 kotlin {
     applyDefaultHierarchyTemplate()
