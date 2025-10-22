@@ -25,14 +25,18 @@ class ParentViewCollectionTest {
     private lateinit var database: LibraryTestDatabase
 
     @Before
-    fun setUp() = runBlocking {
-        database = TestDatabaseHelper.createDatabase()
-        database.open()
+    fun setUp() {
+        runBlocking {
+            database = TestDatabaseHelper.createDatabase()
+            database.open()
+        }
     }
 
     @After
-    fun tearDown() = runBlocking {
-        database.close()
+    fun tearDown() {
+        runBlocking {
+            database.close()
+        }
     }
 
     @Test

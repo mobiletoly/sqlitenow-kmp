@@ -104,6 +104,16 @@ open class DataStructCodeGenerator(
         }
     }
 
+    private val cascadeNotifyByTable: Map<String, StatementAnnotationOverrides.CascadeNotify> =
+        buildMap {
+            createTableStatements.forEach { table ->
+                val cascade = table.annotations.cascadeNotify ?: return@forEach
+                put(table.src.tableName.lowercase(), cascade)
+            }
+        }
+
+    private val cascadeClosureCache = mutableMapOf<Pair<String, StatementAnnotationOverrides.CascadeAction>, Set<String>>()
+
     private val annotationResolver =
         FieldAnnotationResolver(createTableStatements, createViewStatements)
     private val fileGenerationHelper = FileGenerationHelper(packageName, outputDir)
@@ -462,8 +472,25 @@ open class DataStructCodeGenerator(
             }
 
             is AnnotatedExecuteStatement -> {
-                // For INSERT/UPDATE/DELETE, return the main table
-                expandTables(setOf(statement.src.table))
+                val baseTable = statement.src.table
+                val cascadeTables = when (statement.src) {
+                    is InsertStatement -> cascadeTablesFor(
+                        baseTable,
+                        StatementAnnotationOverrides.CascadeAction.INSERT
+                    )
+
+                    is UpdateStatement -> cascadeTablesFor(
+                        baseTable,
+                        StatementAnnotationOverrides.CascadeAction.UPDATE
+                    )
+
+                    is DeleteStatement -> cascadeTablesFor(
+                        baseTable,
+                        StatementAnnotationOverrides.CascadeAction.DELETE
+                    )
+                }
+                // For INSERT/UPDATE/DELETE, return the main table plus any cascaded tables.
+                expandTables(setOf(baseTable) + cascadeTables)
             }
 
             is AnnotatedCreateTableStatement -> {
@@ -497,6 +524,42 @@ open class DataStructCodeGenerator(
             dependencies += resolveViewDependencies(key, seen)
         }
         return dependencies
+    }
+
+    private fun cascadeTablesFor(
+        tableName: String,
+        action: StatementAnnotationOverrides.CascadeAction
+    ): Set<String> {
+        val lowercase = tableName.lowercase()
+        val cacheKey = lowercase to action
+        cascadeClosureCache[cacheKey]?.let { return it }
+
+        val closure = computeCascadeClosure(
+            startTable = lowercase,
+            action = action,
+            visited = mutableSetOf()
+        )
+        cascadeClosureCache[cacheKey] = closure
+        return closure
+    }
+
+    private fun computeCascadeClosure(
+        startTable: String,
+        action: StatementAnnotationOverrides.CascadeAction,
+        visited: MutableSet<String>
+    ): Set<String> {
+        if (!visited.add(startTable)) return emptySet()
+        val direct = cascadeNotifyByTable[startTable]?.tablesFor(action) ?: emptySet()
+        if (direct.isEmpty()) return emptySet()
+
+        val result = mutableSetOf<String>()
+        direct.forEach { childRaw ->
+            val child = childRaw.lowercase()
+            if (result.add(child)) {
+                result += computeCascadeClosure(child, action, visited)
+            }
+        }
+        return result
     }
 
     /**

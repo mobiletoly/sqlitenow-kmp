@@ -102,5 +102,59 @@ fun PersonWithComments(personId: ByteArray) {
 - Debounce high-frequency updates with `.debounce(100)` if needed.
 - Scope queries as tightly as possible instead of broad `SELECT *` operations.
 
+## Cascade notifications
+
+SQLite foreign keys can cascade deletes or updates into other tables. SQLiteNow surfaces those
+changes through `affectedTables` so that reactive flows re-run automatically. To describe the
+relationships, add a `cascadeNotify` block to your table definition; the generator reads that
+metadata and follows the transitive chain.
+
+```sql
+-- person.sql
+-- @@{
+--    cascadeNotify = {
+--       delete = ["person_address", "person_phone"],
+--       update = ["person_phone"]
+--    }
+-- }
+CREATE TABLE person (
+    id         INTEGER PRIMARY KEY NOT NULL,
+    first_name TEXT                NOT NULL
+);
+
+-- person_address.sql
+-- @@{
+--    cascadeNotify = {
+--       delete = ["person_address_note"],
+--       update = ["person_address_note"]
+--    }
+-- }
+CREATE TABLE person_address (
+    id        INTEGER PRIMARY KEY NOT NULL,
+    person_id INTEGER             NOT NULL,
+    street    TEXT                NOT NULL,
+    FOREIGN KEY (person_id) REFERENCES person(id)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+);
+
+-- person_address_note.sql
+CREATE TABLE person_address_note (
+    id         INTEGER PRIMARY KEY NOT NULL,
+    address_id INTEGER             NOT NULL,
+    note       TEXT                NOT NULL,
+    FOREIGN KEY (address_id) REFERENCES person_address(id)
+        ON DELETE CASCADE
+);
+```
+
+In this setup:
+
+- Deleting a person notifies flows watching `person`, `person_address`, and `person_address_note`.
+- Updating a person notifies `person` and `person_address` (and, through the second block,
+  `person_address_note`).
+- The generator computes the transitive closure, so you only need to list the first hop for each
+  action.
+
 **Tip:** When using SQLiteNow's sync features, flows refresh during sync operations automatically.
 See [Reactive Sync Updates]({{ site.baseurl }}/sync/reactive-updates/) for sync-specific patterns.

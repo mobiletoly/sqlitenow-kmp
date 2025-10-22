@@ -44,19 +44,23 @@ class DayTempoHeavyIntegrationTest {
     private lateinit var fixture: SeedFixture
 
     @Before
-    fun setUp() = runBlocking {
-        database = DayTempoTestDatabaseHelper.createDatabase()
-        database.open()
-        fixture = DayTempoSeedHelper(database).seedComplexData(
-            bundleCount = 2,
-            packagesPerBundle = 2,
-            activitiesPerPackage = 2,
-        )
+    fun setUp() {
+        runBlocking {
+            database = DayTempoTestDatabaseHelper.createDatabase()
+            database.open()
+            fixture = DayTempoSeedHelper(database).seedComplexData(
+                bundleCount = 2,
+                packagesPerBundle = 2,
+                activitiesPerPackage = 2,
+            )
+        }
     }
 
     @After
-    fun tearDown() = runBlocking {
-        database.close()
+    fun tearDown() {
+        runBlocking {
+            database.close()
+        }
     }
 
     @Test

@@ -37,6 +37,7 @@ object AnnotationConstants {
     const val ENABLE_SYNC = "enableSync"
     const val SYNC_KEY_COLUMN_NAME = "syncKeyColumnName"
     const val MAP_TO = "mapTo"
+    const val CASCADE_NOTIFY = "cascadeNotify"
 
     // Common field- and statement-level annotations
     const val COLLECTION_KEY = "collectionKey"

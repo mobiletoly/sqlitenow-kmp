@@ -48,14 +48,18 @@ class ActivityBundleIntegrationTest {
     )
 
     @Before
-    fun setUp() = runBlocking {
-        database = DayTempoTestDatabaseHelper.createDatabase()
-        database.open()
+    fun setUp() {
+        runBlocking {
+            database = DayTempoTestDatabaseHelper.createDatabase()
+            database.open()
+        }
     }
 
     @After
-    fun tearDown() = runBlocking {
-        database.close()
+    fun tearDown() {
+        runBlocking {
+            database.close()
+        }
     }
 
     @Test

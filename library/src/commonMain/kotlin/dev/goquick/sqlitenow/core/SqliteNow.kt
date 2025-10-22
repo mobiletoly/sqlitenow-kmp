@@ -23,6 +23,7 @@ import dev.goquick.sqlitenow.core.sqlite.use
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -48,13 +49,19 @@ open class SqliteNowDatabase private constructor(
     private val connectionProvider: SqliteConnectionProvider,
     private val adjustLogger: Boolean,
 ) {
-    private lateinit var conn: SafeSQLiteConnection
+    @Volatile
+    private var _conn: SafeSQLiteConnection? = null
+    private val conn: SafeSQLiteConnection
+        get() = _conn ?: error("Database connection not initialized or already closed. Call open() first.")
+
+    private val openCloseMutex = Mutex()
+
     var connectionConfig: SqliteConnectionConfig = SqliteConnectionConfig(
         persistence = sqliteDefaultPersistence(dbName),
     )
         set(value) {
-            if (::conn.isInitialized) {
-                throw IllegalStateException("Cannot update connectionConfig after open()")
+            if (_conn != null || openCloseMutex.isLocked) {
+                throw IllegalStateException("Cannot update connectionConfig after open() has started")
             }
             field = value
         }
@@ -116,7 +123,7 @@ open class SqliteNowDatabase private constructor(
      * @return The database connection
      * @throws IllegalStateException if the database is not open
      */
-    fun connection(): SafeSQLiteConnection = requireConnectionInitialized()
+    fun connection(): SafeSQLiteConnection = conn
 
     /**
      * Opens a database connection and applies migrations.
@@ -127,21 +134,29 @@ open class SqliteNowDatabase private constructor(
      *  or migration.
      */
     suspend fun open(preInit: suspend (conn: SafeSQLiteConnection) -> Unit = {}) {
-        if (::conn.isInitialized) {
-            throw IllegalStateException("Database connection already initialized")
-        }
+        openCloseMutex.withLock {
+            if (_conn != null) {
+                throw IllegalStateException("Database connection already initialized")
+            }
 
-        conn = connectionProvider.openConnection(dbName, debug, connectionConfig)
-        preInit(conn)
-        ensureBootstrapUserVersion()
+            val c = connectionProvider.openConnection(dbName, debug, connectionConfig)
+            try {
+                preInit(c)
+                ensureBootstrapUserVersion(c)
 
-        transaction {
-            val currentVersion = getUserVersion()
+                c.transaction {
+                    val currentVersion = c.readUserVersion()
+                    val newVersion = migration.applyMigration(c, currentVersion)
+                    if (newVersion != currentVersion) {
+                        c.execSQL("PRAGMA user_version = $newVersion;")
+                    }
+                }
 
-            // Apply migrations starting from the current version
-            val newVersion = migration.applyMigration(conn, currentVersion)
-            if (newVersion != currentVersion) {
-                setUserVersion(newVersion)
+                // Publish only after successful initialization/migrations
+                _conn = c
+            } catch (t: Throwable) {
+                c.close()
+                throw t
             }
         }
     }
@@ -150,7 +165,7 @@ open class SqliteNowDatabase private constructor(
      * Gets the current user_version from the database.
      */
     internal suspend fun getUserVersion(): Int {
-        val connection = requireConnectionInitialized()
+        val connection = conn
         val statement = connection.prepare("PRAGMA user_version;")
         return try {
             statement.step()
@@ -164,7 +179,7 @@ open class SqliteNowDatabase private constructor(
      * Sets the user_version in the database.
      */
     internal suspend fun setUserVersion(version: Int) {
-        requireConnectionInitialized().execSQL("PRAGMA user_version = $version;")
+        conn.execSQL("PRAGMA user_version = $version;")
     }
 
     /**
@@ -181,7 +196,7 @@ open class SqliteNowDatabase private constructor(
         block: suspend () -> T
     ): T {
         // Delegate to SafeSQLiteConnection to ensure nested transactions are handled safely
-        return requireConnectionInitialized().transaction(mode, block)
+        return conn.transaction(mode, block)
     }
 
     /**
@@ -202,11 +217,18 @@ open class SqliteNowDatabase private constructor(
     /**
      * Closes the database connection.
      */
-    suspend fun close() {
-        if (::conn.isInitialized) {
-            conn.close()
+    suspend fun close() = openCloseMutex.withLock {
+        _conn?.let { c ->
+            _conn = null
+            c.close()
+            tableChangeScope.cancel()
         }
     }
+
+    /**
+     * Check if database is open.
+     */
+    fun isOpen(): Boolean = _conn != null
 
     /**
      * Forces any external persistence layer to store the current database snapshot.
@@ -218,23 +240,16 @@ open class SqliteNowDatabase private constructor(
      * `autoFlushPersistence` is disabled.
      */
     suspend fun persistSnapshotNow() {
-        requireConnectionInitialized().persistSnapshotNow()
+        conn.persistSnapshotNow()
     }
 
-    private suspend fun ensureBootstrapUserVersion() {
-        val connection = conn
+    private suspend fun ensureBootstrapUserVersion(connection: SafeSQLiteConnection) {
         val currentVersion = connection.readUserVersion()
         if (currentVersion != 0) return
         if (connection.hasUserTables() || connection.restoredFromSnapshot) return
         connection.execSQL("PRAGMA user_version = -1;")
     }
 
-    private fun requireConnectionInitialized(): SafeSQLiteConnection {
-        if (!::conn.isInitialized) {
-            throw IllegalStateException("Database connection not initialized. Call open() first.")
-        }
-        return conn
-    }
 
     /**
      * Notifies listeners that the specified tables have been modified.

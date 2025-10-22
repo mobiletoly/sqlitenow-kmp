@@ -1,3 +1,9 @@
+-- @@{
+--    cascadeNotify = {
+--       delete = ["person_address", "person_category", "comment"],
+--       update = ["person_address"]
+--    }
+-- }
 CREATE TABLE person
 (
     id         INTEGER PRIMARY KEY NOT NULL,

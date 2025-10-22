@@ -163,17 +163,18 @@ For example, you can use `name` annotation to customize the generated class name
 
 ## Field-level Annotations
 
-| Annotation                     | Purpose                           | Example                                              |
-|--------------------------------|-----------------------------------|------------------------------------------------------|
-| `name=Name`                    | Custom class name                 | `name=PersonEntity`                                  |
-| `field=sql_column_name`        | Target a specific column          | `field=user_name`                                    |
-| `propertyName=name`            | Custom generated property name    | `field=user_name, propertyName=myUserName`           |
-| `propertyType=type`            | Custom property type              | `field=birth_date, propertyType=LocalDate`           |
-| `adapter={custom or default}`  | Request type adapter generation   | `field=birth_date, adapter=custom`                   |
-| `notNull={true or false}`      | Control property nullability      | `field=phone, notNull=false`                         |
-| `dynamicField=name`            | Generate non-table dynamic field  | `dynamicField=addresses, propertyType=List<String>`  |
-| `defaultValue=value`           | Default value for dynamic field   | `dynamicField=addresses, defaultValue=listOf()`      |
-| `sqlTypeHint=type`             | Override SQL type                 | `sqlTypeHint=TEXT`                                   |
+| Annotation                    | Purpose                          | Example                                             |
+|-------------------------------|----------------------------------|-----------------------------------------------------|
+| `name=Name`                   | Custom class name                | `name=PersonEntity`                                 |
+| `field=sql_column_name`       | Target a specific column         | `field=user_name`                                   |
+| `propertyName=name`           | Custom generated property name   | `field=user_name, propertyName=myUserName`          |
+| `propertyType=type`           | Custom property type             | `field=birth_date, propertyType=LocalDate`          |
+| `adapter={custom or default}` | Request type adapter generation  | `field=birth_date, adapter=custom`                  |
+| `notNull={true or false}`     | Control property nullability     | `field=phone, notNull=false`                        |
+| `dynamicField=name`           | Generate non-table dynamic field | `dynamicField=addresses, propertyType=List<String>` |
+| `defaultValue=value`          | Default value for dynamic field  | `dynamicField=addresses, defaultValue=listOf()`     |
+| `sqlTypeHint=type`            | Override SQL type                | `sqlTypeHint=TEXT`                                  |
+| `cascadeNotify={...}`         | Notify on table changes          | `cascadeNotify={ "delete": ["person"] }`            |
 
 ## Example
 

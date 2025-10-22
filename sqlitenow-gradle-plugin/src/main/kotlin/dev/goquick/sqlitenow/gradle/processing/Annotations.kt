@@ -50,6 +50,7 @@ enum class StatementAnnotationContext(
             AnnotationConstants.PROPERTY_NAME_GENERATOR,
             AnnotationConstants.ENABLE_SYNC,
             AnnotationConstants.SYNC_KEY_COLUMN_NAME,
+            AnnotationConstants.CASCADE_NOTIFY,
         )
     ),
     EXECUTE(
@@ -127,7 +128,20 @@ private fun iterateBlockAnnotations(content: String): List<Map<String, Any?>> {
         val startIndex = content.indexOf("@@{", searchStart)
         if (startIndex == -1) break
 
-        val endIndex = content.indexOf("}", startIndex)
+        var depth = 1
+        var currentIndex = startIndex + 3
+        var endIndex = -1
+        while (currentIndex < content.length && depth > 0) {
+            when (content[currentIndex]) {
+                '{' -> depth++
+                '}' -> depth--
+            }
+            if (depth == 0) {
+                endIndex = currentIndex
+                break
+            }
+            currentIndex++
+        }
         if (endIndex == -1) break
 
         val hoconContent = content.substring(startIndex + 3, endIndex).trim()
@@ -155,21 +169,12 @@ private fun parseHoconAnnotations(content: String): Map<String, Any?> {
             hoconText,
             ConfigParseOptions.defaults().setAllowMissing(false)
         )
-
-        // Convert to our annotation format
-        val annotations = mutableMapOf<String, Any?>()
-        for (entry in config.entrySet()) {
-            val key = entry.key
-            val value = entry.value.unwrapped()
-
-            annotations[key] = when (value) {
-                is String, is Boolean, is List<*> -> value
-                null -> null
-                else -> value.toString()  // Convert other types to string
-            }
-        }
-
-        annotations
+        val root = config.root().unwrapped() as Map<*, *>
+        root.map { (key, value) ->
+            val keyString = key as? String
+                ?: throw IllegalArgumentException("Annotation keys must be strings. Found key: $key")
+            keyString to normalizeAnnotationValue(value)
+        }.toMap()
     } catch (e: Exception) {
         logger.error(
             """|
@@ -181,6 +186,19 @@ private fun parseHoconAnnotations(content: String): Map<String, Any?> {
         )
         throw e
     }
+}
+
+private fun normalizeAnnotationValue(value: Any?): Any? = when (value) {
+    is Map<*, *> -> value.entries.associate { (k, v) ->
+        val keyString = k as? String
+            ?: throw IllegalArgumentException("Annotation map keys must be strings. Found key: $k")
+        keyString to normalizeAnnotationValue(v)
+    }
+
+    is List<*> -> value.map { normalizeAnnotationValue(it) }
+    is String, is Boolean -> value
+    null -> null
+    else -> value.toString()
 }
 
 /**
@@ -458,6 +476,7 @@ data class StatementAnnotationOverrides(
     val enableSync: Boolean = false,
     val syncKeyColumnName: String? = null,
     val mapTo: String? = null,
+    val cascadeNotify: CascadeNotify? = null,
 ) {
     companion object {
         fun parse(
@@ -473,6 +492,11 @@ data class StatementAnnotationOverrides(
             val collectionKey = annotations[AnnotationConstants.COLLECTION_KEY] as? String
             val enableSync = annotations[AnnotationConstants.ENABLE_SYNC] as? Boolean ?: false
             val syncKeyColumnName = annotations[AnnotationConstants.SYNC_KEY_COLUMN_NAME] as? String
+            val cascadeNotify = if (context == StatementAnnotationContext.CREATE_TABLE) {
+                parseCascadeNotify(annotations[AnnotationConstants.CASCADE_NOTIFY])
+            } else {
+                null
+            }
 
             if (annotations.containsKey(AnnotationConstants.NAME) && name?.isBlank() == true) {
                 throw IllegalArgumentException("Annotation '${AnnotationConstants.NAME}' cannot be blank")
@@ -495,6 +519,7 @@ data class StatementAnnotationOverrides(
                 enableSync = enableSync,
                 syncKeyColumnName = syncKeyColumnName,
                 mapTo = mapTo,
+                cascadeNotify = cascadeNotify,
             )
         }
 
@@ -505,5 +530,75 @@ data class StatementAnnotationOverrides(
                 "Unsupported propertyNameGenerator value: '$this' (must be 'plain' and 'lowerCamelCase')"
             )
         }
+
+        private fun parseCascadeNotify(raw: Any?): CascadeNotify? {
+            if (raw == null) return null
+
+            val rawMap = raw as? Map<*, *> ?: throw IllegalArgumentException(
+                "Annotation '${AnnotationConstants.CASCADE_NOTIFY}' must be an object with 'insert', 'update', and/or 'delete' arrays."
+            )
+
+            val normalizedKeys = rawMap.entries.associate { (key, value) ->
+                val keyString = key as? String
+                    ?: throw IllegalArgumentException("Keys inside '${AnnotationConstants.CASCADE_NOTIFY}' must be strings.")
+                keyString.lowercase() to value
+            }
+
+            val supportedKeys = setOf("insert", "update", "delete")
+            val unknownKeys = normalizedKeys.keys - supportedKeys
+            if (unknownKeys.isNotEmpty()) {
+                val joined = unknownKeys.sorted().joinToString(", ")
+                throw IllegalArgumentException(
+                    "Unsupported key(s) $joined inside '${AnnotationConstants.CASCADE_NOTIFY}'. Supported keys: insert, update, delete."
+                )
+            }
+
+            fun parseTableList(key: String): Set<String> {
+                val value = normalizedKeys[key] ?: return emptySet()
+                val list = when (value) {
+                    is List<*> -> value
+                    else -> throw IllegalArgumentException(
+                        "Value for '$key' inside '${AnnotationConstants.CASCADE_NOTIFY}' must be a list of table names."
+                    )
+                }
+                return list.mapIndexed { index, item ->
+                    val tableName = item as? String
+                        ?: throw IllegalArgumentException(
+                            "Entry $index in '$key' inside '${AnnotationConstants.CASCADE_NOTIFY}' must be a string table name."
+                        )
+                    val trimmed = tableName.trim()
+                    if (trimmed.isEmpty()) {
+                        throw IllegalArgumentException(
+                            "Entry $index in '$key' inside '${AnnotationConstants.CASCADE_NOTIFY}' cannot be blank."
+                        )
+                    }
+                    trimmed.lowercase()
+                }.toSet()
+            }
+
+            return CascadeNotify(
+                insert = parseTableList("insert"),
+                update = parseTableList("update"),
+                delete = parseTableList("delete"),
+            )
+        }
+    }
+
+    data class CascadeNotify(
+        val insert: Set<String>,
+        val update: Set<String>,
+        val delete: Set<String>,
+    ) {
+        fun tablesFor(action: CascadeAction): Set<String> = when (action) {
+            CascadeAction.INSERT -> insert
+            CascadeAction.UPDATE -> update
+            CascadeAction.DELETE -> delete
+        }
+    }
+
+    enum class CascadeAction {
+        INSERT,
+        UPDATE,
+        DELETE,
     }
 }
