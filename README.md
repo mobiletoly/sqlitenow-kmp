@@ -22,6 +22,10 @@ optimizations.
 
 Full documentation is available in the https://mobiletoly.github.io/sqlitenow-kmp/ pages.
 
+While we have added includes few sample projects to this repository, but for a very simple
+end-to-end walkthrough, follow the [Mood Tracker tutorial series](https://mobiletoly.github.io/sqlitenow-kmp/tutorials/) and browse the
+accompanying [sample project](https://github.com/mobiletoly/moodtracker-sample-kmp).
+
 ## Key Features
 
 ### Supported Platforms

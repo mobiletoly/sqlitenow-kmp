@@ -94,6 +94,11 @@ Learn about platform-specific behavior and configuration tips.
     <p>Load sql.js from Wasm, wire IndexedDB snapshots, and run browser tests</p>
   </a>
 
+  <a href="{{ site.baseurl }}/tutorials/" class="doc-nav-card">
+    <h3>🎓 Tutorials</h3>
+    <p>Follow the Mood Tracker series for an end-to-end walkthrough</p>
+  </a>
+
   <a href="{{ site.baseurl }}/recipes/" class="doc-nav-card">
     <h3>📖 Recipes</h3>
     <p>Explore patterns for serialization, reactive flows, and schema inspection</p>
