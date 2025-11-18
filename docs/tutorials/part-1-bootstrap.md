@@ -31,7 +31,7 @@ existing Compose/KMP plugins (to keep article brief, we are not going to use tom
 ```kotlin
 plugins {
     // … existing plugin declarations …
-    id("dev.goquick.sqlitenow") version "0.5.0"
+    id("dev.goquick.sqlitenow") version "<latest-version>"
 }
 ```
 While you are configuring the module, enable the opt-in flags we will rely on once richer types
@@ -63,7 +63,7 @@ kotlin {
     // …
     sourceSets {
         commonMain.dependencies {
-            implementation("dev.goquick.sqlitenow:core:0.5.1")
+            implementation("dev.goquick.sqlitenow:core:<latest-version>")
             implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
         }
         androidMain.dependencies {
