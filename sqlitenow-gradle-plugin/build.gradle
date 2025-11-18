@@ -1,8 +1,8 @@
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 plugins {
-    id("org.jetbrains.kotlin.jvm") version "2.2.20"
-    id("com.vanniktech.maven.publish") version "0.34.0"
+    id("org.jetbrains.kotlin.jvm") version "2.2.21"
+    id("com.vanniktech.maven.publish") version "0.35.0"
     id("java-gradle-plugin")
 }
 
@@ -15,7 +15,7 @@ repositories {
 }
 
 kotlin {
-    jvmToolchain(21)
+    jvmToolchain(17)
 
     // Set language version to 2.2 to support break/continue in inline lambdas
     compilerOptions {

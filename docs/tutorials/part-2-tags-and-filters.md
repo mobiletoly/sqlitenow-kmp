@@ -133,8 +133,9 @@ ORDER BY mood_entry.entry_time DESC;
 -- selectRecentWithTags.sql
 /* @@{ queryResult=MoodEntryWithTags, collectionKey=entry_id } */
 SELECT
-    me.id AS entry_id,
     -- @@{ field=entry_id, propertyName=id }
+    me.id AS entry_id,
+
     me.entry_time,
     me.mood_score,
     me.note,

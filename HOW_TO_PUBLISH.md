@@ -208,7 +208,7 @@ To add the plugin to your project, add the following line in the plugins block, 
 // build.gradle.kts
 
 plugins {
-    id("com.vanniktech.maven.publish") version "0.29.0" 
+    id("com.vanniktech.maven.publish") version "0.35.0" 
 }
 ```
 
