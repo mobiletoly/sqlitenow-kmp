@@ -15,8 +15,8 @@
  */
 package dev.goquick.sqlitenow.core
 
-import co.touchlab.kermit.Severity
-import dev.goquick.sqlitenow.common.SqliteNowLogger
+import dev.goquick.sqlitenow.common.KermitSqliteNowLogger
+import dev.goquick.sqlitenow.common.LogLevel
 import dev.goquick.sqlitenow.common.originalSqliteNowLogger
 import dev.goquick.sqlitenow.common.sqliteNowLogger
 import dev.goquick.sqlitenow.core.sqlite.use
@@ -111,8 +111,8 @@ open class SqliteNowDatabase private constructor(
 
     init {
         if (adjustLogger) {
-            sqliteNowLogger = if (originalSqliteNowLogger == sqliteNowLogger) {
-                SqliteNowLogger(if (debug) Severity.Debug else Severity.Info)
+            sqliteNowLogger = if (originalSqliteNowLogger === sqliteNowLogger) {
+                KermitSqliteNowLogger(if (debug) LogLevel.Debug else LogLevel.Info)
             } else {
                 sqliteNowLogger
             }

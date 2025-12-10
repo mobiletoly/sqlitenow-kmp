@@ -84,6 +84,7 @@ class IndexedDbSqlitePersistence(
         awaitTransaction(transaction)
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun database(factory: dynamic): dynamic {
         val completed = databaseDeferred?.takeIf { it.isCompleted }?.getCompleted()
         if (completed != null) return completed
