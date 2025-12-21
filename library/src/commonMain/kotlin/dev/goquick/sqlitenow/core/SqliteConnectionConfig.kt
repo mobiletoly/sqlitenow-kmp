@@ -24,6 +24,11 @@ package dev.goquick.sqlitenow.core
 data class SqliteConnectionConfig(
     val persistence: SqlitePersistence? = null,
     val autoFlushPersistence: Boolean = true,
+    /**
+     * Optional hook that restores contextual state (trace/span/MDC) across the dispatcher hop
+     * used by SQLiteNow connections.
+     */
+    val executionContextHook: SqliteNowContextHook? = null,
 )
 
 /**

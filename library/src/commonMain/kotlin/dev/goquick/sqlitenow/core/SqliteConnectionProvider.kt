@@ -82,6 +82,7 @@ object BundledSqliteConnectionProvider : SqliteConnectionProvider {
             ref = connection,
             debug = debug,
             persistenceController = persistenceController,
+            executionContextHook = config.executionContextHook,
         )
     }
 }

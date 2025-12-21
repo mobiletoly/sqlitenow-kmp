@@ -22,14 +22,10 @@ import dev.goquick.sqlitenow.core.sqlite.use
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlin.contracts.ExperimentalContracts
-import kotlin.contracts.InvocationKind
-import kotlin.contracts.contract
 
 import kotlin.concurrent.Volatile
 import kotlin.uuid.ExperimentalUuidApi
@@ -120,7 +116,7 @@ class DefaultOversqliteClient(
     }
 
     override suspend fun bootstrap(userId: String, sourceId: String): Result<Unit> =
-        withContext(db.dispatcher) {
+        db.withDispatcherContext {
             bootstrapper.bootstrap(db, userId, sourceId)
         }
 
@@ -512,14 +508,10 @@ class DefaultOversqliteClient(
         }
     }
 
-    @OptIn(ExperimentalContracts::class)
-    private suspend inline fun <T> Semaphore.lockOnDatabaseDispatcher(crossinline action: suspend () -> T): T {
-        contract {
-            callsInPlace(action, InvocationKind.EXACTLY_ONCE)
-        }
+    private suspend fun <T> Semaphore.lockOnDatabaseDispatcher(action: suspend () -> T): T {
         acquire()
         return try {
-            withContext(db.dispatcher) {
+            db.withDispatcherContext {
                 action()
             }
         } finally {

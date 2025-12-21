@@ -1,13 +1,13 @@
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 plugins {
-    id("org.jetbrains.kotlin.jvm") version "2.2.21"
+    id("org.jetbrains.kotlin.jvm") version "2.3.0"
     id("com.vanniktech.maven.publish") version "0.35.0"
     id("java-gradle-plugin")
 }
 
 group = "dev.goquick.sqlitenow"
-version = "0.5.5"
+version = "0.5.6"
 
 repositories {
     mavenCentral()
@@ -19,7 +19,7 @@ kotlin {
 
     // Set language version to 2.2 to support break/continue in inline lambdas
     compilerOptions {
-        languageVersion.set(KotlinVersion.KOTLIN_2_2)
+        languageVersion.set(KotlinVersion.KOTLIN_2_3)
         freeCompilerArgs.addAll("-Xmulti-dollar-interpolation", "-Xcontext-parameters")
     }
 }

@@ -32,6 +32,7 @@ class SafeSQLiteConnection internal constructor(
     val ref: SqliteConnection,
     val debug: Boolean = false,
     private val persistenceController: PersistenceController = NoopPersistenceController(),
+    private val executionContextHook: SqliteNowContextHook? = null,
 ) {
     val dispatcher: CoroutineDispatcher = sqliteConnectionDispatcher()
     private var activeTransactionDepth: Int = 0
@@ -41,10 +42,22 @@ class SafeSQLiteConnection internal constructor(
 
     private fun isInTransaction(): Boolean = activeTransactionDepth > 0 || ref.inTransaction()
 
+    internal suspend fun <T> withDispatcherContext(block: suspend () -> T): T {
+        val hook = executionContextHook
+        val captured = hook?.capture()
+        return withContext(dispatcher) {
+            if (hook != null) {
+                hook.withCaptured(captured, block)
+            } else {
+                block()
+            }
+        }
+    }
+
     suspend fun <T> withContextAndTrace(block: suspend () -> T): T {
         val creationTrace = Throwable().stackTraceToString().replace("\n\n", "\n")
         return try {
-            withContext(dispatcher) {
+            withDispatcherContext {
                 val result = block()
                 persistenceController.onOperationComplete(ref, isInTransaction())
                 result
@@ -64,7 +77,7 @@ class SafeSQLiteConnection internal constructor(
 
     suspend fun execSQL(sql: String) {
         sqliteNowLogger.d { "SafeSQLiteConnection.execSQL: $sql" }
-        withContext(dispatcher) {
+        withDispatcherContext {
             ref.execSQL(sql)
             persistenceController.onOperationComplete(ref, isInTransaction())
         }
@@ -72,14 +85,14 @@ class SafeSQLiteConnection internal constructor(
 
     suspend fun prepare(sql: String): SqliteStatement {
         sqliteNowLogger.d { "SafeSQLiteConnection.prepare: $sql" }
-        return withContext(dispatcher) {
+        return withDispatcherContext {
             val result = ref.prepare(sql)
             result
         }
     }
 
     suspend fun close() {
-        withContext(dispatcher) {
+        withDispatcherContext {
             sqliteNowLogger.d { "SafeSQLiteConnection.close" }
             persistenceController.onClose(ref)
             ref.close()
@@ -87,7 +100,7 @@ class SafeSQLiteConnection internal constructor(
     }
 
     suspend fun inTransaction(): Boolean {
-        return withContext(dispatcher) {
+        return withDispatcherContext {
             ref.inTransaction()
         }
     }
@@ -99,7 +112,7 @@ class SafeSQLiteConnection internal constructor(
      * committed or rolled back.
      */
     suspend fun <T> transaction(mode: TransactionMode = TransactionMode.DEFERRED, block: suspend () -> T): T {
-        return withContext(dispatcher) {
+        return withDispatcherContext {
             val alreadyInTransaction = activeTransactionDepth > 0 || ref.inTransaction()
             if (!alreadyInTransaction) {
                 when (mode) {
@@ -139,7 +152,7 @@ class SafeSQLiteConnection internal constructor(
      * is safe to call unconditionally.
      */
     internal suspend fun persistSnapshotNow() {
-        withContext(dispatcher) {
+        withDispatcherContext {
             if (activeTransactionDepth > 0 || ref.inTransaction()) {
                 throw IllegalStateException("Cannot flush persistence while a transaction is active")
             }
