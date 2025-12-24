@@ -81,6 +81,9 @@ config.resolve.fallback = Object.assign({}, config.resolve.fallback, {
   fs: false,
   path: false,
   crypto: false,
+  // Some setups also require these (depends on transitive deps / toolchain):
+  wasi_snapshot_preview1: false,
+  env: false,
 });
 
 config.module = config.module || {};
