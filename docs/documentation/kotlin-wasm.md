@@ -14,7 +14,7 @@ Add the Wasm target to your Gradle module alongside the other Kotlin targets:
 
 ```kotlin
 kotlin {
-    @OptIn(org.jetbrains.kotlin.gradle.targets.js.dsl.ExperimentalWasmDsl::class)
+    @OptIn(org.jetbrains.kotlin.gradle.ExperimentalWasmDsl::class)
     wasmJs {
         browser()
         binaries.library()
@@ -68,8 +68,31 @@ When you build the Wasm target, the SQLiteNow Gradle plugin copies the sql.js re
 - Keep `sqlitenow-sqljs.js` and `sqlitenow-indexeddb.js` in the output bundle; they provide the glue
   code Kotlin uses at runtime.
 - If your bundler complains about Node core modules (`fs`, `path`, `crypto`) referenced by sql.js,
-  add the usual fallbacks (`resolve.fallback = { fs: false, path: false, crypto: false }`) or install
-  browser polyfills.
+  add Webpack fallbacks (recommended) or install browser polyfills.
+
+### Webpack 5 fallbacks (recommended)
+
+If you see errors like “Can’t resolve 'fs' in …/node_modules/sql.js/dist”, create a
+`webpack.config.d/sqljs.js` file in the *consumer module* (the module that declares `wasmJs { browser() }`):
+
+```js
+config.resolve = config.resolve || {};
+config.resolve.fallback = Object.assign({}, config.resolve.fallback, {
+  fs: false,
+  path: false,
+  crypto: false,
+});
+
+config.module = config.module || {};
+config.module.rules = Array.isArray(config.module.rules) ? config.module.rules : [];
+config.module.rules.push({
+  test: /sql\.js\/dist\/sql-wasm\.wasm$/,
+  type: "asset/resource",
+});
+
+config.experiments = Object.assign({}, config.experiments, { asyncWebAssembly: true });
+config.target = "web";
+```
 
 ## Local testing
 

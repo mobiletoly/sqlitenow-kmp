@@ -53,3 +53,29 @@ Consider disabling auto flush and calling `persistSnapshotNow()` yourself when:
 - You want to throttle snapshot writes to reduce IndexedDB churn.
 
 For most apps the default `autoFlushPersistence = true` is the easiest option—changes are stored after each statement and transaction, so refreshing the page shows the latest state.
+
+## Webpack bundling notes
+
+`sql.js` ships a browser-friendly build, but its distribution also contains Node-oriented code paths.
+When bundling with Webpack 5 (including Kotlin/JS browser tests), you may see errors such as:
+“Can’t resolve `fs`/`path`/`crypto` in `…/node_modules/sql.js/dist`”.
+
+Create a `webpack.config.d/sqljs.js` file in the consumer module and disable Node core polyfills:
+
+```js
+config.resolve = config.resolve || {};
+config.resolve.fallback = Object.assign({}, config.resolve.fallback, {
+  fs: false,
+  path: false,
+  crypto: false,
+});
+
+config.module = config.module || {};
+config.module.rules = Array.isArray(config.module.rules) ? config.module.rules : [];
+config.module.rules.push({
+  test: /sql\.js\/dist\/sql-wasm\.wasm$/,
+  type: "asset/resource",
+});
+
+config.experiments = Object.assign({}, config.experiments, { asyncWebAssembly: true });
+```
