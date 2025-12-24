@@ -15,10 +15,16 @@
  */
 package dev.goquick.sqlitenow.gradle
 
+import org.gradle.api.artifacts.Configuration
+import org.gradle.api.artifacts.component.ComponentIdentifier
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.component.ProjectComponentIdentifier
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.plugins.ExtensionAware
+import org.gradle.language.jvm.tasks.ProcessResources
 import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
+import java.util.concurrent.atomic.AtomicBoolean
 
 class SqliteNowPlugin : Plugin<Project> {
     override fun apply(project: Project) {
@@ -33,6 +39,8 @@ class SqliteNowPlugin : Plugin<Project> {
         project.pluginManager.withPlugin("org.jetbrains.kotlin.multiplatform") {
             val mppExt = project.extensions
                 .getByType(KotlinMultiplatformExtension::class.java)
+
+            configureWasmResourceBundling(project)
 
             // For each db entry in commonMain, register task and wire srcDir
             ext.databases.all { db ->
@@ -53,5 +61,69 @@ class SqliteNowPlugin : Plugin<Project> {
                     .srcDir(genTask.map { it.outputDir })
             }
         }
+    }
+}
+
+private fun configureWasmResourceBundling(project: Project) {
+    val configured = AtomicBoolean(false)
+    val preferredName = "wasmJsMainCompileClasspath"
+    val fallbackName = "wasmJsCompileClasspath"
+    project.configurations.matching { it.name == preferredName || it.name == fallbackName }.all { wasmClasspath ->
+        if (configured.get()) return@all
+        if (wasmClasspath.name == fallbackName &&
+            project.configurations.findByName(preferredName) != null
+        ) {
+            return@all
+        }
+        configured.set(true)
+        project.tasks.withType(ProcessResources::class.java).configureEach { task ->
+            if (task.name != "wasmJsProcessResources") return@configureEach
+            task.dependsOn(wasmClasspath)
+            task.from({ resolveSqliteNowWasmKlibs(project, wasmClasspath).map { project.zipTree(it) } }) { spec ->
+                spec.include(
+                    "sqlitenow-sqljs.js",
+                    "sqlitenow-indexeddb.js",
+                    "sql-wasm.wasm"
+                )
+            }
+        }
+    }
+}
+
+private fun resolveSqliteNowWasmKlibs(project: Project, classpath: Configuration): Set<java.io.File> {
+    val artifacts = classpath.incoming.artifactView { }.artifacts
+    val klibs = artifacts.artifacts.mapNotNull { artifact ->
+        val file = artifact.file
+        if (file.extension != "klib") {
+            return@mapNotNull null
+        }
+        if (isSqliteNowComponent(project, artifact.id.componentIdentifier)) {
+            return@mapNotNull file
+        }
+        null
+    }.toSet()
+
+    if (klibs.isNotEmpty()) {
+        return klibs
+    }
+
+    return artifacts.artifacts.mapNotNull { artifact ->
+        val file = artifact.file
+        if (file.extension == "klib" && file.name.contains("sqlitenow", ignoreCase = true)) {
+            file
+        } else {
+            null
+        }
+    }.toSet()
+}
+
+private fun isSqliteNowComponent(project: Project, id: ComponentIdentifier): Boolean {
+    return when (id) {
+        is ModuleComponentIdentifier -> id.group == "dev.goquick.sqlitenow"
+        is ProjectComponentIdentifier -> {
+            val targetProject = project.rootProject.findProject(id.projectPath) ?: return false
+            targetProject.group.toString() == "dev.goquick.sqlitenow"
+        }
+        else -> false
     }
 }

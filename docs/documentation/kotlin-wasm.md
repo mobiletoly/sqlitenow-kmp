@@ -60,8 +60,8 @@ snapshots to another storage layer (for example OPFS or remote sync).
 
 ## Bundling sql.js assets
 
-When you build the Wasm target, Gradle copies the sql.js resources to your module’s generated
-resources directory. To run in production:
+When you build the Wasm target, the SQLiteNow Gradle plugin copies the sql.js resources from the
+`dev.goquick.sqlitenow:core` Wasm klib into your module’s generated resources. To run in production:
 
 - Ensure your bundler serves `sql-wasm.wasm` alongside the compiled assets (the helper script loads
   it with `new URL("./sql-wasm.wasm", import.meta.url)`).
