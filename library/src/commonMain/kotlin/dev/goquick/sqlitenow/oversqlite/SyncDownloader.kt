@@ -136,7 +136,7 @@ internal class SyncDownloader(
 
             if (first) {
                 frozenUntil = if (windowed) response.windowUntil else 0L
-                if (frozenUntil > 0) db.execSQL("UPDATE _sync_client_info SET current_window_until=$frozenUntil")
+                if (frozenUntil > 0) db.execSQL("UPDATE _sync_client_info SET current_window_until=max(current_window_until,$frozenUntil)")
                 sqliteNowLogger.d { "hydrate: windowUntil=$frozenUntil" }
                 first = false
             }
@@ -167,7 +167,6 @@ internal class SyncDownloader(
             if (!response.hasMore) break
         }
 
-        if (frozenUntil > 0L) db.execSQL("UPDATE _sync_client_info SET current_window_until=0")
         sqliteNowLogger.i { "hydrate: done" }
 
         return allUpdatedTables

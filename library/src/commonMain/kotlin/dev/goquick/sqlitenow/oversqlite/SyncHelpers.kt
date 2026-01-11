@@ -35,7 +35,7 @@ data class SyncRun(
  *   or event-driven [downloadOnce] separately (e.g., on app resume).
  *
  * This helper preserves the recommended order (upload → download). It relies on
- * the client’s internal post-upload lookback to avoid resurrecting deletes.
+ * the client’s internal post-upload peer download drain to improve convergence.
  */
 suspend fun OversqliteClient.syncOnce(
     limit: Int = 1000,

@@ -194,22 +194,30 @@ class SyncUploader(
     }
 
     private suspend fun loadPendingChanges(db: SafeSQLiteConnection): MutableList<PendingChange> {
-        return db.prepare("SELECT table_name, pk_uuid, op, base_version, payload, change_id FROM _sync_pending ORDER BY queued_at ASC")
-            .use { st ->
-                val out = mutableListOf<PendingChange>()
-                while (st.step()) {
-                    val cid = st.getLong(5)
-                    out += PendingChange(
-                        table = st.getText(0),
-                        pk = st.getText(1),
-                        op = st.getText(2),
-                        baseVersion = st.getLong(3),
-                        payload = if (st.isNull(4)) null else st.getText(4),  // FIX: Handle NULL payload for DELETE operations
-                        changeId = if (cid < 0) null else cid
-                    )
-                }
-                out
+        val limit = config.uploadLimit
+        val sql = if (limit > 0) {
+            "SELECT table_name, pk_uuid, op, base_version, payload, change_id FROM _sync_pending ORDER BY queued_at ASC LIMIT ?"
+        } else {
+            "SELECT table_name, pk_uuid, op, base_version, payload, change_id FROM _sync_pending ORDER BY queued_at ASC"
+        }
+
+        return db.prepare(sql).use { st ->
+            if (limit > 0) st.bindLong(1, limit.toLong())
+
+            val out = mutableListOf<PendingChange>()
+            while (st.step()) {
+                val cid = st.getLong(5)
+                out += PendingChange(
+                    table = st.getText(0),
+                    pk = st.getText(1),
+                    op = st.getText(2),
+                    baseVersion = st.getLong(3),
+                    payload = if (st.isNull(4)) null else st.getText(4), // Handle NULL payload for DELETE operations
+                    changeId = if (cid < 0) null else cid
+                )
             }
+            out
+        }
     }
 
     private suspend fun assignChangeIds(
@@ -229,6 +237,14 @@ class SyncUploader(
                     }
                 p.changeId = nextId
                 nextId += 1
+            }
+        }
+
+        // If we backfilled any legacy NULL change_ids, advance next_change_id so we never reuse IDs.
+        if (nextId > startingId) {
+            db.prepare("UPDATE _sync_client_info SET next_change_id = max(next_change_id, ?)").use { st ->
+                st.bindLong(1, nextId)
+                st.step()
             }
         }
     }
@@ -454,7 +470,10 @@ class SyncUploader(
         val invalidReasons = mutableMapOf<String, Int>()
 
         db.transaction {
-            db.prepare("UPDATE _sync_client_info SET last_server_seq_seen=?").use { st ->
+            // Track the latest known server watermark from uploads WITHOUT advancing the download cursor.
+            // Advancing last_server_seq_seen from upload responses can permanently skip peer changes when
+            // server_id gaps are large under high parallelism.
+            db.prepare("UPDATE _sync_client_info SET current_window_until = max(current_window_until, ?)").use { st ->
                 st.bindLong(1, response.highestServerSeq)
                 st.step()
             }
@@ -677,12 +696,21 @@ class SyncUploader(
             invalidReasons[reason] = (invalidReasons[reason] ?: 0) + 1
         }
 
-        val keep = status.invalid?.toString()?.contains("fk_missing") == true
-        if (!keep) {
+        // Only drop clearly non-recoverable invalids. Everything else (FK missing, transient errors,
+        // batch_too_large, etc.) should remain queued and retried to avoid silent data loss.
+        val shouldDrop = when (reason) {
+            InvalidReasons.BAD_PAYLOAD, InvalidReasons.UNREGISTERED_TABLE -> true
+            else -> false
+        }
+        if (shouldDrop) {
             db.prepare("DELETE FROM _sync_pending WHERE table_name=? AND pk_uuid=?").use { st ->
                 st.bindText(1, change.table)
                 st.bindText(2, change.pk)
                 st.step()
+            }
+        } else {
+            sqliteNowLogger.w {
+                "Retaining pending change after invalid status for ${change.table}:${change.pk}, reason=$reason, message=${status.message}"
             }
         }
 

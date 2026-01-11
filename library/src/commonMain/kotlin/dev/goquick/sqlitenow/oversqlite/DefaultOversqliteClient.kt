@@ -153,9 +153,9 @@ class DefaultOversqliteClient(
                 uploader.finalizeUpload(db, prepared.changes, response, updatedTables)
             }
 
-            // Post-upload lookback drain (network + db), not holding DB context
+            // Post-upload peer download drain (network + db), not holding DB context
             if (summary.total > 0) {
-                drainLookbackUntilInternal()
+                drainPostUploadPeerDownloadsInternal()
             }
 
             if (updatedTables.isNotEmpty()) tablesUpdateListener(updatedTables)
@@ -266,7 +266,7 @@ class DefaultOversqliteClient(
                     frozenUntil = if (windowed) response.windowUntil else 0L
                     if (frozenUntil > 0L) {
                         opGate.lockOnDatabaseDispatcher {
-                            db.execSQL("UPDATE _sync_client_info SET current_window_until=$frozenUntil")
+                            db.execSQL("UPDATE _sync_client_info SET current_window_until=max(current_window_until,$frozenUntil)")
                         }
                     }
                     first = false
@@ -298,12 +298,6 @@ class DefaultOversqliteClient(
                 }
 
                 if (!response.hasMore) break
-            }
-
-            if (frozenUntil > 0L) {
-                opGate.lockOnDatabaseDispatcher {
-                    db.execSQL("UPDATE _sync_client_info SET current_window_until=0")
-                }
             }
 
             if (allUpdatedTables.isNotEmpty()) tablesUpdateListener(allUpdatedTables)
@@ -465,46 +459,26 @@ class DefaultOversqliteClient(
         }
     }
 
-    // Lookback drain helper used by uploadOnce to avoid resurrecting deletes
+    // Post-upload download drain helper:
+    // Download peer changes (includeSelf=false) until a non-full page is applied or we hit a pass limit.
+    // This avoids cursor rewinds / lookback windows, which can permanently skip peer changes when
+    // server_id gaps are large under high parallelism.
+    private suspend fun drainPostUploadPeerDownloadsInternal() {
+        val limit = config.downloadLimit.coerceAtLeast(1)
+        val maxPasses = config.lookbackMaxPasses.coerceAtLeast(1)
 
-    private suspend fun drainLookbackUntilInternal() {
-        val target: Long =
-            db.prepare("SELECT last_server_seq_seen FROM _sync_client_info LIMIT 1").use { st ->
-                if (st.step()) st.getLong(0) else 0L
+        for (pass in 0 until maxPasses) {
+            val (applied, _) = downloadOnceInternal(
+                limit = limit,
+                includeSelf = false,
+                until = 0L,
+                isPostUploadLookback = false
+            ).getOrElse { err ->
+                sqliteNowLogger.w(err) { "post-upload peer download drain failed: ${err.message}" }
+                return
             }
-        val lb = maxOf(1000L, config.downloadLimit.toLong() * 2)
-        val windowStart = (target - lb).coerceAtLeast(0L)
-        sqliteNowLogger.d { "drainLookbackUntilInternal: from=$windowStart to=$target" }
-        db.prepare("UPDATE _sync_client_info SET last_server_seq_seen=?").use { st ->
-            st.bindLong(1, windowStart)
-            st.step()
-        }
-        var nextAfter = windowStart
-        var passes = 0
-        val maxPasses = 50
-        while (true) {
-            val prev = nextAfter
-            sqliteNowLogger.d { "drainLookbackUntilInternal: pass $passes downloading from seq=$prev" }
-            val (applied, na) = downloadOnceInternal(
-                limit = config.downloadLimit,
-                includeSelf = true,  // Include self during lookback to update local metadata
-                isPostUploadLookback = true
-            ).getOrElse { 0 to prev }
-            sqliteNowLogger.d { "drainLookbackUntilInternal: pass $passes downloaded $applied changes, nextAfter=$na" }
-            nextAfter = na
-            passes++
-            val caughtUp = nextAfter >= target
-            val stagnated = nextAfter == prev
-            if (applied == 0 || caughtUp || stagnated || passes >= maxPasses) break
-        }
-        // Restore to target to avoid leaving cursor behind
-        val current: Long = db.prepare("SELECT last_server_seq_seen FROM _sync_client_info LIMIT 1")
-            .use { st -> if (st.step()) st.getLong(0) else 0L }
-        if (current < target) {
-            db.prepare("UPDATE _sync_client_info SET last_server_seq_seen=?").use { st ->
-                st.bindLong(1, target)
-                st.step()
-            }
+
+            if (applied == 0 || applied < limit) return
         }
     }
 

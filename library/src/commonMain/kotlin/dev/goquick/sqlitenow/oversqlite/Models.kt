@@ -49,7 +49,7 @@ data class ChangeUpload(
 @Serializable
 data class UploadResponse(
     val accepted: Boolean,
-    @SerialName("highest_server_seq") val highestServerSeq: Long,
+    @SerialName("highest_server_seq") val highestServerSeq: Long, // per-user watermark (do not use as download cursor)
     val statuses: List<ChangeUploadStatus>
 )
 
@@ -90,6 +90,7 @@ object InvalidReasons {
     const val PRECHECK_ERROR: String = "precheck_error"
     const val INTERNAL_ERROR: String = "internal_error"
     const val UNREGISTERED_TABLE: String = "unregistered_table"
+    const val BATCH_TOO_LARGE: String = "batch_too_large"
 }
 
 /**
