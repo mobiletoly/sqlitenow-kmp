@@ -8,22 +8,29 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 plugins {
-    id(libs.plugins.androidLibrary.get().pluginId)
+    id(libs.plugins.androidKotlinMultiplatformLibrary.get().pluginId)
     id(libs.plugins.kotlinMultiplatform.get().pluginId)
     id(libs.plugins.serialization.get().pluginId)
     id(libs.plugins.mavenPublish.get().pluginId)
 }
 
 group = "dev.goquick.sqlitenow"
-version = "0.5.8"
+version = "0.5.9-SNAPSHOT"
 
 kotlin {
     jvmToolchain(17)
     applyDefaultHierarchyTemplate()
     jvm()
 
-    androidTarget {
-        publishLibraryVariants("release")
+    androidLibrary {
+        namespace = group.toString()
+        compileSdk = libs.versions.android.compileSdk.get().toInt()
+        minSdk = libs.versions.android.minSdk.get().toInt()
+
+        withDeviceTestBuilder {
+            sourceSetTreeName = "test"
+        }
+
         @OptIn(ExperimentalKotlinGradlePluginApi::class)
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_17)
@@ -86,6 +93,13 @@ kotlin {
             implementation(libs.ktor.client.okhttp)
         }
 
+        getByName("androidDeviceTest").dependencies {
+            implementation(libs.androidx.test.runner)
+            implementation(libs.androidx.test.rules)
+            implementation(libs.androidx.junit)
+            implementation(libs.kotlinx.coroutines.test)
+        }
+
         iosMain.dependencies {
             implementation(libs.sqlite.bundled)
             implementation(libs.ktor.client.darwin)
@@ -133,26 +147,6 @@ tasks.named<ProcessResources>("wasmJsProcessResources") {
     dependsOn(copySqlJsWasmForWasm)
     from(wasmSqlJsResourceDir)
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-}
-
-android {
-    namespace = group.toString()
-    compileSdk = libs.versions.android.compileSdk.get().toInt()
-    defaultConfig {
-        minSdk = libs.versions.android.minSdk.get().toInt()
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-    }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-}
-
-dependencies {
-    androidTestImplementation(libs.androidx.test.runner)
-    androidTestImplementation(libs.androidx.test.rules)
-    androidTestImplementation(libs.androidx.junit)
-    androidTestImplementation(libs.kotlinx.coroutines.test)
 }
 
 mavenPublishing {

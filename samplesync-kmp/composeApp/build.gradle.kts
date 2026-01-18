@@ -2,11 +2,11 @@ import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 import org.gradle.language.jvm.tasks.ProcessResources
 
 plugins {
-    id(libs.plugins.kotlinMultiplatform.get().pluginId)
-    id(libs.plugins.androidApplication.get().pluginId)
-    id(libs.plugins.jetbrainsCompose.get().pluginId)
-    id(libs.plugins.composeCompiler.get().pluginId)
-    id(libs.plugins.serialization.get().pluginId)
+    alias(libs.plugins.kotlinMultiplatform)
+    alias(libs.plugins.androidKotlinMultiplatformLibrary)
+    alias(libs.plugins.jetbrainsCompose)
+    alias(libs.plugins.composeCompiler)
+    alias(libs.plugins.serialization)
     id("dev.goquick.sqlitenow")
 }
 
@@ -14,11 +14,17 @@ kotlin {
     jvmToolchain(17)
     applyDefaultHierarchyTemplate()
 
-    androidTarget {
-        compilations.all {
-            this@androidTarget.compilerOptions {
-                jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-            }
+    androidLibrary {
+        namespace = "dev.goquick.sqlitenow.samplesynckmp"
+        compileSdk = libs.versions.android.compileSdk.get().toInt()
+        minSdk = libs.versions.android.minSdk.get().toInt()
+
+        androidResources {
+            enable = true
+        }
+
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
         }
     }
 
@@ -54,13 +60,13 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            implementation(compose.runtime)
-            implementation(compose.foundation)
-            implementation(compose.ui)
-            implementation(compose.material)
-            implementation(compose.materialIconsExtended)
-            implementation(compose.components.resources)
-            implementation(compose.components.uiToolingPreview)
+            implementation(libs.jetbrains.compose.runtime)
+            implementation(libs.jetbrains.compose.foundation)
+            implementation(libs.jetbrains.compose.ui)
+            implementation(libs.jetbrains.compose.material)
+            implementation(libs.jetbrains.compose.material.iconsExtended)
+            implementation(libs.jetbrains.compose.components.resources)
+            implementation(libs.jetbrains.compose.components.uiToolingPreview)
             implementation(libs.kotlinx.datetime)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.kotlinx.serialization.cbor)
@@ -89,61 +95,22 @@ kotlin {
         }
 
         jsMain.dependencies {
-            implementation(compose.runtime)
-            implementation(compose.foundation)
-            implementation(compose.material)
-            implementation(compose.ui)
+            implementation(libs.jetbrains.compose.runtime)
+            implementation(libs.jetbrains.compose.foundation)
+            implementation(libs.jetbrains.compose.material)
+            implementation(libs.jetbrains.compose.ui)
             implementation(devNpm("copy-webpack-plugin", "11.0.0"))
             implementation(npm("sql.js", "1.13.0"))
         }
 
         wasmJsMain.dependencies {
-            implementation(compose.runtime)
-            implementation(compose.foundation)
-            implementation(compose.material)
-            implementation(compose.ui)
+            implementation(libs.jetbrains.compose.runtime)
+            implementation(libs.jetbrains.compose.foundation)
+            implementation(libs.jetbrains.compose.material)
+            implementation(libs.jetbrains.compose.ui)
             implementation(devNpm("copy-webpack-plugin", "11.0.0"))
             implementation(npm("sql.js", "1.13.0"))
         }
-    }
-}
-
-android {
-    compileSdk = libs.versions.android.compileSdk.get().toInt()
-    namespace = "dev.goquick.sqlitenow.samplesynckmp"
-
-    sourceSets["main"].manifest.srcFile("src/androidMain/AndroidManifest.xml")
-    sourceSets["main"].res.srcDirs("src/androidMain/res")
-
-    defaultConfig {
-        applicationId = "dev.goquick.sqlitenow.samplesynckmp"
-        minSdk = libs.versions.android.minSdk.get().toInt()
-        targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 1
-        versionName = "1.0"
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    packaging {
-        resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
-        }
-    }
-
-    buildFeatures {
-        compose = true
-        buildConfig = true
-    }
-
-    lint {
-        abortOnError = false
-    }
-
-    dependencies {
     }
 }
 

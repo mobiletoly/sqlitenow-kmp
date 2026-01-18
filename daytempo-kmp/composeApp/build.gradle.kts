@@ -2,7 +2,7 @@ import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 plugins {
     id(libs.plugins.kotlinMultiplatform.get().pluginId)
-    id(libs.plugins.androidApplication.get().pluginId)
+    id(libs.plugins.androidKotlinMultiplatformLibrary.get().pluginId)
     id(libs.plugins.jetbrainsCompose.get().pluginId)
     id(libs.plugins.composeCompiler.get().pluginId)
     id(libs.plugins.serialization.get().pluginId)
@@ -11,11 +11,21 @@ plugins {
 
 kotlin {
     jvmToolchain(17)
-    androidTarget {
-        compilations.all {
-            this@androidTarget.compilerOptions {
-                jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-            }
+    androidLibrary {
+        namespace = "dev.goquick.sqlitenow.daytempokmp"
+        compileSdk = libs.versions.android.compileSdk.get().toInt()
+        minSdk = libs.versions.android.minSdk.get().toInt()
+
+        androidResources {
+            enable = true
+        }
+
+        withDeviceTestBuilder {
+            sourceSetTreeName = "test"
+        }
+
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
         }
     }
 
@@ -26,12 +36,12 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            implementation(compose.runtime)
-            implementation(compose.foundation)
-            implementation(compose.ui)
-            implementation(compose.material)
-            implementation(compose.components.resources)
-            implementation(compose.components.uiToolingPreview)
+            implementation(libs.jetbrains.compose.runtime)
+            implementation(libs.jetbrains.compose.foundation)
+            implementation(libs.jetbrains.compose.ui)
+            implementation(libs.jetbrains.compose.material)
+            implementation(libs.jetbrains.compose.components.resources)
+            implementation(libs.jetbrains.compose.components.uiToolingPreview)
             implementation(libs.sqlite.bundled)
             implementation(libs.kotlinx.datetime)
             implementation(libs.kotlinx.serialization.json)
@@ -48,51 +58,11 @@ kotlin {
             implementation(libs.compose.ui.toolingPreview)
         }
 
-        // Android instrumentation tests (device/emulator). Keep it minimal; used to compile generated code.
-        androidInstrumentedTest.dependencies {
+        // Android device tests (device/emulator). Keep it minimal; used to compile generated code.
+        getByName("androidDeviceTest").dependencies {
             implementation(libs.androidx.junit)
             implementation(libs.androidx.test.runner)
         }
-    }
-}
-
-android {
-    compileSdk = libs.versions.android.compileSdk.get().toInt()
-    namespace = "dev.goquick.sqlitenow.daytempokmp"
-
-    sourceSets["main"].manifest.srcFile("src/androidMain/AndroidManifest.xml")
-    sourceSets["main"].res.srcDirs("src/androidMain/res")
-
-    defaultConfig {
-        applicationId = "dev.goquick.sqlitenow.daytempokmp"
-        minSdk = libs.versions.android.minSdk.get().toInt()
-        targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 1
-        versionName = "1.0"
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    packaging {
-        resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
-        }
-    }
-
-    buildFeatures {
-        compose = true
-        buildConfig = true
-    }
-
-    lint {
-        abortOnError = false
-    }
-
-    dependencies {
     }
 }
 

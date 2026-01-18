@@ -3,20 +3,43 @@ import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 import org.gradle.language.jvm.tasks.ProcessResources
 import org.jetbrains.kotlin.gradle.targets.jvm.KotlinJvmTarget
 
+val composeDesktopCurrentOsDependency = run {
+    val os = System.getProperty("os.name").lowercase()
+    val arch = System.getProperty("os.arch").lowercase()
+    val targetId = when {
+        os.contains("mac") || os.contains("darwin") ->
+            if (arch.contains("aarch64") || arch.contains("arm64")) "macos-arm64" else "macos-x64"
+        os.contains("win") ->
+            if (arch.contains("aarch64") || arch.contains("arm64")) "windows-arm64" else "windows-x64"
+        else ->
+            if (arch.contains("aarch64") || arch.contains("arm64")) "linux-arm64" else "linux-x64"
+    }
+    "org.jetbrains.compose.desktop:desktop-jvm-$targetId:${libs.versions.compose.plugin.get()}"
+}
+
 plugins {
     id(libs.plugins.kotlinMultiplatform.get().pluginId)
-    id(libs.plugins.androidApplication.get().pluginId)
+    id(libs.plugins.androidKotlinMultiplatformLibrary.get().pluginId)
     id(libs.plugins.jetbrainsCompose.get().pluginId)
-    id(libs.plugins.composeCompiler.get().pluginId)
+//    id(libs.plugins.composeCompiler.get().pluginId)
     id(libs.plugins.serialization.get().pluginId)
     id("dev.goquick.sqlitenow")
+    alias(libs.plugins.composeCompiler)
 }
 
 kotlin {
     jvmToolchain(17)
     applyDefaultHierarchyTemplate()
 
-    androidTarget()
+    androidLibrary {
+        namespace = "dev.goquick.sqlitenow.samplekmp"
+        compileSdk = libs.versions.android.compileSdk.get().toInt()
+        minSdk = libs.versions.android.minSdk.get().toInt()
+
+        androidResources {
+            enable = true
+        }
+    }
 
     jvm("desktop")
 
@@ -52,12 +75,12 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            implementation(compose.runtime)
-            implementation(compose.foundation)
-            implementation(compose.ui)
-            implementation(compose.material)
-            implementation(compose.components.resources)
-            implementation(compose.components.uiToolingPreview)
+            implementation(libs.jetbrains.compose.runtime)
+            implementation(libs.jetbrains.compose.foundation)
+            implementation(libs.jetbrains.compose.ui)
+            implementation(libs.jetbrains.compose.material)
+            implementation(libs.jetbrains.compose.components.resources)
+            implementation(libs.jetbrains.compose.components.uiToolingPreview)
             implementation(libs.kotlinx.datetime)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.kotlinx.serialization.cbor)
@@ -73,63 +96,24 @@ kotlin {
         }
 
         getByName("desktopMain").dependencies {
-            implementation(compose.desktop.currentOs)
+            implementation(composeDesktopCurrentOsDependency)
         }
 
         jsMain.dependencies {
-            implementation(compose.runtime)
-            implementation(compose.foundation)
-            implementation(compose.material)
-            implementation(compose.ui)
+            implementation(libs.jetbrains.compose.runtime)
+            implementation(libs.jetbrains.compose.foundation)
+            implementation(libs.jetbrains.compose.material)
+            implementation(libs.jetbrains.compose.ui)
             implementation(npm("sql.js", "1.13.0"))
         }
 
         wasmJsMain.dependencies {
-            implementation(compose.runtime)
-            implementation(compose.foundation)
-            implementation(compose.material)
-            implementation(compose.ui)
+            implementation(libs.jetbrains.compose.runtime)
+            implementation(libs.jetbrains.compose.foundation)
+            implementation(libs.jetbrains.compose.material)
+            implementation(libs.jetbrains.compose.ui)
             implementation(npm("sql.js", "1.13.0"))
         }
-    }
-}
-
-android {
-    compileSdk = libs.versions.android.compileSdk.get().toInt()
-    namespace = "dev.goquick.sqlitenow.samplekmp"
-
-    sourceSets["main"].manifest.srcFile("src/androidMain/AndroidManifest.xml")
-    sourceSets["main"].res.srcDirs("src/androidMain/res")
-
-    defaultConfig {
-        applicationId = "dev.goquick.sqlitenow.samplekmp"
-        minSdk = libs.versions.android.minSdk.get().toInt()
-        targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 1
-        versionName = "1.0"
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    packaging {
-        resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
-        }
-    }
-
-    buildFeatures {
-        compose = true
-        buildConfig = true
-    }
-
-    lint {
-        abortOnError = false
-    }
-
-    dependencies {
     }
 }
 

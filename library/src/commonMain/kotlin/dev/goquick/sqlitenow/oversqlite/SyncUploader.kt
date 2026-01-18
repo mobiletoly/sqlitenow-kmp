@@ -206,14 +206,14 @@ class SyncUploader(
 
             val out = mutableListOf<PendingChange>()
             while (st.step()) {
-                val cid = st.getLong(5)
+                val cid = if (st.isNull(5)) null else st.getLong(5)
                 out += PendingChange(
                     table = st.getText(0),
                     pk = st.getText(1),
                     op = st.getText(2),
                     baseVersion = st.getLong(3),
                     payload = if (st.isNull(4)) null else st.getText(4), // Handle NULL payload for DELETE operations
-                    changeId = if (cid < 0) null else cid
+                    changeId = cid?.takeIf { it > 0 }
                 )
             }
             out
