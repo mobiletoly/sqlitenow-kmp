@@ -17,6 +17,18 @@ plugins {
 group = "dev.goquick.sqlitenow"
 version = "0.5.9-SNAPSHOT"
 
+val isPublishingToMavenLocal =
+    gradle.startParameter.taskNames.any { it.contains("publishToMavenLocal", ignoreCase = true) }
+val hasSigningCredentials =
+    providers.environmentVariable("SIGNING_KEY").isPresent ||
+        providers.environmentVariable("SIGNING_KEY_ID").isPresent ||
+        providers.environmentVariable("SIGNING_PASSWORD").isPresent ||
+        providers.gradleProperty("signingInMemoryKey").isPresent ||
+        providers.gradleProperty("signing.keyId").isPresent ||
+        providers.gradleProperty("signing.password").isPresent ||
+        providers.gradleProperty("signing.secretKeyRingFile").isPresent ||
+        providers.gradleProperty("signing.gnupg.keyName").isPresent
+
 kotlin {
     jvmToolchain(17)
     applyDefaultHierarchyTemplate()
@@ -88,6 +100,10 @@ kotlin {
             implementation(libs.sqlite.bundled)
         }
 
+        jvmTest.dependencies {
+            implementation("io.ktor:ktor-client-cio:${libs.versions.ktor.get()}")
+        }
+
         androidMain.dependencies {
             implementation(libs.sqlite.bundled)
             implementation(libs.ktor.client.okhttp)
@@ -152,7 +168,9 @@ tasks.named<ProcessResources>("wasmJsProcessResources") {
 mavenPublishing {
     publishToMavenCentral()
 
-    signAllPublications()
+    if (!isPublishingToMavenLocal && hasSigningCredentials) {
+        signAllPublications()
+    }
 
     coordinates(group.toString(), "core", version.toString())
 

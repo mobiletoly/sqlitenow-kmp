@@ -194,6 +194,10 @@ internal class SyncBootstrapper(
             sqliteNowLogger.i { "bootstrap: columns=${columns.joinToString(", ")}" }
         }
 
+        // Trigger naming convention:
+        // - trg_<table>_ai = AFTER INSERT
+        // - trg_<table>_au = AFTER UPDATE
+        // - trg_<table>_ad = AFTER DELETE
         // Build a JSON payload expression that renders BLOB columns as hex(NEW.col) text
         val tableInfo = TableInfoProvider.get(db, tableLc)
         val blobAwarePayloadExpr = buildJsonObjectExprHexAware(
@@ -218,14 +222,17 @@ internal class SyncBootstrapper(
         pkExprNew: String,
         payloadExpr: String
     ) {
+        // trg_<table>_ai = AFTER INSERT trigger (see naming convention in createTriggersForTable()).
+        db.execSQL("DROP TRIGGER IF EXISTS trg_${tableLc}_ai;")
         val triggerSql =
             """
-            CREATE TRIGGER IF NOT EXISTS trg_${tableLc}_ai
+            CREATE TRIGGER trg_${tableLc}_ai
             AFTER INSERT ON ${tableLc}
             WHEN COALESCE((SELECT apply_mode FROM _sync_client_info LIMIT 1), 0) = 0
             BEGIN
-              INSERT OR IGNORE INTO _sync_row_meta(table_name, pk_uuid, server_version, deleted)
-              VALUES ('${tableLc}', ${pkExprNew}, 0, 0);
+              INSERT INTO _sync_row_meta(table_name, pk_uuid, server_version, deleted)
+              VALUES ('${tableLc}', ${pkExprNew}, 0, 0)
+              ON CONFLICT(table_name, pk_uuid) DO NOTHING;
 
               -- Reset deleted flag when record is reinserted
               -- This handles the case where a record was deleted and then reinserted
@@ -264,14 +271,17 @@ internal class SyncBootstrapper(
         pkExprNew: String,
         payloadExpr: String
     ) {
+        // trg_<table>_au = AFTER UPDATE trigger (see naming convention in createTriggersForTable()).
+        db.execSQL("DROP TRIGGER IF EXISTS trg_${tableLc}_au;")
         db.execSQL(
             """
-            CREATE TRIGGER IF NOT EXISTS trg_${tableLc}_au
+            CREATE TRIGGER trg_${tableLc}_au
             AFTER UPDATE ON ${tableLc}
             WHEN COALESCE((SELECT apply_mode FROM _sync_client_info LIMIT 1), 0) = 0
             BEGIN
-              INSERT OR IGNORE INTO _sync_row_meta(table_name, pk_uuid, server_version, deleted)
-              VALUES ('${tableLc}', ${pkExprNew}, 0, 0);
+              INSERT INTO _sync_row_meta(table_name, pk_uuid, server_version, deleted)
+              VALUES ('${tableLc}', ${pkExprNew}, 0, 0)
+              ON CONFLICT(table_name, pk_uuid) DO NOTHING;
 
               UPDATE _sync_row_meta SET deleted=0, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
               WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew};
@@ -298,14 +308,17 @@ internal class SyncBootstrapper(
     }
 
     private suspend fun createDeleteTrigger(db: SafeSQLiteConnection, tableLc: String, primaryKeyColumn: String, pkExprOld: String) {
+        // trg_<table>_ad = AFTER DELETE trigger (see naming convention in createTriggersForTable()).
+        db.execSQL("DROP TRIGGER IF EXISTS trg_${tableLc}_ad;")
         db.execSQL(
             """
-            CREATE TRIGGER IF NOT EXISTS trg_${tableLc}_ad
+            CREATE TRIGGER trg_${tableLc}_ad
             AFTER DELETE ON ${tableLc}
             WHEN COALESCE((SELECT apply_mode FROM _sync_client_info LIMIT 1), 0) = 0
             BEGIN
-              INSERT OR IGNORE INTO _sync_row_meta(table_name, pk_uuid, server_version, deleted)
-              VALUES ('${tableLc}', ${pkExprOld}, 0, 1);
+              INSERT INTO _sync_row_meta(table_name, pk_uuid, server_version, deleted)
+              VALUES ('${tableLc}', ${pkExprOld}, 0, 1)
+              ON CONFLICT(table_name, pk_uuid) DO NOTHING;
 
               INSERT INTO _sync_pending(table_name, pk_uuid, op, base_version, payload, change_id)
               SELECT '${tableLc}', ${pkExprOld}, 'DELETE',

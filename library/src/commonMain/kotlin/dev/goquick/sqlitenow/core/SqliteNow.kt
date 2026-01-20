@@ -341,7 +341,13 @@ private suspend fun SafeSQLiteConnection.readUserVersion(): Int {
 
 private suspend fun SafeSQLiteConnection.hasUserTables(): Boolean {
     val statement = prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' LIMIT 1",
+        // Android's bundled SQLite driver may create `android_metadata` automatically on first open.
+        // Treat it as an internal table so bootstrap/migrations still run for a fresh DB.
+        "SELECT name FROM sqlite_master " +
+            "WHERE type='table' " +
+            "AND name NOT LIKE 'sqlite_%' " +
+            "AND name != 'android_metadata' " +
+            "LIMIT 1",
     )
     statement.use {
         return it.step()
