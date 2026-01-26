@@ -232,7 +232,7 @@ private val lastNames = listOf(
 private val domains = listOf("gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "example.com")
 
 val db = NowSampleSyncDatabase(
-    resolveDatabasePath("test05.db"),
+    resolveDatabasePath(dbName = "test05.db", appName = "SampleSync"),
     personAdapters = NowSampleSyncDatabase.PersonAdapters(
         birthDateToSqlValue = {
             it?.toSqliteDate()

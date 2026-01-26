@@ -28,7 +28,7 @@ Then, configure your adapters with `jsonDecodeFromSqlite` and `jsonEncodeToSqlit
 
 ```kotlin
 val db = SampleDatabase(
-    dbName = resolveDatabasePath("sample.db"),
+    dbName = resolveDatabasePath(dbName = "sample.db", appName = "SampleApp"),
     migration = VersionBasedDatabaseMigrations(),
     commentAdapters = SampleDatabase.CommentAdapters(
         sqlColumnToTags = { value -> value?.jsonDecodeFromSqlite() ?: emptyList() },
@@ -54,7 +54,7 @@ CREATE TABLE comment
 
 ```kotlin
 val db = SampleDatabase(
-    dbName = resolveDatabasePath("sample.db"),
+    dbName = resolveDatabasePath(dbName = "sample.db", appName = "SampleApp"),
     migration = VersionBasedDatabaseMigrations(),
     commentAdapters = SampleDatabase.CommentAdapters(
         sqlColumnToCreatedAt = { value -> LocalDateTime.fromSqliteTimestamp(value) },
@@ -89,7 +89,7 @@ enum class AddressType(val value: String) {
 
 ```kotlin
 val db = SampleDatabase(
-    dbName = resolveDatabasePath("sample.db"),
+    dbName = resolveDatabasePath(dbName = "sample.db", appName = "SampleApp"),
     migration = VersionBasedDatabaseMigrations(),
     personAddressAdapters = SampleDatabase.PersonAddressAdapters(
         addressTypeToSqlColumn = { it.value },

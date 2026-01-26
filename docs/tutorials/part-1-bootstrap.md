@@ -270,7 +270,8 @@ class MoodDatabaseFactory(
     private val debug: Boolean = false,
 ) {
     suspend fun create(): MoodTrackerDatabase {
-        val resolvedName = resolveDatabasePath(dbName)
+        val appName = "MoodTracker"
+        val resolvedName = resolveDatabasePath(dbName = dbName, appName = appName)
         val database = MoodTrackerDatabase(
             dbName = resolvedName,
             migration = VersionBasedDatabaseMigrations(),
@@ -283,8 +284,10 @@ class MoodDatabaseFactory(
 ```
 
 `resolveDatabasePath` comes from the SQLiteNow runtime (`dev.goquick.sqlitenow.common.resolveDatabasePath`)
-and maps friendly filenames to the correct location on each target, so you do not need to write
-platform-specific plumbing.
+and maps friendly filenames to the correct location on each target. On JVM/desktop you must supply
+an app-specific name (used to pick the OS app-data directory); other platforms ignore the value.
+Because the JVM implementation uses `appName` as a directory segment, path-unsafe characters will
+throw an exception.
 
 Repository (notice we return `MoodEntryRow` straight from SQLiteNow—no extra DTO layer):
 

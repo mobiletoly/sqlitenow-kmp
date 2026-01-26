@@ -19,21 +19,32 @@ import java.io.File
 
 /**
  * Returns the path where the database should be stored on JVM platforms.
- * Uses the user's home directory with a subdirectory for the application.
+ * Uses OS app-data directories with an application-specific subdirectory.
  */
-actual fun resolveDatabasePath(dbName: String): String {
-    // Get the user's home directory
-    val userHome = System.getProperty("user.home")
-    
-    // Create an application-specific directory
-    val appDir = File(userHome, ".sqlitenow")
-    
-    // Ensure the directory exists
+actual fun resolveDatabasePath(dbName: String, appName: String): String {
+    val userHome = System.getProperty("user.home") ?: "."
+    val osName = System.getProperty("os.name")?.lowercase() ?: ""
+
+    val baseDir = when {
+        osName.contains("mac") || osName.contains("darwin") ->
+            File(userHome, "Library/Application Support")
+        osName.contains("win") -> {
+            val appData = System.getenv("APPDATA") ?: File(userHome, "AppData/Roaming").path
+            File(appData)
+        }
+        else -> {
+            val xdgDataHome = System.getenv("XDG_DATA_HOME")?.takeIf { it.isNotBlank() }
+            File(xdgDataHome ?: File(userHome, ".local/share").path)
+        }
+    }
+
+    val validatedAppName = requirePathSafeAppName(appName)
+
+    val appDir = File(baseDir, validatedAppName)
     if (!appDir.exists()) {
         appDir.mkdirs()
     }
-    
-    // Return the full path to the database file
+
     return File(appDir, dbName).absolutePath
 }
 
@@ -43,4 +54,18 @@ internal actual fun validateFileExists(path: String): Boolean {
 
 actual fun platform(): PlatformType {
     return PlatformType.JVM
+}
+
+private fun requirePathSafeAppName(name: String): String {
+    val trimmed = name.trim()
+    require(trimmed.isNotEmpty()) {
+        "appName must be a non-empty, path-safe string"
+    }
+
+    val invalidChars = Regex("""[\\/:*?"<>|]""")
+    require(!invalidChars.containsMatchIn(trimmed)) {
+        "appName contains path-unsafe characters: \\ / : * ? \" < > |"
+    }
+
+    return trimmed
 }

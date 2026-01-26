@@ -20,8 +20,13 @@ import platform.Foundation.NSDocumentDirectory
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSUserDomainMask
 
+/**
+ * Returns the path where the database should be stored on iOS.
+ *
+ * @param appName Ignored on iOS (app sandbox already scopes the path; used on JVM only).
+ */
 @OptIn(ExperimentalForeignApi::class)
-actual fun resolveDatabasePath(dbName: String): String {
+actual fun resolveDatabasePath(dbName: String, appName: String): String {
     val url = NSFileManager.defaultManager
         .URLForDirectory(
             NSDocumentDirectory, NSUserDomainMask,

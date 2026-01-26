@@ -15,7 +15,12 @@
  */
 package dev.goquick.sqlitenow.common
 
-actual fun resolveDatabasePath(dbName: String): String = dbName
+/**
+ * Returns the path where the database should be stored on web targets.
+ *
+ * @param appName Ignored on web targets (used on JVM only).
+ */
+actual fun resolveDatabasePath(dbName: String, appName: String): String = dbName
 
 internal actual fun validateFileExists(path: String): Boolean = false
 

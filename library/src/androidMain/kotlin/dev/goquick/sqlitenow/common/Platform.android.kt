@@ -27,10 +27,11 @@ fun setupAndroidAppContext(context: Context) {
 /**
  * Returns the path where the database should be stored on Android.
  * Uses the app's database directory.
+ *
+ * @param appName Ignored on Android (app sandbox already scopes the path; used on JVM only).
  */
-actual fun resolveDatabasePath(dbName: String): String {
-    val path = appContext.getDatabasePath(dbName).absolutePath
-    return path
+actual fun resolveDatabasePath(dbName: String, appName: String): String {
+    return appContext.getDatabasePath(dbName).absolutePath
 }
 
 internal actual fun validateFileExists(path: String): Boolean {

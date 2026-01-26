@@ -480,7 +480,11 @@ class MainActivity : ComponentActivity() {
 ```kotlin
 // MoodDatabaseFactory.kt
 
-val resolvedName = if (dbName.startsWith(":")) dbName else resolveDatabasePath(dbName)
+val appName = "MoodTracker"
+val resolvedName = if (dbName.startsWith(":")) dbName else resolveDatabasePath(
+    dbName = dbName,
+    appName = appName
+)
 val database = MoodTrackerDatabase(
     dbName = resolvedName,
     migration = VersionBasedDatabaseMigrations(),

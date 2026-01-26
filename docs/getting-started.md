@@ -185,6 +185,10 @@ to use `resolveDatabasePath` helper function (that resolves to platform-specific
 database documents directory). Not needed for non-Android platforms and not
 needed if you already have your own way to resolve database path.
 
+On JVM/desktop, `resolveDatabasePath` uses `appName` as a directory segment,
+so it must be path-safe (path-unsafe characters will throw). Other platforms
+ignore `appName`.
+
 ```kotlin
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -204,7 +208,7 @@ class MainActivity : ComponentActivity() {
 // Initialize your database
 // Normally you want to find a better place for this code, but for the sake of example it's here
 val db = SampleDatabase(
-    resolveDatabasePath("sample.db"),
+    resolveDatabasePath(dbName = "sample.db", appName = "SampleApp"),
     personAdapters = SampleDatabase.PersonAdapters(
         // serialize LocalDate to SQLite date string for `birth_date` column
         birthDateToSqlColumn = {
