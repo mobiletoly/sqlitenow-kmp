@@ -50,7 +50,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.goquick.sqlitenow.common.resolveDatabasePath
 import dev.goquick.sqlitenow.core.util.fromSqliteDate
 import dev.goquick.sqlitenow.core.util.fromSqliteTimestamp
 import dev.goquick.sqlitenow.core.util.jsonDecodeListFromSqlite
@@ -235,7 +234,7 @@ private val lastNames = listOf(
 private val domains = listOf("gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "example.com")
 
 val db = NowSampleDatabase(
-    resolveDatabasePath("test04.db"),
+    appDatabasePath("test04.db"),
     personAdapters = NowSampleDatabase.PersonAdapters(
         notesToSqlValue = { it?.let { PersonNote.serialize(it) } },
         birthDateToSqlValue = {

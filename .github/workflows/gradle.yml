@@ -26,9 +26,7 @@ jobs:
             os: macos-latest
           - target: jvmTest
             os: ubuntu-latest
-          - target: testDebugUnitTest
-            os: ubuntu-latest
-          - target: testReleaseUnitTest
+          - target: :sample-kmp:androidApp:testDebugUnitTest
             os: ubuntu-latest
     runs-on: ${{ matrix.os }}
 

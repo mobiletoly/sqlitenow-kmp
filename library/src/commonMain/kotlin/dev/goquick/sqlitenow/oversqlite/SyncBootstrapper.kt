@@ -184,8 +184,7 @@ internal class SyncBootstrapper(
     private suspend fun createTriggersForTable(db: SafeSQLiteConnection, table: String, primaryKeyColumn: String) {
         val tableLc = table.lowercase()
         val columns = getTableColumns(db, tableLc)
-        val newRowJson = jsonObjectExpr(columns, prefix = "NEW")
-        val pkIsBlob = isPrimaryKeyBlob(db, tableLc, primaryKeyColumn)
+        val pkIsBlob = isPrimaryKeyBlob(db, tableLc)
         val pkExprNew = if (pkIsBlob) "lower(hex(NEW.$primaryKeyColumn))" else "NEW.$primaryKeyColumn"
         val pkExprOld = if (pkIsBlob) "lower(hex(OLD.$primaryKeyColumn))" else "OLD.$primaryKeyColumn"
 
@@ -205,9 +204,9 @@ internal class SyncBootstrapper(
             prefix = "NEW"
         )
 
-        createInsertTrigger(db, tableLc, primaryKeyColumn, newRowJson, pkExprNew, blobAwarePayloadExpr)
-        createUpdateTrigger(db, tableLc, primaryKeyColumn, newRowJson, pkExprNew, blobAwarePayloadExpr)
-        createDeleteTrigger(db, tableLc, primaryKeyColumn, pkExprOld)
+        createInsertTrigger(db, tableLc, pkExprNew, blobAwarePayloadExpr)
+        createUpdateTrigger(db, tableLc, pkExprNew, blobAwarePayloadExpr)
+        createDeleteTrigger(db, tableLc, pkExprOld)
 
         if (config.verboseLogs) {
             sqliteNowLogger.i { "bootstrap: triggers created successfully for table=$tableLc" }
@@ -217,8 +216,6 @@ internal class SyncBootstrapper(
     private suspend fun createInsertTrigger(
         db: SafeSQLiteConnection,
         tableLc: String,
-        primaryKeyColumn: String,
-        newRowJson: String,
         pkExprNew: String,
         payloadExpr: String
     ) {
@@ -231,8 +228,11 @@ internal class SyncBootstrapper(
             WHEN COALESCE((SELECT apply_mode FROM _sync_client_info LIMIT 1), 0) = 0
             BEGIN
               INSERT INTO _sync_row_meta(table_name, pk_uuid, server_version, deleted)
-              VALUES ('${tableLc}', ${pkExprNew}, 0, 0)
-              ON CONFLICT(table_name, pk_uuid) DO NOTHING;
+              SELECT '${tableLc}', ${pkExprNew}, 0, 0
+              WHERE NOT EXISTS (
+                SELECT 1 FROM _sync_row_meta
+                WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew}
+              );
 
               -- Reset deleted flag when record is reinserted
               -- This handles the case where a record was deleted and then reinserted
@@ -266,8 +266,6 @@ internal class SyncBootstrapper(
     private suspend fun createUpdateTrigger(
         db: SafeSQLiteConnection,
         tableLc: String,
-        primaryKeyColumn: String,
-        newRowJson: String,
         pkExprNew: String,
         payloadExpr: String
     ) {
@@ -280,8 +278,11 @@ internal class SyncBootstrapper(
             WHEN COALESCE((SELECT apply_mode FROM _sync_client_info LIMIT 1), 0) = 0
             BEGIN
               INSERT INTO _sync_row_meta(table_name, pk_uuid, server_version, deleted)
-              VALUES ('${tableLc}', ${pkExprNew}, 0, 0)
-              ON CONFLICT(table_name, pk_uuid) DO NOTHING;
+              SELECT '${tableLc}', ${pkExprNew}, 0, 0
+              WHERE NOT EXISTS (
+                SELECT 1 FROM _sync_row_meta
+                WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew}
+              );
 
               UPDATE _sync_row_meta SET deleted=0, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
               WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew};
@@ -307,7 +308,7 @@ internal class SyncBootstrapper(
         )
     }
 
-    private suspend fun createDeleteTrigger(db: SafeSQLiteConnection, tableLc: String, primaryKeyColumn: String, pkExprOld: String) {
+    private suspend fun createDeleteTrigger(db: SafeSQLiteConnection, tableLc: String, pkExprOld: String) {
         // trg_<table>_ad = AFTER DELETE trigger (see naming convention in createTriggersForTable()).
         db.execSQL("DROP TRIGGER IF EXISTS trg_${tableLc}_ad;")
         db.execSQL(
@@ -317,8 +318,11 @@ internal class SyncBootstrapper(
             WHEN COALESCE((SELECT apply_mode FROM _sync_client_info LIMIT 1), 0) = 0
             BEGIN
               INSERT INTO _sync_row_meta(table_name, pk_uuid, server_version, deleted)
-              VALUES ('${tableLc}', ${pkExprOld}, 0, 1)
-              ON CONFLICT(table_name, pk_uuid) DO NOTHING;
+              SELECT '${tableLc}', ${pkExprOld}, 0, 1
+              WHERE NOT EXISTS (
+                SELECT 1 FROM _sync_row_meta
+                WHERE table_name='${tableLc}' AND pk_uuid=${pkExprOld}
+              );
 
               INSERT INTO _sync_pending(table_name, pk_uuid, op, base_version, payload, change_id)
               SELECT '${tableLc}', ${pkExprOld}, 'DELETE',
@@ -357,19 +361,11 @@ internal class SyncBootstrapper(
         )
     }
 
-    private suspend fun isPrimaryKeyBlob(db: SafeSQLiteConnection, table: String, primaryKeyColumn: String): Boolean =
+    private suspend fun isPrimaryKeyBlob(db: SafeSQLiteConnection, table: String): Boolean =
         TableInfoProvider.get(db, table).primaryKeyIsBlob
 
     private suspend fun getTableColumns(db: SafeSQLiteConnection, table: String): List<String> =
         TableInfoProvider.get(db, table).columnNamesLower
-
-    private fun jsonObjectExpr(
-        columns: List<String>,
-        prefix: String,
-    ): String =
-        "json_object(" + columns.joinToString(", ") {
-            "'${it.lowercase()}', $prefix.$it"
-        } + ")"
 
     private fun buildJsonObjectExprHexAware(
         tableInfo: TableInfo,

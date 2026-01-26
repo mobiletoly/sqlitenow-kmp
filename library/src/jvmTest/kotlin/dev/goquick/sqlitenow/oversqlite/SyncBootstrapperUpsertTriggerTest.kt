@@ -97,8 +97,9 @@ class SyncBootstrapperUpsertTriggerTest {
             }
             assertTrue(
                 triggerSql?.contains("INSERT INTO _sync_row_meta") == true &&
-                    triggerSql.contains("ON CONFLICT(table_name, pk_uuid) DO NOTHING"),
-                "expected trg_value_registry_ai to use ON CONFLICT DO NOTHING; sql=$triggerSql",
+                    triggerSql.contains("WHERE NOT EXISTS") &&
+                    triggerSql.contains("_sync_row_meta"),
+                "expected trg_value_registry_ai to be UPSERT-safe without requiring ON CONFLICT; sql=$triggerSql",
             )
 
             val idHex = "00112233445566778899aabbccddeeff"
