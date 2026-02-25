@@ -44,12 +44,26 @@ kotlin {
         commonMain.dependencies {
             // ...
             implementation(libs.sqlitenow.kmp)
-            implementation(libs.sqlite.bundled)
             implementation(libs.kotlinx.datetime)
+        }
+
+        // Add sqlite-bundled only to targets that publish this dependency.
+        // Do not place it in commonMain if your project has wasmJs target.
+        androidMain.dependencies {
+            implementation(libs.sqlite.bundled)
+        }
+
+        iosMain.dependencies {
+            implementation(libs.sqlite.bundled)
         }
     }
 }
 ```
+
+If you target Kotlin/Wasm, keep `sqlite-bundled` out of `commonMain`; that artifact does not
+publish a `wasmJs` variant and will break dependency resolution for Wasm tasks.
+For iOS/JVM targets, add `sqlite-bundled` in those platform source sets too (`iosMain`,
+`jvmMain` or `desktopMain`) if you use `BundledSQLiteDriver` there.
 
 Most likely you would need to update your project's root-level `build.gradle.kts` file as well:
 

@@ -53,8 +53,9 @@ Gradle will expose a `generateMoodTrackerDatabase` task once this line is in pla
 ## Step 2 – Add Runtime Dependencies
 
 The generated code needs the SQLiteNow runtime (for `SqliteNowDatabase`, migrations,
-reactive helpers) and the bundled SQLite driver used on native targets. Add them to
-`commonMain` so every platform can resolve them.
+reactive helpers) plus the bundled SQLite driver used on supported native/JVM targets.
+Keep the runtime in `commonMain`, and add `sqlite-bundled` only in platform source sets
+that publish it (for example `androidMain`; do not put it in `commonMain` when using `wasmJs`).
 
 Feel free to replace version with more recent one.
 
