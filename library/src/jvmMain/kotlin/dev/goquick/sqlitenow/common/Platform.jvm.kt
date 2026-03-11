@@ -55,17 +55,3 @@ internal actual fun validateFileExists(path: String): Boolean {
 actual fun platform(): PlatformType {
     return PlatformType.JVM
 }
-
-private fun requirePathSafeAppName(name: String): String {
-    val trimmed = name.trim()
-    require(trimmed.isNotEmpty()) {
-        "appName must be a non-empty, path-safe string"
-    }
-
-    val invalidChars = Regex("""[\\/:*?"<>|]""")
-    require(!invalidChars.containsMatchIn(trimmed)) {
-        "appName contains path-unsafe characters: \\ / : * ? \" < > |"
-    }
-
-    return trimmed
-}

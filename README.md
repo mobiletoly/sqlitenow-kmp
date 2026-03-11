@@ -32,6 +32,8 @@ accompanying [sample project](https://github.com/mobiletoly/moodtracker-sample-k
 
 - Android (Kotlin/JVM via AndroidX bundled SQLite driver)
 - iOS (Kotlin/Native with bundled SQLite)
+- macOS native (`macosArm64`, `macosX64`) with bundled SQLite
+- Linux native (`linuxX64`, `linuxArm64`) with bundled SQLite
 - JVM desktop/server targets
 - JavaScript (browser) via SQL.js with optional IndexedDB persistence
 - Kotlin/Wasm (browser) using the same SQL.js runtime with automatic OPFS or IndexedDB persistence
@@ -42,7 +44,7 @@ accompanying [sample project](https://github.com/mobiletoly/moodtracker-sample-k
 - **Comment-based Annotations** - Control code generation using simple `-- @@{ annotations }`
   comments in your SQL.
 - **No IDE Plugin Required** - Works with any editor, uses Gradle plugin for code generation
-- **Kotlin Multiplatform** - Targets Android, iOS, JVM, JavaScript, and Kotlin/Wasm browsers
+- **Kotlin Multiplatform** - Targets Android, iOS, macOS, Linux, JVM, JavaScript, and Kotlin/Wasm browsers
   using [androidx.sqlite](https://developer.android.com/kotlin/multiplatform/sqlite) driver plus SQL.js where appropriate
 - **SQLite Focused** - Optimized specifically for SQLite features and capabilities
 - **Migration support** - Migration scripts are supported to manage database schema changes

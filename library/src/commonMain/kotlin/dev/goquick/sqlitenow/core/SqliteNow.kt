@@ -38,9 +38,9 @@ import kotlin.concurrent.Volatile
  * Base class for generated database classes.
  *
  * The generated types build on this implementation across every supported Kotlin target:
- * Android/JVM, iOS/Native, JavaScript, and Kotlin/Wasm. On browser targets the runtime
- * uses SQL.js under the hood (with optional IndexedDB snapshots) while native targets rely
- * on the bundled SQLite driver.
+ * Android/JVM, iOS/Native, macOS/Native, Linux/Native, JavaScript, and Kotlin/Wasm.
+ * On browser targets the runtime uses SQL.js under the hood (with optional IndexedDB
+ * snapshots) while native targets rely on the bundled SQLite driver.
  */
 open class SqliteNowDatabase private constructor(
     private val dbName: String,

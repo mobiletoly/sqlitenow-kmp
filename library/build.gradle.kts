@@ -15,7 +15,7 @@ plugins {
 }
 
 group = "dev.goquick.sqlitenow"
-version = "0.6.0"
+version = "0.7.0-SNAPSHOT"
 
 val isPublishingToMavenLocal =
     gradle.startParameter.taskNames.any { it.contains("publishToMavenLocal", ignoreCase = true) }
@@ -74,6 +74,10 @@ kotlin {
     iosX64()
     iosArm64()
     iosSimulatorArm64()
+    macosArm64()
+    macosX64()
+    linuxArm64()
+    linuxX64()
 
     sourceSets {
         commonMain.dependencies {
@@ -94,6 +98,12 @@ kotlin {
 //                implementation(libs.kotlinx.coroutines.test)
 //                implementation(kotlin("test"))
 //            }
+        }
+
+        val nativeMain by getting {
+            dependencies {
+                implementation(libs.sqlite.bundled)
+            }
         }
 
         jvmMain.dependencies {
@@ -117,7 +127,6 @@ kotlin {
         }
 
         iosMain.dependencies {
-            implementation(libs.sqlite.bundled)
             implementation(libs.ktor.client.darwin)
         }
 
@@ -137,7 +146,7 @@ kotlin {
                 optIn("kotlin.js.ExperimentalWasmJsInterop")
             }
             dependencies {
-                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core-wasm-js:1.10.2")
+                implementation(libs.kotlinx.coroutines.core.wasm.js)
             }
             resources.srcDir("src/wasmJsMain/resources")
         }

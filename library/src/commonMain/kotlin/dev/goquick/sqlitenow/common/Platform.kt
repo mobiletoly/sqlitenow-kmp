@@ -19,9 +19,9 @@ package dev.goquick.sqlitenow.common
  * Returns the path where the database should be stored on the current platform.
  *
  * @param dbName The database file name.
- * @param appName A stable, app-specific name used for JVM desktop paths. Ignored on non-JVM platforms.
- *        On JVM this value becomes part of the directory path, so keep it stable and path-safe.
- *        On JVM, path-unsafe characters (\\ / : * ? " < > |) will throw an IllegalArgumentException.
+ * @param appName A stable, app-specific name used for desktop paths. Ignored on mobile and web targets.
+ *        On desktop targets this value becomes part of the directory path, so keep it stable and path-safe.
+ *        Path-unsafe characters (\\ / : * ? " < > |) will throw an IllegalArgumentException.
  */
 expect fun resolveDatabasePath(dbName: String, appName: String): String
 
@@ -31,7 +31,7 @@ expect fun resolveDatabasePath(dbName: String, appName: String): String
 internal expect fun validateFileExists(path: String): Boolean
 
 enum class PlatformType {
-    JVM, ANDROID, IOS, JS
+    JVM, ANDROID, IOS, MACOS, LINUX, JS
 }
 
 expect fun platform(): PlatformType

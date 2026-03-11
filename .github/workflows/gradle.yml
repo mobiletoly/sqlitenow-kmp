@@ -24,7 +24,11 @@ jobs:
         include:
           - target: iosSimulatorArm64Test
             os: macos-latest
+          - target: ":library:macosArm64Test :library:compileTestKotlinMacosX64"
+            os: macos-latest
           - target: jvmTest
+            os: ubuntu-latest
+          - target: ":library:linuxX64Test :library:compileTestKotlinLinuxArm64"
             os: ubuntu-latest
           - target: :sample-kmp:androidApp:testDebugUnitTest
             os: ubuntu-latest
