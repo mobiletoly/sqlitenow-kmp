@@ -40,14 +40,15 @@ automatically.
   custom)
 - **Offline-First** - Works seamlessly offline, syncs when connection is available
 - **Secure Authentication** - JWT-based authentication with automatic token refresh
-- **Incremental Sync** - Efficient sync with pagination and change-based updates
+- **Bundle Replay** - Efficient incremental sync with authoritative bundle ordering
+- **Chunked Snapshot Rebuilds** - Full-device hydrate and recover flows use staged snapshots
 - **Selective Sync** - Choose which tables to sync with `enableSync=true` annotation
 
 ## How It Works
 
 OverSqlite follows a simple but powerful client-server pattern:
 
-1. **Enabl sync** on the tables you want to synchronize
+1. **Enable sync** on the tables you want to synchronize
 2. **Connect to sync HTTP server**, developer's own server that uses go-oversync library to handle 
    sync requests and synchronize data with PostgreSQL tables
 3. **Configure authentication** between your app and the sync server
@@ -65,7 +66,7 @@ OverSqlite follows a client-server architecture using the oversync protocol:
 1. **OverSqlite Clients** track local changes and periodically sync with the server
 2. **HTTP Server** (built with go-oversync library) maintains the authoritative state in PostgreSQL
    and resolves conflicts
-3. **Changes** are tracked at the row level with timestamps and device attribution
+3. **Changes** are tracked at the row level and pushed as ordered bundles
 4. **Conflicts** are resolved using pluggable strategies when the same data is modified on multiple
    devices
 
@@ -112,7 +113,7 @@ Understand the two-phase process of setting up sync for new devices and initial 
 
 ### [Sync Operations →]({{ site.baseurl }}/sync/sync-operations/)
 
-Deep dive into upload and download operations, conflict resolution, and sync strategies.
+Deep dive into `pushPending()`, `pullToStable()`, `sync()`, hydration, and recovery.
 
 ### [Reactive Sync Updates →]({{ site.baseurl }}/sync/reactive-updates/)
 
@@ -146,7 +147,7 @@ Set up your sync server to handle client requests and manage data synchronizatio
 
   <a href="{{ site.baseurl }}/sync/sync-operations/" class="doc-nav-card">
     <h3>⚡ Sync Operations</h3>
-    <p>Upload, download, and conflict resolution strategies</p>
+    <p>Push, pull, hydrate, recover, and conflict resolution strategies</p>
   </a>
 
   <a href="{{ site.baseurl }}/sync/reactive-updates/" class="doc-nav-card">

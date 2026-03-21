@@ -44,8 +44,8 @@ A **device** represents a specific installation of your application. Each device
 
 ### What Happens During Bootstrap?
 - **Database Configuration**: Sets up SQLite pragmas (foreign keys, WAL mode, timeouts)
-- **Metadata Tables**: Creates or ensures sync system tables exist (`_sync_client_info`, `_sync_row_meta`, `_sync_pending`)
-- **Client Info Setup**: Creates or updates the client record for this user-device combination
+- **Metadata Tables**: Creates or ensures sync system tables exist (`_sync_client_state`, `_sync_row_state`, `_sync_dirty_rows`, `_sync_snapshot_stage`)
+- **Client State Setup**: Creates or updates the client record for this user-device combination
 - **Trigger Creation**: Creates or recreates SQLite triggers that track changes on sync-enabled tables
 - **Apply Mode Reset**: Resets the database to normal operation mode (not applying remote changes)
 
@@ -70,16 +70,12 @@ A **device** represents a specific installation of your application. Each device
 **Hydration** is the process of downloading the complete dataset from the server to populate a device. This is typically used for new devices or recovery scenarios where you need to rebuild the local database.
 
 ### What Happens During Hydration?
-1. **Snapshot Creation**: Server creates a consistent snapshot of all user data (windowed mode)
-2. **Bulk Download**: Device downloads all data in paginated chunks
-3. **Trigger Suppression**: Local change-tracking triggers are temporarily disabled
-4. **Batch Insert**: Downloaded data is inserted directly into local tables
-5. **Metadata Update**: Sync metadata is updated to reflect the current server state
-6. **Trigger Restoration**: Change-tracking triggers are re-enabled
-
-### Hydration Modes
-- **Windowed Hydration** (Recommended): Uses a frozen snapshot for consistency across multiple pages
-- **Non-Windowed Hydration**: Simpler paging without snapshot consistency (fine for small datasets)
+1. **Snapshot Start**: Server exposes a consistent snapshot of all managed user data
+2. **Chunked Download**: Device downloads snapshot rows in chunks
+3. **Stage Storage**: Downloaded rows are written into `_sync_snapshot_stage`
+4. **Final Apply**: Managed tables are rebuilt from the staged snapshot in one controlled apply step
+5. **Metadata Update**: Sync metadata is updated to reflect the current server bundle state
+6. **Trigger Restoration**: Change-tracking triggers are re-enabled for normal local edits
 
 ### When to Use Hydration
 - **New User Sign-In**: When a user signs in for the first time (not session restoration)
@@ -126,19 +122,20 @@ Each change includes:
 ## Sync Operations
 
 ### Upload
-**Upload** is the process of sending local changes to the server.
+**Push** is the process of sending local dirty rows to the server.
 
 - **Purpose**: Share your device's changes with other devices
 - **Frequency**: Can be triggered manually or automatically
-- **Batching**: Multiple changes are sent together for efficiency
+- **Batching**: Pending local rows are frozen as one logical bundle and uploaded through chunked
+  push sessions
 - **Conflict Detection**: Server checks for conflicts with other devices' changes
 
 ### Download
-**Download** is the process of receiving changes from other devices via the server.
+**Pull** is the process of receiving authoritative bundles from other devices via the server.
 
 - **Purpose**: Get changes made on other devices
 - **Frequency**: Can be triggered manually or automatically
-- **Filtering**: Only receives changes newer than what the device already has
+- **Filtering**: Only receives bundles newer than what the device already has
 - **Conflict Resolution**: Applies conflict resolution rules when needed
 
 ### Bidirectional Sync
@@ -157,10 +154,11 @@ Most sync operations involve both upload and download:
 - Both devices try to sync before seeing each other's changes
 
 ### Resolution Strategies
-- **Server Wins**: Server's version is always kept
-- **Client Wins**: Local device's version is always kept
-- **Last Writer Wins**: Most recent change wins (based on timestamp)
-- **Custom Logic**: Application-specific resolution rules
+- **Version-Based Detection**: Conflicts are detected from `base_row_version` versus the
+  authoritative server `row_version`, not from wall-clock timestamps
+- **Whole-Bundle Failure**: A conflicting push fails closed instead of partially applying stale rows
+- **Default Resolver**: The default KMP resolver is server-wins (`ServerWinsResolver`)
+- **Custom Merge Logic**: Applications can accept server state or rewrite local intent and retry
 
 ### Conflict Prevention
 - **Frequent Sync**: Sync often to minimize conflict windows
@@ -227,7 +225,7 @@ Understanding the complete lifecycle helps you implement sync correctly:
 ### 4. Regular Usage
 - User makes changes to data
 - Changes are automatically tracked by triggers (created during bootstrap)
-- Periodic sync uploads changes and downloads updates
+- Periodic sync pushes local bundles and pulls remote bundles
 - Conflicts are resolved automatically
 
 ### 5. User Sign-Out
@@ -249,7 +247,7 @@ Understanding the complete lifecycle helps you implement sync correctly:
 - **Adaptive**: Sync more often when app is active, less when idle
 
 ### Data Volume
-- **Large Datasets**: Use windowed hydration and pagination
+- **Large Datasets**: Hydration is chunked internally through staged snapshot apply
 - **Small Changes**: Incremental sync is very efficient
 - **Bulk Operations**: Consider batching for better performance
 

@@ -31,7 +31,9 @@ A **device ID** (also called `sourceId`) represents a specific app installation.
 
 ## Bootstrap: Preparing the Local Database
 
-Bootstrap initializes the sync system for a specific user on a specific device. It sets up the necessary metadata tables, triggers, and client information.
+Bootstrap initializes the sync system for a specific user on a specific device. It validates the
+managed schema, creates the current metadata tables, binds the user/device identity, and installs
+the change-capture triggers.
 
 ### When to Call Bootstrap
 ```kotlin
@@ -54,10 +56,11 @@ suspend fun switchUser(newUserId: String) {
 ```
 
 ### What Bootstrap Does
-1. **Creates metadata tables**: `_sync_client_info`, `_sync_row_meta`, `_sync_pending`
-2. **Installs triggers**: Automatically tracks changes to sync-enabled tables
-3. **Records client info**: Stores user ID, device ID, and sync state
-4. **Prepares for sync**: Database is now ready for upload/download operations
+1. **Validates local schema**: Sync-managed tables must satisfy the supported key and FK rules
+2. **Creates metadata tables**: `_sync_client_state`, `_sync_row_state`, `_sync_dirty_rows`, `_sync_snapshot_stage`
+3. **Installs triggers**: Automatically captures local INSERT, UPDATE, and DELETE activity
+4. **Records client state**: Stores user ID, source ID, and bundle checkpoint state
+5. **Prepares for sync**: Database is now ready for bundle push, pull, and snapshot rebuild operations
 
 ### Bootstrap Parameters
 - **`userId`**: Stable user identifier from your auth system
@@ -65,20 +68,22 @@ suspend fun switchUser(newUserId: String) {
 
 ## Hydration: Initial Data Download
 
-Hydration downloads the complete dataset for a user, typically used when setting up a new device or recovering from data loss.
+Hydration downloads the complete dataset for a user and rebuilds the local managed tables from a
+server snapshot. It is used for first-time device setup, recovery, and pull fallback after history
+pruning.
 
 ### When to Use Hydration
 ```kotlin
 // New device setup (first sign-in on this device)
 suspend fun setupNewDevice(userId: String) {
     client.bootstrap(userId, deviceId).getOrThrow()
-    client.hydrate(limit = 1000, windowed = true).getOrThrow()
+    client.hydrate().getOrThrow()
     // Device now has complete user dataset
 }
 
 // Data recovery scenarios
 suspend fun recoverFromDataLoss() {
-    client.hydrate(limit = 1000, windowed = true).getOrThrow()
+    client.hydrate().getOrThrow()
     // Local database restored from server
 }
 ```
@@ -88,22 +93,22 @@ suspend fun recoverFromDataLoss() {
 // Session restore (app restart with existing data)
 suspend fun restoreSession(userId: String) {
     client.bootstrap(userId, deviceId).getOrThrow()
-    
-    // Use incremental sync to catch up on changes
-    var more = true
-    while (more) {
-        val (applied, _) = client.downloadOnce(limit = 500).getOrThrow()
-        more = applied == 500  // Continue if page was full
-        if (applied == 0) break
-    }
+
+    // Use bundle replay to catch up on changes
+    client.pullToStable().getOrThrow()
 }
 ```
 
-### Hydration Modes
-- **`windowed = true`** (recommended): Creates consistent snapshot, safe for large datasets
-- **`windowed = false`**: Simpler paging, suitable for small datasets
-- **`includeSelf = false`** (default): Excludes your own changes to avoid duplicates
-- **`limit`**: Page size for downloads (1000 is a good default)
+### How Hydration Works
+
+- The server exposes a snapshot session for the current user
+- The client downloads that snapshot in chunks
+- Chunks are stored in `_sync_snapshot_stage`
+- Managed tables are replaced only during the final apply step
+- If a hydrate attempt restarts, stale stage rows are cleared before the new attempt proceeds
+
+The public KMP API no longer exposes paging or window parameters for hydration. Chunking and stage
+management are internal correctness details.
 
 ## Device ID Management
 
@@ -153,10 +158,10 @@ class SyncManager {
             
             if (isFirstTime) {
                 // New device: full hydration
-                client.hydrate(limit = 1000, windowed = true).getOrThrow()
+                client.hydrate().getOrThrow()
             } else {
                 // Existing device: incremental sync
-                performIncrementalSync(client)
+                client.pullToStable().getOrThrow()
             }
             
             Result.success(Unit)
@@ -207,13 +212,12 @@ suspend fun onUserSignOut() {
 
 ### Bootstrap Guidelines
 - **Always call bootstrap** after user authentication
-- **Call once per user session** (not on every app start)
+- **Call once per client lifetime before sync operations**
 - **Ensure business tables exist** before bootstrap
 - **Handle bootstrap failures** gracefully with retry logic
 
 ### Hydration Guidelines
-- **Use windowed mode** for production apps
-- **Choose appropriate page size** (1000 is usually good)
+- **Treat hydrate as a rebuild operation**, not a paged incremental sync
 - **Show progress indicators** for large datasets
 - **Handle network interruptions** with resume capability
 
@@ -225,4 +229,5 @@ suspend fun onUserSignOut() {
 
 ---
 
-**Next Steps**: Learn about [Sync Operations]({{ site.baseurl }}/sync/sync-operations/) to understand upload/download patterns and conflict resolution.
+**Next Steps**: Learn about [Sync Operations]({{ site.baseurl }}/sync/sync-operations/) to
+understand bundle push/pull flows and conflict resolution.

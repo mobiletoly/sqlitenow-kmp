@@ -7,237 +7,162 @@ parent: Sync
 
 # Sync Operations
 
-SQLiteNow provides three core sync operations: **upload**, **download**, and **combined sync**. Understanding when and how to use each operation is crucial for building efficient sync workflows.
+The current KMP `oversqlite` client exposes a small bundle-era API:
 
-## Upload Operations
+- `bootstrap(userId, sourceId)`
+- `pushPending()`
+- `pullToStable()`
+- `sync()`
+- `hydrate()`
+- `recover()`
+- `lastBundleSeqSeen()`
 
-Upload operations send your device's local changes to the server, making them available to other devices.
+All sync operations require a successful `bootstrap(...)` first.
 
-### uploadOnce()
+## Bootstrap
 
-Uploads pending local changes in a single batch.
+`bootstrap(userId, sourceId)` prepares the local database for sync. It validates the managed
+tables, creates the sync metadata tables, binds the current user/device identity, and installs the
+change-capture triggers.
 
 ```kotlin
-suspend fun uploadOnce(): Result<UploadSummary>
+client.bootstrap(userId = userId, sourceId = deviceId).getOrThrow()
 ```
 
-**When to use:**
-- **Manual sync triggers**: User taps "sync" button
-- **Background sync**: Periodic uploads of accumulated changes
-- **Before critical operations**: Ensure changes are backed up before risky operations
-- **App backgrounding**: Upload changes when app goes to background
+Call bootstrap after authentication and before any sync operation. Client construction alone does
+not create sync metadata or install triggers.
 
-**Example:**
+## Push Pending
+
+`pushPending()` freezes all currently dirty rows into one logical outbound bundle, uploads that
+bundle through the server's chunked push-session transport, fetches the committed authoritative
+rows back, and replays them locally. If the push is accepted and replay completes, the matching
+frozen dirty rows are cleared.
+
 ```kotlin
-val uploadResult = client.uploadOnce()
-uploadResult.onSuccess { summary ->
-    println("Uploaded: ${summary.applied}/${summary.total} changes")
-    if (summary.conflict > 0) {
-        println("Conflicts: ${summary.conflict}")
-    }
-}.onFailure { error ->
-    println("Upload failed: ${error.message}")
+val result = client.pushPending()
+result.onFailure { error ->
+    logger.e(error) { "pushPending failed" }
 }
 ```
 
-### Upload Results
+Use `pushPending()` when:
 
-The `UploadSummary` provides detailed information about what happened:
+- you want to flush local edits before the app backgrounds
+- the user taps a manual sync button
+- you are running a periodic upload job
 
-```kotlin
-data class UploadSummary(
-    val total: Int,           // Total changes attempted
-    val applied: Int,         // Successfully applied changes
-    val conflict: Int,        // Changes that conflicted
-    val invalid: Int,         // Invalid changes (schema errors, etc.)
-    val materializeError: Int, // Server-side processing errors
-    val invalidReasons: Map<String, Int>, // Breakdown of invalid reasons
-    val firstErrorMessage: String?       // First error encountered
-)
-```
+Notes:
 
-**Status meanings:**
-- **Applied**: Change was successfully saved on server
-- **Conflict**: Another device modified the same record (see Conflict Resolution)
-- **Invalid**: Change violates server-side validation rules
-- **Materialize Error**: Server couldn't process the change due to internal errors
+- `uploadLimit` is a per-chunk limit, not a total-dirty-row ceiling
+- the client keeps new local writes in `_sync_dirty_rows` while an earlier frozen outbound snapshot
+  is in flight
+- create only one `OversqliteClient` per local database at a time; sync-operation serialization is
+  enforced per client instance, not across multiple client objects
 
-## Download Operations
+## Pull To Stable
 
-Download operations retrieve changes from other devices via the server.
-
-### downloadOnce()
-
-Downloads a page of changes from the server.
+`pullToStable()` downloads remote bundles until the server's current stable bundle sequence is fully
+applied locally. It fails if the local database still has dirty rows, because pull applies
+authoritative remote history and must not mix with unpushed local edits.
 
 ```kotlin
-suspend fun downloadOnce(
-    limit: Int = 1000,           // Page size
-    includeSelf: Boolean = false, // Include your own changes
-    until: Long = 0L             // Download up to this server sequence
-): Result<Pair<Int, Long>>       // Returns (applied_count, next_sequence)
-```
-
-**Parameters:**
-- **`limit`**: Maximum changes to download in one call (1000 is recommended)
-- **`includeSelf`**: Whether to include your own changes (usually false)
-- **`until`**: Stop downloading at this server sequence (0 = no limit)
-
-**Example:**
-```kotlin
-val downloadResult = client.downloadOnce(limit = 500)
-downloadResult.onSuccess { (applied, nextSeq) ->
-    println("Downloaded and applied: $applied changes")
-    println("Next server sequence: $nextSeq")
-}.onFailure { error ->
-    println("Download failed: ${error.message}")
+val result = client.pullToStable()
+result.onFailure { error ->
+    logger.e(error) { "pullToStable failed" }
 }
 ```
 
-### Paginated Downloads
+If the server has already pruned the requested history, `pullToStable()` falls back to snapshot
+hydration automatically.
 
-For large datasets, download in pages until no more changes:
+## Sync
+
+`sync()` is the default interactive operation. It runs push first and then pull.
 
 ```kotlin
-suspend fun downloadAllChanges() {
-    var more = true
-    var totalApplied = 0
-    
-    while (more) {
-        val result = client.downloadOnce(limit = 1000)
-        val (applied, _) = result.getOrThrow()
-        
-        totalApplied += applied
-        more = applied == 1000  // Continue if page was full
-        
-        if (applied == 0) break  // No more changes
-    }
-    
-    println("Total changes applied: $totalApplied")
-}
+client.sync().getOrThrow()
 ```
 
-## Combined Sync Operations
+Use `sync()` when you want the standard "send local changes, then catch up on remote changes"
+behavior.
 
-### syncOnce()
+## Hydrate
 
-Convenience helper that uploads then downloads in the recommended order.
+`hydrate()` rebuilds the local managed tables from a full server snapshot. Snapshot rows are staged
+in `_sync_snapshot_stage` and become visible to application queries only after the final apply step
+commits.
 
 ```kotlin
-suspend fun OversqliteClient.syncOnce(
-    limit: Int = 1000,
-    includeSelf: Boolean = false
-): Result<SyncRun>
-
-data class SyncRun(
-    val upload: UploadSummary,
-    val downloaded: Int
-)
+client.hydrate().getOrThrow()
 ```
 
-**When to use:**
-- **Bi-directional sync**: Multiple devices frequently editing the same data
-- **Interactive sync**: User expects to see others' changes immediately
-- **Simple sync workflows**: One-call solution for most sync needs
+Use `hydrate()` for:
 
-**When to avoid:**
-- **Upload-heavy scenarios**: If you primarily create data, separate upload/download
-- **Bandwidth constraints**: More control with separate operations
-- **Complex error handling**: Need different retry logic for upload vs download
+- first-time device setup
+- local database replacement from server state
+- automatic prune fallback after pull can no longer replay history incrementally
 
-**Example:**
+Hydration is chunked internally. The public API no longer exposes paging or window parameters.
+
+## Recover
+
+`recover()` also rebuilds from snapshot, but it rotates the local `sourceId` and resets local
+bundle state as part of recovery.
+
 ```kotlin
-val syncResult = client.syncOnce(limit = 1000)
-syncResult.onSuccess { run ->
-    println("Upload: ${run.upload.applied}/${run.upload.total}")
-    println("Download: ${run.downloaded} changes")
-}.onFailure { error ->
-    println("Sync failed: ${error.message}")
-}
+client.recover().getOrThrow()
 ```
 
-## Conflict Resolution
+Use `recover()` when the device should be treated as a fresh sync source after severe local state
+loss.
 
-When multiple devices modify the same record, conflicts occur. SQLiteNow provides pluggable conflict resolution strategies.
+## Last Bundle Seq Seen
 
-### Resolver Interface
+`lastBundleSeqSeen()` returns the last remote bundle sequence durably applied locally.
 
 ```kotlin
-fun interface Resolver {
-    fun merge(
-        table: String,
-        pk: String,
-        serverRow: JsonElement?,    // Current server state
-        localPayload: JsonElement? // Your local changes
-    ): MergeResult
-}
-
-sealed class MergeResult {
-    object AcceptServer : MergeResult()                    // Use server version
-    data class KeepLocal(val mergedPayload: JsonElement) : MergeResult() // Use local version
-}
+val lastSeen = client.lastBundleSeqSeen().getOrThrow()
 ```
 
-### Built-in Resolvers
+This is mainly useful for diagnostics, status surfaces, or advanced telemetry.
 
-**ServerWinsResolver** (recommended for most apps):
+## Pause / Resume Controls
+
+The client can temporarily suppress uploads or downloads:
+
 ```kotlin
-val client = database.newOversqliteClient(
-    schema = "myapp",
-    httpClient = httpClient,
-    resolver = ServerWinsResolver  // Server always wins conflicts
-)
+client.pauseUploads()
+client.resumeUploads()
+
+client.pauseDownloads()
+client.resumeDownloads()
 ```
 
-**Custom Resolver** (for advanced conflict handling):
+This is useful around bulk local imports or temporary UI flows where remote apply should be delayed.
+
+## Recommended Patterns
+
+### First Device Restore
+
 ```kotlin
-object SmartResolver : Resolver {
-    override fun merge(
-        table: String, pk: String,
-        serverRow: JsonElement?, localPayload: JsonElement?
-    ): MergeResult {
-        return when (table) {
-            "user_preferences" -> MergeResult.KeepLocal(localPayload!!) // Client wins
-            "shared_documents" -> mergeDocumentFields(serverRow, localPayload)
-            else -> MergeResult.AcceptServer // Default to server wins
-        }
-    }
-}
+client.bootstrap(userId = userId, sourceId = deviceId).getOrThrow()
+client.hydrate().getOrThrow()
 ```
 
-### Conflict Resolution Flow
-
-1. **Upload detects conflict**: Server returns current server state
-2. **Resolver is called**: Your resolver decides how to merge
-3. **Result is applied**:
-   - `AcceptServer`: Local change is discarded, server state is applied locally
-   - `KeepLocal`: Merged payload is saved locally and re-uploaded
-
-## Sync Patterns
-
-### Periodic Background Sync
+### Returning Device Catch-Up
 
 ```kotlin
-class SyncManager {
-    private val syncScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    
-    fun startPeriodicSync() {
-        syncScope.launch {
-            while (isActive) {
-                try {
-                    client.uploadOnce()
-                    delay(30_000) // 30 seconds
-                    
-                    // Download less frequently
-                    if (System.currentTimeMillis() % 120_000 < 30_000) {
-                        client.downloadOnce(limit = 500)
-                    }
-                } catch (e: Exception) {
-                    logger.e(e) { "Periodic sync failed" }
-                    delay(60_000) // Back off on error
-                }
-            }
-        }
+client.bootstrap(userId = userId, sourceId = deviceId).getOrThrow()
+client.pullToStable().getOrThrow()
+```
+
+### Manual Sync Button
+
+```kotlin
+syncButton.onClick {
+    coroutineScope.launch {
+        client.sync().getOrThrow()
     }
 }
 ```
@@ -245,105 +170,47 @@ class SyncManager {
 ### Event-Driven Sync
 
 ```kotlin
-class SyncManager {
-    private val syncTrigger = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-    
-    init {
-        // Debounced sync worker
-        syncTrigger
-            .debounce(2000) // Wait 2 seconds after last trigger
-            .onEach { performSync() }
-            .launchIn(syncScope)
+class SyncManager(
+    private val client: OversqliteClient,
+) {
+    suspend fun onAppForegrounded() {
+        client.sync().getOrThrow()
     }
-    
-    fun triggerSync() {
-        syncTrigger.tryEmit(Unit)
-    }
-    
-    // Call this after database changes
-    fun onDataChanged() {
-        triggerSync()
+
+    suspend fun onAppBackgrounded() {
+        client.pushPending().getOrThrow()
     }
 }
-```
-
-### Pause/Resume Controls
-
-```kotlin
-// Pause uploads during bulk operations
-client.pauseUploads()
-try {
-    // Perform bulk import
-    importLargeDataset()
-} finally {
-    client.resumeUploads()
-    client.uploadOnce() // Upload all changes at once
-}
-
-// Pause downloads during critical UI flows
-client.pauseDownloads()
-showCriticalUserDialog()
-client.resumeDownloads()
 ```
 
 ## Error Handling
 
-### Upload Errors
+- `bootstrap(...)` failures usually mean unsupported local schema/configuration and should be fixed
+  before sync is retried.
+- `pushPending()` failures leave dirty rows intact unless an accepted bundle was fully replayed.
+- `SyncOperationInProgressException` means another sync operation already owns that client-local
+  lock; treat it as expected contention rather than a user-facing sync failure.
+- `pullToStable()` failures leave the durable checkpoint at the last successfully applied bundle.
+- `hydrate()` and `recover()` use staged snapshot rows so partial downloads do not become partially
+  visible local state.
+
+## Conflict Resolution
+
+Conflicts are resolved by the configured resolver when remote authoritative state and local changes
+disagree. For most applications, `ServerWinsResolver` is the simplest default:
 
 ```kotlin
-val uploadResult = client.uploadOnce()
-uploadResult.onFailure { error ->
-    when (error) {
-        is HttpException -> {
-            if (error.statusCode == 401) {
-                // Token expired, refresh and retry
-                refreshAuthToken()
-                client.uploadOnce()
-            }
-        }
-        is NetworkException -> {
-            // Network issue, retry later
-            scheduleRetry()
-        }
-        else -> {
-            // Log and report error
-            logger.e(error) { "Upload failed" }
-        }
-    }
-}
+val client = database.newOversqliteClient(
+    schema = "myapp",
+    httpClient = httpClient,
+    resolver = ServerWinsResolver,
+)
 ```
 
-### Download Errors
-
-```kotlin
-val downloadResult = client.downloadOnce()
-downloadResult.onFailure { error ->
-    // Downloads are generally safe to retry
-    // They don't modify server state
-    retryDownload()
-}
-```
-
-## Best Practices
-
-### Upload Guidelines
-- **Batch changes**: Don't upload after every single change
-- **Handle conflicts gracefully**: Provide appropriate resolvers
-- **Monitor upload results**: Check for conflicts and invalid changes
-- **Retry on network errors**: Uploads are idempotent
-
-### Download Guidelines
-- **Use appropriate page sizes**: 1000 is usually optimal
-- **Handle large datasets**: Use pagination for initial sync
-- **Exclude self by default**: Avoid processing your own changes twice
-- **Download regularly**: Keep local state fresh
-
-### Performance Tips
-- **Separate upload/download**: For upload-heavy or download-heavy scenarios
-- **Use pause/resume**: Control sync during bulk operations
-- **Monitor bandwidth**: Adjust sync frequency based on network conditions
-- **Batch UI updates**: Update UI after sync completes, not per change
+Custom resolvers can keep local payloads or merge fields as needed.
 
 ---
 
-**Next Steps**: Learn about [Server Setup]({{ site.baseurl }}/sync/server-setup/) to deploy your sync infrastructure.
+**Next Steps**: Review [Bootstrap & Hydration]({{ site.baseurl }}/sync/bootstrap-hydration/) for
+device setup flows or [Reactive Sync Updates]({{ site.baseurl }}/sync/reactive-updates/) for UI
+integration patterns.

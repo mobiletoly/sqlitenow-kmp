@@ -25,18 +25,18 @@ Add the required Ktor dependencies to your `build.gradle.kts`:
 ```kotlin
 commonMain.dependencies {
     // Ktor for HTTP communication
-    implementation("io.ktor:ktor-client-core:3.3.0")
-    implementation("io.ktor:ktor-client-content-negotiation:3.3.0")
-    implementation("io.ktor:ktor-serialization-kotlinx-json:3.3.0")
-    implementation("io.ktor:ktor-client-auth:3.3.0")
+    implementation("io.ktor:ktor-client-core:3.4.1")
+    implementation("io.ktor:ktor-client-content-negotiation:3.4.1")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:3.4.1")
+    implementation("io.ktor:ktor-client-auth:3.4.1")
 }
 
 androidMain.dependencies {
-    implementation("io.ktor:ktor-client-okhttp:3.3.0")
+    implementation("io.ktor:ktor-client-okhttp:3.4.1")
 }
 
 iosMain.dependencies {
-    implementation("io.ktor:ktor-client-darwin:3.3.0")
+    implementation("io.ktor:ktor-client-darwin:3.4.1")
 }
 ```
 
@@ -322,11 +322,7 @@ class SyncManager(
                 return Result.failure(bootstrapResult.exceptionOrNull() ?: Exception("Bootstrap failed"))
             }
             
-            // Perform initial data hydration
-            val hydrateResult = client.hydrate(limit = 1000, windowed = true)
-            if (hydrateResult.isFailure) {
-                return Result.failure(hydrateResult.exceptionOrNull() ?: Exception("Hydration failed"))
-            }
+            client.hydrate().getOrThrow()
             
             Result.success(Unit)
         } catch (e: Exception) {
@@ -334,36 +330,30 @@ class SyncManager(
         }
     }
     
-    suspend fun performSync(): Result<SyncSummary> {
+    suspend fun restoreExistingDevice(userId: String): Result<Unit> {
         val client = syncClient ?: return Result.failure(Exception("Sync not initialized"))
+        val deviceId = deviceIdManager.getDeviceId()
         
         return try {
-            // Upload local changes
-            val uploadResult = client.uploadOnce(limit = 1000)
-            if (uploadResult.isFailure) {
-                return Result.failure(uploadResult.exceptionOrNull() ?: Exception("Upload failed"))
-            }
-            
-            // Download remote changes
-            val downloadResult = client.downloadOnce(limit = 1000)
-            if (downloadResult.isFailure) {
-                return Result.failure(downloadResult.exceptionOrNull() ?: Exception("Download failed"))
-            }
-            
-            Result.success(SyncSummary(
-                uploaded = uploadResult.getOrNull()?.uploaded ?: 0,
-                downloaded = downloadResult.getOrNull()?.applied ?: 0
-            ))
+            client.bootstrap(userId = userId, sourceId = deviceId).getOrThrow()
+            client.pullToStable().getOrThrow()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun performSync(): Result<Unit> {
+        val client = syncClient ?: return Result.failure(Exception("Sync not initialized"))
+
+        return try {
+            client.sync().getOrThrow()
+            Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 }
-
-data class SyncSummary(
-    val uploaded: Int,
-    val downloaded: Int
-)
 ```
 
 ## Step 6: Integrate with Your App
@@ -378,8 +368,12 @@ class App {
         // Initialize sync system
         syncManager.initializeSync().getOrThrow()
         
-        // Set up sync for this user (first time or new device)
-        syncManager.setupNewDevice(userId).getOrThrow()
+        // Choose the correct restore path for this device
+        if (hasExistingManagedData()) {
+            syncManager.restoreExistingDevice(userId).getOrThrow()
+        } else {
+            syncManager.setupNewDevice(userId).getOrThrow()
+        }
         
         // Start periodic sync
         startPeriodicSync()
@@ -394,8 +388,7 @@ class App {
                 try {
                     val result = syncManager.performSync()
                     if (result.isSuccess) {
-                        val summary = result.getOrNull()!!
-                        println("Sync completed: ${summary.uploaded} uploaded, ${summary.downloaded} downloaded")
+                        println("Sync completed")
                     } else {
                         println("Sync failed: ${result.exceptionOrNull()?.message}")
                     }
@@ -438,8 +431,8 @@ Congratulations! You now have basic sync functionality working. Here's what to e
 - Ensure primary keys contain UUID data (TEXT strings or BLOB bytes)
 
 ### Sync seems slow
-- Adjust the `limit` parameter in upload/download operations
-- Consider implementing windowed hydration for large datasets
+- Hydration is chunked internally; expect first-device restore to take longer than incremental sync
+- Prefer `client.sync()` for normal interactive catch-up and `client.pushPending()` for quick upload-only flushes
 - Monitor network conditions and adjust sync frequency accordingly
 
 ### "Column not found" Errors in Triggers

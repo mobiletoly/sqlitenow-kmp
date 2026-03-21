@@ -71,6 +71,7 @@ kotlin {
             implementation(libs.androidx.test.rules)
             implementation(libs.androidx.junit)
             implementation(libs.kotlinx.coroutines.test)
+            implementation(libs.okhttp.mockwebserver3)
         }
     }
 }

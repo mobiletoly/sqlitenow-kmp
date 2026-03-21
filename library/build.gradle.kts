@@ -94,6 +94,7 @@ kotlin {
         commonTest.dependencies {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutines.test)
+            implementation("io.ktor:ktor-client-mock:${libs.versions.ktor.get()}")
 //                implementation(libs.kotlin.test)
 //                implementation(libs.kotlinx.coroutines.test)
 //                implementation(kotlin("test"))
@@ -127,6 +128,10 @@ kotlin {
         }
 
         iosMain.dependencies {
+            implementation(libs.ktor.client.darwin)
+        }
+
+        macosMain.dependencies {
             implementation(libs.ktor.client.darwin)
         }
 

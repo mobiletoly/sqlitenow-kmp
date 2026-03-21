@@ -1,0 +1,782 @@
+package dev.goquick.sqlitenow.oversqlite
+
+import dev.goquick.sqlitenow.core.BundledSqliteConnectionProvider
+import kotlinx.coroutines.runBlocking
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
+
+class BundleSnapshotContractTest : BundleClientContractTestSupport() {
+    @Test
+    fun hydrate_oneChunkStagesBeforeFinalApply_andClearsStaleStageFirst() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer().apply {
+            createContext("/sync/snapshot-sessions") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-one",
+                      "snapshot_bundle_seq": 9,
+                      "row_count": 1,
+                      "byte_count": 32,
+                      "expires_at": "2026-03-22T00:00:00Z"
+                    }
+                    """.trimIndent()
+                )
+            }
+            createContext("/sync/snapshot-sessions/snapshot-one") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-one",
+                      "snapshot_bundle_seq": 9,
+                      "next_row_ordinal": 1,
+                      "has_more": false,
+                      "rows": [
+                        {
+                          "schema": "main",
+                          "table": "users",
+                          "key": {"id":"user-1"},
+                          "row_version": 2,
+                          "payload": {"id":"user-1"}
+                        }
+                      ]
+                    }
+                    """.trimIndent()
+                )
+            }
+        }
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.bootstrap("user-1", "device-a").getOrThrow()
+            db.execSQL(
+                """
+                INSERT INTO _sync_snapshot_stage(snapshot_id, row_ordinal, schema_name, table_name, key_json, row_version, payload)
+                VALUES ('stale-snapshot', 1, 'main', 'users', '{"id":"stale"}', 1, '{"id":"stale","name":"Old"}')
+                """.trimIndent()
+            )
+
+            val error = client.hydrate().exceptionOrNull()
+            assertTrue(error != null)
+            assertTrue(error.message?.contains("payload for users must contain every table column") == true)
+            assertEquals(0L, client.lastBundleSeqSeen().getOrThrow())
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
+            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
+            assertEquals("snapshot-one", scalarText(db, "SELECT DISTINCT snapshot_id FROM _sync_snapshot_stage"))
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun hydrate_multiChunkStaysInvisibleUntilFinalApply() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val requestedOrdinals = mutableListOf<String>()
+        val server = newServer().apply {
+            createContext("/sync/snapshot-sessions") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-multi",
+                      "snapshot_bundle_seq": 9,
+                      "row_count": 2,
+                      "byte_count": 64,
+                      "expires_at": "2026-03-22T00:00:00Z"
+                    }
+                    """.trimIndent()
+                )
+            }
+            createContext("/sync/snapshot-sessions/snapshot-multi") { exchange ->
+                if (exchange.requestMethod == "GET") {
+                    requestedOrdinals += queryParam(exchange, "after_row_ordinal")
+                }
+                when (queryParam(exchange, "after_row_ordinal")) {
+                    "0" -> respondJson(
+                        exchange,
+                        200,
+                        """
+                        {
+                          "snapshot_id": "snapshot-multi",
+                          "snapshot_bundle_seq": 9,
+                          "next_row_ordinal": 1,
+                          "has_more": true,
+                          "rows": [
+                            {
+                              "schema": "main",
+                              "table": "users",
+                              "key": {"id":"user-1"},
+                              "row_version": 2,
+                              "payload": {"id":"user-1","name":"Ada"}
+                            }
+                          ]
+                        }
+                        """.trimIndent()
+                    )
+                    "1" -> respondJson(
+                        exchange,
+                        200,
+                        """
+                        {
+                          "snapshot_id": "snapshot-multi",
+                          "snapshot_bundle_seq": 9,
+                          "next_row_ordinal": 2,
+                          "has_more": false,
+                          "rows": [
+                            {
+                              "schema": "main",
+                              "table": "users",
+                              "key": {"id":"user-2"},
+                              "row_version": 2,
+                              "payload": {"id":"user-2"}
+                            }
+                          ]
+                        }
+                        """.trimIndent()
+                    )
+                    else -> error("unexpected after_row_ordinal")
+                }
+            }
+        }
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.bootstrap("user-1", "device-a").getOrThrow()
+
+            val error = client.hydrate().exceptionOrNull()
+            assertTrue(error != null)
+            assertTrue(error.message?.contains("payload for users must contain every table column") == true)
+            assertEquals(listOf("0", "1"), requestedOrdinals)
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
+            assertEquals(2L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
+            assertEquals(0L, client.lastBundleSeqSeen().getOrThrow())
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun hydrate_restartClearsStageAndRestartsFromZero() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val requestedOrdinals = mutableListOf<String>()
+        var sessionAttempts = 0
+        val server = newServer().apply {
+            createContext("/sync/snapshot-sessions") { exchange ->
+                sessionAttempts++
+                if (sessionAttempts == 1) {
+                    respondJson(
+                        exchange,
+                        200,
+                        """
+                        {
+                          "snapshot_id": "snapshot-restart-a",
+                          "snapshot_bundle_seq": 9,
+                          "row_count": 2,
+                          "byte_count": 64,
+                          "expires_at": "2026-03-22T00:00:00Z"
+                        }
+                        """.trimIndent()
+                    )
+                } else {
+                    respondJson(
+                        exchange,
+                        200,
+                        """
+                        {
+                          "snapshot_id": "snapshot-restart-b",
+                          "snapshot_bundle_seq": 12,
+                          "row_count": 1,
+                          "byte_count": 32,
+                          "expires_at": "2026-03-22T00:00:00Z"
+                        }
+                        """.trimIndent()
+                    )
+                }
+            }
+            createContext("/sync/snapshot-sessions/snapshot-restart-a") { exchange ->
+                if (exchange.requestMethod == "GET") {
+                    requestedOrdinals += "a:${queryParam(exchange, "after_row_ordinal")}"
+                }
+                when (queryParam(exchange, "after_row_ordinal")) {
+                    "0" -> respondJson(
+                        exchange,
+                        200,
+                        """
+                        {
+                          "snapshot_id": "snapshot-restart-a",
+                          "snapshot_bundle_seq": 9,
+                          "next_row_ordinal": 1,
+                          "has_more": true,
+                          "rows": [
+                            {
+                              "schema": "main",
+                              "table": "users",
+                              "key": {"id":"user-1"},
+                              "row_version": 2,
+                              "payload": {"id":"user-1","name":"Ada"}
+                            }
+                          ]
+                        }
+                        """.trimIndent()
+                    )
+                    "1" -> {
+                        exchange.sendResponseHeaders(500, 0)
+                        exchange.responseBody.close()
+                    }
+                    else -> error("unexpected restart-a after_row_ordinal")
+                }
+            }
+            createContext("/sync/snapshot-sessions/snapshot-restart-b") { exchange ->
+                if (exchange.requestMethod == "GET") {
+                    requestedOrdinals += "b:${queryParam(exchange, "after_row_ordinal")}"
+                }
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-restart-b",
+                      "snapshot_bundle_seq": 12,
+                      "next_row_ordinal": 1,
+                      "has_more": false,
+                      "rows": [
+                        {
+                          "schema": "main",
+                          "table": "users",
+                          "key": {"id":"user-2"},
+                          "row_version": 3,
+                          "payload": {"id":"user-2","name":"Grace"}
+                        }
+                      ]
+                    }
+                    """.trimIndent()
+                )
+            }
+        }
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.bootstrap("user-1", "device-a").getOrThrow()
+
+            val firstError = client.hydrate().exceptionOrNull()
+            assertTrue(firstError != null)
+            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
+
+            client.hydrate().getOrThrow()
+
+            assertEquals(listOf("a:0", "a:1", "b:0"), requestedOrdinals)
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
+            assertEquals("Grace", scalarText(db, "SELECT name FROM users WHERE id = 'user-2'"))
+            assertEquals(12L, client.lastBundleSeqSeen().getOrThrow())
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun hydrate_selfReferentialRowsSurviveChunkBoundaries() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createEmployeesTable(db)
+        val server = newServer().apply {
+            createContext("/sync/snapshot-sessions") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-employees",
+                      "snapshot_bundle_seq": 5,
+                      "row_count": 2,
+                      "byte_count": 64,
+                      "expires_at": "2026-03-22T00:00:00Z"
+                    }
+                    """.trimIndent()
+                )
+            }
+            createContext("/sync/snapshot-sessions/snapshot-employees") { exchange ->
+                when (queryParam(exchange, "after_row_ordinal")) {
+                    "0" -> respondJson(
+                        exchange,
+                        200,
+                        """
+                        {
+                          "snapshot_id": "snapshot-employees",
+                          "snapshot_bundle_seq": 5,
+                          "next_row_ordinal": 1,
+                          "has_more": true,
+                          "rows": [
+                            {
+                              "schema": "main",
+                              "table": "employees",
+                              "key": {"id":"employee-2"},
+                              "row_version": 2,
+                              "payload": {"id":"employee-2","manager_id":"employee-1","name":"Bob"}
+                            }
+                          ]
+                        }
+                        """.trimIndent()
+                    )
+                    "1" -> respondJson(
+                        exchange,
+                        200,
+                        """
+                        {
+                          "snapshot_id": "snapshot-employees",
+                          "snapshot_bundle_seq": 5,
+                          "next_row_ordinal": 2,
+                          "has_more": false,
+                          "rows": [
+                            {
+                              "schema": "main",
+                              "table": "employees",
+                              "key": {"id":"employee-1"},
+                              "row_version": 2,
+                              "payload": {"id":"employee-1","manager_id":null,"name":"Alice"}
+                            }
+                          ]
+                        }
+                        """.trimIndent()
+                    )
+                    else -> error("unexpected after_row_ordinal for employees snapshot")
+                }
+            }
+        }
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("employees", syncKeyColumnName = "id")))
+            client.bootstrap("user-1", "device-a").getOrThrow()
+
+            client.hydrate().getOrThrow()
+
+            assertEquals(5L, client.lastBundleSeqSeen().getOrThrow())
+            assertEquals(2L, scalarLong(db, "SELECT COUNT(*) FROM employees"))
+            assertEquals("employee-1", scalarText(db, "SELECT manager_id FROM employees WHERE id = 'employee-2'"))
+            assertEquals("Alice", scalarText(db, "SELECT name FROM employees WHERE id = 'employee-1'"))
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun hydrate_cyclicFkGraphsSurviveChunkBoundaries() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createAuthorsAndProfilesCycleTables(db)
+        val server = newServer().apply {
+            createContext("/sync/snapshot-sessions") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-cycle",
+                      "snapshot_bundle_seq": 6,
+                      "row_count": 2,
+                      "byte_count": 64,
+                      "expires_at": "2026-03-22T00:00:00Z"
+                    }
+                    """.trimIndent()
+                )
+            }
+            createContext("/sync/snapshot-sessions/snapshot-cycle") { exchange ->
+                when (queryParam(exchange, "after_row_ordinal")) {
+                    "0" -> respondJson(
+                        exchange,
+                        200,
+                        """
+                        {
+                          "snapshot_id": "snapshot-cycle",
+                          "snapshot_bundle_seq": 6,
+                          "next_row_ordinal": 1,
+                          "has_more": true,
+                          "rows": [
+                            {
+                              "schema": "main",
+                              "table": "authors",
+                              "key": {"id":"author-1"},
+                              "row_version": 2,
+                              "payload": {"id":"author-1","profile_id":"profile-1","name":"Author"}
+                            }
+                          ]
+                        }
+                        """.trimIndent()
+                    )
+                    "1" -> respondJson(
+                        exchange,
+                        200,
+                        """
+                        {
+                          "snapshot_id": "snapshot-cycle",
+                          "snapshot_bundle_seq": 6,
+                          "next_row_ordinal": 2,
+                          "has_more": false,
+                          "rows": [
+                            {
+                              "schema": "main",
+                              "table": "profiles",
+                              "key": {"id":"profile-1"},
+                              "row_version": 2,
+                              "payload": {"id":"profile-1","author_id":"author-1","bio":"Cyclic"}
+                            }
+                          ]
+                        }
+                        """.trimIndent()
+                    )
+                    else -> error("unexpected after_row_ordinal for cycle snapshot")
+                }
+            }
+        }
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(
+                db,
+                http,
+                syncTables = listOf(
+                    SyncTable("authors", syncKeyColumnName = "id"),
+                    SyncTable("profiles", syncKeyColumnName = "id"),
+                )
+            )
+            client.bootstrap("user-1", "device-a").getOrThrow()
+
+            client.hydrate().getOrThrow()
+
+            assertEquals(6L, client.lastBundleSeqSeen().getOrThrow())
+            assertEquals("profile-1", scalarText(db, "SELECT profile_id FROM authors WHERE id = 'author-1'"))
+            assertEquals("author-1", scalarText(db, "SELECT author_id FROM profiles WHERE id = 'profile-1'"))
+            assertEquals("Cyclic", scalarText(db, "SELECT bio FROM profiles WHERE id = 'profile-1'"))
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun recover_failedFinalApplyLeavesSourceIdUnchanged() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer().apply {
+            createContext("/sync/snapshot-sessions") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-recover-fail",
+                      "snapshot_bundle_seq": 9,
+                      "row_count": 1,
+                      "byte_count": 32,
+                      "expires_at": "2026-03-22T00:00:00Z"
+                    }
+                    """.trimIndent()
+                )
+            }
+            createContext("/sync/snapshot-sessions/snapshot-recover-fail") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-recover-fail",
+                      "snapshot_bundle_seq": 9,
+                      "next_row_ordinal": 1,
+                      "has_more": false,
+                      "rows": [
+                        {
+                          "schema": "main",
+                          "table": "users",
+                          "key": {"id":"user-1"},
+                          "row_version": 2,
+                          "payload": {"id":"user-1"}
+                        }
+                      ]
+                    }
+                    """.trimIndent()
+                )
+            }
+        }
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.bootstrap("user-1", "device-a").getOrThrow()
+            val originalSourceId = scalarText(db, "SELECT source_id FROM _sync_client_state WHERE user_id = 'user-1'")
+
+            val error = client.recover().exceptionOrNull()
+            assertTrue(error != null)
+            assertTrue(error.message?.contains("payload for users must contain every table column") == true)
+            assertEquals(originalSourceId, scalarText(db, "SELECT source_id FROM _sync_client_state WHERE user_id = 'user-1'"))
+            assertEquals(0L, client.lastBundleSeqSeen().getOrThrow())
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun recover_rotatesSourceId_andResetsBundleState() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer().apply {
+            createContext("/sync/snapshot-sessions") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-recover",
+                      "snapshot_bundle_seq": 9,
+                      "row_count": 1,
+                      "byte_count": 32,
+                      "expires_at": "2026-03-22T00:00:00Z"
+                    }
+                    """.trimIndent()
+                )
+            }
+            createContext("/sync/snapshot-sessions/snapshot-recover") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-recover",
+                      "snapshot_bundle_seq": 9,
+                      "next_row_ordinal": 1,
+                      "has_more": false,
+                      "rows": [
+                        {
+                          "schema": "main",
+                          "table": "users",
+                          "key": {"id":"user-1"},
+                          "row_version": 2,
+                          "payload": {"id":"user-1","name":"Ada"}
+                        }
+                      ]
+                    }
+                    """.trimIndent()
+                )
+            }
+        }
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.bootstrap("user-1", "device-a").getOrThrow()
+            db.execSQL("UPDATE _sync_client_state SET next_source_bundle_id = 5, last_bundle_seq_seen = 4 WHERE user_id = 'user-1'")
+
+            client.recover().getOrThrow()
+
+            val newSourceId = scalarText(db, "SELECT source_id FROM _sync_client_state WHERE user_id = 'user-1'")
+            assertNotEquals("device-a", newSourceId)
+            assertEquals(1L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_client_state WHERE user_id = 'user-1'"))
+            assertEquals(9L, client.lastBundleSeqSeen().getOrThrow())
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun recover_sourceRotationClearsManagedTables_andRemainingLocalSyncState() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer().apply {
+            createContext("/sync/snapshot-sessions") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-recover-reset",
+                      "snapshot_bundle_seq": 11,
+                      "row_count": 1,
+                      "byte_count": 32,
+                      "expires_at": "2026-03-22T00:00:00Z"
+                    }
+                    """.trimIndent()
+                )
+            }
+            createContext("/sync/snapshot-sessions/snapshot-recover-reset") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-recover-reset",
+                      "snapshot_bundle_seq": 11,
+                      "next_row_ordinal": 1,
+                      "has_more": false,
+                      "rows": [
+                        {
+                          "schema": "main",
+                          "table": "users",
+                          "key": {"id":"user-2"},
+                          "row_version": 11,
+                          "payload": {"id":"user-2","name":"Grace"}
+                        }
+                      ]
+                    }
+                    """.trimIndent()
+                )
+            }
+        }
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.bootstrap("user-1", "device-a").getOrThrow()
+
+            db.execSQL("UPDATE _sync_client_state SET apply_mode = 1 WHERE user_id = 'user-1'")
+            db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada stale')")
+            db.execSQL("UPDATE _sync_client_state SET apply_mode = 0 WHERE user_id = 'user-1'")
+            db.execSQL(
+                """
+                INSERT INTO _sync_row_state(schema_name, table_name, key_json, row_version, deleted)
+                VALUES ('main', 'users', '{"id":"user-1"}', 4, 0)
+                """.trimIndent()
+            )
+            db.execSQL(
+                """
+                INSERT INTO _sync_push_stage(bundle_seq, row_ordinal, schema_name, table_name, key_json, op, row_version, payload)
+                VALUES (7, 0, 'main', 'users', '{"id":"user-1"}', 'INSERT', 7, '{"id":"user-1","name":"Ada staged"}')
+                """.trimIndent()
+            )
+            db.execSQL(
+                """
+                INSERT INTO _sync_snapshot_stage(snapshot_id, row_ordinal, schema_name, table_name, key_json, row_version, payload)
+                VALUES ('stale-snapshot', 0, 'main', 'users', '{"id":"user-9"}', 9, '{"id":"user-9","name":"Old snapshot"}')
+                """.trimIndent()
+            )
+            db.execSQL("UPDATE _sync_client_state SET next_source_bundle_id = 5, last_bundle_seq_seen = 4, rebuild_required = 1 WHERE user_id = 'user-1'")
+
+            client.recover().getOrThrow()
+
+            val newSourceId = scalarText(db, "SELECT source_id FROM _sync_client_state WHERE user_id = 'user-1'")
+            assertNotEquals("device-a", newSourceId)
+            assertEquals(1L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_client_state WHERE user_id = 'user-1'"))
+            assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_client_state WHERE user_id = 'user-1'"))
+            assertEquals(11L, client.lastBundleSeqSeen().getOrThrow())
+            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM users"))
+            assertEquals("Grace", scalarText(db, "SELECT name FROM users WHERE id = 'user-2'"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users WHERE id = 'user-1'"))
+            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_row_state WHERE table_name = 'users'"))
+            assertEquals(11L, scalarLong(db, "SELECT row_version FROM _sync_row_state WHERE table_name = 'users' AND key_json = '{\"id\":\"user-2\"}'"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_push_stage"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun hydrateAndRecover_clearRebuildRequired_andAllowNormalSyncAgain() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer().apply {
+            createContext("/sync/snapshot-sessions") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-rebuild",
+                      "snapshot_bundle_seq": 9,
+                      "row_count": 1,
+                      "byte_count": 32,
+                      "expires_at": "2026-03-22T00:00:00Z"
+                    }
+                    """.trimIndent()
+                )
+            }
+            createContext("/sync/snapshot-sessions/snapshot-rebuild") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-rebuild",
+                      "snapshot_bundle_seq": 9,
+                      "next_row_ordinal": 1,
+                      "has_more": false,
+                      "rows": [
+                        {
+                          "schema": "main",
+                          "table": "users",
+                          "key": {"id":"user-1"},
+                          "row_version": 2,
+                          "payload": {"id":"user-1","name":"Ada"}
+                        }
+                      ]
+                    }
+                    """.trimIndent()
+                )
+            }
+            createContext("/sync/pull") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "stable_bundle_seq": 9,
+                      "has_more": false,
+                      "bundles": []
+                    }
+                    """.trimIndent()
+                )
+            }
+        }
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.bootstrap("user-1", "device-a").getOrThrow()
+
+            db.execSQL("UPDATE _sync_client_state SET rebuild_required = 1 WHERE user_id = 'user-1'")
+            assertTrue(client.sync().exceptionOrNull() is RebuildRequiredException)
+
+            client.hydrate().getOrThrow()
+            assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_client_state WHERE user_id = 'user-1'"))
+            client.sync().getOrThrow()
+
+            db.execSQL("UPDATE _sync_client_state SET rebuild_required = 1 WHERE user_id = 'user-1'")
+            assertTrue(client.sync().exceptionOrNull() is RebuildRequiredException)
+
+            client.recover().getOrThrow()
+            assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_client_state WHERE user_id = 'user-1'"))
+            client.sync().getOrThrow()
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+}

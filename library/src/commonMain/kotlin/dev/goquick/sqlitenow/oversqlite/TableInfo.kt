@@ -30,21 +30,22 @@ data class ColumnInfo(
 data class TableInfo(
     val table: String,
     val columns: List<ColumnInfo>,
+    val foreignKeyColumnsLower: Set<String> = emptySet(),
 ) {
     val columnNamesLower: List<String> = columns.map { it.name.lowercase() }
     val typesByNameLower: Map<String, String> = columns.associate { it.name.lowercase() to it.declaredType }
     val primaryKey: ColumnInfo? = columns.firstOrNull { it.isPrimaryKey }
     val primaryKeyIsBlob: Boolean = primaryKey?.declaredType?.lowercase()?.contains("blob") == true
+
+    fun isBlobReferenceColumn(columnName: String): Boolean = foreignKeyColumnsLower.contains(columnName.lowercase())
 }
 
-object TableInfoProvider {
-    // Cache is scoped per SafeSQLiteConnection to avoid cross-database contamination between tests/apps
-    private val cacheByDb = mutableMapOf<SafeSQLiteConnection, MutableMap<String, TableInfo>>()
+class TableInfoCache {
+    private val cache = mutableMapOf<String, TableInfo>()
 
     suspend fun get(db: SafeSQLiteConnection, table: String): TableInfo {
         val key = table.lowercase()
-        val dbCache = cacheByDb.getOrPut(db) { mutableMapOf() }
-        dbCache[key]?.let { return it }
+        cache[key]?.let { return it }
 
         val cols = mutableListOf<ColumnInfo>()
         db.prepare("PRAGMA table_info($key)").use { st ->
@@ -74,12 +75,31 @@ object TableInfoProvider {
                 )
             }
         }
-        val ti = TableInfo(key, cols)
-        dbCache[key] = ti
+        val foreignKeyColumns = mutableSetOf<String>()
+        db.prepare("PRAGMA foreign_key_list($key)").use { st ->
+            while (st.step()) {
+                foreignKeyColumns += st.getText(3).lowercase()
+            }
+        }
+
+        val ti = TableInfo(key, cols, foreignKeyColumns)
+        cache[key] = ti
         return ti
     }
 
-    // Optional: allow callers to clear per-db cache (e.g., after migrations)
+    fun clear() {
+        cache.clear()
+    }
+}
+
+object TableInfoProvider {
+    // Legacy helper retained for tests and ad hoc callers; the runtime uses a client-scoped TableInfoCache.
+    private val cacheByDb = mutableMapOf<SafeSQLiteConnection, TableInfoCache>()
+
+    suspend fun get(db: SafeSQLiteConnection, table: String): TableInfo {
+        return cacheByDb.getOrPut(db) { TableInfoCache() }.get(db, table)
+    }
+
     fun clear(db: SafeSQLiteConnection) {
         cacheByDb.remove(db)
     }

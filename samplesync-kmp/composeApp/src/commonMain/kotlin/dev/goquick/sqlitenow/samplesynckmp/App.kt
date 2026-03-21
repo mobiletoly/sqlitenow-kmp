@@ -282,23 +282,16 @@ private suspend fun setupSyncClient(
         )
 
         // Bootstrap is always required
-        client.bootstrap(userId = user, sourceId = deviceId)
+        client.bootstrap(userId = user, sourceId = deviceId).getOrThrow()
 
         if (isSessionRestore) {
             // For session restore, do incremental sync to catch up
-            val limit = 500
-            var more = true
-            while (more) {
-                val res = client.downloadOnce(limit = limit)
-                val applied = res.getOrNull()?.first ?: 0
-                if (applied > 0) appLog.d { "restore: applied=$applied" }
-                more = applied == limit
-                if (applied == 0) break
-            }
+            client.pullToStable().getOrThrow()
+            appLog.d { "restore: pullToStable complete" }
         } else {
             // For new sign-in, do full hydration
             appLog.i { "Sign-in success for user=$user; starting hydrate" }
-            val hydrateRes = client.hydrate(limit = 1000, windowed = true)
+            val hydrateRes = client.hydrate()
             if (hydrateRes.isFailure) {
                 appLog.e(hydrateRes.exceptionOrNull()) { "Hydrate failed" }
             } else {
@@ -425,52 +418,19 @@ fun App() {
             .debounce(700)
             .collectLatest {
                 try {
-                    val up = client.uploadOnce()
-                    up.onSuccess { summary ->
-                        if (summary.total > 0) {
-                            val reasons = if (summary.invalidReasons.isNotEmpty()) {
-                                summary.invalidReasons.entries
-                                    .sortedByDescending { it.value }
-                                    .joinToString(
-                                        limit = 3,
-                                        separator = ", "
-                                    ) { "${it.key}=${it.value}" }
-                            } else "none"
-                            appLog.i { "Upload: total=${summary.total} applied=${summary.applied} conflict=${summary.conflict} invalid=${summary.invalid} (reasons: ${reasons}) materialize_error=${summary.materializeError}" }
-                            if (summary.conflict > 0 || summary.invalid > 0 || summary.materializeError > 0) {
-                                // Prefer the first concrete error message if available
-                                errorMessage = summary.firstErrorMessage ?: buildString {
-                                    append("Upload issues: conflicts=${summary.conflict}, invalid=${summary.invalid}")
-                                    if (summary.invalidReasons.isNotEmpty()) {
-                                        append(" [")
-                                        append(
-                                            summary.invalidReasons.entries
-                                                .sortedByDescending { it.value }
-                                                .joinToString(
-                                                    limit = 3,
-                                                    separator = ", "
-                                                ) { "${it.key}=${it.value}" })
-                                        append("]")
-                                    }
-                                }
-                            }
+                    client.pushPending()
+                        .onFailure {
+                            appLog.e(it) { "pushPending failed" }
+                            errorMessage = "Push failed: ${it.message ?: "unknown"}"
+                            return@collectLatest
                         }
-                    }.onFailure {
-                        appLog.e(it) { "uploadOnce failed" }
-                        errorMessage = "Upload failed: ${it.message ?: "unknown"}"
-                        return@collectLatest
-                    }
-                    val limit = 500
-                    var more = true
-                    var total = 0
-                    while (more) {
-                        val (applied, _) = client.downloadOnce(limit = limit)
-                            .getOrNull() ?: (0 to 0L)
-                        total += applied
-                        more = applied == limit
-                        if (applied == 0) break
-                    }
-                    if (total > 0) appLog.i { "Applied $total changes" }
+                    client.pullToStable()
+                        .onFailure {
+                            appLog.e(it) { "pullToStable failed" }
+                            errorMessage = "Pull failed: ${it.message ?: "unknown"}"
+                            return@collectLatest
+                        }
+                    appLog.i { "Sync cycle complete" }
                 } catch (e: Exception) {
                     appLog.e(e) { "Sync cycle failed" }
                 }
@@ -525,48 +485,21 @@ fun App() {
                             syncClient ?: run { errorMessage = "Not signed in"; return@launch }
                         try {
                             val report = StringBuilder()
-                            val up = client.uploadOnce()
-                            up.onSuccess { summary ->
-                                val reasons = if (summary.invalidReasons.isNotEmpty()) {
-                                    summary.invalidReasons.entries.sortedByDescending { it.value }
-                                        .joinToString(
-                                            limit = 3,
-                                            separator = ", "
-                                        ) { "${it.key}=${it.value}" }
-                                } else "none"
-                                report.append("Upload: total=${summary.total} applied=${summary.applied} conflict=${summary.conflict} invalid=${summary.invalid} (reasons: ${reasons}) materialize_error=${summary.materializeError}")
-                                if (summary.conflict > 0 || summary.invalid > 0 || summary.materializeError > 0) {
-                                    summary.firstErrorMessage?.let { em ->
-                                        report.append("\nFirst error: ").append(em)
-                                    }
-                                }
+                            client.pushPending().onSuccess {
+                                report.append("Push: ok")
                             }.onFailure { err ->
-                                appLog.e(err) { "Upload failed" }
-                                report.append("Upload failed: ")
-                                    .append(err.message ?: "unknown error")
-                            }
-                            val limit = 500
-                            var more = true
-                            var totalApplied = 0
-                            while (more) {
-                                val (applied, _) = client.downloadOnce(limit = limit).getOrNull()
-                                    ?: (0 to 0L)
-                                totalApplied += applied
-                                more = applied == limit
-                                if (applied == 0) break
+                                appLog.e(err) { "Push failed" }
+                                report.append("Push failed: ").append(err.message ?: "unknown error")
                             }
                             if (report.isNotEmpty()) report.append('\n')
-                            report.append("Download: applied=").append(totalApplied)
-                            val conflictsOrErrors = up.getOrNull()
-                                ?.let { it.conflict > 0 || it.invalid > 0 || it.materializeError > 0 }
-                                ?: false
-                            if (conflictsOrErrors) {
-                                errorMessage = report.toString()
-                                reportMessage = null
-                            } else {
-                                reportMessage = report.toString()
-                                errorMessage = null
+                            client.pullToStable().onSuccess {
+                                report.append("Pull: ok")
+                            }.onFailure { err ->
+                                appLog.e(err) { "Pull failed" }
+                                report.append("Pull failed: ").append(err.message ?: "unknown error")
                             }
+                            reportMessage = report.toString()
+                            errorMessage = null
                         } catch (e: Exception) {
                             errorMessage = "Sync failed: ${e.message}"
                             reportMessage = null

@@ -16,6 +16,9 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import io.ktor.http.HttpStatusCode
+import kotlinx.serialization.json.Json
+
+private val httpErrorJson = Json { ignoreUnknownKeys = true }
 
 class UploadHttpException(
     val status: HttpStatusCode,
@@ -28,3 +31,16 @@ class DownloadHttpException(
     val rawBody: String,
     cause: Throwable? = null,
 ) : RuntimeException("Download failed: HTTP $status - $rawBody", cause)
+
+class HistoryPrunedException(
+    message: String,
+) : RuntimeException(message)
+
+internal fun DownloadHttpException.toHistoryPrunedOrNull(): HistoryPrunedException? {
+    if (status != HttpStatusCode.Conflict) return null
+    val error = runCatching {
+        httpErrorJson.decodeFromString<ErrorResponse>(rawBody)
+    }.getOrNull() ?: return null
+    if (error.error != "history_pruned") return null
+    return HistoryPrunedException(error.message)
+}

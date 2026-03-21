@@ -19,134 +19,140 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 
-/**
- * UploadRequest mirrors the server’s POST /sync/upload shape.
- */
-@Serializable
-data class UploadRequest(
-    @SerialName("last_server_seq_seen") val lastServerSeqSeen: Long,
-    val changes: List<ChangeUpload>
-)
+typealias SyncKey = Map<String, String>
 
-/**
- * ChangeUpload represents a single upsert/delete operation with optimistic concurrency (serverVersion).
- * Use schema to target the business schema registered on the server.
- */
 @Serializable
-data class ChangeUpload(
-    @SerialName("source_change_id") val sourceChangeId: Long,
-    val schema: String? = null,
-    val table: String,
-    val op: String, // INSERT, UPDATE, DELETE
-    val pk: String,
-    @SerialName("server_version") val serverVersion: Long,
-    val payload: JsonElement? = null
-)
-
-/**
- * UploadResponse reports per‑change outcomes: applied, conflict, invalid, or materialize_error.
- */
-@Serializable
-data class UploadResponse(
-    val accepted: Boolean,
-    @SerialName("highest_server_seq") val highestServerSeq: Long, // per-user watermark (do not use as download cursor)
-    val statuses: List<ChangeUploadStatus>
-)
-
-/**
- * ChangeUploadStatus contains the per‑item status and optional details (serverRow/invalid).
- */
-@Serializable
-data class ChangeUploadStatus(
-    @SerialName("source_change_id") val sourceChangeId: Long,
-    val status: String,
-    @SerialName("new_server_version") val newServerVersion: Long? = null,
-    @SerialName("server_row") val serverRow: JsonElement? = null,
-    val message: String? = null,
-    val invalid: JsonElement? = null
-)
-
-/**
- * UploadSummary aggregates the outcome of an upload batch.
- */
-@Serializable
-data class UploadSummary(
-    val total: Int,
-    val applied: Int,
-    val conflict: Int,
-    val invalid: Int,
-    @SerialName("materialize_error") val materializeError: Int,
-    @SerialName("invalid_reasons") val invalidReasons: Map<String, Int> = emptyMap(),
-    val firstErrorMessage: String? = null,
-)
-
-/**
- * Canonical string constants for invalid reasons returned by the server in ChangeUploadStatus.invalid.reason.
- * Use these to branch on specific categories without relying on ad-hoc string comparisons.
- */
-object InvalidReasons {
-    const val FK_MISSING: String = "fk_missing"
-    const val BAD_PAYLOAD: String = "bad_payload"
-    const val PRECHECK_ERROR: String = "precheck_error"
-    const val INTERNAL_ERROR: String = "internal_error"
-    const val UNREGISTERED_TABLE: String = "unregistered_table"
-    const val BATCH_TOO_LARGE: String = "batch_too_large"
-}
-
-/**
- * DownloadResponse mirrors the server’s GET /sync/download result.
- * Clients apply changes in `server_id` order and advance `next_after` atomically.
- */
-@Serializable
-data class DownloadResponse(
-    val changes: List<ChangeDownloadResponse>,
-    @SerialName("has_more") val hasMore: Boolean,
-    @SerialName("next_after") val nextAfter: Long,
-    @SerialName("window_until") val windowUntil: Long
-)
-
-/**
- * ChangeDownloadResponse is an item in the ordered stream for a user.
- * payload is the after‑image for INSERT/UPDATE; null for DELETE.
- */
-@Serializable
-data class ChangeDownloadResponse(
-    @SerialName("server_id") val serverId: Long,
+data class BundleRow(
     val schema: String,
-    @SerialName("table") val tableName: String,
+    val table: String,
+    val key: SyncKey,
     val op: String,
-    val pk: String,
+    @SerialName("row_version") val rowVersion: Long,
     val payload: JsonElement? = null,
-    @SerialName("server_version") val serverVersion: Long,
-    val deleted: Boolean,
-    @SerialName("source_id") val sourceId: String,
-    @SerialName("source_change_id") val sourceChangeId: Long,
-    val ts: String
 )
 
-/**
- * OversqliteConfig defines the client’s schema and tables, and the upload/download page sizes.
- * The schema must match the server’s registered business schema and is required by design.
- */
+@Serializable
+data class Bundle(
+    @SerialName("bundle_seq") val bundleSeq: Long,
+    @SerialName("source_id") val sourceId: String,
+    @SerialName("source_bundle_id") val sourceBundleId: Long,
+    val rows: List<BundleRow>,
+)
+
+@Serializable
+data class PushRequestRow(
+    val schema: String,
+    val table: String,
+    val key: SyncKey,
+    val op: String,
+    @SerialName("base_row_version") val baseRowVersion: Long,
+    val payload: JsonElement? = null,
+)
+
+@Serializable
+data class PushSessionCreateRequest(
+    @SerialName("source_id") val sourceId: String,
+    @SerialName("source_bundle_id") val sourceBundleId: Long,
+    @SerialName("planned_row_count") val plannedRowCount: Long,
+)
+
+@Serializable
+data class PushSessionCreateResponse(
+    @SerialName("push_id") val pushId: String = "",
+    val status: String,
+    @SerialName("planned_row_count") val plannedRowCount: Long = 0,
+    @SerialName("next_expected_row_ordinal") val nextExpectedRowOrdinal: Long = 0,
+    @SerialName("bundle_seq") val bundleSeq: Long = 0,
+    @SerialName("source_id") val sourceId: String = "",
+    @SerialName("source_bundle_id") val sourceBundleId: Long = 0,
+    @SerialName("row_count") val rowCount: Long = 0,
+    @SerialName("bundle_hash") val bundleHash: String = "",
+)
+
+@Serializable
+data class PushSessionChunkRequest(
+    @SerialName("start_row_ordinal") val startRowOrdinal: Long,
+    val rows: List<PushRequestRow>,
+)
+
+@Serializable
+data class PushSessionChunkResponse(
+    @SerialName("push_id") val pushId: String,
+    @SerialName("next_expected_row_ordinal") val nextExpectedRowOrdinal: Long,
+)
+
+@Serializable
+data class PushSessionCommitResponse(
+    @SerialName("bundle_seq") val bundleSeq: Long,
+    @SerialName("source_id") val sourceId: String,
+    @SerialName("source_bundle_id") val sourceBundleId: Long,
+    @SerialName("row_count") val rowCount: Long,
+    @SerialName("bundle_hash") val bundleHash: String,
+)
+
+@Serializable
+data class CommittedBundleRowsResponse(
+    @SerialName("bundle_seq") val bundleSeq: Long,
+    @SerialName("source_id") val sourceId: String,
+    @SerialName("source_bundle_id") val sourceBundleId: Long,
+    @SerialName("row_count") val rowCount: Long,
+    @SerialName("bundle_hash") val bundleHash: String,
+    val rows: List<BundleRow>,
+    @SerialName("next_row_ordinal") val nextRowOrdinal: Long,
+    @SerialName("has_more") val hasMore: Boolean,
+)
+
+@Serializable
+data class PullResponse(
+    @SerialName("stable_bundle_seq") val stableBundleSeq: Long,
+    val bundles: List<Bundle>,
+    @SerialName("has_more") val hasMore: Boolean,
+)
+
+@Serializable
+data class SnapshotRow(
+    val schema: String,
+    val table: String,
+    val key: SyncKey,
+    @SerialName("row_version") val rowVersion: Long,
+    val payload: JsonElement,
+)
+
+@Serializable
+data class SnapshotSession(
+    @SerialName("snapshot_id") val snapshotId: String,
+    @SerialName("snapshot_bundle_seq") val snapshotBundleSeq: Long,
+    @SerialName("row_count") val rowCount: Long,
+    @SerialName("byte_count") val byteCount: Long = 0,
+    @SerialName("expires_at") val expiresAt: String,
+)
+
+@Serializable
+data class SnapshotChunkResponse(
+    @SerialName("snapshot_id") val snapshotId: String,
+    @SerialName("snapshot_bundle_seq") val snapshotBundleSeq: Long,
+    val rows: List<SnapshotRow>,
+    @SerialName("next_row_ordinal") val nextRowOrdinal: Long,
+    @SerialName("has_more") val hasMore: Boolean,
+)
+
+@Serializable
+data class ErrorResponse(
+    val error: String,
+    val message: String,
+)
+
 data class OversqliteConfig(
-    val schema: String, // mandatory; no default to avoid business-specific assumptions
+    val schema: String,
     val syncTables: List<SyncTable>,
     val uploadLimit: Int = 200,
     val downloadLimit: Int = 1000,
-    val syncWindowLookback: Long = 100L,
-    val lookbackMaxPasses: Int = 20,
-    val uploadPath: String = "/sync/upload",
-    val downloadPath: String = "/sync/download",
-    val verboseLogs: Boolean = false, // Enable detailed debug logging for troubleshooting
+    val snapshotChunkRows: Int = 1000,
+    val verboseLogs: Boolean = false,
 )
 
-/**
- * Represents a table to be synchronized with its primary key column.
- *
- * @param tableName The name of the table to synchronize
- * @param syncKeyColumnName The primary key column name. "id" by default.
- */
 data class SyncTable(
     val tableName: String,
-    val syncKeyColumnName: String? = "id"
+    val syncKeyColumnName: String? = null,
+    val syncKeyColumns: List<String> = emptyList(),
 )

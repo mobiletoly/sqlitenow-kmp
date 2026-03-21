@@ -15,7 +15,7 @@ SQLiteNow's reactive flows automatically update your UI when sync operations mod
 
 When sync operations modify your database tables, SQLiteNow's table update listener automatically:
 
-1. **Detects table changes** during upload and download operations
+1. **Detects table changes** during push, pull, hydrate, and recover operations
 2. **Notifies reactive flows** that depend on those tables
 3. **Triggers UI updates** through your existing `.asFlow()` queries
 4. **Maintains consistency** between local and remote data
@@ -44,8 +44,7 @@ fun SyncAwarePersonList() {
     suspend fun performSync() {
         isSyncing = true
         try {
-            syncClient.uploadOnce()      // May trigger flows if conflicts resolved
-            syncClient.downloadOnce()    // Triggers flows when new data arrives
+            syncClient.sync()            // Pushes local changes, then pulls remote bundles
             // No manual UI refresh needed!
         } finally {
             isSyncing = false
@@ -58,12 +57,13 @@ fun SyncAwarePersonList() {
 
 SQLiteNow's sync system uses a table update listener that:
 
-1. **Monitors sync operations**: Tracks which tables are modified during upload/download
+1. **Monitors sync operations**: Tracks which tables are modified during push, pull, hydrate, and recover
 2. **Notifies flow system**: Calls `notifyTablesChanged()` with affected table names
 3. **Triggers reactive queries**: Any `.asFlow()` queries watching those tables re-execute
 4. **Updates UI automatically**: Compose recomposes with new data
 
-This happens for both upload operations (when conflicts are resolved) and download operations (when remote changes are applied).
+This happens for push operations (when accepted bundles are replayed), pull operations, and
+snapshot rebuild operations.
 
 ## Sync Triggers with Reactive Updates
 
@@ -86,8 +86,7 @@ class SyncManager {
 
     private suspend fun performSync() {
         try {
-            syncClient.uploadOnce()
-            syncClient.downloadOnce(limit = 1000)
+            syncClient.sync()
             // Table update listener automatically triggers reactive flows
         } catch (e: Exception) {
             logger.e(e) { "Sync failed" }
@@ -109,7 +108,7 @@ fun PersonListWithPullRefresh() {
             coroutineScope.launch {
                 isRefreshing = true
                 try {
-                    syncClient.downloadOnce(limit = 1000)
+                    syncClient.pullToStable()
                     // UI updates automatically via table update listener
                 } finally {
                     isRefreshing = false
@@ -129,9 +128,9 @@ fun PersonListWithPullRefresh() {
 
 The table update listener fires at specific points during sync:
 
-- **Upload operations**: When conflicts are resolved and local data changes
-- **Download operations**: When remote changes are applied to local tables
-- **Post-upload lookback**: When consistency checks modify local data
+- **Push operations**: When accepted bundles are replayed or conflicts update local rows
+- **Pull operations**: When remote bundles are applied to local tables
+- **Hydrate / recover**: When the staged snapshot becomes the new local state
 
 ### Conflict Resolution Impact
 
@@ -145,7 +144,6 @@ When conflicts occur during upload, the resolver may modify local data:
 ### Sync Performance
 
 - **Batch sync operations**: Don't sync after every single change
-- **Use appropriate page sizes**: 1000 is usually optimal for downloads
 - **Monitor sync frequency**: Balance freshness with battery/bandwidth usage
 
 ## Best Practices for Sync + Reactive Flows

@@ -15,371 +15,616 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
-import dev.goquick.sqlitenow.common.sqliteNowLogger
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import dev.goquick.sqlitenow.core.sqlite.getColumnNames
 import dev.goquick.sqlitenow.core.sqlite.use
+import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
 
-/**
- * Handles the bootstrapping process for sync operations.
- * Separated from DefaultOversqliteClient to improve maintainability.
- */
+internal data class ValidatedSyncTable(
+    val tableName: String,
+    val syncKeyColumnName: String,
+)
+
+internal data class ValidatedConfig(
+    val schema: String,
+    val tables: List<ValidatedSyncTable>,
+    val pkByTable: Map<String, String>,
+    val keyByTable: Map<String, List<String>>,
+    val tableOrder: Map<String, Int>,
+)
+
 internal class SyncBootstrapper(
-    private val config: OversqliteConfig
+    private val config: OversqliteConfig,
+    private val tableInfoCache: TableInfoCache,
 ) {
-
     suspend fun bootstrap(
         db: SafeSQLiteConnection,
         userId: String,
-        sourceId: String
-    ): Result<Unit> = runCatching {
-        // Clear per-db table info cache to avoid stale schema info across app runs/tests
-        TableInfoProvider.clear(db)
+        sourceId: String,
+    ): Result<ValidatedConfig> = runCatching {
+        require(config.schema.isNotBlank()) { "config.schema must be provided" }
+        require(userId.isNotBlank()) { "userId must be provided" }
+        require(sourceId.isNotBlank()) { "sourceId must be provided" }
 
-        if (config.verboseLogs) {
-            sqliteNowLogger.i { "bootstrap: start userId=$userId sourceId=$sourceId" }
-            sqliteNowLogger.i { "bootstrap: config=$config" }
-        } else {
-            sqliteNowLogger.i { "bootstrap: start userId=$userId sourceId=$sourceId" }
-        }
-
-        configureDatabaseSettings(db)
-        createMetadataTables(db)
-        ensureClientRowExists(db, userId, sourceId)
-        createTriggersForTables(db)
-
-        if (config.verboseLogs) {
-            sqliteNowLogger.i { "bootstrap: done successfully" }
-        } else {
-            sqliteNowLogger.i { "bootstrap: done" }
-        }
-    }.onFailure { exception ->
-        sqliteNowLogger.e(exception) { "bootstrap: failed userId=$userId sourceId=$sourceId" }
+        initializeDatabase(db)
+        val validated = validateConfig(db)
+        persistClientIdentity(db, validated, userId.trim(), sourceId.trim())
+        installTriggers(db, validated)
+        validated
     }
 
-    private suspend fun configureDatabaseSettings(db: SafeSQLiteConnection) {
-        try {
-            db.execSQL("PRAGMA journal_mode=WAL")
-        } catch (_: Throwable) {
-            // Ignore if WAL mode is not supported
-        }
-        try {
-            db.execSQL("PRAGMA busy_timeout=4000")
-        } catch (_: Throwable) {
-            // Ignore if busy_timeout is not supported
-        }
-    }
-
-    private suspend fun createMetadataTables(db: SafeSQLiteConnection) {
-        // Client info table
+    private suspend fun initializeDatabase(db: SafeSQLiteConnection) {
+        db.execSQL("PRAGMA foreign_keys = ON")
         db.execSQL(
             """
-            CREATE TABLE IF NOT EXISTS _sync_client_info (
+            CREATE TABLE IF NOT EXISTS _sync_client_state (
               user_id TEXT NOT NULL PRIMARY KEY,
               source_id TEXT NOT NULL,
-              next_change_id INTEGER NOT NULL DEFAULT 1,
-              last_server_seq_seen INTEGER NOT NULL DEFAULT 0,
+              schema_name TEXT NOT NULL DEFAULT '',
+              next_source_bundle_id INTEGER NOT NULL DEFAULT 1,
+              last_bundle_seq_seen INTEGER NOT NULL DEFAULT 0,
               apply_mode INTEGER NOT NULL DEFAULT 0,
-              current_window_until INTEGER NOT NULL DEFAULT 0
+              rebuild_required INTEGER NOT NULL DEFAULT 0
             )
             """.trimIndent()
         )
-
-
-
-        // Row metadata table
         db.execSQL(
             """
-            CREATE TABLE IF NOT EXISTS _sync_row_meta (
+            CREATE TABLE IF NOT EXISTS _sync_row_state (
+              schema_name TEXT NOT NULL,
               table_name TEXT NOT NULL,
-              pk_uuid TEXT NOT NULL,
-              server_version INTEGER NOT NULL DEFAULT 0,
+              key_json TEXT NOT NULL,
+              row_version INTEGER NOT NULL DEFAULT 0,
               deleted INTEGER NOT NULL DEFAULT 0,
               updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-              PRIMARY KEY (table_name, pk_uuid)
+              PRIMARY KEY (schema_name, table_name, key_json)
             )
             """.trimIndent()
         )
-
-        // Pending changes table
         db.execSQL(
             """
-            CREATE TABLE IF NOT EXISTS _sync_pending (
+            CREATE TABLE IF NOT EXISTS _sync_dirty_rows (
+              schema_name TEXT NOT NULL,
               table_name TEXT NOT NULL,
-              pk_uuid TEXT NOT NULL,
+              key_json TEXT NOT NULL,
               op TEXT NOT NULL CHECK (op IN ('INSERT','UPDATE','DELETE')),
-              base_version INTEGER DEFAULT 0,
+              base_row_version INTEGER NOT NULL DEFAULT 0,
               payload TEXT,
-              change_id INTEGER,
-              queued_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-              PRIMARY KEY (table_name, pk_uuid)
+              dirty_ordinal INTEGER NOT NULL DEFAULT 0,
+              updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+              PRIMARY KEY (schema_name, table_name, key_json)
             )
             """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_sync_dirty_rows_dirty_ordinal ON _sync_dirty_rows(dirty_ordinal)")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS _sync_snapshot_stage (
+              snapshot_id TEXT NOT NULL,
+              row_ordinal INTEGER NOT NULL,
+              schema_name TEXT NOT NULL,
+              table_name TEXT NOT NULL,
+              key_json TEXT NOT NULL,
+              row_version INTEGER NOT NULL,
+              payload TEXT NOT NULL,
+              PRIMARY KEY (snapshot_id, row_ordinal)
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS _sync_push_outbound (
+              source_bundle_id INTEGER NOT NULL,
+              row_ordinal INTEGER NOT NULL,
+              schema_name TEXT NOT NULL,
+              table_name TEXT NOT NULL,
+              key_json TEXT NOT NULL,
+              op TEXT NOT NULL CHECK (op IN ('INSERT','UPDATE','DELETE')),
+              base_row_version INTEGER NOT NULL DEFAULT 0,
+              payload TEXT,
+              PRIMARY KEY (source_bundle_id, row_ordinal)
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS _sync_push_stage (
+              bundle_seq INTEGER NOT NULL,
+              row_ordinal INTEGER NOT NULL,
+              schema_name TEXT NOT NULL,
+              table_name TEXT NOT NULL,
+              key_json TEXT NOT NULL,
+              op TEXT NOT NULL CHECK (op IN ('INSERT','UPDATE','DELETE')),
+              row_version INTEGER NOT NULL,
+              payload TEXT,
+              PRIMARY KEY (bundle_seq, row_ordinal)
+            )
+            """.trimIndent()
+        )
+        db.execSQL("UPDATE _sync_client_state SET apply_mode = 0 WHERE apply_mode = 1")
+    }
+
+    private suspend fun validateConfig(db: SafeSQLiteConnection): ValidatedConfig {
+        val schema = config.schema.trim()
+        val pkByTable = linkedMapOf<String, String>()
+        val keyByTable = linkedMapOf<String, List<String>>()
+        val validatedTables = mutableListOf<ValidatedSyncTable>()
+        val managedTables = linkedSetOf<String>()
+
+        for (syncTable in config.syncTables) {
+            val tableName = syncTable.tableName.trim().lowercase()
+            require(tableName.isNotBlank()) { "sync table name must be provided" }
+            require(!tableName.contains(".")) {
+                "table ${syncTable.tableName} must not include a schema qualifier; oversqlite supports exactly one config.schema per local database"
+            }
+            require(tableName !in managedTables) { "duplicate sync table registration for ${syncTable.tableName}" }
+            managedTables += tableName
+
+            val keyColumns = normalizedSyncKeyColumns(syncTable)
+            require(keyColumns.size == 1) {
+                "table ${syncTable.tableName} must declare exactly one sync key column in the current client runtime"
+            }
+
+            val tableInfo = tableInfoCache.get(db, tableName)
+            val syncKeyColumn = configuredPrimaryKeyColumn(tableInfo, syncTable, keyColumns.single())
+            pkByTable[tableName] = syncKeyColumn
+            keyByTable[tableName] = listOf(syncKeyColumn)
+            validatedTables += ValidatedSyncTable(tableName = tableName, syncKeyColumnName = syncKeyColumn)
+        }
+
+        validateManagedForeignKeyClosure(db, managedTables)
+        val tableOrder = computeManagedTableOrder(db, validatedTables)
+        return ValidatedConfig(
+            schema = schema,
+            tables = validatedTables,
+            pkByTable = pkByTable,
+            keyByTable = keyByTable,
+            tableOrder = tableOrder,
         )
     }
 
-    private suspend fun ensureClientRowExists(
+    private fun normalizedSyncKeyColumns(syncTable: SyncTable): List<String> {
+        val explicit = syncTable.syncKeyColumns
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinctBy { it.lowercase() }
+        if (explicit.isNotEmpty()) {
+            return explicit
+        }
+
+        val single = syncTable.syncKeyColumnName?.trim().orEmpty()
+        require(single.isNotEmpty()) {
+            "table ${syncTable.tableName} must declare syncKeyColumnName or syncKeyColumns explicitly"
+        }
+        return listOf(single)
+    }
+
+    private fun configuredPrimaryKeyColumn(
+        tableInfo: TableInfo,
+        syncTable: SyncTable,
+        configuredKeyColumn: String,
+    ): String {
+        for (column in tableInfo.columns) {
+            if (!column.name.equals(configuredKeyColumn, ignoreCase = true)) {
+                continue
+            }
+            require(column.isPrimaryKey) {
+                "configured primary key column ${column.name} for table ${syncTable.tableName} is not declared as PRIMARY KEY"
+            }
+            return column.name
+        }
+        error("table ${syncTable.tableName} does not contain configured primary key column $configuredKeyColumn")
+    }
+
+    private suspend fun validateManagedForeignKeyClosure(
+        db: SafeSQLiteConnection,
+        managedTables: Set<String>,
+    ) {
+        for (tableName in managedTables) {
+            val compositeRefs = mutableListOf<String>()
+            val missingRefs = mutableListOf<String>()
+            db.prepare("PRAGMA foreign_key_list(${quoteIdent(tableName)})").use { st ->
+                val indexes = foreignKeyIndexMap(st)
+                while (st.step()) {
+                    val seq = st.getLong(indexes["seq"] ?: 1).toInt()
+                    val refTable = st.getText(indexes["table"] ?: 2).trim().lowercase()
+                    val fromCol = st.getText(indexes["from"] ?: 3)
+                    val toCol = st.getText(indexes["to"] ?: 4)
+                    if (refTable.isEmpty()) {
+                        continue
+                    }
+                    if (seq > 0) {
+                        compositeRefs += "$tableName -> $refTable"
+                        continue
+                    }
+                    if (refTable !in managedTables) {
+                        missingRefs += "$tableName.$fromCol -> $refTable.$toCol"
+                    }
+                }
+            }
+            require(compositeRefs.isEmpty()) {
+                "managed tables contain unsupported composite foreign keys: ${compositeRefs.sorted().joinToString("; ")}"
+            }
+            require(missingRefs.isEmpty()) {
+                "managed tables are not FK-closed: ${missingRefs.sorted().joinToString("; ")}"
+            }
+        }
+    }
+
+    private suspend fun computeManagedTableOrder(
+        db: SafeSQLiteConnection,
+        tables: List<ValidatedSyncTable>,
+    ): Map<String, Int> {
+        val originalOrder = tables.mapIndexed { index, table -> table.tableName to index }.toMap()
+        val managed = tables.map { it.tableName }.toSet()
+        val dependents = managed.associateWith { linkedSetOf<String>() }.toMutableMap()
+        val inDegree = managed.associateWith { 0 }.toMutableMap()
+
+        for (table in tables) {
+            db.prepare("PRAGMA foreign_key_list(${quoteIdent(table.tableName)})").use { st ->
+                val indexes = foreignKeyIndexMap(st)
+                while (st.step()) {
+                    val refTable = st.getText(indexes["table"] ?: 2).trim().lowercase()
+                    if (refTable.isEmpty() || refTable == table.tableName || refTable !in managed) {
+                        continue
+                    }
+                    if (dependents.getValue(refTable).add(table.tableName)) {
+                        inDegree[table.tableName] = inDegree.getValue(table.tableName) + 1
+                    }
+                }
+            }
+        }
+
+        val queue = managed.filter { inDegree.getValue(it) == 0 }.sortedBy { originalOrder.getValue(it) }.toMutableList()
+        val ordered = mutableListOf<String>()
+        while (queue.isNotEmpty()) {
+            val current = queue.removeAt(0)
+            ordered += current
+            val children = dependents.getValue(current).sortedBy { originalOrder.getValue(it) }
+            for (child in children) {
+                val next = inDegree.getValue(child) - 1
+                inDegree[child] = next
+                if (next == 0) {
+                    queue += child
+                    queue.sortBy { originalOrder.getValue(it) }
+                }
+            }
+        }
+
+        for (table in tables) {
+            if (table.tableName !in ordered) {
+                ordered += table.tableName
+            }
+        }
+        return ordered.mapIndexed { index, tableName -> tableName to index }.toMap()
+    }
+
+    private fun foreignKeyIndexMap(statement: dev.goquick.sqlitenow.core.sqlite.SqliteStatement): Map<String, Int> {
+        return statement.getColumnNames()
+            .mapIndexed { index, name -> name.lowercase() to index }
+            .toMap()
+    }
+
+    private suspend fun persistClientIdentity(
+        db: SafeSQLiteConnection,
+        validated: ValidatedConfig,
+        userId: String,
+        sourceId: String,
+    ) {
+        val identities = mutableListOf<PersistedClientIdentity>()
+        db.prepare(
+            """
+            SELECT user_id, source_id, schema_name
+            FROM _sync_client_state
+            ORDER BY user_id
+            """.trimIndent()
+        ).use { st ->
+            while (st.step()) {
+                identities += PersistedClientIdentity(
+                    userId = st.getText(0),
+                    sourceId = st.getText(1),
+                    schemaName = st.getText(2),
+                )
+            }
+        }
+
+        if (identities.isEmpty()) {
+            insertClientIdentity(db, userId, sourceId, config.schema.trim(), rebuildRequired = false)
+            return
+        }
+
+        if (identities.size == 1 && identities[0].userId == userId) {
+            val persisted = identities[0]
+            val persistedSchema = persisted.schemaName.trim()
+            val configuredSchema = config.schema.trim()
+            require(persistedSchema.isEmpty() || persistedSchema == configuredSchema) {
+                "client state for user $userId is bound to schema ${persisted.schemaName}, not $configuredSchema"
+            }
+            if (persisted.sourceId == sourceId) {
+                if (persistedSchema.isEmpty()) {
+                    db.prepare(
+                        """
+                        UPDATE _sync_client_state
+                        SET schema_name = ?, apply_mode = 0
+                        WHERE user_id = ?
+                        """.trimIndent()
+                    ).use { st ->
+                        st.bindText(1, configuredSchema)
+                        st.bindText(2, userId)
+                        st.step()
+                    }
+                }
+                return
+            }
+        }
+
+        db.transaction {
+            db.execSQL("UPDATE _sync_client_state SET apply_mode = 1")
+            clearManagedState(db, validated)
+            db.execSQL("DELETE FROM _sync_snapshot_stage")
+            db.execSQL("DELETE FROM _sync_client_state")
+            insertClientIdentity(db, userId, sourceId, config.schema.trim(), rebuildRequired = true)
+        }
+    }
+
+    private suspend fun clearManagedState(
+        db: SafeSQLiteConnection,
+        validated: ValidatedConfig,
+    ) {
+        for (table in validated.tables) {
+            db.execSQL("DELETE FROM ${quoteIdent(table.tableName)}")
+            db.prepare(
+                "DELETE FROM _sync_row_state WHERE schema_name = ? AND table_name = ?"
+            ).use { st ->
+                st.bindText(1, validated.schema)
+                st.bindText(2, table.tableName)
+                st.step()
+            }
+        }
+        db.execSQL("DELETE FROM _sync_dirty_rows")
+        db.execSQL("DELETE FROM _sync_push_outbound")
+        db.execSQL("DELETE FROM _sync_push_stage")
+    }
+
+    private suspend fun insertClientIdentity(
         db: SafeSQLiteConnection,
         userId: String,
-        sourceId: String
+        sourceId: String,
+        schemaName: String,
+        rebuildRequired: Boolean,
     ) {
-        val existing = db.prepare("SELECT COUNT(*) FROM _sync_client_info WHERE user_id=?").use { st ->
+        db.prepare(
+            """
+            INSERT INTO _sync_client_state(
+              user_id, source_id, schema_name, next_source_bundle_id, last_bundle_seq_seen, apply_mode, rebuild_required
+            )
+            VALUES(?, ?, ?, 1, 0, 0, ?)
+            """.trimIndent()
+        ).use { st ->
             st.bindText(1, userId)
-            if (st.step()) st.getLong(0) else 0L
-        }
-
-        if (existing == 0L) {
-            db.prepare(
-                "INSERT INTO _sync_client_info(user_id, source_id, next_change_id, last_server_seq_seen, apply_mode, current_window_until) " +
-                "VALUES(?,?,1,0,0,0)"
-            ).use { st ->
-                st.bindText(1, userId)
-                st.bindText(2, sourceId)
-                st.step()
-            }
-        } else {
-            db.prepare("UPDATE _sync_client_info SET apply_mode=0 WHERE user_id=?").use { st ->
-                st.bindText(1, userId)
-                st.step()
-            }
+            st.bindText(2, sourceId)
+            st.bindText(3, schemaName)
+            st.bindLong(4, if (rebuildRequired) 1 else 0)
+            st.step()
         }
     }
 
-    private suspend fun createTriggersForTables(db: SafeSQLiteConnection) {
-        // Create triggers for each sync table with its specific primary key
-        config.syncTables.forEach { syncTable ->
-            val tableLc = syncTable.tableName.lowercase()
-            if (config.verboseLogs) {
-                sqliteNowLogger.i { "bootstrap: creating triggers for table=$tableLc, syncKeyColumn=${syncTable.syncKeyColumnName}" }
-            } else {
-                sqliteNowLogger.d { "bootstrap: creating triggers for table=$tableLc" }
-            }
-
-            val primaryKeyColumn = determinePrimaryKeyColumn(db, syncTable)
-            if (config.verboseLogs) {
-                sqliteNowLogger.i { "bootstrap: determined primary key column='$primaryKeyColumn' for table=$tableLc" }
-            }
-            createTriggersForTable(db, tableLc, primaryKeyColumn)
-        }
-    }
-
-    private suspend fun determinePrimaryKeyColumn(db: SafeSQLiteConnection, syncTable: SyncTable): String {
-        // If syncKeyColumnName is explicitly specified, use it
-        if (!syncTable.syncKeyColumnName.isNullOrBlank()) {
-            return syncTable.syncKeyColumnName
-        }
-
-        // Auto-detect primary key from table schema
-        val detectedPk = detectPrimaryKeyColumn(db, syncTable.tableName.lowercase())
-        if (detectedPk != null) {
-            return detectedPk
-        }
-
-        sqliteNowLogger.w { "No primary key detected for table '${syncTable.tableName}', falling back to 'id'" }
-        return "id"
-    }
-
-    private suspend fun detectPrimaryKeyColumn(db: SafeSQLiteConnection, table: String): String? =
-        TableInfoProvider.get(db, table).primaryKey?.name
-
-    private suspend fun createTriggersForTable(db: SafeSQLiteConnection, table: String, primaryKeyColumn: String) {
-        val tableLc = table.lowercase()
-        val columns = getTableColumns(db, tableLc)
-        val pkIsBlob = isPrimaryKeyBlob(db, tableLc)
-        val pkExprNew = if (pkIsBlob) "lower(hex(NEW.$primaryKeyColumn))" else "NEW.$primaryKeyColumn"
-        val pkExprOld = if (pkIsBlob) "lower(hex(OLD.$primaryKeyColumn))" else "OLD.$primaryKeyColumn"
-
-        if (config.verboseLogs) {
-            sqliteNowLogger.i { "bootstrap: table=$tableLc, primaryKey=$primaryKeyColumn, isBlob=$pkIsBlob" }
-            sqliteNowLogger.i { "bootstrap: columns=${columns.joinToString(", ")}" }
-        }
-
-        // Trigger naming convention:
-        // - trg_<table>_ai = AFTER INSERT
-        // - trg_<table>_au = AFTER UPDATE
-        // - trg_<table>_ad = AFTER DELETE
-        // Build a JSON payload expression that renders BLOB columns as hex(NEW.col) text
-        val tableInfo = TableInfoProvider.get(db, tableLc)
-        val blobAwarePayloadExpr = buildJsonObjectExprHexAware(
-            tableInfo = tableInfo,
-            prefix = "NEW"
-        )
-
-        createInsertTrigger(db, tableLc, pkExprNew, blobAwarePayloadExpr)
-        createUpdateTrigger(db, tableLc, pkExprNew, blobAwarePayloadExpr)
-        createDeleteTrigger(db, tableLc, pkExprOld)
-
-        if (config.verboseLogs) {
-            sqliteNowLogger.i { "bootstrap: triggers created successfully for table=$tableLc" }
-        }
-    }
-
-    private suspend fun createInsertTrigger(
+    private suspend fun installTriggers(
         db: SafeSQLiteConnection,
-        tableLc: String,
-        pkExprNew: String,
-        payloadExpr: String
+        validated: ValidatedConfig,
     ) {
-        // trg_<table>_ai = AFTER INSERT trigger (see naming convention in createTriggersForTable()).
-        db.execSQL("DROP TRIGGER IF EXISTS trg_${tableLc}_ai;")
-        val triggerSql =
-            """
-            CREATE TRIGGER trg_${tableLc}_ai
-            AFTER INSERT ON ${tableLc}
-            WHEN COALESCE((SELECT apply_mode FROM _sync_client_info LIMIT 1), 0) = 0
-            BEGIN
-              INSERT INTO _sync_row_meta(table_name, pk_uuid, server_version, deleted)
-              SELECT '${tableLc}', ${pkExprNew}, 0, 0
-              WHERE NOT EXISTS (
-                SELECT 1 FROM _sync_row_meta
-                WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew}
-              );
-
-              -- Reset deleted flag when record is reinserted
-              -- This handles the case where a record was deleted and then reinserted
-              UPDATE _sync_row_meta SET deleted=0, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-              WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew} AND deleted=1;
-
-              INSERT INTO _sync_pending(table_name, pk_uuid, op, base_version, payload, change_id)
-              SELECT '${tableLc}', ${pkExprNew}, 'INSERT', 0, ${payloadExpr}, (SELECT next_change_id FROM _sync_client_info LIMIT 1)
-              WHERE NOT EXISTS (SELECT 1 FROM _sync_pending WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew});
-
-              UPDATE _sync_pending SET
-                op='INSERT',
-                base_version=(SELECT server_version FROM _sync_row_meta WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew}),
-                payload=${payloadExpr},
-                queued_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-              WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew};
-
-              UPDATE _sync_client_info SET next_change_id = next_change_id + 1
-              WHERE changes() > 0 AND last_insert_rowid() > 0;
-            END
-            """.trimIndent()
-
-        if (config.verboseLogs) {
-            sqliteNowLogger.i { "bootstrap: creating INSERT trigger for table=$tableLc" }
-            sqliteNowLogger.d { "INSERT trigger SQL: $triggerSql" }
+        for (table in validated.tables) {
+            createTriggersForTable(db, validated.schema, table)
         }
-
-        db.execSQL(triggerSql)
     }
 
-    private suspend fun createUpdateTrigger(
+    private suspend fun createTriggersForTable(
         db: SafeSQLiteConnection,
-        tableLc: String,
-        pkExprNew: String,
-        payloadExpr: String
+        schemaName: String,
+        table: ValidatedSyncTable,
     ) {
-        // trg_<table>_au = AFTER UPDATE trigger (see naming convention in createTriggersForTable()).
-        db.execSQL("DROP TRIGGER IF EXISTS trg_${tableLc}_au;")
-        db.execSQL(
-            """
-            CREATE TRIGGER trg_${tableLc}_au
-            AFTER UPDATE ON ${tableLc}
-            WHEN COALESCE((SELECT apply_mode FROM _sync_client_info LIMIT 1), 0) = 0
-            BEGIN
-              INSERT INTO _sync_row_meta(table_name, pk_uuid, server_version, deleted)
-              SELECT '${tableLc}', ${pkExprNew}, 0, 0
-              WHERE NOT EXISTS (
-                SELECT 1 FROM _sync_row_meta
-                WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew}
-              );
+        val tableInfo = tableInfoCache.get(db, table.tableName)
+        val pkColumn = table.syncKeyColumnName
+        val payloadExpr = buildJsonObjectExprHexAware(tableInfo, "NEW")
+        val oldKeyExpr = buildKeyJsonObjectExprHexAware(tableInfo, pkColumn, "OLD")
+        val newKeyExpr = buildKeyJsonObjectExprHexAware(tableInfo, pkColumn, "NEW")
 
-              UPDATE _sync_row_meta SET deleted=0, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-              WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew};
-
-              INSERT INTO _sync_pending(table_name, pk_uuid, op, base_version, payload, change_id)
-              SELECT '${tableLc}', ${pkExprNew}, 'UPDATE',
-                     (SELECT server_version FROM _sync_row_meta WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew}),
-                     ${payloadExpr},
-                     (SELECT next_change_id FROM _sync_client_info LIMIT 1)
-              WHERE NOT EXISTS (SELECT 1 FROM _sync_pending WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew});
-
-              UPDATE _sync_pending SET
-                op = CASE WHEN op='INSERT' THEN 'INSERT' ELSE 'UPDATE' END,
-                base_version = CASE WHEN op='INSERT' THEN base_version ELSE COALESCE((SELECT server_version FROM _sync_row_meta WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew}), 0) END,
-                payload = ${payloadExpr},
-                queued_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-              WHERE table_name='${tableLc}' AND pk_uuid=${pkExprNew};
-
-              UPDATE _sync_client_info SET next_change_id = next_change_id + 1
-              WHERE changes() > 0 AND last_insert_rowid() > 0;
-            END
-            """.trimIndent()
+        val data = TriggerData(
+            schemaName = schemaName,
+            tableName = table.tableName,
+            newRowJson = payloadExpr,
+            oldKeyJson = oldKeyExpr,
+            newKeyJson = newKeyExpr,
         )
-    }
 
-    private suspend fun createDeleteTrigger(db: SafeSQLiteConnection, tableLc: String, pkExprOld: String) {
-        // trg_<table>_ad = AFTER DELETE trigger (see naming convention in createTriggersForTable()).
-        db.execSQL("DROP TRIGGER IF EXISTS trg_${tableLc}_ad;")
-        db.execSQL(
-            """
-            CREATE TRIGGER trg_${tableLc}_ad
-            AFTER DELETE ON ${tableLc}
-            WHEN COALESCE((SELECT apply_mode FROM _sync_client_info LIMIT 1), 0) = 0
-            BEGIN
-              INSERT INTO _sync_row_meta(table_name, pk_uuid, server_version, deleted)
-              SELECT '${tableLc}', ${pkExprOld}, 0, 1
-              WHERE NOT EXISTS (
-                SELECT 1 FROM _sync_row_meta
-                WHERE table_name='${tableLc}' AND pk_uuid=${pkExprOld}
-              );
-
-              INSERT INTO _sync_pending(table_name, pk_uuid, op, base_version, payload, change_id)
-              SELECT '${tableLc}', ${pkExprOld}, 'DELETE',
-                     COALESCE((SELECT server_version FROM _sync_row_meta WHERE table_name='${tableLc}' AND pk_uuid=${pkExprOld}), 0),
-                     NULL,
-                     (SELECT next_change_id FROM _sync_client_info LIMIT 1)
-              WHERE NOT EXISTS (SELECT 1 FROM _sync_pending WHERE table_name='${tableLc}' AND pk_uuid=${pkExprOld});
-
-              INSERT INTO _sync_pending(table_name, pk_uuid, op, base_version, payload, change_id)
-              SELECT '${tableLc}', ${pkExprOld}, 'DELETE',
-                     COALESCE((SELECT server_version FROM _sync_row_meta WHERE table_name='${tableLc}' AND pk_uuid=${pkExprOld}), 0),
-                     NULL,
-                     (SELECT next_change_id FROM _sync_client_info LIMIT 1)
-              WHERE NOT EXISTS (SELECT 1 FROM _sync_pending WHERE table_name='${tableLc}' AND pk_uuid=${pkExprOld});
-
-              UPDATE _sync_pending SET
-                op = 'DELETE',
-                base_version = COALESCE((SELECT server_version FROM _sync_row_meta WHERE table_name='${tableLc}' AND pk_uuid=${pkExprOld}), 0),
-                payload = NULL,
-                queued_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-              WHERE table_name='${tableLc}' AND pk_uuid=${pkExprOld} AND op != 'INSERT';
-
-              UPDATE _sync_client_info SET next_change_id = next_change_id + 1
-              WHERE changes() > 0 AND last_insert_rowid() > 0;
-
-              DELETE FROM _sync_pending WHERE table_name='${tableLc}' AND pk_uuid=${pkExprOld} AND op='INSERT';
-
-              UPDATE _sync_row_meta SET deleted=1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-              WHERE table_name='${tableLc}' AND pk_uuid=${pkExprOld};
-
-              DELETE FROM _sync_row_meta
-              WHERE table_name='${tableLc}' AND pk_uuid=${pkExprOld} AND server_version=0
-                AND NOT EXISTS (SELECT 1 FROM _sync_pending WHERE table_name='${tableLc}' AND pk_uuid=${pkExprOld});
-            END
-            """.trimIndent()
+        val triggers = listOf(
+            "trg_${table.tableName}_ai" to insertTriggerSql(data),
+            "trg_${table.tableName}_au" to updateTriggerSql(data),
+            "trg_${table.tableName}_ad" to deleteTriggerSql(data),
         )
-    }
 
-    private suspend fun isPrimaryKeyBlob(db: SafeSQLiteConnection, table: String): Boolean =
-        TableInfoProvider.get(db, table).primaryKeyIsBlob
-
-    private suspend fun getTableColumns(db: SafeSQLiteConnection, table: String): List<String> =
-        TableInfoProvider.get(db, table).columnNamesLower
-
-    private fun buildJsonObjectExprHexAware(
-        tableInfo: TableInfo,
-        prefix: String,
-    ): String {
-        val pairs = tableInfo.columns.map { col ->
-            val name = col.name.lowercase()
-            val expr = if (col.declaredType.lowercase().contains("blob")) {
-                "lower(hex($prefix.$name))"
-            } else {
-                "$prefix.$name"
-            }
-            "'${name}', $expr"
+        for ((name, sql) in triggers) {
+            db.execSQL("DROP TRIGGER IF EXISTS ${quoteIdent(name)}")
+            db.execSQL(sql)
         }
-        return "json_object(" + pairs.joinToString(", ") + ")"
     }
 }
+
+private data class PersistedClientIdentity(
+    val userId: String,
+    val sourceId: String,
+    val schemaName: String,
+)
+
+private data class TriggerData(
+    val schemaName: String,
+    val tableName: String,
+    val newRowJson: String,
+    val oldKeyJson: String,
+    val newKeyJson: String,
+)
+
+private fun insertTriggerSql(data: TriggerData): String = """
+CREATE TRIGGER IF NOT EXISTS trg_${data.tableName}_ai
+AFTER INSERT ON ${quoteIdent(data.tableName)}
+WHEN COALESCE((SELECT apply_mode FROM _sync_client_state LIMIT 1), 0) = 0
+BEGIN
+  INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at)
+  VALUES (
+    '${data.schemaName}',
+    '${data.tableName}',
+    ${data.newKeyJson},
+    CASE
+      WHEN EXISTS (
+        SELECT 1
+        FROM _sync_row_state
+        WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.newKeyJson} AND deleted=0
+      ) THEN 'UPDATE'
+      ELSE 'INSERT'
+    END,
+    COALESCE(
+      (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.newKeyJson}),
+      (SELECT row_version FROM _sync_row_state WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.newKeyJson}),
+      0
+    ),
+    ${data.newRowJson},
+    COALESCE(
+      (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.newKeyJson}),
+      (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows)
+    ),
+    strftime('%Y-%m-%dT%H:%M:%fZ','now')
+  )
+  ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET
+    op=excluded.op,
+    payload=excluded.payload,
+    updated_at=excluded.updated_at;
+END
+""".trimIndent()
+
+private fun updateTriggerSql(data: TriggerData): String = """
+CREATE TRIGGER IF NOT EXISTS trg_${data.tableName}_au
+AFTER UPDATE ON ${quoteIdent(data.tableName)}
+WHEN COALESCE((SELECT apply_mode FROM _sync_client_state LIMIT 1), 0) = 0
+BEGIN
+  INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at)
+  SELECT
+    '${data.schemaName}',
+    '${data.tableName}',
+    ${data.oldKeyJson},
+    'DELETE',
+    COALESCE(
+      (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.oldKeyJson}),
+      (SELECT row_version FROM _sync_row_state WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.oldKeyJson}),
+      0
+    ),
+    NULL,
+    COALESCE(
+      (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.oldKeyJson}),
+      (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows)
+    ),
+    strftime('%Y-%m-%dT%H:%M:%fZ','now')
+  WHERE ${data.oldKeyJson} != ${data.newKeyJson}
+  ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET
+    op='DELETE',
+    payload=NULL,
+    updated_at=excluded.updated_at;
+
+  INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at)
+  VALUES (
+    '${data.schemaName}',
+    '${data.tableName}',
+    ${data.newKeyJson},
+    CASE
+      WHEN EXISTS (
+        SELECT 1
+        FROM _sync_row_state
+        WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.newKeyJson} AND deleted=0
+      ) THEN 'UPDATE'
+      ELSE 'INSERT'
+    END,
+    COALESCE(
+      (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.newKeyJson}),
+      (SELECT row_version FROM _sync_row_state WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.newKeyJson}),
+      0
+    ),
+    ${data.newRowJson},
+    COALESCE(
+      (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.newKeyJson}),
+      (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows)
+    ),
+    strftime('%Y-%m-%dT%H:%M:%fZ','now')
+  )
+  ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET
+    op=excluded.op,
+    payload=excluded.payload,
+    updated_at=excluded.updated_at;
+END
+""".trimIndent()
+
+private fun deleteTriggerSql(data: TriggerData): String = """
+CREATE TRIGGER IF NOT EXISTS trg_${data.tableName}_ad
+AFTER DELETE ON ${quoteIdent(data.tableName)}
+WHEN COALESCE((SELECT apply_mode FROM _sync_client_state LIMIT 1), 0) = 0
+BEGIN
+  INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at)
+  VALUES (
+    '${data.schemaName}',
+    '${data.tableName}',
+    ${data.oldKeyJson},
+    'DELETE',
+    COALESCE(
+      (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.oldKeyJson}),
+      (SELECT row_version FROM _sync_row_state WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.oldKeyJson}),
+      0
+    ),
+    NULL,
+    COALESCE(
+      (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.oldKeyJson}),
+      (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows)
+    ),
+    strftime('%Y-%m-%dT%H:%M:%fZ','now')
+  )
+  ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET
+    op='DELETE',
+    payload=NULL,
+    updated_at=excluded.updated_at;
+END
+""".trimIndent()
+
+private fun buildJsonObjectExprHexAware(
+    tableInfo: TableInfo,
+    prefix: String,
+): String {
+    val pairs = tableInfo.columns.map { column ->
+        val name = column.name.lowercase()
+        val valueExpr = if (column.declaredType.lowercase().contains("blob")) {
+            "lower(hex($prefix.${quoteIdent(column.name)}))"
+        } else {
+            "$prefix.${quoteIdent(column.name)}"
+        }
+        "'$name', $valueExpr"
+    }
+    return "json_object(${pairs.joinToString(", ")})"
+}
+
+private fun buildKeyJsonObjectExprHexAware(
+    tableInfo: TableInfo,
+    keyColumn: String,
+    prefix: String,
+): String {
+    val column = tableInfo.columns.firstOrNull { it.name.equals(keyColumn, ignoreCase = true) }
+        ?: error("table ${tableInfo.table} is missing sync key column $keyColumn")
+    val keyName = column.name.lowercase()
+    val valueExpr = if (column.declaredType.lowercase().contains("blob")) {
+        "lower(hex($prefix.${quoteIdent(column.name)}))"
+    } else {
+        "$prefix.${quoteIdent(column.name)}"
+    }
+    return "json_object('$keyName', $valueExpr)"
+}
+
+internal fun quoteIdent(identifier: String): String = "\"${identifier.replace("\"", "\"\"")}\""
+
+@OptIn(ExperimentalUuidApi::class)
+internal fun randomSourceId(): String = Uuid.random().toString()
