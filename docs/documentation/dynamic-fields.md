@@ -73,7 +73,7 @@ public data class PersonSelectWithPerRowMappingResult(
     val email: String,
     val phone: String?,
     val birthDate: LocalDate?,
-    val createdAt: LocalDateTime,
+    val createdAt: Instant,
     val address: PersonAddressRow?,
 )
 ```

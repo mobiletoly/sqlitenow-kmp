@@ -1,7 +1,7 @@
 package dev.goquick.sqlitenow.oversqlite.e2e
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.goquick.sqlitenow.oversqlite.PendingPushReplayException
+import dev.goquick.sqlitenow.oversqlite.PushConflictRetryExhaustedException
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -11,7 +11,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class RealServerLongHorizonDivergentWriterStressTest {
     @Test
-    fun longHorizon_divergentWriterFailsClosedThenRecoversThroughRebuild() = runBlocking {
+    fun longHorizon_divergentWriterServerWinsRecoversAndContinuesSyncing() = runBlocking {
         val config = requireRealServerConfig()
         resetRealServerState(config.baseUrl)
 
@@ -83,17 +83,28 @@ class RealServerLongHorizonDivergentWriterStressTest {
                 }
             }
 
-            val conflict = writer.pushPending().exceptionOrNull()
-            assertTrue(conflict != null)
-            assertTrue(conflict?.message?.contains("409") == true)
+            val remainingDirtyByAttempt = mutableListOf<Long>()
+            var pushCompleted = false
+            repeat(4) {
+                if (pushCompleted) return@repeat
+                val result = writer.pushPending()
+                val error = result.exceptionOrNull()
+                if (error == null) {
+                    pushCompleted = true
+                    return@repeat
+                }
+                assertTrue(error is PushConflictRetryExhaustedException)
+                error as PushConflictRetryExhaustedException
+                remainingDirtyByAttempt += error.remainingDirtyCount.toLong()
+                assertEquals(0L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            }
+
+            assertTrue(pushCompleted)
+            assertEquals(listOf(6L, 3L), remainingDirtyByAttempt)
             assertEquals(0L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertTrue(scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_push_outbound") > 0L)
-            assertEquals("Hot User 106", scalarText(writerDb, "SELECT name FROM users WHERE id = '${hotGraph.userId}'"))
-            assertEquals("Hot Review 106", scalarText(writerDb, "SELECT review FROM file_reviews WHERE id = '${hotGraph.reviewId}'"))
+            assertEquals(0L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_push_outbound"))
 
-            val pullBlocked = writer.pullToStable().exceptionOrNull()
-            assertTrue(pullBlocked is PendingPushReplayException)
-
+            writer.pullToStable().getOrThrow()
             observer.pullToStable().getOrThrow()
             assertEquals(7L, observer.lastBundleSeqSeen().getOrThrow())
             assertHotGraphDrivenCounts(observerDb, rounds)
@@ -101,38 +112,19 @@ class RealServerLongHorizonDivergentWriterStressTest {
             assertRoundPresence(observerDb, "divergent-leader-6")
             assertForeignKeyIntegrity(observerDb)
             assertEquals(0L, scalarLong(observerDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-
-            val resetSourceId = randomDeviceId("divergent-writer-reset")
-            writerHttp.close()
-            val resetToken = issueDummySigninToken(config.baseUrl, userId, resetSourceId)
-            writerHttp = newAuthenticatedHttpClient(config.baseUrl, resetToken)
-            val rebuiltWriter = newRealServerClient(
-                db = writerDb,
-                config = config,
-                http = writerHttp,
-                syncTables = richSchemaSyncTables,
-                uploadLimit = 8,
-                downloadLimit = 2,
-            )
-            rebuiltWriter.bootstrap(userId, resetSourceId).getOrThrow()
-            rebuiltWriter.hydrate().getOrThrow()
-
-            assertEquals(7L, rebuiltWriter.lastBundleSeqSeen().getOrThrow())
-            assertEquals(resetSourceId, scalarText(writerDb, "SELECT source_id FROM _sync_client_state WHERE user_id = '$userId'"))
+            assertEquals(7L, writer.lastBundleSeqSeen().getOrThrow())
             assertEquals(0L, scalarLong(writerDb, "SELECT rebuild_required FROM _sync_client_state WHERE user_id = '$userId'"))
-            assertEquals(0L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_push_outbound"))
-            assertEquals(0L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             assertHotGraphDrivenCounts(writerDb, rounds)
             assertHotGraphState(writerDb, hotGraph, rounds)
             assertForeignKeyIntegrity(writerDb)
 
             insertRichSchemaBatch(writerDb, "divergent-writer-recovered")
-            rebuiltWriter.pushPending().getOrThrow()
+            writer.pushPending().getOrThrow()
             leader.pullToStable().getOrThrow()
             observer.pullToStable().getOrThrow()
 
             assertEquals(8L, leader.lastBundleSeqSeen().getOrThrow())
-            assertEquals(8L, rebuiltWriter.lastBundleSeqSeen().getOrThrow())
+            assertEquals(8L, writer.lastBundleSeqSeen().getOrThrow())
             assertEquals(8L, observer.lastBundleSeqSeen().getOrThrow())
 
             assertHotGraphDrivenCounts(leaderDb, rounds, extraRichBatches = 1)

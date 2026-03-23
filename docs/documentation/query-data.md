@@ -51,7 +51,7 @@ object PersonQuery {
             val email: String,
             val userPhone: String?,
             val birthDate: kotlinx.datetime.LocalDate?,
-            val createdAt: kotlinx.datetime.LocalDateTime,
+            val createdAt: kotlin.time.Instant,
         )
         
         // ...
@@ -87,7 +87,7 @@ object PersonQuery {
             val email: String,
             val userPhone: String?,
             val birthDate: kotlinx.datetime.LocalDate?,
-            val createdAt: kotlinx.datetime.LocalDateTime,
+            val createdAt: kotlin.time.Instant,
         )
         
         // ...

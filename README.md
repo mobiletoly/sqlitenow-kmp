@@ -197,7 +197,7 @@ syncClient.sync().getOrThrow()
 
 The sync system automatically handles:
 - **Change tracking** for all sync-enabled tables
-- **Conflict resolution** when the same record is modified on multiple devices
+- **Conflict resolution** for concurrent writes across devices
 - **Incremental sync** to minimize bandwidth usage
 - **Chunked push upload** for large dirty sets without a total-row hard ceiling
 - **Error handling** and retry logic

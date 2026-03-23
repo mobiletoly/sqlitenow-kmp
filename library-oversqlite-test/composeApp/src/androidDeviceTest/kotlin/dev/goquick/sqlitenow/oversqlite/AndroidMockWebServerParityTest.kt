@@ -9,6 +9,8 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -34,22 +36,60 @@ class AndroidMockWebServerParityTest {
                 jsonMockResponse(
                     """
                         {
-                          "accepted": true,
-                          "bundle": {
-                            "bundle_seq": 1,
-                            "source_id": "device-a",
-                            "source_bundle_id": 1,
-                            "rows": [
-                              {
-                                "schema": "main",
-                                "table": "users",
-                                "key": {"id":"user-1"},
-                                "op": "INSERT",
-                                "row_version": 7,
-                                "payload": {"id":"user-1","name":"Ada Server"}
-                              }
-                            ]
-                          }
+                          "push_id": "push-1",
+                          "status": "staging",
+                          "planned_row_count": 1,
+                          "next_expected_row_ordinal": 0,
+                          "source_id": "device-a",
+                          "source_bundle_id": 1
+                        }
+                    """.trimIndent()
+                )
+            )
+            server.enqueue(
+                jsonMockResponse(
+                    """
+                        {
+                          "push_id": "push-1",
+                          "next_expected_row_ordinal": 1
+                        }
+                    """.trimIndent()
+                )
+            )
+            server.enqueue(
+                jsonMockResponse(
+                    """
+                        {
+                          "bundle_seq": 1,
+                          "source_id": "device-a",
+                          "source_bundle_id": 1,
+                          "row_count": 1,
+                          "bundle_hash": "8376a4098c0c17075d513e3a3bbdc7f198c4aa6e49f9595cfa1ad7595dae83c2"
+                        }
+                    """.trimIndent()
+                )
+            )
+            server.enqueue(
+                jsonMockResponse(
+                    """
+                        {
+                          "bundle_seq": 1,
+                          "source_id": "device-a",
+                          "source_bundle_id": 1,
+                          "row_count": 1,
+                          "bundle_hash": "8376a4098c0c17075d513e3a3bbdc7f198c4aa6e49f9595cfa1ad7595dae83c2",
+                          "next_row_ordinal": 0,
+                          "has_more": false,
+                          "rows": [
+                            {
+                              "schema": "main",
+                              "table": "users",
+                              "key": {"id":"user-1"},
+                              "op": "INSERT",
+                              "row_version": 7,
+                              "payload": {"id":"user-1","name":"Ada Server"}
+                            }
+                          ]
                         }
                     """.trimIndent()
                 )
@@ -144,13 +184,32 @@ class AndroidMockWebServerParityTest {
             assertEquals("Katherine Johnson", scalarText(db, "SELECT name FROM users WHERE id = 'user-3'"))
             assertEquals(9L, client.lastBundleSeqSeen().getOrThrow())
 
-            val pushRequest = server.takeRequest(5, TimeUnit.SECONDS)
-            assertNotNull(pushRequest)
-            assertEquals("/sync/push", pushRequest?.url?.encodedPath)
-            val pushJson = testJson.parseToJsonElement(pushRequest!!.body!!.utf8()).jsonObject
-            assertEquals("1", pushJson["source_bundle_id"]?.jsonPrimitive?.content)
-            assertEquals(1, pushJson["rows"]?.jsonArray?.size)
-            assertEquals("users", pushJson["rows"]?.jsonArray?.first()?.jsonObject?.get("table")?.jsonPrimitive?.content)
+            val createPushRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(createPushRequest)
+            assertEquals("/sync/push-sessions", createPushRequest?.url?.encodedPath)
+            val createPushJson = testJson.parseToJsonElement(createPushRequest!!.body!!.utf8()).jsonObject
+            assertEquals("1", createPushJson["source_bundle_id"]?.jsonPrimitive?.content)
+            assertEquals("1", createPushJson["planned_row_count"]?.jsonPrimitive?.content)
+
+            val chunkPushRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(chunkPushRequest)
+            assertEquals("/sync/push-sessions/push-1/chunks", chunkPushRequest?.url?.encodedPath)
+            val chunkPushJson = testJson.parseToJsonElement(chunkPushRequest!!.body!!.utf8()).jsonObject
+            assertEquals("0", chunkPushJson["start_row_ordinal"]?.jsonPrimitive?.content)
+            assertEquals(1, chunkPushJson["rows"]?.jsonArray?.size)
+            assertEquals(
+                "users",
+                chunkPushJson["rows"]?.jsonArray?.first()?.jsonObject?.get("table")?.jsonPrimitive?.content
+            )
+
+            val commitPushRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(commitPushRequest)
+            assertEquals("/sync/push-sessions/push-1/commit", commitPushRequest?.url?.encodedPath)
+
+            val committedRowsRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(committedRowsRequest)
+            assertEquals("/sync/committed-bundles/1/rows", committedRowsRequest?.url?.encodedPath)
+            assertEquals("1000", committedRowsRequest?.url?.queryParameter("max_rows"))
 
             val pullRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(pullRequest)
@@ -268,6 +327,276 @@ class AndroidMockWebServerParityTest {
         }
     }
 
+    @Test
+    fun pullAndHydrate_blobPayloadFromCanonicalBase64_storesRawBytes() = runBlocking {
+        val pullDb = newInMemoryDb()
+        val hydrateDb = newInMemoryDb()
+        val server = MockWebServer()
+        server.start()
+        val pullHttp = newMockWebServerHttpClient(server)
+        val hydrateHttp = newMockWebServerHttpClient(server)
+        try {
+            pullDb.execSQL(
+                """
+                CREATE TABLE files (
+                  id TEXT PRIMARY KEY NOT NULL,
+                  name TEXT NOT NULL,
+                  data BLOB NOT NULL
+                )
+                """.trimIndent()
+            )
+            hydrateDb.execSQL(
+                """
+                CREATE TABLE files (
+                  id TEXT PRIMARY KEY NOT NULL,
+                  name TEXT NOT NULL,
+                  data BLOB NOT NULL
+                )
+                """.trimIndent()
+            )
+
+            server.enqueue(
+                jsonMockResponse(
+                    """
+                        {
+                          "stable_bundle_seq": 1,
+                          "has_more": false,
+                          "bundles": [
+                            {
+                              "bundle_seq": 1,
+                              "source_id": "peer-a",
+                              "source_bundle_id": 11,
+                              "rows": [
+                                {
+                                  "schema": "main",
+                                  "table": "files",
+                                  "key": {"id":"file-1"},
+                                  "op": "INSERT",
+                                  "row_version": 1,
+                                  "payload": {
+                                    "id":"file-1",
+                                    "name":"Blob File",
+                                    "data":"AAECAwQFBgcICQoLDA0ODw=="
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                    """.trimIndent()
+                )
+            )
+            server.enqueue(
+                jsonMockResponse(
+                    """
+                        {
+                          "snapshot_id": "snapshot-blob",
+                          "snapshot_bundle_seq": 1,
+                          "row_count": 1,
+                          "byte_count": 64,
+                          "expires_at": "2026-03-22T00:00:00Z"
+                        }
+                    """.trimIndent()
+                )
+            )
+            server.enqueue(
+                jsonMockResponse(
+                    """
+                        {
+                          "snapshot_id": "snapshot-blob",
+                          "snapshot_bundle_seq": 1,
+                          "next_row_ordinal": 1,
+                          "has_more": false,
+                          "rows": [
+                            {
+                              "schema": "main",
+                              "table": "files",
+                              "key": {"id":"file-1"},
+                              "row_version": 1,
+                              "payload": {
+                                "id":"file-1",
+                                "name":"Blob File",
+                                "data":"AAECAwQFBgcICQoLDA0ODw=="
+                              }
+                            }
+                          ]
+                        }
+                    """.trimIndent()
+                )
+            )
+            server.enqueue(MockResponse.Builder().code(204).build())
+
+            val pullClient = DefaultOversqliteClient(
+                db = pullDb,
+                config = OversqliteConfig(
+                    schema = "main",
+                    syncTables = listOf(SyncTable("files", syncKeyColumnName = "id"))
+                ),
+                http = pullHttp,
+                tablesUpdateListener = { }
+            )
+            val hydrateClient = DefaultOversqliteClient(
+                db = hydrateDb,
+                config = OversqliteConfig(
+                    schema = "main",
+                    syncTables = listOf(SyncTable("files", syncKeyColumnName = "id"))
+                ),
+                http = hydrateHttp,
+                tablesUpdateListener = { }
+            )
+
+            pullClient.bootstrap("user-1", "device-pull").getOrThrow()
+            hydrateClient.bootstrap("user-1", "device-hydrate").getOrThrow()
+
+            pullClient.pullToStable().getOrThrow()
+            hydrateClient.hydrate().getOrThrow()
+
+            assertEquals(16L, scalarLong(pullDb, "SELECT length(data) FROM files WHERE id = 'file-1'"))
+            assertEquals("000102030405060708090A0B0C0D0E0F", scalarText(pullDb, "SELECT hex(data) FROM files WHERE id = 'file-1'"))
+            assertEquals(16L, scalarLong(hydrateDb, "SELECT length(data) FROM files WHERE id = 'file-1'"))
+            assertEquals("000102030405060708090A0B0C0D0E0F", scalarText(hydrateDb, "SELECT hex(data) FROM files WHERE id = 'file-1'"))
+        } finally {
+            pullHttp.close()
+            hydrateHttp.close()
+            server.close()
+            pullDb.close()
+            hydrateDb.close()
+        }
+    }
+
+    @Test
+    fun push_blobPayloadEncodesRawBytesForWire() = runBlocking {
+        val db = newInMemoryDb()
+        val server = MockWebServer()
+        server.start()
+        val http = newMockWebServerHttpClient(server)
+        try {
+            db.execSQL(
+                """
+                CREATE TABLE files (
+                  id TEXT PRIMARY KEY NOT NULL,
+                  name TEXT NOT NULL,
+                  data BLOB NOT NULL
+                )
+                """.trimIndent()
+            )
+
+            val bundleHash = "dcde4c0ea8f55eea93a935cf27d9982ff4e130543ae48cb4c355928c998d7fbd"
+
+            server.enqueue(
+                jsonMockResponse(
+                    """
+                        {
+                          "push_id": "push-blob-1",
+                          "status": "staging",
+                          "planned_row_count": 1,
+                          "next_expected_row_ordinal": 0,
+                          "source_id": "device-a",
+                          "source_bundle_id": 1
+                        }
+                    """.trimIndent()
+                )
+            )
+            server.enqueue(
+                jsonMockResponse(
+                    """
+                        {
+                          "push_id": "push-blob-1",
+                          "next_expected_row_ordinal": 1
+                        }
+                    """.trimIndent()
+                )
+            )
+            server.enqueue(
+                jsonMockResponse(
+                    """
+                        {
+                          "bundle_seq": 1,
+                          "source_id": "device-a",
+                          "source_bundle_id": 1,
+                          "row_count": 1,
+                          "bundle_hash": "$bundleHash"
+                        }
+                    """.trimIndent()
+                )
+            )
+            server.enqueue(
+                jsonMockResponse(
+                    """
+                        {
+                          "bundle_seq": 1,
+                          "source_id": "device-a",
+                          "source_bundle_id": 1,
+                          "row_count": 1,
+                          "bundle_hash": "$bundleHash",
+                          "next_row_ordinal": 0,
+                          "has_more": false,
+                          "rows": [
+                            {
+                              "schema": "main",
+                              "table": "files",
+                              "key": {"id":"file-1"},
+                              "op": "INSERT",
+                              "row_version": 1,
+                              "payload": {
+                                "id":"file-1",
+                                "name":"Blob File",
+                                "data":"AAECAwQFBgcICQoLDA0ODw=="
+                              }
+                            }
+                          ]
+                        }
+                    """.trimIndent()
+                )
+            )
+
+            val client = DefaultOversqliteClient(
+                db = db,
+                config = OversqliteConfig(
+                    schema = "main",
+                    syncTables = listOf(SyncTable("files", syncKeyColumnName = "id"))
+                ),
+                http = http,
+                tablesUpdateListener = { }
+            )
+
+            client.bootstrap("user-1", "device-a").getOrThrow()
+            db.execSQL(
+                """
+                INSERT INTO files(id, name, data)
+                VALUES('file-1', 'Blob File', x'000102030405060708090A0B0C0D0E0F')
+                """.trimIndent()
+            )
+            client.pushPending().getOrThrow()
+
+            val createPushRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(createPushRequest)
+            assertEquals("/sync/push-sessions", createPushRequest?.url?.encodedPath)
+
+            val chunkPushRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(chunkPushRequest)
+            assertEquals("/sync/push-sessions/push-blob-1/chunks", chunkPushRequest?.url?.encodedPath)
+            val chunkPushJson = testJson.parseToJsonElement(chunkPushRequest!!.body!!.utf8()).jsonObject
+            val payloadJson = chunkPushJson["rows"]!!.jsonArray.first().jsonObject["payload"]!!.jsonObject
+            assertEquals("AAECAwQFBgcICQoLDA0ODw==", payloadJson["data"]!!.jsonPrimitive.content)
+
+            val commitPushRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(commitPushRequest)
+            assertEquals("/sync/push-sessions/push-blob-1/commit", commitPushRequest?.url?.encodedPath)
+
+            val committedRowsRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(committedRowsRequest)
+            assertEquals("/sync/committed-bundles/1/rows", committedRowsRequest?.url?.encodedPath)
+
+            assertEquals(16L, scalarLong(db, "SELECT length(data) FROM files WHERE id = 'file-1'"))
+            assertEquals("000102030405060708090A0B0C0D0E0F", scalarText(db, "SELECT hex(data) FROM files WHERE id = 'file-1'"))
+        } finally {
+            http.close()
+            server.close()
+            db.close()
+        }
+    }
+
     private fun newMockWebServerHttpClient(server: MockWebServer): HttpClient {
         return HttpClient(OkHttp) {
             install(ContentNegotiation) {
@@ -300,4 +629,5 @@ class AndroidMockWebServerParityTest {
             st.getText(0)
         }
     }
+
 }

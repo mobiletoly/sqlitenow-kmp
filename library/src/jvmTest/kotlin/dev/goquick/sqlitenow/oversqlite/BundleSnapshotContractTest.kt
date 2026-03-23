@@ -9,6 +9,43 @@ import kotlin.test.assertTrue
 
 class BundleSnapshotContractTest : BundleClientContractTestSupport() {
     @Test
+    fun hydrate_rejectsSnapshotSessionWithMalformedExpiresAt() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer().apply {
+            createContext("/sync/snapshot-sessions") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-invalid-expiry",
+                      "snapshot_bundle_seq": 9,
+                      "row_count": 0,
+                      "byte_count": 32,
+                      "expires_at": "not-a-timestamp"
+                    }
+                    """.trimIndent()
+                )
+            }
+        }
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.bootstrap("user-1", "device-a").getOrThrow()
+
+            val error = client.hydrate().exceptionOrNull()
+            assertTrue(error != null)
+            assertTrue(error.message?.contains("oversqlite timestamp must be RFC3339/ISO-8601 instant") == true)
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
     fun hydrate_oneChunkStagesBeforeFinalApply_andClearsStaleStageFirst() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
@@ -163,6 +200,74 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
             assertEquals(2L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
             assertEquals(0L, client.lastBundleSeqSeen().getOrThrow())
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun hydrate_blobPrimaryKeySnapshotConvertsWireUuidOnlyOnce() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createBlobDocsTable(db)
+        val server = newServer().apply {
+            createContext("/sync/snapshot-sessions") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-blob-docs",
+                      "snapshot_bundle_seq": 7,
+                      "row_count": 1,
+                      "byte_count": 96,
+                      "expires_at": "2026-03-22T00:00:00Z"
+                    }
+                    """.trimIndent()
+                )
+            }
+            createContext("/sync/snapshot-sessions/snapshot-blob-docs") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-blob-docs",
+                      "snapshot_bundle_seq": 7,
+                      "next_row_ordinal": 1,
+                      "has_more": false,
+                      "rows": [
+                        {
+                          "schema": "main",
+                          "table": "blob_docs",
+                          "key": {"id":"601c32ed-8299-c541-c389-749094a88cf2"},
+                          "row_version": 7,
+                          "payload": {
+                            "id":"601c32ed-8299-c541-c389-749094a88cf2",
+                            "name":"Doc one",
+                            "payload":"AQID"
+                          }
+                        }
+                      ]
+                    }
+                    """.trimIndent()
+                )
+            }
+        }
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("blob_docs", syncKeyColumnName = "id")))
+            client.bootstrap("user-1", "device-a").getOrThrow()
+
+            client.hydrate().getOrThrow()
+
+            assertEquals(7L, client.lastBundleSeqSeen().getOrThrow())
+            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM blob_docs"))
+            assertEquals("601C32ED8299C541C389749094A88CF2", scalarText(db, "SELECT hex(id) FROM blob_docs"))
+            assertEquals("010203", scalarText(db, "SELECT hex(payload) FROM blob_docs"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
         } finally {
             http.close()
             server.stop(0)

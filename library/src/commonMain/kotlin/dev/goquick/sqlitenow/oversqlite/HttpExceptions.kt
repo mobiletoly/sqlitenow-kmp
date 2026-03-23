@@ -20,7 +20,7 @@ import kotlinx.serialization.json.Json
 
 private val httpErrorJson = Json { ignoreUnknownKeys = true }
 
-class UploadHttpException(
+open class UploadHttpException(
     val status: HttpStatusCode,
     val rawBody: String,
     cause: Throwable? = null,
@@ -36,6 +36,14 @@ class HistoryPrunedException(
     message: String,
 ) : RuntimeException(message)
 
+class PushConflictException(
+    rawBody: String,
+    val response: PushConflictResponse,
+) : UploadHttpException(HttpStatusCode.Conflict, rawBody) {
+    val conflict: PushConflictDetails
+        get() = response.conflict ?: error("push conflict response is missing conflict details")
+}
+
 internal fun DownloadHttpException.toHistoryPrunedOrNull(): HistoryPrunedException? {
     if (status != HttpStatusCode.Conflict) return null
     val error = runCatching {
@@ -43,4 +51,16 @@ internal fun DownloadHttpException.toHistoryPrunedOrNull(): HistoryPrunedExcepti
     }.getOrNull() ?: return null
     if (error.error != "history_pruned") return null
     return HistoryPrunedException(error.message)
+}
+
+internal fun decodePushConflictExceptionOrNull(
+    status: HttpStatusCode,
+    rawBody: String,
+): PushConflictException? {
+    if (status != HttpStatusCode.Conflict) return null
+    val response = runCatching {
+        httpErrorJson.decodeFromString<PushConflictResponse>(rawBody)
+    }.getOrNull() ?: return null
+    if (response.error != "push_conflict" || response.conflict == null) return null
+    return PushConflictException(rawBody = rawBody, response = response)
 }

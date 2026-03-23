@@ -207,7 +207,43 @@ val client = database.newOversqliteClient(
 )
 ```
 
-Custom resolvers can keep local payloads or merge fields as needed.
+`ClientWinsResolver` is the built-in client-wins convenience option:
+
+```kotlin
+val client = database.newOversqliteClient(
+    schema = "myapp",
+    httpClient = httpClient,
+    resolver = ClientWinsResolver,
+)
+```
+
+Custom resolvers decide per conflict by returning one of:
+
+- `MergeResult.AcceptServer`
+- `MergeResult.KeepLocal`
+- `MergeResult.KeepMerged(mergedPayload)`
+
+Example:
+
+```kotlin
+val client = database.newOversqliteClient(
+    schema = "myapp",
+    httpClient = httpClient,
+    resolver = Resolver { conflict ->
+        when (conflict.table) {
+            "notes" -> MergeResult.KeepLocal
+            "profiles" -> MergeResult.KeepMerged(mergeProfile(conflict.serverRow, conflict.localPayload))
+            else -> MergeResult.AcceptServer
+        }
+    },
+)
+```
+
+Important:
+
+- `resolver` is configured once when the client is created
+- `KeepLocal` and `KeepMerged(...)` are conflict-time return values from that resolver
+- `KeepMerged(...)` is for advanced row-preserving merges, not a top-level client mode
 
 ---
 

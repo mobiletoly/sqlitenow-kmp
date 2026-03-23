@@ -136,10 +136,10 @@ CREATE TABLE person
     birth_date TEXT,
 
     -- this annotation will generate `createdAt` property for `created_at` column
-    -- and will use adapter to convert between LocalDateTime and String
+    -- and will use adapter to convert between Instant and RFC3339 text
     --
-    -- @@{field=created_at, propertyType=kotlinx.datetime.LocalDateTime, adapter=custom}
-    created_at TEXT                NOT NULL DEFAULT current_timestamp
+    -- @@{field=created_at, propertyType=kotlin.time.Instant, adapter=custom}
+    created_at TEXT                NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 CREATE INDEX idx_person_email ON Person (email);
@@ -232,9 +232,13 @@ val db = SampleDatabase(
         sqlColumnToBirthDate = {
             it?.let { LocalDate.fromSqliteDate(it) }
         },
-        // deserialize SQLite timestamp string to LocalDateTime for `created_at` column
+        // deserialize RFC3339 text to Instant for `created_at` column
         sqlColumnToCreatedAt = {
-            LocalDateTime.fromSqliteTimestamp(it)
+            Instant.fromRfc3339String(it)
+        },
+        // serialize Instant back to RFC3339 text for `created_at` column
+        createdAtToSqlColumn = {
+            it.toRfc3339String()
         },
     ),
     migration = VersionBasedDatabaseMigrations()

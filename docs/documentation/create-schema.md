@@ -80,8 +80,8 @@ CREATE TABLE person
     -- @@{ field=birth_date, adapter=custom, propertyType=kotlinx.datetime.LocalDate }
     birth_date TEXT,
 
-    -- @@{ field=created_at, adapter=custom, propertyType=kotlinx.datetime.LocalDateTime }
-    created_at TEXT                NOT NULL DEFAULT current_timestamp,
+    -- @@{ field=created_at, adapter=custom, propertyType=kotlin.time.Instant }
+    created_at TEXT                NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     
     -- @@{ field=is_active, adapter=default, propertyType=Boolean }
     is_active INTEGER              NOT NULL DEFAULT 1
@@ -91,7 +91,7 @@ CREATE TABLE person
 This will result in the following properties:
 
 - `birthDate: kotlinx.datetime.LocalDate?`
-- `createdAt: kotlinx.datetime.LocalDateTime`
+- `createdAt: kotlin.time.Instant`
 
 There are two values can be assigned to `adapter` annotation: `default` and `custom`:
 - `default` value means that developer will be required to provide conversion adapter if `propertyType` is
@@ -203,8 +203,8 @@ CREATE TABLE person
     --     propertyType=kotlinx.datetime.LocalDate }
     birth_date TEXT,
 
-    -- @@{ field=created_at, propertyType=kotlinx.datetime.LocalDateTime }
-    created_at TEXT                NOT NULL DEFAULT current_timestamp
+    -- @@{ field=created_at, propertyType=kotlin.time.Instant }
+    created_at TEXT                NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
 -- Indexes
@@ -222,7 +222,7 @@ This will result in the following properties:
   to convert phone number format, validate phone number and throw exception if invalid,
   etc.)
 - `birthDate: kotlinx.datetime.LocalDate?` (custom type with adapter)
-- `createdAt: kotlinx.datetime.LocalDateTime` (custom type with adapter)
+- `createdAt: kotlin.time.Instant` (custom type with adapter)
 
 ## Type Adapters
 
@@ -241,7 +241,8 @@ class SampleDatabase(
     data class PersonAdapters(
         val sqlColumnToBirthDate: (String?) -> LocalDate?,
         val birthDateToSqlColumn: (LocalDate?) -> String?,
-        val sqlColumnToCreatedAt: (String) -> LocalDateTime,
+        val sqlColumnToCreatedAt: (String) -> Instant,
+        val createdAtToSqlColumn: (Instant) -> String,
         val phoneToSqlColumn: (String) -> String
     )
 }
@@ -256,7 +257,8 @@ val db = SampleDatabase(
     personAdapters = SampleDatabase.PersonAdapters(
         sqlColumnToBirthDate = { it?.let { LocalDate.parse(it) } },
         birthDateToSqlColumn = { it?.toString() },
-        sqlColumnToCreatedAt = { LocalDateTime.parse(it) },
+        sqlColumnToCreatedAt = { Instant.fromRfc3339String(it) },
+        createdAtToSqlColumn = { it.toRfc3339String() },
         phoneToSqlColumn = { it }
     )
 )

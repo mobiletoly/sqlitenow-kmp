@@ -142,6 +142,25 @@ data class ErrorResponse(
     val message: String,
 )
 
+@Serializable
+data class PushConflictDetails(
+    val schema: String,
+    val table: String,
+    val key: SyncKey,
+    val op: String,
+    @SerialName("base_row_version") val baseRowVersion: Long,
+    @SerialName("server_row_version") val serverRowVersion: Long,
+    @SerialName("server_row_deleted") val serverRowDeleted: Boolean,
+    @SerialName("server_row") val serverRow: JsonElement? = null,
+)
+
+@Serializable
+data class PushConflictResponse(
+    val error: String,
+    val message: String,
+    val conflict: PushConflictDetails? = null,
+)
+
 data class OversqliteConfig(
     val schema: String,
     val syncTables: List<SyncTable>,

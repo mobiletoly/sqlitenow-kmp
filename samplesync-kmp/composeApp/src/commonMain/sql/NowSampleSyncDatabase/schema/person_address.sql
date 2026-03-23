@@ -18,8 +18,8 @@ CREATE TABLE person_address
     -- @@{ field=is_primary, propertyType=Boolean }
     is_primary   INTEGER             NOT NULL DEFAULT 0,
 
-    -- @@{ field=created_at, propertyType=kotlinx.datetime.LocalDateTime }
-    created_at   TEXT                NOT NULL DEFAULT current_timestamp,
+    -- @@{ field=created_at, propertyType=kotlin.time.Instant }
+    created_at   TEXT                NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
 
     FOREIGN KEY (person_id) REFERENCES person (id) ON DELETE CASCADE
 )

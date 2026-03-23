@@ -16,6 +16,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.json.Json
 import kotlin.random.Random
 
@@ -27,6 +28,7 @@ internal data class RealServerSmokeConfig(
 
 internal open class RealServerSmokeSupport : CrossTargetSyncTestSupport() {
     private val smokeJson = Json { ignoreUnknownKeys = true }
+    private val expectedRealServerAppName = "nethttp-server-example"
 
     protected suspend fun requireRealServerSmokeConfig(): RealServerSmokeConfig? {
         initializePlatformTestContext()
@@ -38,6 +40,11 @@ internal open class RealServerSmokeSupport : CrossTargetSyncTestSupport() {
         if (!availability) {
             println("Skipping real-server smoke tests; server unavailable at $baseUrl")
             return null
+        }
+        val status = fetchRealServerStatus(baseUrl)
+        check(status.appName == expectedRealServerAppName) {
+            "Real-server smoke tests require app_name='$expectedRealServerAppName' at $baseUrl, " +
+                "but server reported '${status.appName}'. Start examples/nethttp_server instead."
         }
         return RealServerSmokeConfig(baseUrl = baseUrl)
     }
@@ -179,6 +186,19 @@ internal open class RealServerSmokeSupport : CrossTargetSyncTestSupport() {
             http.close()
         }
     }
+
+    private suspend fun fetchRealServerStatus(baseUrl: String): RealServerStatusResponse {
+        val http = newRealServerHttpClient(baseUrl)
+        return try {
+            val response = http.get("/status")
+            check(response.status == HttpStatusCode.OK) {
+                "real-server smoke status probe failed: HTTP ${response.status} - ${response.bodyAsText()}"
+            }
+            response.body<RealServerStatusResponse>()
+        } finally {
+            http.close()
+        }
+    }
 }
 
 @Serializable
@@ -191,4 +211,10 @@ private data class DummySigninRequest(
 @Serializable
 private data class DummySigninResponse(
     val token: String,
+)
+
+@Serializable
+private data class RealServerStatusResponse(
+    @SerialName("app_name")
+    val appName: String,
 )

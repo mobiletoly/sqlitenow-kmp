@@ -20,19 +20,26 @@ import kotlinx.serialization.json.JsonElement
 /**
  * Resolver defines how to resolve optimistic concurrency conflicts reported by the server.
  *
- * On conflict, the server returns the current server row (including server_version and payload).
+ * On push conflict, the server returns structured conflict data for the first conflicting row:
+ * schema/table/key/op, the client base version, the authoritative server row version, an explicit
+ * deleted flag, and the current server row payload when one exists.
+ *
  * Implementations can either:
- *  - return MergeResult.AcceptServer to accept server state and drop local pending change, or
- *  - return MergeResult.KeepLocal(mergedPayload) to keep local intent by rewriting the row
- *    and re‑enqueuing an UPDATE with base_version set to the server’s version.
+ *  - return [MergeResult.AcceptServer] to accept server state and drop local pending change
+ *  - return [MergeResult.KeepLocal] to retry the original local intent where that is valid
+ *  - return [MergeResult.KeepMerged] to retry an explicit merged row payload where that is valid
+ *
+ * Current runtime behavior:
+ *  - [ServerWinsResolver] is handled automatically from the structured conflict payload.
+ *  - [ClientWinsResolver] is a convenience resolver that always returns [MergeResult.KeepLocal].
+ *  - [MergeResult.KeepLocal] and [MergeResult.KeepMerged] are applied automatically only when the
+ *    conflict shape makes that result valid for the local operation.
+ *  - Invalid automatic outcomes surface [InvalidConflictResolutionException].
+ *  - Repeated auto-resolution conflicts are bounded; exhausting the retry budget surfaces
+ *    [PushConflictRetryExhaustedException].
  */
 fun interface Resolver {
-    fun merge(
-        table: String,
-        pk: String,
-        serverRow: JsonElement?,
-        localPayload: JsonElement?
-    ): MergeResult
+    fun resolve(conflict: ConflictContext): MergeResult
 }
 
 /** Outcome of conflict resolution. */
@@ -40,17 +47,43 @@ sealed class MergeResult {
     /** Accept server’s version and drop local pending change. */
     data object AcceptServer : MergeResult()
 
-    /** Keep local by writing merged payload locally and retrying as UPDATE. */
-    data class KeepLocal(val mergedPayload: JsonElement) : MergeResult()
+    /** Keep the original local intent where the runtime deems that operation valid. */
+    data object KeepLocal : MergeResult()
+
+    /** Retry an explicit merged row payload where the runtime deems that operation valid. */
+    data class KeepMerged(val mergedPayload: JsonElement) : MergeResult()
 }
+
+/**
+ * Structured conflict context passed to resolvers.
+ *
+ * This is the canonical resolver input for bundle-era oversqlite. It exposes enough information for
+ * operation-aware conflict decisions without forcing resolvers to infer semantics from transport
+ * errors or human-readable messages.
+ */
+data class ConflictContext(
+    val schema: String,
+    val table: String,
+    val key: SyncKey,
+    val localOp: String,
+    val localPayload: JsonElement?,
+    val baseRowVersion: Long,
+    val serverRowVersion: Long,
+    val serverRowDeleted: Boolean,
+    val serverRow: JsonElement?,
+)
 
 /** Default resolver: server wins. */
 object ServerWinsResolver : Resolver {
-    override fun merge(
-        table: String,
-        pk: String,
-        serverRow: JsonElement?,
-        localPayload: JsonElement?
-    ): MergeResult = MergeResult.AcceptServer
+    override fun resolve(conflict: ConflictContext): MergeResult = MergeResult.AcceptServer
 }
 
+/**
+ * Convenience resolver for client-wins semantics.
+ *
+ * This only declares intent. Whether [MergeResult.KeepLocal] is a valid automatic outcome for the
+ * specific conflict shape is determined by runtime conflict-resolution rules.
+ */
+object ClientWinsResolver : Resolver {
+    override fun resolve(conflict: ConflictContext): MergeResult = MergeResult.KeepLocal
+}

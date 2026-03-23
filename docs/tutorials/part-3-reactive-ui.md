@@ -64,8 +64,7 @@ class MoodTrackerViewModel(
             try {
                 entryRepository.add(
                     MoodEntryRepository.NewMoodEntry(
-                        entryTime = Clock.System.now()
-                            .toLocalDateTime(TimeZone.currentSystemDefault()),
+                        entryTime = Clock.System.now(),
                         moodScore = moodScore,
                         note = note.ifBlank { null },
                     )
@@ -83,7 +82,9 @@ class MoodTrackerViewModel(
             .toLocalDateTime(TimeZone.currentSystemDefault())
             .date
         val weekStart = today.startOfWeek()
-        val weekEntries = entries.filter { it.entryTime.date >= weekStart }
+        val weekEntries = entries.filter {
+            it.entryTime.toLocalDateTime(TimeZone.currentSystemDefault()).date >= weekStart
+        }
         if (weekEntries.isEmpty()) {
             return WeeklySummary.Empty.copy(startDate = weekStart, endDate = today)
         }
@@ -123,7 +124,7 @@ private fun LocalDate.startOfWeek(): LocalDate {
 - `stateIn` turns the cold SQLiteNow flow into a hot `StateFlow`, caching the latest rows so every
   collector sees the same list immediately. Because `selectRecentWithTags.sql` uses a dynamic-field
   collection, each element already includes its `tags: List<MoodTagRow>`.
-- We stamp new entries with `Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())`
+- We stamp new entries with `Clock.System.now()`
   and guard the insert with `_isSaving` to avoid double taps.
 - The summary helpers live alongside the ViewModel and reuse the generated row model to compute the
   average and streak window.

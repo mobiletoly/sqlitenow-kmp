@@ -65,6 +65,208 @@ class RealServerBasicContractTest {
     }
 
     @Test
+    fun pushPending_thenOwnPush_thenPullToStable_stillFetchesEarlierPeerBundle() = runBlocking {
+        val config = requireRealServerConfig()
+        resetRealServerState(config.baseUrl)
+
+        val userId = randomUserId()
+        val deviceA = randomDeviceId("device-a")
+        val deviceB = randomDeviceId("device-b")
+
+        val tokenA = issueDummySigninToken(config.baseUrl, userId, deviceA)
+        val tokenB = issueDummySigninToken(config.baseUrl, userId, deviceB)
+        val httpA = newAuthenticatedHttpClient(config.baseUrl, tokenA)
+        val httpB = newAuthenticatedHttpClient(config.baseUrl, tokenB)
+        val dbA = newInMemoryDb()
+        val dbB = newInMemoryDb()
+        try {
+            createBusinessSubsetTables(dbA)
+            createBusinessSubsetTables(dbB)
+
+            val clientA = newRealServerClient(dbA, config, httpA)
+            val clientB = newRealServerClient(dbB, config, httpB)
+
+            clientA.bootstrap(userId, deviceA).getOrThrow()
+            clientB.bootstrap(userId, deviceB).getOrThrow()
+
+            val firstAuthorId = randomRowId()
+            dbA.execSQL(
+                """
+                INSERT INTO users(id, name, email)
+                VALUES('$firstAuthorId', 'From A', 'from-a@example.com')
+                """.trimIndent()
+            )
+            clientA.pushPending().getOrThrow()
+
+            val secondAuthorId = randomRowId()
+            dbB.execSQL(
+                """
+                INSERT INTO users(id, name, email)
+                VALUES('$secondAuthorId', 'From B', 'from-b@example.com')
+                """.trimIndent()
+            )
+            clientB.pushPending().getOrThrow()
+            clientB.pullToStable().getOrThrow()
+
+            assertEquals(2L, clientB.lastBundleSeqSeen().getOrThrow())
+            assertEquals("From A", scalarText(dbB, "SELECT name FROM users WHERE id = '$firstAuthorId'"))
+            assertEquals("From B", scalarText(dbB, "SELECT name FROM users WHERE id = '$secondAuthorId'"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_push_outbound"))
+        } finally {
+            httpA.close()
+            httpB.close()
+            dbA.close()
+            dbB.close()
+        }
+    }
+
+    @Test
+    fun threeDevices_pushWithoutPull_thenAllPull_converge() = runBlocking {
+        val config = requireRealServerConfig()
+        resetRealServerState(config.baseUrl)
+
+        val userId = randomUserId()
+        val deviceA = randomDeviceId("device-a")
+        val deviceB = randomDeviceId("device-b")
+        val deviceC = randomDeviceId("device-c")
+
+        val tokenA = issueDummySigninToken(config.baseUrl, userId, deviceA)
+        val tokenB = issueDummySigninToken(config.baseUrl, userId, deviceB)
+        val tokenC = issueDummySigninToken(config.baseUrl, userId, deviceC)
+        val httpA = newAuthenticatedHttpClient(config.baseUrl, tokenA)
+        val httpB = newAuthenticatedHttpClient(config.baseUrl, tokenB)
+        val httpC = newAuthenticatedHttpClient(config.baseUrl, tokenC)
+        val dbA = newInMemoryDb()
+        val dbB = newInMemoryDb()
+        val dbC = newInMemoryDb()
+        try {
+            createBusinessSubsetTables(dbA)
+            createBusinessSubsetTables(dbB)
+            createBusinessSubsetTables(dbC)
+
+            val clientA = newRealServerClient(dbA, config, httpA)
+            val clientB = newRealServerClient(dbB, config, httpB)
+            val clientC = newRealServerClient(dbC, config, httpC)
+
+            clientA.bootstrap(userId, deviceA).getOrThrow()
+            clientB.bootstrap(userId, deviceB).getOrThrow()
+            clientC.bootstrap(userId, deviceC).getOrThrow()
+
+            val userA = randomRowId()
+            dbA.execSQL(
+                """
+                INSERT INTO users(id, name, email)
+                VALUES('$userA', 'From A', 'from-a@example.com')
+                """.trimIndent()
+            )
+            clientA.pushPending().getOrThrow()
+
+            val userB = randomRowId()
+            dbB.execSQL(
+                """
+                INSERT INTO users(id, name, email)
+                VALUES('$userB', 'From B', 'from-b@example.com')
+                """.trimIndent()
+            )
+            clientB.pushPending().getOrThrow()
+
+            val userC = randomRowId()
+            dbC.execSQL(
+                """
+                INSERT INTO users(id, name, email)
+                VALUES('$userC', 'From C', 'from-c@example.com')
+                """.trimIndent()
+            )
+            clientC.pushPending().getOrThrow()
+
+            clientA.pullToStable().getOrThrow()
+            clientB.pullToStable().getOrThrow()
+            clientC.pullToStable().getOrThrow()
+
+            assertEquals(3L, clientA.lastBundleSeqSeen().getOrThrow())
+            assertEquals(3L, clientB.lastBundleSeqSeen().getOrThrow())
+            assertEquals(3L, clientC.lastBundleSeqSeen().getOrThrow())
+            assertEquals(3L, scalarLong(dbA, "SELECT COUNT(*) FROM users"))
+            assertEquals(3L, scalarLong(dbB, "SELECT COUNT(*) FROM users"))
+            assertEquals(3L, scalarLong(dbC, "SELECT COUNT(*) FROM users"))
+            assertEquals("From A", scalarText(dbB, "SELECT name FROM users WHERE id = '$userA'"))
+            assertEquals("From B", scalarText(dbC, "SELECT name FROM users WHERE id = '$userB'"))
+            assertEquals("From C", scalarText(dbA, "SELECT name FROM users WHERE id = '$userC'"))
+            assertEquals(0L, scalarLong(dbA, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+            assertEquals(0L, scalarLong(dbC, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+        } finally {
+            httpA.close()
+            httpB.close()
+            httpC.close()
+            dbA.close()
+            dbB.close()
+            dbC.close()
+        }
+    }
+
+    @Test
+    fun restartAfterOwnPushBeforePull_stillFetchesEarlierPeerBundle() = runBlocking {
+        val config = requireRealServerConfig()
+        resetRealServerState(config.baseUrl)
+
+        val userId = randomUserId()
+        val deviceA = randomDeviceId("device-a")
+        val deviceB = randomDeviceId("device-b")
+
+        val tokenA = issueDummySigninToken(config.baseUrl, userId, deviceA)
+        val tokenB = issueDummySigninToken(config.baseUrl, userId, deviceB)
+        val httpA = newAuthenticatedHttpClient(config.baseUrl, tokenA)
+        val httpB = newAuthenticatedHttpClient(config.baseUrl, tokenB)
+        val dbA = newInMemoryDb()
+        val dbB = newInMemoryDb()
+        try {
+            createBusinessSubsetTables(dbA)
+            createBusinessSubsetTables(dbB)
+
+            val clientA = newRealServerClient(dbA, config, httpA)
+            val clientB = newRealServerClient(dbB, config, httpB)
+
+            clientA.bootstrap(userId, deviceA).getOrThrow()
+            clientB.bootstrap(userId, deviceB).getOrThrow()
+
+            val firstAuthorId = randomRowId()
+            dbA.execSQL(
+                """
+                INSERT INTO users(id, name, email)
+                VALUES('$firstAuthorId', 'From A', 'from-a@example.com')
+                """.trimIndent()
+            )
+            clientA.pushPending().getOrThrow()
+
+            val secondAuthorId = randomRowId()
+            dbB.execSQL(
+                """
+                INSERT INTO users(id, name, email)
+                VALUES('$secondAuthorId', 'From B', 'from-b@example.com')
+                """.trimIndent()
+            )
+            clientB.pushPending().getOrThrow()
+
+            val restartedClientB = newRealServerClient(dbB, config, httpB)
+            restartedClientB.bootstrap(userId, deviceB).getOrThrow()
+            restartedClientB.pullToStable().getOrThrow()
+
+            assertEquals(2L, restartedClientB.lastBundleSeqSeen().getOrThrow())
+            assertEquals("From A", scalarText(dbB, "SELECT name FROM users WHERE id = '$firstAuthorId'"))
+            assertEquals("From B", scalarText(dbB, "SELECT name FROM users WHERE id = '$secondAuthorId'"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_push_outbound"))
+        } finally {
+            httpA.close()
+            httpB.close()
+            dbA.close()
+            dbB.close()
+        }
+    }
+
+    @Test
     fun hydrate_rebuildsFreshDeviceFromManualNethttpServer() = runBlocking {
         val config = requireRealServerConfig()
         resetRealServerState(config.baseUrl)

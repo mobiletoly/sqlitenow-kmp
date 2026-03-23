@@ -19,25 +19,69 @@ import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.sqlite.getColumnNames
 import dev.goquick.sqlitenow.core.sqlite.use
 
+enum class ColumnKind {
+    TEXT,
+    INTEGER,
+    REAL,
+    BLOB,
+    UUID_BLOB,
+}
+
+internal fun ColumnKind.isBlobKind(): Boolean = this == ColumnKind.BLOB || this == ColumnKind.UUID_BLOB
+
+private fun classifyColumnKind(
+    declaredType: String,
+    isPrimaryKey: Boolean,
+    isBlobReference: Boolean,
+): ColumnKind {
+    val type = declaredType.lowercase()
+    return when {
+        type.contains("blob") && (isPrimaryKey || isBlobReference) -> ColumnKind.UUID_BLOB
+        type.contains("blob") -> ColumnKind.BLOB
+        type.contains("real") || type.contains("float") || type.contains("double") -> ColumnKind.REAL
+        type.contains("int") -> ColumnKind.INTEGER
+        else -> ColumnKind.TEXT
+    }
+}
+
 data class ColumnInfo(
     val name: String,
     val declaredType: String,
     val isPrimaryKey: Boolean,
     val notNull: Boolean,
     val defaultValue: String?,
+    val kind: ColumnKind = classifyColumnKind(
+        declaredType = declaredType,
+        isPrimaryKey = isPrimaryKey,
+        isBlobReference = false,
+    ),
+)
+
+data class ForeignKeyInfo(
+    val seq: Int,
+    val refTable: String,
+    val fromCol: String,
+    val toCol: String,
 )
 
 data class TableInfo(
     val table: String,
     val columns: List<ColumnInfo>,
+    val foreignKeys: List<ForeignKeyInfo> = emptyList(),
     val foreignKeyColumnsLower: Set<String> = emptySet(),
 ) {
     val columnNamesLower: List<String> = columns.map { it.name.lowercase() }
+    val columnsByNameLower: Map<String, ColumnInfo> = columns.associateBy { it.name.lowercase() }
     val typesByNameLower: Map<String, String> = columns.associate { it.name.lowercase() to it.declaredType }
     val primaryKey: ColumnInfo? = columns.firstOrNull { it.isPrimaryKey }
-    val primaryKeyIsBlob: Boolean = primaryKey?.declaredType?.lowercase()?.contains("blob") == true
+    val primaryKeyIsBlob: Boolean = primaryKey?.kind?.isBlobKind() == true
 
     fun isBlobReferenceColumn(columnName: String): Boolean = foreignKeyColumnsLower.contains(columnName.lowercase())
+
+    fun column(columnName: String): ColumnInfo {
+        return columnsByNameLower[columnName.lowercase()]
+            ?: error("table $table is missing column $columnName")
+    }
 }
 
 class TableInfoCache {
@@ -48,7 +92,7 @@ class TableInfoCache {
         cache[key]?.let { return it }
 
         val cols = mutableListOf<ColumnInfo>()
-        db.prepare("PRAGMA table_info($key)").use { st ->
+        db.prepare("PRAGMA table_info(${quoteIdent(key)})").use { st ->
             // Resolve column indexes by name to avoid magic numbers
             val idxByName: Map<String, Int> = run {
                 val names = st.getColumnNames().map { it.lowercase() }
@@ -75,14 +119,45 @@ class TableInfoCache {
                 )
             }
         }
+        val foreignKeys = mutableListOf<ForeignKeyInfo>()
         val foreignKeyColumns = mutableSetOf<String>()
-        db.prepare("PRAGMA foreign_key_list($key)").use { st ->
+        db.prepare("PRAGMA foreign_key_list(${quoteIdent(key)})").use { st ->
+            val idxByName: Map<String, Int> = run {
+                val names = st.getColumnNames().map { it.lowercase() }
+                names.mapIndexed { idx, n -> n to idx }.toMap()
+            }
+            val iSeq = idxByName["seq"] ?: 1
+            val iTable = idxByName["table"] ?: 2
+            val iFrom = idxByName["from"] ?: 3
+            val iTo = idxByName["to"] ?: 4
             while (st.step()) {
-                foreignKeyColumns += st.getText(3).lowercase()
+                val fromCol = st.getText(iFrom)
+                foreignKeys += ForeignKeyInfo(
+                    seq = st.getLong(iSeq).toInt(),
+                    refTable = st.getText(iTable).trim().lowercase(),
+                    fromCol = fromCol,
+                    toCol = st.getText(iTo),
+                )
+                foreignKeyColumns += fromCol.lowercase()
             }
         }
 
-        val ti = TableInfo(key, cols, foreignKeyColumns)
+        val normalizedColumns = cols.map { column ->
+            column.copy(
+                kind = classifyColumnKind(
+                    declaredType = column.declaredType,
+                    isPrimaryKey = column.isPrimaryKey,
+                    isBlobReference = foreignKeyColumns.contains(column.name.lowercase()),
+                ),
+            )
+        }
+
+        val ti = TableInfo(
+            table = key,
+            columns = normalizedColumns,
+            foreignKeys = foreignKeys,
+            foreignKeyColumnsLower = foreignKeyColumns,
+        )
         cache[key] = ti
         return ti
     }

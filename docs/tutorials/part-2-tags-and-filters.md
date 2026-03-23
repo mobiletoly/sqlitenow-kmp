@@ -26,8 +26,8 @@ CREATE TABLE mood_entry (
     -- @@{ field=id, propertyType=kotlin.uuid.Uuid }
     id TEXT PRIMARY KEY NOT NULL,
     
-    -- @@{ field=entry_time, propertyType=kotlinx.datetime.LocalDateTime }
-    entry_time TEXT NOT NULL,
+    -- @@{ field=entry_time, propertyType=kotlin.time.Instant }
+    entry_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     
     -- @@{ field=mood_score, propertyType=kotlin.Int }
     mood_score INTEGER NOT NULL,
@@ -72,10 +72,10 @@ A few important notes:
 - Schema files can contain multiple statements. We use that to declare the table followed by
   the relevant indexes.
 - Capturing full timestamps (`entry_time`) keeps our eventual UI simple: the shared code can call
-  `Clock.System.now()` and persist both the date and time without extra columns.
+  `Clock.System.now()` and persist an unambiguous instant without extra columns.
 - The field-level annotations (`propertyType=…`) instruct SQLiteNow to surface strongly typed
   Kotlin values. Once you declare `entry_time` as
-  `kotlinx.datetime.LocalDateTime` in the schema, the generator applies that type to every query
+  `kotlin.time.Instant` in the schema, the generator applies that type to every query
   touching the column—no extra annotations or `adapter=default` flags required.
 
 
@@ -177,14 +177,15 @@ Two highlights to notice:
 
 
 ## Step 4 – Wire Kotlin Repositories
-Our Part 1 setup already added `kotlinx-datetime`, so `LocalDateTime` is available in shared code.
+`kotlin.time.Instant` comes from the Kotlin standard library, while the `LocalDate` types from
+Part 1 continue to come from `kotlinx-datetime`.
 The schema annotations we added earlier change the generated Kotlin signatures in two
 important ways:
 - `MoodTrackerDatabase` now exposes adapter groups such as `MoodEntryAdapters` and
   `MoodEntryTagAdapters`. Each property inside those groups corresponds to a column-level
   annotation that asked for a custom type, so we must provide lambdas that convert between `Uuid`
-  or `LocalDateTime` and the underlying `TEXT` representation.
-- Parameter classes like `MoodEntryQuery.Add.Params` now expect `LocalDateTime`
+  or `Instant` and the underlying `TEXT` representation.
+- Parameter classes like `MoodEntryQuery.Add.Params` now expect `Instant`
   (alongside `Uuid` and `Int`), which means our repositories can drop string parsing or
   integer-widening helpers.
 
@@ -196,8 +197,8 @@ field names turn into adapter property names (`entryTimeToSqlValue`, `sqlValueTo
 suspend fun create(): MoodTrackerDatabase {
     val uuidToSql: (Uuid) -> String = { it.toString() }
     val sqlToUuid: (String) -> Uuid = { Uuid.parse(it) }
-    val localDateTimeToSql: (LocalDateTime) -> String = { it.toSqliteTimestamp() }
-    val sqlToLocalDateTime: (String) -> LocalDateTime = { LocalDateTime.fromSqliteTimestamp(it) }
+    val instantToSql: (Instant) -> String = { it.toRfc3339String() }
+    val sqlToInstant: (String) -> Instant = { Instant.fromRfc3339String(it) }
 
     val appName = "MoodTracker"
     val resolvedName = if (dbName.startsWith(":")) dbName else resolveDatabasePath(
@@ -210,9 +211,9 @@ suspend fun create(): MoodTrackerDatabase {
         debug = debug,
         moodEntryAdapters = MoodTrackerDatabase.MoodEntryAdapters(
             idToSqlValue = uuidToSql,
-            entryTimeToSqlValue = localDateTimeToSql,
+            entryTimeToSqlValue = instantToSql,
             sqlValueToId = sqlToUuid,
-            sqlValueToEntryTime = sqlToLocalDateTime,
+            sqlValueToEntryTime = sqlToInstant,
         ),
         moodEntryTagAdapters = MoodTrackerDatabase.MoodEntryTagAdapters(
             entryIdToSqlValue = uuidToSql,
@@ -230,7 +231,7 @@ the generated code platform-agnostic—every target receives the same conversion
 and maps friendly filenames to platform-specific storage locations.
 
 Now add the repositories. Thanks to the annotations, every parameter class uses `Uuid` and
-`LocalDateTime` directly, and the select-by-tag helper only needs a single `toString()`
+`Instant` directly, and the select-by-tag helper only needs a single `toString()`
 because we did not add a parameter annotation for `:tagId` yet. We also surface the new
 collection-aware query so callers can fetch entries with their tags in one shot—or subscribe to the
 reactive flow exposed by the generated router.
@@ -240,7 +241,7 @@ reactive flow exposed by the generated router.
 class MoodEntryRepository(private val database: MoodTrackerDatabase) {
 
     data class NewMoodEntry(
-        val entryTime: LocalDateTime,
+        val entryTime: Instant,
         val moodScore: Int,
         val note: String?,
         val id: Uuid = Uuid.random(),
@@ -307,8 +308,8 @@ point on the app relies entirely on `MoodEntryWithTags`, even when no tags are a
 entry—the generated mapper simply returns an empty list.
 
 The compiler opt-ins we added back in Part 1 let us call `Uuid.random()` without sprinkling extra
-`@OptIn` annotations through the code. Because we already pulled in `kotlinx-datetime`,
-`LocalDateTime` is available everywhere without extra setup.
+`@OptIn` annotations through the code. Because `Instant` is part of the Kotlin standard library,
+absolute timestamps are available everywhere without extra setup.
 
 Notice how the generated API mirrors our file system:
 - `queries/mood_tag/add.sql` becomes `database.moodTag.add`.
@@ -324,16 +325,16 @@ Run the usual command after updating SQL and Kotlin files:
 
 We also added instrumentation checks in the android instrumentation source set
 (`MoodEntryRepositoryTest.kt` and `MoodTagRepositoryTest.kt`) to cover entry creation, tag
-assignment, lookups, and `LocalDateTime` round-tripping end-to-end.
+assignment, lookups, and `Instant` round-tripping end-to-end.
 
-Everything should compile without additional casts. UUIDs, `LocalDateTime`, and `Int` properties now
+Everything should compile without additional casts. UUIDs, `Instant`, and `Int` properties now
 map natively while `notNull=true` protects you from nullable surprises.
 
 ## What We Learned
 - Schema files can host multiple DDL statements; query files stay one statement per file.
 - `propertyType` and `notNull` annotations give you fine-grained control over how SQLiteNow
   surfaces Kotlin types (with adapters inferred automatically for common targets such as `Uuid`
-  and `LocalDateTime`).
+  and `Instant`).
 - Shared `queryResult` names keep generated models consistent across multiple queries.
 - Adapters are injected through the generated database constructor so you can define the actual
   conversion logic in one place.

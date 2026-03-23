@@ -50,17 +50,19 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.goquick.sqlitenow.core.sqlite.SqliteException
+import dev.goquick.sqlitenow.core.sqlite.use
 import dev.goquick.sqlitenow.common.PlatformType
 import dev.goquick.sqlitenow.common.platform
 import dev.goquick.sqlitenow.common.resolveDatabasePath
 import dev.goquick.sqlitenow.core.util.fromSqliteDate
-import dev.goquick.sqlitenow.core.util.fromSqliteTimestamp
+import dev.goquick.sqlitenow.core.util.fromRfc3339String
 import dev.goquick.sqlitenow.core.util.jsonDecodeListFromSqlite
 import dev.goquick.sqlitenow.core.util.jsonEncodeToSqlite
 import dev.goquick.sqlitenow.core.util.toSqliteDate
-import dev.goquick.sqlitenow.core.util.toSqliteTimestamp
+import dev.goquick.sqlitenow.core.util.toRfc3339String
+import dev.goquick.sqlitenow.oversqlite.MergeResult
 import dev.goquick.sqlitenow.oversqlite.OversqliteClient
-import dev.goquick.sqlitenow.oversqlite.ServerWinsResolver
+import dev.goquick.sqlitenow.oversqlite.Resolver
 import dev.goquick.sqlitenow.samplesynckmp.db.AddressType
 import dev.goquick.sqlitenow.samplesynckmp.db.CommentQuery
 import dev.goquick.sqlitenow.samplesynckmp.db.CommentRow
@@ -84,18 +86,23 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalDate
-import kotlinx.datetime.LocalDateTime
-import kotlinx.datetime.TimeZone
-import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.jetbrains.compose.ui.tooling.preview.Preview
 import kotlin.random.Random
 import kotlin.time.Clock
-import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
+
+private const val periodicSyncEnabled = false
+private const val periodicSyncIntervalMs = 10_000L
 
 private val firstNames = listOf(
     // Traditional English names
@@ -240,11 +247,12 @@ val db = NowSampleSyncDatabase(
         sqlValueToBirthDate = {
             it?.let { LocalDate.fromSqliteDate(it) }
         },
+        sqlValueToUpdatedAt = { Instant.fromRfc3339String(it) },
     ),
     commentAdapters = NowSampleSyncDatabase.CommentAdapters(
-        createdAtToSqlValue = { ts -> ts.toSqliteTimestamp() },
+        createdAtToSqlValue = { ts -> ts.toRfc3339String() },
         tagsToSqlValue = { tags -> tags?.jsonEncodeToSqlite() },
-        sqlValueToCreatedAt = { LocalDateTime.fromSqliteTimestamp(it) },
+        sqlValueToCreatedAt = { Instant.fromRfc3339String(it) },
         sqlValueToTags = { it?.jsonDecodeListFromSqlite() ?: emptyList() },
     ),
     personAddressAdapters = NowSampleSyncDatabase.PersonAddressAdapters(
@@ -253,6 +261,26 @@ val db = NowSampleSyncDatabase(
     ),
     migration = VersionBasedDatabaseMigrations()
 )
+
+private val updatedAtWinsResolver = Resolver { conflict ->
+    val serverUpdatedAt = conflict.serverRow.updatedAtOrNull()
+    val localUpdatedAt = conflict.localPayload.updatedAtOrNull()
+    if (serverUpdatedAt != null && localUpdatedAt != null && localUpdatedAt > serverUpdatedAt) {
+        MergeResult.KeepLocal
+    } else {
+        MergeResult.AcceptServer
+    }
+}
+
+private fun JsonElement?.updatedAtOrNull(): Instant? {
+    val value = this
+        ?.jsonObject
+        ?.get("updated_at")
+        ?.jsonPrimitive
+        ?.contentOrNull
+        ?: return null
+    return runCatching { Instant.fromRfc3339String(value) }.getOrNull()
+}
 
 /**
  * Common function to set up sync client for both session restore and new sign-in
@@ -267,6 +295,8 @@ private suspend fun setupSyncClient(
     onError: (Exception) -> Unit
 ) {
     try {
+        ensureSampleSyncServer(baseUrl)
+
         val httpClient = createAuthenticatedHttpClient(
             baseUrl = baseUrl,
             username = user,
@@ -277,12 +307,13 @@ private suspend fun setupSyncClient(
         val client = db.newOversqliteClient(
             schema = "business",
             httpClient = httpClient,
-            resolver = ServerWinsResolver,
+            resolver = updatedAtWinsResolver,
             verboseLogs = true,
         )
 
         // Bootstrap is always required
         client.bootstrap(userId = user, sourceId = deviceId).getOrThrow()
+        logLocalSyncState("after bootstrap")
 
         if (isSessionRestore) {
             // For session restore, do incremental sync to catch up
@@ -296,6 +327,7 @@ private suspend fun setupSyncClient(
                 appLog.e(hydrateRes.exceptionOrNull()) { "Hydrate failed" }
             } else {
                 appLog.i { "Hydrate complete" }
+                logLocalSyncState("after hydrate")
             }
         }
 
@@ -328,6 +360,11 @@ fun App() {
     var isDatabaseOpen by remember { mutableStateOf(false) }
     val syncTrigger = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
     val commentsRefreshTrigger = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
+    fun requestAutoSync() {
+        if (periodicSyncEnabled) {
+            syncTrigger.tryEmit(Unit)
+        }
+    }
 
     val baseUrl = if (platform() == PlatformType.ANDROID) {
         "http://10.0.2.2:8080"
@@ -391,7 +428,6 @@ fun App() {
                         showSigninDialog = false
                         username = savedUser
                         appLog.i { "Restored session for user=$savedUser device=$did" }
-                        // Nudge sync worker to run soon
                         syncTrigger.tryEmit(Unit)
                     },
                     onError = { error ->
@@ -418,21 +454,26 @@ fun App() {
             .debounce(700)
             .collectLatest {
                 try {
+                    ensureSampleSyncServer(baseUrl)
+                    logLocalSyncState("before pushPending")
                     client.pushPending()
                         .onFailure {
                             appLog.e(it) { "pushPending failed" }
                             errorMessage = "Push failed: ${it.message ?: "unknown"}"
                             return@collectLatest
                         }
+                    logLocalSyncState("after pushPending")
                     client.pullToStable()
                         .onFailure {
                             appLog.e(it) { "pullToStable failed" }
                             errorMessage = "Pull failed: ${it.message ?: "unknown"}"
                             return@collectLatest
                         }
+                    logLocalSyncState("after pullToStable")
                     appLog.i { "Sync cycle complete" }
                 } catch (e: Exception) {
                     appLog.e(e) { "Sync cycle failed" }
+                    errorMessage = e.message ?: "Sync cycle failed"
                 }
             }
     }
@@ -440,9 +481,13 @@ fun App() {
     // Periodic nudge (e.g., every 60s) only when signed in
     LaunchedEffect(signedIn, bootstrapDone) {
         if (signedIn && bootstrapDone) {
-            appLog.i { "Scheduling periodic sync every 60s" }
-            while (signedIn) {
-                delay(10_000)
+            if (!periodicSyncEnabled) {
+                appLog.i { "Periodic sync disabled" }
+                return@LaunchedEffect
+            }
+            appLog.i { "Scheduling periodic sync every ${periodicSyncIntervalMs / 1000}s" }
+            while (isActive) {
+                delay(periodicSyncIntervalMs)
                 syncTrigger.tryEmit(Unit)
             }
         }
@@ -476,7 +521,7 @@ fun App() {
                             errorMessage = error;
                             reportMessage = null
                         }
-                        syncTrigger.tryEmit(Unit)
+                        requestAutoSync()
                     }
                 },
                 onSync = {
@@ -484,19 +529,29 @@ fun App() {
                         val client =
                             syncClient ?: run { errorMessage = "Not signed in"; return@launch }
                         try {
+                            ensureSampleSyncServer(baseUrl)
                             val report = StringBuilder()
-                            client.pushPending().onSuccess {
+                            logLocalSyncState("manual sync before pushPending")
+                            val pushResult = client.pushPending()
+                            pushResult.onSuccess {
                                 report.append("Push: ok")
                             }.onFailure { err ->
                                 appLog.e(err) { "Push failed" }
                                 report.append("Push failed: ").append(err.message ?: "unknown error")
                             }
+                            if (pushResult.isSuccess) {
+                                logLocalSyncState("manual sync after pushPending")
+                            }
                             if (report.isNotEmpty()) report.append('\n')
-                            client.pullToStable().onSuccess {
+                            val pullResult = client.pullToStable()
+                            pullResult.onSuccess {
                                 report.append("Pull: ok")
                             }.onFailure { err ->
                                 appLog.e(err) { "Pull failed" }
                                 report.append("Pull failed: ").append(err.message ?: "unknown error")
+                            }
+                            if (pullResult.isSuccess) {
+                                logLocalSyncState("manual sync after pullToStable")
                             }
                             reportMessage = report.toString()
                             errorMessage = null
@@ -533,7 +588,8 @@ fun App() {
                                 errorMessage = error;
                                 reportMessage = null
                             }
-                            syncTrigger.tryEmit(Unit)
+                            logLocalSyncState("after Rnd click", p.id)
+                            requestAutoSync()
                         }
                     },
                     onDelete = { p ->
@@ -542,7 +598,7 @@ fun App() {
                                 errorMessage = error;
                                 reportMessage = null
                             }
-                            syncTrigger.tryEmit(Unit)
+                            requestAutoSync()
                         }
                     },
                     onAddAddress = { pid ->
@@ -551,7 +607,7 @@ fun App() {
                                 errorMessage = error;
                                 reportMessage = null
                             }
-                            syncTrigger.tryEmit(Unit)
+                            requestAutoSync()
                         }
                     },
                     onAddComment = { pid ->
@@ -560,7 +616,7 @@ fun App() {
                                 errorMessage = error;
                                 reportMessage = null
                             }
-                            syncTrigger.tryEmit(Unit)
+                            requestAutoSync()
                             commentsRefreshTrigger.tryEmit(Unit)
                         }
                     }
@@ -985,6 +1041,10 @@ suspend fun randomizePerson(person: PersonRow, onError: (String) -> Unit = {}) {
         val phone = person.phone
         val birthDate = person.birthDate
         val notes = person.notes
+        appLog.i {
+            "Rnd updating person id=${person.id.toHexLower()} " +
+                "from='${person.myFirstName} ${person.myLastName}' to='$firstName $lastName'"
+        }
         db.transaction {
             db.person.updateById(
                 PersonQuery.UpdateById.Params(
@@ -1001,12 +1061,137 @@ suspend fun randomizePerson(person: PersonRow, onError: (String) -> Unit = {}) {
                 )
             )
         }
+        logLocalSyncState("after randomizePerson", person.id)
     } catch (e: SqliteException) {
         appLog.e(e) { "Failed to update person (SQLite)" }
         onError("Failed to update person: ${e.message}")
     } catch (e: Exception) {
         appLog.e(e) { "Failed to update person" }
         onError("Unexpected error: ${e.message}")
+    }
+}
+
+private suspend fun logLocalSyncState(label: String, personId: ByteArray? = null) {
+    val connection = db.connection()
+    connection.withContextAndTrace {
+        val dirtyRows = mutableListOf<String>()
+        connection.prepare(
+            """
+            SELECT schema_name, table_name, key_json, op, base_row_version, dirty_ordinal
+            FROM _sync_dirty_rows
+            ORDER BY dirty_ordinal, table_name, key_json
+            LIMIT 10
+            """.trimIndent()
+        ).use { st ->
+            while (st.step()) {
+                dirtyRows += buildString {
+                    append("schema=")
+                    append(st.getText(0))
+                    append(", table=")
+                    append(st.getText(1))
+                    append(", key=")
+                    append(st.getText(2))
+                    append(", op=")
+                    append(st.getText(3))
+                    append(", baseRowVersion=")
+                    append(st.getLong(4))
+                    append(", dirtyOrdinal=")
+                    append(st.getLong(5))
+                }
+            }
+        }
+
+        val rowStates = mutableListOf<String>()
+        connection.prepare(
+            """
+            SELECT schema_name, table_name, key_json, row_version, deleted
+            FROM _sync_row_state
+            ORDER BY table_name, key_json
+            LIMIT 10
+            """.trimIndent()
+        ).use { st ->
+            while (st.step()) {
+                rowStates += buildString {
+                    append("schema=")
+                    append(st.getText(0))
+                    append(", table=")
+                    append(st.getText(1))
+                    append(", key=")
+                    append(st.getText(2))
+                    append(", rowVersion=")
+                    append(st.getLong(3))
+                    append(", deleted=")
+                    append(st.getLong(4) == 1L)
+                }
+            }
+        }
+
+        val clientState = connection.prepare(
+            """
+            SELECT user_id, source_id, next_source_bundle_id, last_bundle_seq_seen, rebuild_required, apply_mode
+            FROM _sync_client_state
+            LIMIT 1
+            """.trimIndent()
+        ).use { st ->
+            if (!st.step()) {
+                "<missing>"
+            } else {
+                buildString {
+                    append("user=")
+                    append(st.getText(0))
+                    append(", source=")
+                    append(st.getText(1))
+                    append(", nextSourceBundleId=")
+                    append(st.getLong(2))
+                    append(", lastBundleSeqSeen=")
+                    append(st.getLong(3))
+                    append(", rebuildRequired=")
+                    append(st.getLong(4) == 1L)
+                    append(", applyMode=")
+                    append(st.getLong(5) == 1L)
+                }
+            }
+        }
+
+        val personSummary = personId?.let { id ->
+            connection.prepare(
+                """
+                SELECT lower(hex(id)), first_name, last_name, email
+                FROM person
+                WHERE id = ?
+                """.trimIndent()
+            ).use { st ->
+                st.bindBlob(1, id)
+                if (!st.step()) {
+                    "person=${id.toHexLower()} missing"
+                } else {
+                    "person=${st.getText(0)} name='${st.getText(1)} ${st.getText(2)}' email='${st.getText(3)}'"
+                }
+            }
+        } ?: "person=<not requested>"
+
+        appLog.i {
+            buildString {
+                append("Local sync state [")
+                append(label)
+                append("] clientState=")
+                append(clientState)
+                append("; dirtyRows=")
+                append(if (dirtyRows.isEmpty()) "<none>" else dirtyRows.joinToString(" | "))
+                append("; rowState=")
+                append(if (rowStates.isEmpty()) "<none>" else rowStates.joinToString(" | "))
+                append("; ")
+                append(personSummary)
+            }
+        }
+    }
+}
+
+private fun ByteArray.toHexLower(): String = buildString(size * 2) {
+    for (byte in this@toHexLower) {
+        val value = byte.toInt() and 0xff
+        append("0123456789abcdef"[value ushr 4])
+        append("0123456789abcdef"[value and 0x0f])
     }
 }
 
@@ -1042,12 +1227,11 @@ suspend fun addRandomAddress(personId: ByteArray, onError: (String) -> Unit = {}
     }
 }
 
-@OptIn(ExperimentalTime::class)
 suspend fun addRandomComment(personId: ByteArray, onError: (String) -> Unit = {}) {
     try {
         val comments =
             listOf("Great person!", "Met at the event.", "Loves Kotlin", "Follows up quickly")
-        val created = Clock.System.now().toLocalDateTime(TimeZone.UTC)
+        val created = Clock.System.now()
         db.comment.add(
             CommentQuery.Add.Params(
                 id = generateUuid(),

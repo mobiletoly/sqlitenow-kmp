@@ -32,6 +32,7 @@ internal data class ValidatedConfig(
     val pkByTable: Map<String, String>,
     val keyByTable: Map<String, List<String>>,
     val tableOrder: Map<String, Int>,
+    val tableInfoByName: Map<String, TableInfo>,
 )
 
 internal class SyncBootstrapper(
@@ -149,6 +150,7 @@ internal class SyncBootstrapper(
         val schema = config.schema.trim()
         val pkByTable = linkedMapOf<String, String>()
         val keyByTable = linkedMapOf<String, List<String>>()
+        val tableInfoByName = linkedMapOf<String, TableInfo>()
         val validatedTables = mutableListOf<ValidatedSyncTable>()
         val managedTables = linkedSetOf<String>()
 
@@ -167,20 +169,22 @@ internal class SyncBootstrapper(
             }
 
             val tableInfo = tableInfoCache.get(db, tableName)
+            tableInfoByName[tableName] = tableInfo
             val syncKeyColumn = configuredPrimaryKeyColumn(tableInfo, syncTable, keyColumns.single())
             pkByTable[tableName] = syncKeyColumn
             keyByTable[tableName] = listOf(syncKeyColumn)
             validatedTables += ValidatedSyncTable(tableName = tableName, syncKeyColumnName = syncKeyColumn)
         }
 
-        validateManagedForeignKeyClosure(db, managedTables)
-        val tableOrder = computeManagedTableOrder(db, validatedTables)
+        validateManagedForeignKeyClosure(tableInfoByName, managedTables)
+        val tableOrder = computeManagedTableOrder(tableInfoByName, validatedTables)
         return ValidatedConfig(
             schema = schema,
             tables = validatedTables,
             pkByTable = pkByTable,
             keyByTable = keyByTable,
             tableOrder = tableOrder,
+            tableInfoByName = tableInfoByName,
         )
     }
 
@@ -217,30 +221,26 @@ internal class SyncBootstrapper(
         error("table ${syncTable.tableName} does not contain configured primary key column $configuredKeyColumn")
     }
 
-    private suspend fun validateManagedForeignKeyClosure(
-        db: SafeSQLiteConnection,
+    private fun validateManagedForeignKeyClosure(
+        tableInfoByName: Map<String, TableInfo>,
         managedTables: Set<String>,
     ) {
         for (tableName in managedTables) {
+            val tableInfo = tableInfoByName[tableName]
+                ?: error("managed table $tableName is missing cached table info")
             val compositeRefs = mutableListOf<String>()
             val missingRefs = mutableListOf<String>()
-            db.prepare("PRAGMA foreign_key_list(${quoteIdent(tableName)})").use { st ->
-                val indexes = foreignKeyIndexMap(st)
-                while (st.step()) {
-                    val seq = st.getLong(indexes["seq"] ?: 1).toInt()
-                    val refTable = st.getText(indexes["table"] ?: 2).trim().lowercase()
-                    val fromCol = st.getText(indexes["from"] ?: 3)
-                    val toCol = st.getText(indexes["to"] ?: 4)
-                    if (refTable.isEmpty()) {
-                        continue
-                    }
-                    if (seq > 0) {
-                        compositeRefs += "$tableName -> $refTable"
-                        continue
-                    }
-                    if (refTable !in managedTables) {
-                        missingRefs += "$tableName.$fromCol -> $refTable.$toCol"
-                    }
+            for (foreignKey in tableInfo.foreignKeys) {
+                val refTable = foreignKey.refTable
+                if (refTable.isEmpty()) {
+                    continue
+                }
+                if (foreignKey.seq > 0) {
+                    compositeRefs += "$tableName -> $refTable"
+                    continue
+                }
+                if (refTable !in managedTables) {
+                    missingRefs += "$tableName.${foreignKey.fromCol} -> $refTable.${foreignKey.toCol}"
                 }
             }
             require(compositeRefs.isEmpty()) {
@@ -252,8 +252,8 @@ internal class SyncBootstrapper(
         }
     }
 
-    private suspend fun computeManagedTableOrder(
-        db: SafeSQLiteConnection,
+    private fun computeManagedTableOrder(
+        tableInfoByName: Map<String, TableInfo>,
         tables: List<ValidatedSyncTable>,
     ): Map<String, Int> {
         val originalOrder = tables.mapIndexed { index, table -> table.tableName to index }.toMap()
@@ -262,16 +262,15 @@ internal class SyncBootstrapper(
         val inDegree = managed.associateWith { 0 }.toMutableMap()
 
         for (table in tables) {
-            db.prepare("PRAGMA foreign_key_list(${quoteIdent(table.tableName)})").use { st ->
-                val indexes = foreignKeyIndexMap(st)
-                while (st.step()) {
-                    val refTable = st.getText(indexes["table"] ?: 2).trim().lowercase()
-                    if (refTable.isEmpty() || refTable == table.tableName || refTable !in managed) {
-                        continue
-                    }
-                    if (dependents.getValue(refTable).add(table.tableName)) {
-                        inDegree[table.tableName] = inDegree.getValue(table.tableName) + 1
-                    }
+            val tableInfo = tableInfoByName[table.tableName]
+                ?: error("managed table ${table.tableName} is missing cached table info")
+            for (foreignKey in tableInfo.foreignKeys) {
+                val refTable = foreignKey.refTable
+                if (refTable.isEmpty() || refTable == table.tableName || refTable !in managed) {
+                    continue
+                }
+                if (dependents.getValue(refTable).add(table.tableName)) {
+                    inDegree[table.tableName] = inDegree.getValue(table.tableName) + 1
                 }
             }
         }
@@ -298,12 +297,6 @@ internal class SyncBootstrapper(
             }
         }
         return ordered.mapIndexed { index, tableName -> tableName to index }.toMap()
-    }
-
-    private fun foreignKeyIndexMap(statement: dev.goquick.sqlitenow.core.sqlite.SqliteStatement): Map<String, Int> {
-        return statement.getColumnNames()
-            .mapIndexed { index, name -> name.lowercase() to index }
-            .toMap()
     }
 
     private suspend fun persistClientIdentity(
@@ -415,23 +408,24 @@ internal class SyncBootstrapper(
         validated: ValidatedConfig,
     ) {
         for (table in validated.tables) {
-            createTriggersForTable(db, validated.schema, table)
+            createTriggersForTable(db, validated, table)
         }
     }
 
     private suspend fun createTriggersForTable(
         db: SafeSQLiteConnection,
-        schemaName: String,
+        validated: ValidatedConfig,
         table: ValidatedSyncTable,
     ) {
-        val tableInfo = tableInfoCache.get(db, table.tableName)
+        val tableInfo = validated.tableInfoByName[table.tableName]
+            ?: tableInfoCache.get(db, table.tableName)
         val pkColumn = table.syncKeyColumnName
         val payloadExpr = buildJsonObjectExprHexAware(tableInfo, "NEW")
         val oldKeyExpr = buildKeyJsonObjectExprHexAware(tableInfo, pkColumn, "OLD")
         val newKeyExpr = buildKeyJsonObjectExprHexAware(tableInfo, pkColumn, "NEW")
 
         val data = TriggerData(
-            schemaName = schemaName,
+            schemaName = validated.schema,
             tableName = table.tableName,
             newRowJson = payloadExpr,
             oldKeyJson = oldKeyExpr,
@@ -443,11 +437,42 @@ internal class SyncBootstrapper(
             "trg_${table.tableName}_au" to updateTriggerSql(data),
             "trg_${table.tableName}_ad" to deleteTriggerSql(data),
         )
+        val existingSqlByName = loadExistingTriggerSqlByName(db, table.tableName)
 
         for ((name, sql) in triggers) {
-            db.execSQL("DROP TRIGGER IF EXISTS ${quoteIdent(name)}")
+            val existingSql = existingSqlByName[name]
+            if (existingSql != null && normalizeTriggerSql(existingSql) == normalizeTriggerSql(sql)) {
+                continue
+            }
+            if (existingSql != null) {
+                db.execSQL("DROP TRIGGER IF EXISTS ${quoteIdent(name)}")
+            }
             db.execSQL(sql)
         }
+    }
+
+    private suspend fun loadExistingTriggerSqlByName(
+        db: SafeSQLiteConnection,
+        tableName: String,
+    ): Map<String, String> {
+        val sqlByName = linkedMapOf<String, String>()
+        db.prepare(
+            """
+            SELECT name, sql
+            FROM sqlite_master
+            WHERE type = 'trigger' AND tbl_name = ?
+            ORDER BY name
+            """.trimIndent()
+        ).use { st ->
+            st.bindText(1, tableName)
+            while (st.step()) {
+                if (st.isNull(1)) {
+                    continue
+                }
+                sqlByName[st.getText(0)] = st.getText(1)
+            }
+        }
+        return sqlByName
     }
 }
 
@@ -464,6 +489,27 @@ private data class TriggerData(
     val oldKeyJson: String,
     val newKeyJson: String,
 )
+
+private val collapseWhitespaceRegex = Regex("\\s+")
+private val createTriggerIfNotExistsRegex = Regex(
+    pattern = "^CREATE\\s+TRIGGER\\s+IF\\s+NOT\\s+EXISTS\\s+",
+    options = setOf(RegexOption.IGNORE_CASE),
+)
+private val createTriggerRegex = Regex(
+    pattern = "^CREATE\\s+TRIGGER\\s+",
+    options = setOf(RegexOption.IGNORE_CASE),
+)
+
+private fun normalizeTriggerSql(sql: String): String {
+    val collapsed = collapseWhitespaceRegex.replace(sql.trim(), " ")
+    return when {
+        createTriggerIfNotExistsRegex.containsMatchIn(collapsed) ->
+            createTriggerIfNotExistsRegex.replace(collapsed, "CREATE TRIGGER ")
+        createTriggerRegex.containsMatchIn(collapsed) ->
+            createTriggerRegex.replace(collapsed, "CREATE TRIGGER ")
+        else -> collapsed
+    }
+}
 
 private fun insertTriggerSql(data: TriggerData): String = """
 CREATE TRIGGER IF NOT EXISTS trg_${data.tableName}_ai
@@ -592,14 +638,14 @@ BEGIN
 END
 """.trimIndent()
 
-private fun buildJsonObjectExprHexAware(
+internal fun buildJsonObjectExprHexAware(
     tableInfo: TableInfo,
     prefix: String,
 ): String {
     val pairs = tableInfo.columns.map { column ->
         val name = column.name.lowercase()
-        val valueExpr = if (column.declaredType.lowercase().contains("blob")) {
-            "lower(hex($prefix.${quoteIdent(column.name)}))"
+        val valueExpr = if (column.kind.isBlobKind()) {
+            "CASE WHEN $prefix.${quoteIdent(column.name)} IS NULL THEN NULL ELSE lower(hex($prefix.${quoteIdent(column.name)})) END"
         } else {
             "$prefix.${quoteIdent(column.name)}"
         }
@@ -608,7 +654,7 @@ private fun buildJsonObjectExprHexAware(
     return "json_object(${pairs.joinToString(", ")})"
 }
 
-private fun buildKeyJsonObjectExprHexAware(
+internal fun buildKeyJsonObjectExprHexAware(
     tableInfo: TableInfo,
     keyColumn: String,
     prefix: String,
@@ -616,7 +662,7 @@ private fun buildKeyJsonObjectExprHexAware(
     val column = tableInfo.columns.firstOrNull { it.name.equals(keyColumn, ignoreCase = true) }
         ?: error("table ${tableInfo.table} is missing sync key column $keyColumn")
     val keyName = column.name.lowercase()
-    val valueExpr = if (column.declaredType.lowercase().contains("blob")) {
+    val valueExpr = if (column.kind.isBlobKind()) {
         "lower(hex($prefix.${quoteIdent(column.name)}))"
     } else {
         "$prefix.${quoteIdent(column.name)}"

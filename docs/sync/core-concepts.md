@@ -158,7 +158,8 @@ Most sync operations involve both upload and download:
   authoritative server `row_version`, not from wall-clock timestamps
 - **Whole-Bundle Failure**: A conflicting push fails closed instead of partially applying stale rows
 - **Default Resolver**: The default KMP resolver is server-wins (`ServerWinsResolver`)
-- **Custom Merge Logic**: Applications can accept server state or rewrite local intent and retry
+- **Custom Merge Logic**: Applications configure a client-wide `Resolver`, which then returns
+  `AcceptServer`, `KeepLocal`, or `KeepMerged(...)` for each conflict
 
 ### Conflict Prevention
 - **Frequent Sync**: Sync often to minimize conflict windows

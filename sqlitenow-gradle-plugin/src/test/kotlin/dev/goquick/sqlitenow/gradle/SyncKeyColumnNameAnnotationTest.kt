@@ -103,11 +103,10 @@ class SyncKeyColumnNameAnnotationTest {
             "Should auto-detect primary key column name"
         )
 
-        // Verify default id primary key doesn't include syncKeyColumnName parameter
+        // Verify default id primary key is still materialized explicitly for runtime bootstrap.
         assertTrue(
-            generatedContent.contains("SyncTable(tableName = \"orders\")") ||
             generatedContent.contains("SyncTable(tableName = \"orders\", syncKeyColumnName = \"id\")"),
-            "Should handle default id primary key correctly"
+            "Should emit explicit syncKeyColumnName for default id primary key"
         )
 
         // Verify buildOversqliteConfig function is generated

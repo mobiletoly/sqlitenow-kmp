@@ -236,4 +236,51 @@ class MigratorCodeGeneratorTest {
         // Verify latest version return
         assertTrue(fileContent.contains("return@withContext 5") || fileContent.contains("    5"), "Should return latest version 5")
     }
+
+    @Test
+    @DisplayName("Test MigratorCodeGenerator preserves percent signs in SQL literals")
+    fun testGenerateCodeWithPercentSignsInSql() {
+        val schemaSql = """
+            CREATE TABLE events (
+                id INTEGER PRIMARY KEY NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            );
+        """.trimIndent()
+
+        val schemaDir = File(tempDir.toFile(), "schema")
+        val batchDir = File(tempDir.toFile(), "batch")
+        val migrationDir = File(tempDir.toFile(), "migrations")
+        schemaDir.mkdir()
+        batchDir.mkdir()
+        migrationDir.mkdir()
+
+        File(schemaDir, "schema.sql").writeText(schemaSql)
+        File(migrationDir, "0001.sql").writeText(
+            "ALTER TABLE events ADD COLUMN updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));"
+        )
+
+        val schemaInspector = SchemaInspector(schemaDirectory = schemaDir)
+        val sqlBatchInspector = SQLBatchInspector(sqlDirectory = batchDir, mandatory = false)
+        val migrationInspector = MigrationInspector(sqlDirectory = migrationDir)
+
+        val generator = MigratorCodeGenerator(
+            schemaInspector = schemaInspector,
+            sqlBatchInspector = sqlBatchInspector,
+            migrationInspector = migrationInspector,
+            packageName = "com.example.db",
+            outputDir = outputDir,
+        )
+
+        generator.generateCode()
+
+        val outputFile = File(outputDir, "com/example/db/VersionBasedDatabaseMigrations.kt")
+        assertTrue(outputFile.exists(), "Output file should be created")
+
+        val fileContent = outputFile.readText()
+
+        assertTrue(
+            fileContent.contains("strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"),
+            "Generated code should preserve strftime format strings with percent signs"
+        )
+    }
 }

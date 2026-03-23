@@ -45,15 +45,15 @@ class RealServerBlobAndCascadeTest {
             pullClient.bootstrap(userId, pullDevice).getOrThrow()
             hydrateClient.bootstrap(userId, hydrateDevice).getOrThrow()
 
-            insertBlobPair(seedDb, "blob-contract-a")
-            insertBlobPair(seedDb, "blob-contract-b")
+            val blobA = insertBlobPair(seedDb, "blob-contract-a")
+            val blobB = insertBlobPair(seedDb, "blob-contract-b")
 
             seedClient.pushPending().getOrThrow()
             pullClient.pullToStable().getOrThrow()
             hydrateClient.hydrate().getOrThrow()
 
-            assertBlobState(pullDb)
-            assertBlobState(hydrateDb)
+            assertBlobState(pullDb, blobA, blobB)
+            assertBlobState(hydrateDb, blobA, blobB)
             assertEquals(0L, scalarLong(pullDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             assertEquals(0L, scalarLong(hydrateDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
         } finally {
@@ -68,36 +68,16 @@ class RealServerBlobAndCascadeTest {
 
     private suspend fun assertBlobState(
         db: dev.goquick.sqlitenow.core.SafeSQLiteConnection,
+        vararg rows: BlobPairRow,
     ) {
         assertEquals(2L, scalarLong(db, "SELECT COUNT(*) FROM files"))
         assertEquals(2L, scalarLong(db, "SELECT COUNT(*) FROM file_reviews"))
-        assertEquals(
-            1L,
-            scalarLong(
-                db,
-                """
-                SELECT COUNT(*)
-                FROM files f
-                JOIN file_reviews r ON r.file_id = f.id
-                WHERE f.name = 'File blob-contract-a'
-                  AND r.review = 'Review blob-contract-a'
-                  AND length(f.data) > 0
-                """.trimIndent(),
-            ),
-        )
-        assertEquals(
-            1L,
-            scalarLong(
-                db,
-                """
-                SELECT COUNT(*)
-                FROM files f
-                JOIN file_reviews r ON r.file_id = f.id
-                WHERE f.name = 'File blob-contract-b'
-                  AND r.review = 'Review blob-contract-b'
-                  AND length(f.data) > 0
-                """.trimIndent(),
-            ),
-        )
+        for (row in rows) {
+            assertEquals("File ${row.label}", scalarText(db, "SELECT name FROM files WHERE id = '${row.fileId}'"))
+            assertEquals(16L, scalarLong(db, "SELECT length(data) FROM files WHERE id = '${row.fileId}'"))
+            assertEquals(row.dataHex.uppercase(), scalarText(db, "SELECT hex(data) FROM files WHERE id = '${row.fileId}'"))
+            assertEquals("Review ${row.label}", scalarText(db, "SELECT review FROM file_reviews WHERE id = '${row.reviewId}'"))
+            assertEquals(row.fileId, scalarText(db, "SELECT file_id FROM file_reviews WHERE id = '${row.reviewId}'"))
+        }
     }
 }

@@ -129,16 +129,16 @@ internal class MigratorCodeGenerator(
         statements.forEach { statement ->
             // Convert the SQL statement to a Kotlin string with proper formatting
             val formattedSql = translateSqliteStatementToKotlin(statement.sql)
-
-            // Add the statement to execute the SQL (no individual withLock needed)
-            // Handle dollar signs in SQL by using the $$ syntax in the generated code
-            if (formattedSql.contains("$")) {
-                // Use $$ syntax for SQL containing dollar signs
-                codeBlockBuilder.addStatement("conn.execSQL($$\"\"\"$formattedSql\"\"\".trimMargin())")
+            val sqlLiteral = if (formattedSql.contains("$")) {
+                // Kotlin raw strings still need the $$ prefix when the SQL itself contains dollars.
+                "$$\"\"\"$formattedSql\"\"\".trimMargin()"
             } else {
-                // Regular case without dollar signs
-                codeBlockBuilder.addStatement("conn.execSQL(\"\"\"$formattedSql\"\"\".trimMargin())")
+                "\"\"\"$formattedSql\"\"\".trimMargin()"
             }
+
+            // Pass the SQL as a KotlinPoet literal argument so '%' inside SQL does not get
+            // misinterpreted as a KotlinPoet format token.
+            codeBlockBuilder.addStatement("conn.execSQL(%L)", sqlLiteral)
         }
     }
 

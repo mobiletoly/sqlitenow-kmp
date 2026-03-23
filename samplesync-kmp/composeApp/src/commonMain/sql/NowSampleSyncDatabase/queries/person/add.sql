@@ -23,4 +23,5 @@ ON CONFLICT(email) DO UPDATE SET first_name = :firstName,
                                  ssn        = :ssn,
                                  score      = :score,
                                  is_active  = :isActive,
-                                 notes      = :notes;
+                                 notes      = :notes,
+                                 updated_at = (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));

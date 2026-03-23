@@ -52,11 +52,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.goquick.sqlitenow.common.resolveDatabasePath
 import dev.goquick.sqlitenow.core.util.fromSqliteDate
-import dev.goquick.sqlitenow.core.util.fromSqliteTimestamp
+import dev.goquick.sqlitenow.core.util.fromRfc3339String
 import dev.goquick.sqlitenow.core.util.jsonDecodeListFromSqlite
 import dev.goquick.sqlitenow.core.util.jsonEncodeToSqlite
 import dev.goquick.sqlitenow.core.util.toSqliteDate
-import dev.goquick.sqlitenow.core.util.toSqliteTimestamp
+import dev.goquick.sqlitenow.core.util.toRfc3339String
 import dev.goquick.sqlitenow.samplekmp.db.AddressType
 import dev.goquick.sqlitenow.samplekmp.db.NowSampleDatabase
 import dev.goquick.sqlitenow.samplekmp.db.PersonQuery
@@ -70,9 +70,9 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalDate
-import kotlinx.datetime.LocalDateTime
 import org.jetbrains.compose.ui.tooling.preview.Preview
 import kotlin.random.Random
+import kotlin.time.Instant
 
 private val firstNames = listOf(
     // Traditional English names
@@ -248,9 +248,9 @@ val db = NowSampleDatabase(
         sqlValueToAddressType = { AddressType.from(it) },
     ),
     commentAdapters = NowSampleDatabase.CommentAdapters(
-        createdAtToSqlValue = { ts -> ts.toSqliteTimestamp() },
+        createdAtToSqlValue = { ts -> ts.toRfc3339String() },
         tagsToSqlValue = { tags -> tags?.jsonEncodeToSqlite() },
-        sqlValueToCreatedAt = { LocalDateTime.fromSqliteTimestamp(it) },
+        sqlValueToCreatedAt = { Instant.fromRfc3339String(it) },
         sqlValueToTags = { it?.jsonDecodeListFromSqlite() ?: emptyList() },
     ),
     personAddressAdapters = NowSampleDatabase.PersonAddressAdapters(

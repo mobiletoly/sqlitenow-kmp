@@ -215,7 +215,7 @@ the SQL remains valid for every tool. A few essentials:
   (`mapTo=dev.goquick.SomeType`).
 - **Column-level annotations** appear next to a column definition or select item:
   `-- @@{ field=entry_time, propertyName=loggedAt }` would rename the generated property,
-  while `adapter=custom` or `propertyType=kotlinx.datetime.LocalDateTime` instruct SQLiteNow to
+  while `adapter=custom` or `propertyType=kotlin.time.Instant` instruct SQLiteNow to
   use adapters for complex types.
 - **Reusable defaults** live entirely in SQL comments, so they work with any editor, diff
   tool, or migration review process—you don't need IDE plugins.
@@ -323,7 +323,7 @@ class MoodEntryRepository(private val database: MoodTrackerDatabase) {
 
 At this stage you can open the database from any KMP target, insert a row, and fetch it back
 with type-safe Kotlin. In [Part 2]({{ site.baseurl }}/tutorials/part-2-tags-and-filters/) we will layer annotations and adapters on top so these APIs can
-work with `LocalDateTime`, UUID wrappers, and richer domain models without changing the SQL files.
+work with `Instant`, UUID wrappers, and richer domain models without changing the SQL files.
 
 ## Where We Stand
 

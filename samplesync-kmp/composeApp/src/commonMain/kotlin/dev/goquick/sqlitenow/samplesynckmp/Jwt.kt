@@ -18,13 +18,18 @@ package dev.goquick.sqlitenow.samplesynckmp
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+
+private const val expectedSampleSyncServerAppName = "samplesync-server"
 
 @Serializable
 private data class SigninRequest(val user: String, val password: String, val device: String)
@@ -32,8 +37,34 @@ private data class SigninRequest(val user: String, val password: String, val dev
 @Serializable
 private data class SigninResponse(val token: String, val expires_in: Long, val user: String, val device: String)
 
+@Serializable
+private data class ServerStatusResponse(
+    @SerialName("app_name")
+    val appName: String,
+)
+
+suspend fun ensureSampleSyncServer(baseUrl: String) {
+    val http = HttpClient {
+        install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+    }
+    try {
+        val response = http.get("$baseUrl/status")
+        check(response.status == HttpStatusCode.OK) {
+            "SampleSync server check failed: HTTP ${response.status}"
+        }
+        val status: ServerStatusResponse = response.body()
+        check(status.appName == expectedSampleSyncServerAppName) {
+            "Expected SampleSync server '$expectedSampleSyncServerAppName' at $baseUrl, " +
+                "but got '${status.appName}'. Start examples/samplesync_server."
+        }
+    } finally {
+        http.close()
+    }
+}
+
 // Fetches JWT from the example server's /dummy-signin endpoint.
 suspend fun fetchJwt(baseUrl: String, user: String, device: String, password: String = "demo"): String {
+    ensureSampleSyncServer(baseUrl)
     val http = HttpClient {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
     }

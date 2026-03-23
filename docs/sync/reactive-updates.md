@@ -138,8 +138,12 @@ When conflicts occur during upload, the resolver may modify local data:
 
 ```kotlin
 // If resolver chooses AcceptServer, local data changes and flows update
-// If resolver chooses KeepLocal, data stays the same, no flow update needed
+// If resolver chooses KeepLocal, data may stay the same or be rewritten for retry
+// If resolver chooses KeepMerged(...), local data is rewritten before retry
 ```
+
+Resolver policy is configured once at client construction time. `KeepLocal` and `KeepMerged(...)`
+are per-conflict outcomes returned by that resolver, not separate client setup modes.
 
 ### Sync Performance
 

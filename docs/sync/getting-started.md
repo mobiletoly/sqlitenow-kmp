@@ -302,7 +302,7 @@ class SyncManager(
             syncClient = database.newOversqliteClient(
                 schema = "yourapp", // Your app's schema name
                 httpClient = httpClient,
-                resolver = ServerWinsResolver // or ClientWinsResolver
+                resolver = ServerWinsResolver
             )
             
             Result.success(Unit)
@@ -355,6 +355,37 @@ class SyncManager(
     }
 }
 ```
+
+Resolver choice is made when the sync client is created:
+
+```kotlin
+val serverWins = database.newOversqliteClient(
+    schema = "yourapp",
+    httpClient = httpClient,
+    resolver = ServerWinsResolver,
+)
+
+val clientWins = database.newOversqliteClient(
+    schema = "yourapp",
+    httpClient = httpClient,
+    resolver = ClientWinsResolver,
+)
+
+val custom = database.newOversqliteClient(
+    schema = "yourapp",
+    httpClient = httpClient,
+    resolver = Resolver { conflict ->
+        when (conflict.table) {
+            "notes" -> MergeResult.KeepLocal
+            "profiles" -> MergeResult.KeepMerged(mergeProfile(conflict.serverRow, conflict.localPayload))
+            else -> MergeResult.AcceptServer
+        }
+    },
+)
+```
+
+`resolver` is the client-wide policy hook. `KeepLocal` and `KeepMerged(...)` are returned later for
+individual conflicts; they are not standalone constructor options.
 
 ## Step 6: Integrate with Your App
 

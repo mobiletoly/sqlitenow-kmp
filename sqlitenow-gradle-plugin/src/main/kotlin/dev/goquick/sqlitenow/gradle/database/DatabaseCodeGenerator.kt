@@ -401,17 +401,13 @@ class DatabaseCodeGenerator(
         if (syncTables.isNotEmpty()) {
             // Generate SyncTable objects with primary key detection
             val syncTableInitializers = syncTables.map { table ->
-                // Use explicit syncKeyColumnName annotation if provided, otherwise auto-detect
-                val explicitSyncKey = table.annotations.syncKeyColumnName
-                val primaryKeyColumn = explicitSyncKey ?: findPrimaryKeyColumn(table)
-
-                val syncKeyParam = if (primaryKeyColumn != null && primaryKeyColumn != "id") {
+                // Always materialize the resolved sync key into generated code so runtime bootstrap
+                // does not depend on any implicit SyncTable default.
+                val primaryKeyColumn = table.annotations.syncKeyColumnName ?: findPrimaryKeyColumn(table)
+                val syncKeyParam = if (primaryKeyColumn != null) {
                     ", syncKeyColumnName = \"$primaryKeyColumn\""
-                } else if (explicitSyncKey != null) {
-                    // Explicit annotation provided, even if it's "id"
-                    ", syncKeyColumnName = \"$explicitSyncKey\""
                 } else {
-                    "" // Use default "id"
+                    ""
                 }
                 "%T(tableName = \"${table.name}\"$syncKeyParam)"
             }

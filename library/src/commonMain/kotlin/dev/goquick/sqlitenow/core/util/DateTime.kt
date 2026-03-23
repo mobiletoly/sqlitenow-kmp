@@ -20,6 +20,8 @@ import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.LocalTime
 import kotlinx.datetime.format.FormatStringsInDatetimeFormats
 import kotlinx.datetime.format.byUnicodePattern
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 
 /**
  * SQLite datetime format pattern: "YYYY-MM-DD HH:MM:SS"
@@ -49,26 +51,63 @@ private val SQLITE_TIME_FORMAT = LocalTime.Format {
 }
 
 /**
- * Convert LocalDateTime to SQLite UTC timestamp such as "2025-05-26 19:43:13"
+ * Convert a [LocalDateTime] to SQLite datetime text such as "2025-05-26 19:43:13".
+ *
+ * This helper preserves only date and time fields. It does not encode any timezone or UTC offset.
  *
  * @return SQLite-compatible datetime string in format "YYYY-MM-DD HH:MM:SS"
  */
+@Deprecated(
+    message = "This helper stores naive SQLite datetime text with no timezone semantics. " +
+        "Use Instant.toRfc3339String() for absolute timestamps.",
+)
 fun LocalDateTime.toSqliteTimestamp(): String {
     return SQLITE_DATETIME_FORMAT.format(this)
 }
 
 /**
- * Convert SQLite UTC timestamp such as "2025-05-26 19:43:13" to LocalDateTime
+ * Convert SQLite datetime text such as "2025-05-26 19:43:13" to [LocalDateTime].
  *
  * @param timestamp SQLite datetime string in format "YYYY-MM-DD HH:MM:SS"
  * @return LocalDateTime instance
  * @throws IllegalArgumentException if the timestamp format is invalid
  */
+@Deprecated(
+    message = "This helper parses naive SQLite datetime text with no timezone semantics. " +
+        "Use Instant.fromRfc3339String(...) for absolute timestamps.",
+)
 fun LocalDateTime.Companion.fromSqliteTimestamp(timestamp: String): LocalDateTime {
     return try {
         SQLITE_DATETIME_FORMAT.parse(timestamp)
     } catch (e: Exception) {
         throw IllegalArgumentException("Invalid SQLite timestamp format: '$timestamp'. Expected format: 'YYYY-MM-DD HH:MM:SS'", e)
+    }
+}
+
+/**
+ * Convert an [Instant] to RFC3339/ISO-8601 text such as "2025-05-26T19:43:13Z".
+ *
+ * This is the preferred format for new functionality that represents an absolute instant.
+ */
+@OptIn(ExperimentalTime::class)
+fun Instant.toRfc3339String(): String {
+    return toString()
+}
+
+/**
+ * Convert RFC3339/ISO-8601 text such as "2025-05-26T19:43:13Z" to an [Instant].
+ *
+ * @throws IllegalArgumentException if the timestamp format is invalid
+ */
+@OptIn(ExperimentalTime::class)
+fun Instant.Companion.fromRfc3339String(timestamp: String): Instant {
+    return try {
+        Instant.parse(timestamp)
+    } catch (e: Exception) {
+        throw IllegalArgumentException(
+            "Invalid RFC3339 timestamp format: '$timestamp'. Expected format like '2025-05-26T19:43:13Z'",
+            e
+        )
     }
 }
 

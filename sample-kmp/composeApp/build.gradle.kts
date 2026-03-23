@@ -45,7 +45,10 @@ kotlin {
 
     compilerOptions {
         languageVersion.set(KotlinVersion.KOTLIN_2_2)
-        freeCompilerArgs.addAll("-Xmulti-dollar-interpolation")
+        freeCompilerArgs.addAll(
+            "-Xmulti-dollar-interpolation",
+            "-opt-in=kotlin.time.ExperimentalTime"
+        )
     }
 
     listOf(

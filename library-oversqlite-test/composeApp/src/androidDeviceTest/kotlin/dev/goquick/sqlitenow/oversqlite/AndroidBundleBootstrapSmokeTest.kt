@@ -3,8 +3,9 @@ package dev.goquick.sqlitenow.oversqlite
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.core.sqlite.use
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -41,9 +42,10 @@ class AndroidBundleBootstrapSmokeTest {
                 check(st.step())
                 st.getLong(0)
             }
+            val parsedKey = testJson.parseToJsonElement(keyJson).jsonObject
 
             assertEquals(1L, dirtyCount)
-            assertTrue(keyJson.contains("user-1"))
+            assertEquals("user-1", parsedKey["id"]?.jsonPrimitive?.content)
             assertEquals(0L, applyMode)
         } finally {
             http.close()

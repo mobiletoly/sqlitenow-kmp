@@ -42,6 +42,8 @@ internal open class CrossTargetSyncTestSupport {
         http: HttpClient,
         uploadLimit: Int = 200,
         downloadLimit: Int = 1000,
+        resolver: Resolver = ServerWinsResolver,
+        tablesUpdateListener: (Set<String>) -> Unit = { },
     ): DefaultOversqliteClient {
         return DefaultOversqliteClient(
             db = db,
@@ -55,12 +57,34 @@ internal open class CrossTargetSyncTestSupport {
                 downloadLimit = downloadLimit,
             ),
             http = http,
-            tablesUpdateListener = { },
+            resolver = resolver,
+            tablesUpdateListener = tablesUpdateListener,
         )
     }
 
     protected suspend fun createUsersAndPostsTables(db: SafeSQLiteConnection) {
         db.execSQL("CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)")
+        db.execSQL(
+            """
+            CREATE TABLE posts (
+              id TEXT PRIMARY KEY NOT NULL,
+              user_id TEXT NOT NULL REFERENCES users(id),
+              title TEXT NOT NULL
+            )
+            """.trimIndent(),
+        )
+    }
+
+    protected suspend fun createUsersWithUpdatedAtAndPostsTables(db: SafeSQLiteConnection) {
+        db.execSQL(
+            """
+            CREATE TABLE users (
+              id TEXT PRIMARY KEY NOT NULL,
+              name TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+            """.trimIndent(),
+        )
         db.execSQL(
             """
             CREATE TABLE posts (
@@ -108,6 +132,7 @@ internal open class CrossTargetSyncTestSupport {
 
         var retainedBundleFloor: Long = 0
         var uploadedChunkCount: Int = 0
+        var conflictOverride: ((PushRequestRow, Long, kotlinx.serialization.json.JsonElement?) -> PushConflictDetails?)? = null
 
         private var nextBundleSeq = 1L
         private var nextPushId = 1L
@@ -272,12 +297,34 @@ internal open class CrossTargetSyncTestSupport {
 
                 for (row in session.rows) {
                     val key = liveKey(row.table, row.key)
-                    val currentVersion = liveRows[key]?.rowVersion ?: 0L
+                    val liveRow = liveRows[key]
+                    val currentVersion = liveRow?.rowVersion ?: 0L
+                    val forcedConflict = conflictOverride?.invoke(row, currentVersion, liveRow?.payload)
+                    if (forcedConflict != null) {
+                        if (forcedConflict.serverRowDeleted) {
+                            liveRows.remove(key)
+                        } else if (forcedConflict.serverRow != null) {
+                            liveRows[key] = LiveRow(
+                                table = row.table,
+                                key = row.key,
+                                rowVersion = forcedConflict.serverRowVersion,
+                                payload = forcedConflict.serverRow,
+                            )
+                        }
+                        return pushConflictResponse(forcedConflict)
+                    }
                     if (currentVersion != row.baseRowVersion) {
-                        return errorResponse(
-                            "push_conflict",
-                            "base_row_version ${row.baseRowVersion} does not match live $currentVersion",
-                            HttpStatusCode.Conflict,
+                        return pushConflictResponse(
+                            PushConflictDetails(
+                                schema = row.schema,
+                                table = row.table,
+                                key = row.key,
+                                op = row.op,
+                                baseRowVersion = row.baseRowVersion,
+                                serverRowVersion = currentVersion,
+                                serverRowDeleted = false,
+                                serverRow = liveRow?.payload,
+                            ),
                         )
                     }
                 }
@@ -517,6 +564,20 @@ internal open class CrossTargetSyncTestSupport {
         ) = jsonResponse(
             body = json.encodeToString(ErrorResponse.serializer(), ErrorResponse(error = error, message = message)),
             status = status,
+        )
+
+        private fun MockRequestHandleScope.pushConflictResponse(
+            conflict: PushConflictDetails,
+        ) = jsonResponse(
+            body = json.encodeToString(
+                PushConflictResponse.serializer(),
+                PushConflictResponse(
+                    error = "push_conflict",
+                    message = "base_row_version ${conflict.baseRowVersion} does not match live ${conflict.serverRowVersion}",
+                    conflict = conflict,
+                ),
+            ),
+            status = HttpStatusCode.Conflict,
         )
 
         private suspend fun HttpRequestData.bodyText(): String {

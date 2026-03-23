@@ -29,6 +29,20 @@ class PendingPushReplayException(
     "cannot rebuild while $outboundCount staged push rows are pending authoritative replay"
 )
 
+class InvalidConflictResolutionException(
+    val conflict: ConflictContext,
+    val result: MergeResult,
+    message: String,
+) : RuntimeException(message)
+
+class PushConflictRetryExhaustedException(
+    val retryCount: Int,
+    val remainingDirtyCount: Int,
+) : RuntimeException(
+    "push conflict auto-retry exhausted after $retryCount retries; " +
+        "$remainingDirtyCount dirty rows remain replayable"
+)
+
 fun isExpectedSyncContention(error: Throwable?): Boolean {
     if (error == null) return false
     var current: Throwable? = error

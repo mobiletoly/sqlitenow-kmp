@@ -7,12 +7,15 @@ import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.sqlite.use
 import dev.goquick.sqlitenow.oversqlite.DefaultOversqliteClient
 import dev.goquick.sqlitenow.oversqlite.OversqliteConfig
+import dev.goquick.sqlitenow.oversqlite.Resolver
+import dev.goquick.sqlitenow.oversqlite.ServerWinsResolver
 import dev.goquick.sqlitenow.oversqlite.SyncTable
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
+import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -26,9 +29,11 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assume.assumeTrue
+import java.time.OffsetDateTime
 import java.util.UUID
 
 private val e2eJson = Json { ignoreUnknownKeys = true }
+private const val expectedRealServerAppName = "nethttp-server-example"
 
 internal val richSchemaSyncTables = listOf(
     SyncTable("users", syncKeyColumnName = "id"),
@@ -38,6 +43,7 @@ internal val richSchemaSyncTables = listOf(
     SyncTable("team_members", syncKeyColumnName = "id"),
     SyncTable("files", syncKeyColumnName = "id"),
     SyncTable("file_reviews", syncKeyColumnName = "id"),
+    SyncTable("typed_rows", syncKeyColumnName = "id"),
 )
 
 internal data class HotGraphIds(
@@ -51,6 +57,25 @@ internal data class HotGraphIds(
     val memberId: String,
     val fileId: String,
     val reviewId: String,
+)
+
+internal data class BlobPairRow(
+    val fileId: String,
+    val reviewId: String,
+    val label: String,
+    val dataHex: String,
+)
+
+internal data class TypedRowFixture(
+    val id: String,
+    val name: String,
+    val note: String?,
+    val countValue: Long?,
+    val enabledFlag: Long,
+    val ratingLiteral: String?,
+    val ratingExpectedText: String?,
+    val dataHex: String?,
+    val createdAt: String?,
 )
 
 internal data class RealServerConfig(
@@ -120,6 +145,15 @@ internal suspend fun resetRealServerState(baseUrl: String) {
         }
     }
     try {
+        val status = http.get("/status")
+        check(status.status == HttpStatusCode.OK) {
+            "real-server Android e2e status probe failed: HTTP ${status.status} - ${status.bodyAsText()}"
+        }
+        val appName = status.body<RealServerStatusResponse>().appName
+        check(appName == expectedRealServerAppName) {
+            "Real-server Android e2e tests require app_name='$expectedRealServerAppName' at $baseUrl, " +
+                "but server reported '$appName'. Start examples/nethttp_server instead."
+        }
         http.post("/test/reset") {
             header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
             setBody("{}")
@@ -230,6 +264,20 @@ internal suspend fun createBusinessRichSchemaTables(db: SafeSQLiteConnection) {
             id TEXT PRIMARY KEY NOT NULL,
             review TEXT NOT NULL,
             file_id TEXT NOT NULL REFERENCES files(id) DEFERRABLE INITIALLY DEFERRED
+        )
+        """.trimIndent()
+    )
+    db.execSQL(
+        """
+        CREATE TABLE typed_rows (
+            id TEXT PRIMARY KEY NOT NULL,
+            name TEXT NOT NULL,
+            note TEXT NULL,
+            count_value INTEGER NULL,
+            enabled_flag INTEGER NOT NULL,
+            rating REAL NULL,
+            data BLOB NULL,
+            created_at TEXT NULL
         )
         """.trimIndent()
     )
@@ -419,7 +467,7 @@ internal suspend fun insertTeamGraph(
 internal suspend fun insertBlobPair(
     db: SafeSQLiteConnection,
     label: String,
-) {
+): BlobPairRow {
     val fileId = randomRowId()
     val reviewId = randomRowId()
     val dataHex = randomRowId().replace("-", "")
@@ -435,6 +483,66 @@ internal suspend fun insertBlobPair(
         VALUES('$reviewId', 'Review $label', '$fileId')
         """.trimIndent()
     )
+    return BlobPairRow(
+        fileId = fileId,
+        reviewId = reviewId,
+        label = label,
+        dataHex = dataHex,
+    )
+}
+
+internal suspend fun insertTypedRow(
+    db: SafeSQLiteConnection,
+    row: TypedRowFixture,
+) {
+    val noteValue = row.note?.let { "'$it'" } ?: "NULL"
+    val countValue = row.countValue?.toString() ?: "NULL"
+    val ratingValue = row.ratingLiteral ?: "NULL"
+    val dataValue = row.dataHex?.let { "x'$it'" } ?: "NULL"
+    val createdAtValue = row.createdAt?.let { "'$it'" } ?: "NULL"
+    db.execSQL(
+        """
+        INSERT INTO typed_rows(id, name, note, count_value, enabled_flag, rating, data, created_at)
+        VALUES('${row.id}', '${row.name}', $noteValue, $countValue, ${row.enabledFlag}, $ratingValue, $dataValue, $createdAtValue)
+        """.trimIndent()
+    )
+}
+
+internal suspend fun assertTypedRowState(
+    db: SafeSQLiteConnection,
+    row: TypedRowFixture,
+) {
+    assertEquals(row.name, scalarText(db, "SELECT name FROM typed_rows WHERE id = '${row.id}'"))
+    if (row.note == null) {
+        assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM typed_rows WHERE id = '${row.id}' AND note IS NULL"))
+    } else {
+        assertEquals(row.note, scalarText(db, "SELECT note FROM typed_rows WHERE id = '${row.id}'"))
+    }
+    if (row.countValue == null) {
+        assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM typed_rows WHERE id = '${row.id}' AND count_value IS NULL"))
+    } else {
+        assertEquals(row.countValue, scalarLong(db, "SELECT count_value FROM typed_rows WHERE id = '${row.id}'"))
+    }
+    assertEquals(row.enabledFlag, scalarLong(db, "SELECT enabled_flag FROM typed_rows WHERE id = '${row.id}'"))
+    if (row.ratingExpectedText == null) {
+        assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM typed_rows WHERE id = '${row.id}' AND rating IS NULL"))
+    } else {
+        assertEquals(row.ratingExpectedText, scalarText(db, "SELECT quote(rating) FROM typed_rows WHERE id = '${row.id}'"))
+    }
+    if (row.dataHex == null) {
+        assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM typed_rows WHERE id = '${row.id}' AND data IS NULL"))
+    } else {
+        assertEquals((row.dataHex.length / 2).toLong(), scalarLong(db, "SELECT length(data) FROM typed_rows WHERE id = '${row.id}'"))
+        assertEquals(row.dataHex.uppercase(), scalarText(db, "SELECT hex(data) FROM typed_rows WHERE id = '${row.id}'"))
+    }
+    if (row.createdAt == null) {
+        assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM typed_rows WHERE id = '${row.id}' AND created_at IS NULL"))
+    } else {
+        assertEquals(
+            OffsetDateTime.parse(row.createdAt).toInstant(),
+            OffsetDateTime.parse(scalarText(db, "SELECT created_at FROM typed_rows WHERE id = '${row.id}'")).toInstant(),
+        )
+    }
 }
 
 internal suspend fun insertHotGraph(
@@ -664,7 +772,7 @@ internal suspend fun assertRoundPresence(
             JOIN file_reviews r ON r.file_id = f.id
             WHERE f.name = 'File B $label'
               AND r.review = 'Review B $label'
-              AND length(f.data) > 0
+              AND length(f.data) = 16
             """.trimIndent(),
         ),
     )
@@ -745,6 +853,7 @@ internal fun newRealServerClient(
     ),
     uploadLimit: Int = 200,
     downloadLimit: Int = 1000,
+    resolver: Resolver = ServerWinsResolver,
 ): DefaultOversqliteClient {
     return DefaultOversqliteClient(
         db = db,
@@ -755,6 +864,7 @@ internal fun newRealServerClient(
             syncTables = syncTables,
         ),
         http = http,
+        resolver = resolver,
         tablesUpdateListener = { },
     )
 }
@@ -792,4 +902,9 @@ private data class DummySigninResponse(
 private data class RetainedFloorRequest(
     @SerialName("user_id") val userId: String,
     @SerialName("retained_bundle_floor") val retainedBundleFloor: Long,
+)
+
+@Serializable
+private data class RealServerStatusResponse(
+    @SerialName("app_name") val appName: String,
 )

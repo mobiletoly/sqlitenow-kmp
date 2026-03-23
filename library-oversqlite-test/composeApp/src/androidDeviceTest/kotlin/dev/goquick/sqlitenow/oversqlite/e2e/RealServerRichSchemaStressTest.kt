@@ -118,7 +118,7 @@ class RealServerRichSchemaStressTest {
                 1L,
                 scalarLong(
                     dbA,
-                    "SELECT COUNT(*) FROM file_reviews r JOIN files f ON f.id = r.file_id WHERE f.name = 'File A seed-b-3' AND r.review = 'Review A seed-b-3' AND length(f.data) > 0"
+                    "SELECT COUNT(*) FROM file_reviews r JOIN files f ON f.id = r.file_id WHERE f.name = 'File A seed-b-3' AND r.review = 'Review A seed-b-3' AND length(f.data) = 16"
                 )
             )
             assertEquals(0L, scalarLong(dbA, "SELECT COUNT(*) FROM _sync_dirty_rows"))

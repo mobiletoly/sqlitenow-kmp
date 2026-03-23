@@ -135,6 +135,12 @@ kotlin {
             implementation(libs.ktor.client.darwin)
         }
 
+        val linuxMain by getting {
+            dependencies {
+                implementation(libs.ktor.client.curl)
+            }
+        }
+
         val webMain by getting {
             dependencies {
                 implementation(npm("sql.js", "1.13.0"))

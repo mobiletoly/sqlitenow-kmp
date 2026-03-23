@@ -3,12 +3,15 @@ package dev.goquick.sqlitenow.core.util
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.LocalTime
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 class DateTimeTest {
 
+    @Suppress("DEPRECATION")
     @Test
     fun testBasicConversion() {
         // Test basic round-trip conversion
@@ -20,6 +23,7 @@ class DateTimeTest {
         assertEquals(dateTime, parsed)
     }
 
+    @Suppress("DEPRECATION")
     @Test
     fun testZeroPadding() {
         // Test that single digits are properly zero-padded
@@ -28,6 +32,7 @@ class DateTimeTest {
         assertEquals("2025-01-05 09:03:07", timestamp)
     }
 
+    @Suppress("DEPRECATION")
     @Test
     fun testInvalidFormats() {
         // Test a few key invalid formats that our error handling should catch
@@ -45,6 +50,7 @@ class DateTimeTest {
         }
     }
 
+    @Suppress("DEPRECATION")
     @Test
     fun testRoundTripConversion() {
         // Test a few different dates to ensure data integrity
@@ -58,6 +64,39 @@ class DateTimeTest {
             val timestamp = original.toSqliteTimestamp()
             val parsed = LocalDateTime.fromSqliteTimestamp(timestamp)
             assertEquals(original, parsed, "Round-trip failed for: $original")
+        }
+    }
+
+    @OptIn(ExperimentalTime::class)
+    @Test
+    fun testInstantToRfc3339String() {
+        val instant = Instant.parse("2025-05-26T19:43:13Z")
+        assertEquals("2025-05-26T19:43:13Z", instant.toRfc3339String())
+    }
+
+    @OptIn(ExperimentalTime::class)
+    @Test
+    fun testInstantFromRfc3339String() {
+        val parsed = Instant.fromRfc3339String("2025-05-26T19:43:13Z")
+        assertEquals(Instant.parse("2025-05-26T19:43:13Z"), parsed)
+    }
+
+    @OptIn(ExperimentalTime::class)
+    @Test
+    fun testInstantRfc3339RoundTripWithFractionalSeconds() {
+        val original = Instant.parse("2025-05-26T19:43:13.123456Z")
+        val serialized = original.toRfc3339String()
+        val parsed = Instant.fromRfc3339String(serialized)
+
+        assertEquals("2025-05-26T19:43:13.123456Z", serialized)
+        assertEquals(original, parsed)
+    }
+
+    @OptIn(ExperimentalTime::class)
+    @Test
+    fun testInstantFromRfc3339StringInvalidFormat() {
+        assertFailsWith<IllegalArgumentException> {
+            Instant.fromRfc3339String("2025-05-26 19:43:13")
         }
     }
 

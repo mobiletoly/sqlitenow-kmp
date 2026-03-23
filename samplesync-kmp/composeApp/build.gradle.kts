@@ -1,4 +1,6 @@
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
+import org.jetbrains.kotlin.gradle.targets.js.webpack.KotlinWebpack
+import org.jetbrains.kotlin.gradle.targets.js.webpack.KotlinWebpackConfig
 import org.gradle.language.jvm.tasks.ProcessResources
 
 plugins {
@@ -30,7 +32,10 @@ kotlin {
 
     compilerOptions {
         languageVersion.set(KotlinVersion.KOTLIN_2_2)
-        freeCompilerArgs.addAll("-Xmulti-dollar-interpolation")
+        freeCompilerArgs.addAll(
+            "-Xmulti-dollar-interpolation",
+            "-opt-in=kotlin.time.ExperimentalTime"
+        )
     }
 
     listOf(
@@ -118,6 +123,29 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEa
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
+}
+
+val openChromeForWasmRun = providers.gradleProperty("openChrome").orNull.equals("true", ignoreCase = true)
+val chromeAppNameForHostOs = run {
+    when {
+        System.getProperty("os.name").contains("Mac", ignoreCase = true) -> "Google Chrome"
+        System.getProperty("os.name").contains("Windows", ignoreCase = true) -> "chrome"
+        else -> "google-chrome"
+    }
+}
+
+tasks.named<KotlinWebpack>("wasmJsBrowserDevelopmentRun") {
+    devServerProperty.set((devServerProperty.orNull ?: KotlinWebpackConfig.DevServer()).apply {
+        open = if (openChromeForWasmRun) {
+            linkedMapOf(
+                "app" to linkedMapOf(
+                    "name" to chromeAppNameForHostOs
+                )
+            )
+        } else {
+            true
+        }
+    })
 }
 
 sqliteNow {

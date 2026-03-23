@@ -49,11 +49,13 @@ open class BundleClientContractTestSupport {
         http: HttpClient,
         syncTables: List<SyncTable>,
         uploadLimit: Int = 200,
+        resolver: Resolver = ServerWinsResolver,
     ): DefaultOversqliteClient {
         return DefaultOversqliteClient(
             db = db,
             config = OversqliteConfig(schema = "main", syncTables = syncTables, uploadLimit = uploadLimit),
             http = http,
+            resolver = resolver,
             tablesUpdateListener = { }
         )
     }
@@ -72,6 +74,10 @@ open class BundleClientContractTestSupport {
 
     protected suspend fun createUsersTable(db: SafeSQLiteConnection) {
         db.execSQL("CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)")
+    }
+
+    protected suspend fun createScoredUsersTable(db: SafeSQLiteConnection) {
+        db.execSQL("CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, score REAL NOT NULL)")
     }
 
     protected suspend fun createUsersAndPostsTables(db: SafeSQLiteConnection) {
@@ -120,6 +126,23 @@ open class BundleClientContractTestSupport {
               id BLOB PRIMARY KEY NOT NULL,
               name TEXT NOT NULL,
               payload BLOB NOT NULL
+            )
+            """.trimIndent()
+        )
+    }
+
+    protected suspend fun createTypedRowsTable(db: SafeSQLiteConnection) {
+        db.execSQL(
+            """
+            CREATE TABLE typed_rows (
+              id TEXT PRIMARY KEY NOT NULL,
+              name TEXT NOT NULL,
+              note TEXT NULL,
+              count_value INTEGER NULL,
+              enabled_flag INTEGER NOT NULL,
+              rating REAL NULL,
+              data BLOB NULL,
+              created_at TEXT NULL
             )
             """.trimIndent()
         )

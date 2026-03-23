@@ -39,16 +39,15 @@ val db = SampleDatabase(
 
 ## Serialize timestamps
 
-SQLiteNow provides helpers for converting `LocalDateTime` values to and from the timestamp strings
-stored in SQLite.
+For absolute timestamps, prefer storing RFC3339 text and mapping it to `kotlin.time.Instant`.
 
 ```sql
 CREATE TABLE comment
 (
     id         INTEGER PRIMARY KEY NOT NULL,
 
-    -- @@{ field=created_at, adapter=custom, propertyType=kotlinx.datetime.LocalDateTime }
-    created_at TEXT    NOT NULL DEFAULT current_timestamp
+    -- @@{ field=created_at, adapter=custom, propertyType=kotlin.time.Instant }
+    created_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 )
 ```
 
@@ -57,8 +56,8 @@ val db = SampleDatabase(
     dbName = resolveDatabasePath(dbName = "sample.db", appName = "SampleApp"),
     migration = VersionBasedDatabaseMigrations(),
     commentAdapters = SampleDatabase.CommentAdapters(
-        sqlColumnToCreatedAt = { value -> LocalDateTime.fromSqliteTimestamp(value) },
-        createdAtToSqlColumn = { instant -> instant.toSqliteTimestamp() },
+        sqlColumnToCreatedAt = { value -> Instant.fromRfc3339String(value) },
+        createdAtToSqlColumn = { instant -> instant.toRfc3339String() },
     )
 )
 ```

@@ -6,6 +6,7 @@ SELECT p.id         AS person_id,
        p.phone,
        p.birth_date,
        p.created_at,
+       p.updated_at,
 
        a.id         AS address__id,
        a.person_id  AS address__person_id,

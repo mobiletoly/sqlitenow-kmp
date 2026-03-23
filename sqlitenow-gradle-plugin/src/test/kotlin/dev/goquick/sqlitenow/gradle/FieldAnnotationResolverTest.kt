@@ -6,6 +6,7 @@ import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.SchemaInspector
 import java.io.File
 import java.sql.DriverManager
+import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -14,8 +15,8 @@ import kotlin.test.assertTrue
 class FieldAnnotationResolverTest {
 
     @Test
-    fun propagatesAnnotationsAcrossDayTempoViews() {
-        val schemaDir = locateSchemaDir()
+    fun propagatesAnnotationsAcrossNestedViews() {
+        val schemaDir = createNestedViewFixture().resolve("schema")
         DriverManager.getConnection("jdbc:sqlite::memory:").use { conn ->
             val inspector = SchemaInspector(schemaDir)
             val tables = inspector.getCreateTableStatements(conn)
@@ -36,7 +37,7 @@ class FieldAnnotationResolverTest {
 
     @Test
     fun selectStatementInheritsNotNullFromNestedViews() {
-        val schemaDir = locateSchemaDir()
+        val schemaDir = createNestedViewFixture().resolve("schema")
         val queriesDir = schemaDir.parentFile.resolve("queries")
         assertTrue(queriesDir.exists(), "Queries directory not found at ${queriesDir.absolutePath}")
 
@@ -62,16 +63,75 @@ class FieldAnnotationResolverTest {
         }
     }
 
-    private fun locateSchemaDir(): File {
-        val candidates = listOf(
-            "daytempo-kmp/composeApp/src/commonMain/sql/DayTempoDatabase/schema",
-            "../daytempo-kmp/composeApp/src/commonMain/sql/DayTempoDatabase/schema",
-            "../../daytempo-kmp/composeApp/src/commonMain/sql/DayTempoDatabase/schema"
+    private fun createNestedViewFixture(): File {
+        val root = createTempDirectory("field-annotation-resolver").toFile()
+        val schemaDir = root.resolve("schema").apply { mkdirs() }
+        val queriesDir = root.resolve("queries/activity_bundle").apply { mkdirs() }
+
+        schemaDir.resolve("activity.sql").writeText(
+            """
+            CREATE TABLE activity (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL
+            );
+
+            CREATE TABLE program_item (
+                id TEXT PRIMARY KEY NOT NULL,
+                doc_id TEXT NOT NULL UNIQUE,
+                activity_id TEXT NOT NULL REFERENCES activity(id)
+            );
+
+            CREATE VIEW activity_detailed_view AS
+            SELECT
+                act.id AS act__id,
+                act.name AS act__name,
+                pi.doc_id AS joined__act__pi__doc_id
+            FROM activity act
+            LEFT JOIN program_item pi ON pi.activity_id = act.id;
+            """.trimIndent()
         )
-        val schema = candidates
-            .map { File(it).canonicalFile }
-            .firstOrNull { it.exists() && it.isDirectory }
-        assertTrue(schema != null, "Schema directory not found. Tried: $candidates")
-        return schema
+
+        schemaDir.resolve("activity_package.sql").writeText(
+            """
+            CREATE TABLE activity_package (
+                id TEXT PRIMARY KEY NOT NULL,
+                activity_id TEXT NOT NULL REFERENCES activity(id)
+            );
+
+            CREATE VIEW activity_package_with_activities_view AS
+            SELECT
+                pkg.id AS pkg__id,
+                adv.joined__act__pi__doc_id AS joined__act__pi__doc_id
+            FROM activity_package pkg
+            JOIN activity_detailed_view adv ON adv.act__id = pkg.activity_id;
+            """.trimIndent()
+        )
+
+        schemaDir.resolve("activity_bundle.sql").writeText(
+            """
+            CREATE TABLE activity_bundle (
+                id TEXT PRIMARY KEY NOT NULL,
+                package_id TEXT NOT NULL REFERENCES activity_package(id)
+            );
+
+            CREATE VIEW activity_bundle_with_activities_view AS
+            SELECT
+                bnd.id AS bnd__id,
+                pav.joined__act__pi__doc_id AS joined__act__pi__doc_id
+            FROM activity_bundle bnd
+            JOIN activity_package_with_activities_view pav ON pav.pkg__id = bnd.package_id;
+            """.trimIndent()
+        )
+
+        queriesDir.resolve("selectAllWithEnabledActivities.sql").writeText(
+            """
+            SELECT
+                b.joined__act__pi__doc_id
+            FROM activity_bundle_with_activities_view b
+            ORDER BY b.bnd__id;
+            """.trimIndent()
+        )
+
+        return root
     }
 }
