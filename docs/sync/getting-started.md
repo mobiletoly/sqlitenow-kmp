@@ -63,7 +63,7 @@ CREATE TABLE note (
     id BLOB PRIMARY KEY NOT NULL DEFAULT (randomblob(16)),  -- BLOB with UUID bytes
     title TEXT NOT NULL,
     content TEXT,
-    person_id TEXT REFERENCES person(id),  -- Foreign key matches referenced table type
+    person_id TEXT REFERENCES person(id) DEFERRABLE INITIALLY DEFERRED,
     updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 ```
@@ -102,6 +102,23 @@ CREATE TABLE users (
   performance
 - **Foreign keys**: Must match the type of the referenced primary key
 
+### Recommended Foreign Key Mode For Sync-Managed Tables
+
+When a sync-managed table references another sync-managed table, prefer:
+
+```sql
+person_id TEXT REFERENCES person(id) DEFERRABLE INITIALLY DEFERRED
+```
+
+Why:
+
+- oversqlite apply already defers foreign-key checks while remote bundles are replayed
+- `INITIALLY DEFERRED` keeps your normal application writes closer to that behavior
+- local transactions that insert related rows in multiple steps are less likely to fail
+
+Use `INITIALLY IMMEDIATE` only if you deliberately want ordinary non-sync writes to fail earlier
+when they temporarily violate FK ordering inside a transaction.
+
 
 ### Custom Primary Key Column Names
 
@@ -135,6 +152,7 @@ CREATE TABLE orders (
 - Use `syncKeyColumnName` annotation for custom primary key column names
 - The system can auto-detect primary key columns if not explicitly specified
 - **Foreign keys must match the type of the referenced primary key** (TEXT or BLOB)
+- **For sync-managed foreign keys, prefer `DEFERRABLE INITIALLY DEFERRED`**
 - Sync-enabled local tables must not include the reserved server column `_sync_scope_id`
 
 ### UUID Generation in Your App

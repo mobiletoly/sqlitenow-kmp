@@ -11,6 +11,7 @@ import org.junit.jupiter.api.BeforeEach
 import kotlin.test.assertTrue
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 
 class SchemaInspectorTest {
 
@@ -208,5 +209,71 @@ class SchemaInspectorTest {
                 assertTrue(rs.next(), "view_a should be created")
             }
         }
+    }
+
+    @Test
+    @DisplayName("Test SchemaInspector supports deferrable foreign key clauses")
+    fun testSchemaInspectorSupportsDeferrableForeignKeys() {
+        File(schemaDir, "01_users.sql").writeText(
+            """
+            CREATE TABLE users (
+                id TEXT PRIMARY KEY NOT NULL
+            );
+            """.trimIndent()
+        )
+        File(schemaDir, "02_posts.sql").writeText(
+            """
+            CREATE TABLE posts (
+                id TEXT PRIMARY KEY NOT NULL,
+                author_id TEXT REFERENCES users(id) DEFERRABLE INITIALLY DEFERRED
+            );
+            """.trimIndent()
+        )
+        File(schemaDir, "03_comments.sql").writeText(
+            """
+            CREATE TABLE comments (
+                id TEXT PRIMARY KEY NOT NULL,
+                post_id TEXT NOT NULL,
+                FOREIGN KEY (post_id) REFERENCES posts(id) NOT DEFERRABLE
+            );
+            """.trimIndent()
+        )
+        File(schemaDir, "04_likes.sql").writeText(
+            """
+            CREATE TABLE likes (
+                id TEXT PRIMARY KEY NOT NULL,
+                post_id TEXT NOT NULL,
+                FOREIGN KEY (post_id) REFERENCES posts(id) DEFERRABLE INITIALLY IMMEDIATE
+            );
+            """.trimIndent()
+        )
+
+        val inspector = SchemaInspector(schemaDirectory = schemaDir)
+        val createdTables = inspector.getCreateTableStatements(conn)
+
+        assertEquals(4, createdTables.size, "Should execute all CREATE TABLE statements with deferrable clauses")
+        assertTrue(inspector.sqlStatements.any { it.sql.contains("DEFERRABLE INITIALLY DEFERRED") })
+        assertTrue(inspector.sqlStatements.any { it.sql.contains("NOT DEFERRABLE") })
+        assertTrue(inspector.sqlStatements.any { it.sql.contains("DEFERRABLE INITIALLY IMMEDIATE") })
+
+        fun tableSql(name: String): String {
+            return conn.createStatement().use { stmt ->
+                stmt.executeQuery("SELECT sql FROM sqlite_master WHERE type='table' AND name='$name'").use { rs ->
+                    assertTrue(rs.next(), "$name table should exist")
+                    rs.getString("sql")
+                }
+            }
+        }
+
+        val postsSql = tableSql("posts")
+        val commentsSql = tableSql("comments")
+        val likesSql = tableSql("likes")
+
+        assertNotNull(postsSql)
+        assertNotNull(commentsSql)
+        assertNotNull(likesSql)
+        assertTrue(postsSql.contains("DEFERRABLE INITIALLY DEFERRED"))
+        assertTrue(commentsSql.contains("NOT DEFERRABLE"))
+        assertTrue(likesSql.contains("DEFERRABLE INITIALLY IMMEDIATE"))
     }
 }

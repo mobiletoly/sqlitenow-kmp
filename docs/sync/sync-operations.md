@@ -32,6 +32,15 @@ client.bootstrap(userId = userId, sourceId = deviceId).getOrThrow()
 Call bootstrap after authentication and before any sync operation. Client construction alone does
 not create sync metadata or install triggers.
 
+Note on foreign keys:
+
+- oversqlite apply runs inside a transaction that defers foreign-key checks while authoritative
+  remote bundles are replayed
+- because of that, `DEFERRABLE INITIALLY DEFERRED` is the recommended schema default for
+  sync-managed foreign keys
+- `INITIALLY IMMEDIATE` mainly changes how your own non-sync local writes behave outside apply
+  transactions
+
 ## Push Pending
 
 `pushPending()` freezes all currently dirty rows into one logical outbound bundle, uploads that

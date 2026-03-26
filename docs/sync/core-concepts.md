@@ -120,6 +120,24 @@ configuration obey the same runtime contract:
 - the local sync key type must be `TEXT` or `BLOB`
 - local sync-enabled tables must not include the reserved server column `_sync_scope_id`
 
+### Foreign Key Recommendation For Sync Schemas
+
+For foreign keys between sync-managed tables, prefer `DEFERRABLE INITIALLY DEFERRED`.
+
+Why this is the default recommendation:
+
+- oversqlite apply transactions already defer foreign-key checks while authoritative bundles are
+  replayed
+- `INITIALLY DEFERRED` makes ordinary app writes behave more like sync apply, which reduces
+  surprises
+- it is more tolerant of valid multi-step local transactions that temporarily create rows out of
+  parent/child order before commit
+
+Use `DEFERRABLE INITIALLY IMMEDIATE` only when you specifically want non-sync application writes
+to fail on foreign-key violations at statement time unless those transactions explicitly defer
+checks themselves. In practice, `INITIALLY IMMEDIATE` is mainly a stricter rule for your own local
+write paths, not a sync feature.
+
 ### Change Metadata
 Each change includes:
 - **What changed**: The actual data that was modified

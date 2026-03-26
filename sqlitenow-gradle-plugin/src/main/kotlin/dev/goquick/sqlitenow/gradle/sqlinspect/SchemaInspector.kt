@@ -28,6 +28,8 @@ import net.sf.jsqlparser.schema.Table
 import net.sf.jsqlparser.statement.create.table.CreateTable
 import net.sf.jsqlparser.statement.create.view.CreateView
 
+private enum class NormalizationState { OUTSIDE, LINE_COMMENT, BLOCK_COMMENT, SINGLE_QUOTE, DOUBLE_QUOTE }
+
 internal class SchemaInspector(
     schemaDirectory: File
 ) {
@@ -138,13 +140,112 @@ internal class SchemaInspector(
 
     /**
      * JSqlParser doesn't understand some SQLite-specific tail modifiers like "WITHOUT ROWID".
-     * We strip such suffixes for parsing only, but we keep the original SQL for execution
+     * It also rejects foreign-key deferrable clauses that SQLite accepts. We strip only the
+     * parser-hostile syntax for parsing, but keep the original SQL for execution
      * (CreateTableStatement stores the original sql passed in SchemaInspector).
      */
     private fun normalizeForParser(sql: String): String {
-        // Remove trailing WITHOUT ROWID (case-insensitive), optionally before semicolon
-        val regex = Regex("(?is)\\s+WITHOUT\\s+ROWID\\s*;?\\s*$")
-        return sql.replace(regex, ";")
+        val withoutRowId = sql.replace(Regex("(?is)\\s+WITHOUT\\s+ROWID\\s*;?\\s*$"), ";")
+        return stripParserUnsupportedForeignKeyClauses(withoutRowId)
+    }
+
+    private fun stripParserUnsupportedForeignKeyClauses(sql: String): String {
+        val unsupportedClause = Regex(
+            "(?i)\\b(?:NOT\\s+DEFERRABLE|DEFERRABLE)(?:\\s+INITIALLY\\s+(?:DEFERRED|IMMEDIATE))?\\b"
+        )
+        val normalized = StringBuilder(sql.length)
+        var outsideStart = 0
+        var state = NormalizationState.OUTSIDE
+        var i = 0
+
+        fun appendNormalizedOutside(endExclusive: Int) {
+            if (outsideStart >= endExclusive) return
+            normalized.append(sql.substring(outsideStart, endExclusive).replace(unsupportedClause, ""))
+        }
+
+        while (i < sql.length) {
+            val c = sql[i]
+            val c2 = sql.getOrNull(i + 1)
+
+            when (state) {
+                NormalizationState.OUTSIDE -> when {
+                    c == '-' && c2 == '-' -> {
+                        appendNormalizedOutside(i)
+                        normalized.append("--")
+                        state = NormalizationState.LINE_COMMENT
+                        i += 2
+                    }
+                    c == '/' && c2 == '*' -> {
+                        appendNormalizedOutside(i)
+                        normalized.append("/*")
+                        state = NormalizationState.BLOCK_COMMENT
+                        i += 2
+                    }
+                    c == '\'' -> {
+                        appendNormalizedOutside(i)
+                        normalized.append(c)
+                        state = NormalizationState.SINGLE_QUOTE
+                        i++
+                    }
+                    c == '"' -> {
+                        appendNormalizedOutside(i)
+                        normalized.append(c)
+                        state = NormalizationState.DOUBLE_QUOTE
+                        i++
+                    }
+                    else -> i++
+                }
+
+                NormalizationState.LINE_COMMENT -> {
+                    normalized.append(c)
+                    i++
+                    if (c == '\n' || c == '\r') {
+                        state = NormalizationState.OUTSIDE
+                        outsideStart = i
+                    }
+                }
+
+                NormalizationState.BLOCK_COMMENT -> if (c == '*' && c2 == '/') {
+                    normalized.append("*/")
+                    i += 2
+                    state = NormalizationState.OUTSIDE
+                    outsideStart = i
+                } else {
+                    normalized.append(c)
+                    i++
+                }
+
+                NormalizationState.SINGLE_QUOTE -> if (c == '\'' && c2 == '\'') {
+                    normalized.append("''")
+                    i += 2
+                } else {
+                    normalized.append(c)
+                    i++
+                    if (c == '\'') {
+                        state = NormalizationState.OUTSIDE
+                        outsideStart = i
+                    }
+                }
+
+                NormalizationState.DOUBLE_QUOTE -> if (c == '"' && c2 == '"') {
+                    normalized.append("\"\"")
+                    i += 2
+                } else {
+                    normalized.append(c)
+                    i++
+                    if (c == '"') {
+                        state = NormalizationState.OUTSIDE
+                        outsideStart = i
+                    }
+                }
+            }
+        }
+
+        if (state == NormalizationState.OUTSIDE) {
+            appendNormalizedOutside(sql.length)
+        }
+
+        return normalized.toString()
     }
 }
 
