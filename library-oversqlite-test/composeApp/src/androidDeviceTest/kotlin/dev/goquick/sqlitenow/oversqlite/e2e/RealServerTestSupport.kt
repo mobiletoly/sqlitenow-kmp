@@ -283,6 +283,38 @@ internal suspend fun createBusinessRichSchemaTables(db: SafeSQLiteConnection) {
     )
 }
 
+internal suspend fun createBusinessBlobKeyTables(db: SafeSQLiteConnection) {
+    db.execSQL(
+        """
+        CREATE TABLE files (
+            id BLOB PRIMARY KEY NOT NULL,
+            name TEXT NOT NULL,
+            data BLOB NOT NULL
+        )
+        """.trimIndent()
+    )
+    db.execSQL(
+        """
+        CREATE TABLE file_reviews (
+            id BLOB PRIMARY KEY NOT NULL,
+            review TEXT NOT NULL,
+            file_id BLOB NOT NULL REFERENCES files(id) DEFERRABLE INITIALLY DEFERRED
+        )
+        """.trimIndent()
+    )
+}
+
+internal suspend fun createBusinessIntegerKeyTables(db: SafeSQLiteConnection) {
+    db.execSQL(
+        """
+        CREATE TABLE users (
+            id INTEGER PRIMARY KEY NOT NULL,
+            name TEXT NOT NULL
+        )
+        """.trimIndent()
+    )
+}
+
 internal fun randomUserId(prefix: String = "oversqlite-e2e-user"): String =
     "$prefix-${UUID.randomUUID()}"
 
@@ -471,16 +503,18 @@ internal suspend fun insertBlobPair(
     val fileId = randomRowId()
     val reviewId = randomRowId()
     val dataHex = randomRowId().replace("-", "")
+    val fileIdHex = uuidTextToBlobHex(fileId)
+    val reviewIdHex = uuidTextToBlobHex(reviewId)
     db.execSQL(
         """
         INSERT INTO files(id, name, data)
-        VALUES('$fileId', 'File $label', x'$dataHex')
+        VALUES(x'$fileIdHex', 'File $label', x'$dataHex')
         """.trimIndent()
     )
     db.execSQL(
         """
         INSERT INTO file_reviews(id, review, file_id)
-        VALUES('$reviewId', 'Review $label', '$fileId')
+        VALUES(x'$reviewIdHex', 'Review $label', x'$fileIdHex')
         """.trimIndent()
     )
     return BlobPairRow(
@@ -855,19 +889,36 @@ internal fun newRealServerClient(
     downloadLimit: Int = 1000,
     resolver: Resolver = ServerWinsResolver,
 ): DefaultOversqliteClient {
-    return DefaultOversqliteClient(
+    return newRealServerClient(
         db = db,
-        config = OversqliteConfig(
+        http = http,
+        oversqliteConfig = OversqliteConfig(
             schema = config.schema,
             uploadLimit = uploadLimit,
             downloadLimit = downloadLimit,
             syncTables = syncTables,
         ),
+        resolver = resolver,
+    )
+}
+
+internal fun newRealServerClient(
+    db: SafeSQLiteConnection,
+    http: HttpClient,
+    oversqliteConfig: OversqliteConfig,
+    resolver: Resolver = ServerWinsResolver,
+): DefaultOversqliteClient {
+    return DefaultOversqliteClient(
+        db = db,
+        config = oversqliteConfig,
         http = http,
         resolver = resolver,
         tablesUpdateListener = { },
     )
 }
+
+internal fun uuidTextToBlobHex(uuidText: String): String =
+    uuidText.replace("-", "").lowercase()
 
 internal suspend fun scalarLong(db: SafeSQLiteConnection, sql: String): Long {
     return db.prepare(sql).use { st ->

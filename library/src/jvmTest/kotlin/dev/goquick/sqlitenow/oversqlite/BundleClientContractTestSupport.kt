@@ -76,6 +76,30 @@ open class BundleClientContractTestSupport {
         db.execSQL("CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)")
     }
 
+    protected suspend fun createBlobUsersTable(db: SafeSQLiteConnection) {
+        db.execSQL("CREATE TABLE users (id BLOB PRIMARY KEY NOT NULL, name TEXT NOT NULL)")
+    }
+
+    protected suspend fun createIntegerUsersTable(db: SafeSQLiteConnection) {
+        db.execSQL("CREATE TABLE users (id INTEGER PRIMARY KEY NOT NULL, name TEXT NOT NULL)")
+    }
+
+    protected suspend fun createBigIntUsersTable(db: SafeSQLiteConnection) {
+        db.execSQL("CREATE TABLE users (id BIGINT PRIMARY KEY NOT NULL, name TEXT NOT NULL)")
+    }
+
+    protected suspend fun createUsersTableWithReservedScopeColumn(db: SafeSQLiteConnection) {
+        db.execSQL(
+            """
+            CREATE TABLE users (
+              id TEXT PRIMARY KEY NOT NULL,
+              _sync_scope_id TEXT NOT NULL,
+              name TEXT NOT NULL
+            )
+            """.trimIndent()
+        )
+    }
+
     protected suspend fun createScoredUsersTable(db: SafeSQLiteConnection) {
         db.execSQL("CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, score REAL NOT NULL)")
     }

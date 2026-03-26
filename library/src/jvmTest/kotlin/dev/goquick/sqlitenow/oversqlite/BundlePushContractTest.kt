@@ -900,6 +900,54 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
+    fun pushPending_rejectsHiddenScopeColumnInConflictServerRow() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer()
+        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson).apply {
+            commitError = { _, _ ->
+                409 to """
+                    {
+                      "error":"push_conflict",
+                      "message":"insert conflict on main.users user-1",
+                      "conflict":{
+                        "schema":"main",
+                        "table":"users",
+                        "key":{"id":"user-1"},
+                        "op":"INSERT",
+                        "base_row_version":0,
+                        "server_row_version":7,
+                        "server_row_deleted":false,
+                        "server_row":{"id":"user-1","_sync_scope_id":"forbidden","name":"Server"}
+                      }
+                    }
+                """.trimIndent()
+            }
+        }
+        pushServer.install(server)
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(
+                db,
+                http,
+                syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+                resolver = Resolver { MergeResult.KeepLocal },
+            )
+            client.bootstrap("user-1", "device-a").getOrThrow()
+            db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Client')")
+
+            val error = client.pushPending().exceptionOrNull()
+            assertNotNull(error)
+            assertTrue(error.message?.contains("_sync_scope_id") == true)
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
     fun pushPending_structuredConflict_keepMergedRetriesMergedPayloadAndCommits() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)

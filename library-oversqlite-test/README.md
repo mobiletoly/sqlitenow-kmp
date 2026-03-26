@@ -10,6 +10,8 @@ Binary payload note:
 
 - non-key binary payload fields use standard base64 on the HTTP wire
 - UUID-valued keys and UUID-valued key columns use dashed UUID text
+- sync-enabled local tables are exercised here with `TEXT PRIMARY KEY` and `BLOB PRIMARY KEY`
+  key columns; unsupported integer-like sync keys should fail before network mutation
 
 ## Opt-in Real-Server E2E Tests
 
@@ -41,6 +43,22 @@ From `sqlitenow-kmp`:
   --no-daemon
 ```
 
+Additional useful slices:
+
+```bash
+./gradlew :library-oversqlite-test:composeApp:connectedAndroidDeviceTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=dev.goquick.sqlitenow.oversqlite.e2e.RealServerBlobAndCascadeTest \
+  -Pandroid.testInstrumentationRunnerArguments.oversqliteRealServer=true \
+  -Pandroid.testInstrumentationRunnerArguments.oversqliteE2EBaseUrl=http://10.0.2.2:8080 \
+  --no-daemon
+
+./gradlew :library-oversqlite-test:composeApp:connectedAndroidDeviceTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=dev.goquick.sqlitenow.oversqlite.e2e.RealServerGeneratedConfigTest \
+  -Pandroid.testInstrumentationRunnerArguments.oversqliteRealServer=true \
+  -Pandroid.testInstrumentationRunnerArguments.oversqliteE2EBaseUrl=http://10.0.2.2:8080 \
+  --no-daemon
+```
+
 Optional arguments:
 
 - `oversqliteE2ESchema=business`
@@ -50,3 +68,5 @@ Optional arguments:
 - these tests are not part of the normal automated suite
 - they use fresh user IDs and source IDs per run to avoid cross-test contamination
 - if `oversqliteRealServer` is not set, the class is skipped instead of trying to reach a server
+- `RealServerGeneratedConfigTest` exercises generated annotation-driven sync config
+- `RealServerBlobAndCascadeTest` exercises real local `BLOB PRIMARY KEY` sync keys

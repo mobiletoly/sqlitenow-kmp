@@ -165,6 +165,10 @@ CREATE TABLE person (
 );
 ```
 
+Sync-enabled tables must use exactly one local `PRIMARY KEY` column of type `TEXT` or `BLOB`.
+`INTEGER`/`BIGINT` sync keys are rejected, and local sync-enabled tables must not model the
+reserved server scope column `_sync_scope_id`.
+
 Then use the generated sync client in your application:
 
 ```kotlin

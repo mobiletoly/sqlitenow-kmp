@@ -112,6 +112,14 @@ SQLiteNow automatically tracks changes to your data when sync is enabled on a ta
 - **Manual Configuration**: Tables can be manually specified during oversqlite client configuration
 - **Mixed Approach**: You can combine both annotation-based and manual table configuration
 
+For sync-enabled tables, both generated annotation-based config and manual `SyncTable(...)`
+configuration obey the same runtime contract:
+
+- exactly one visible local sync key column
+- that visible sync key must be the local SQLite `PRIMARY KEY`
+- the local sync key type must be `TEXT` or `BLOB`
+- local sync-enabled tables must not include the reserved server column `_sync_scope_id`
+
 ### Change Metadata
 Each change includes:
 - **What changed**: The actual data that was modified

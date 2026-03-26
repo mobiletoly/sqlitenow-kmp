@@ -1,4 +1,4 @@
--- @@{ enableSync=true }}
+-- @@{ enableSync=true }
 CREATE TABLE person_address
 (
     id           BLOB PRIMARY KEY NOT NULL DEFAULT (randomblob(16)),

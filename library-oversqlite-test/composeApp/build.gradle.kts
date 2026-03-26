@@ -6,6 +6,7 @@ plugins {
     id(libs.plugins.jetbrainsCompose.get().pluginId)
 //    id(libs.plugins.composeCompiler.get().pluginId)
     id(libs.plugins.serialization.get().pluginId)
+    id("dev.goquick.sqlitenow")
     alias(libs.plugins.composeCompiler)
 }
 
@@ -79,5 +80,13 @@ kotlin {
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEach {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
+sqliteNow {
+    databases {
+        create("RealServerGeneratedDatabase") {
+            packageName = "dev.goquick.sqlitenow.oversqlite.e2e.generated"
+        }
     }
 }

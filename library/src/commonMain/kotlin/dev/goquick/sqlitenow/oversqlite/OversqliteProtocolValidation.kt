@@ -15,9 +15,13 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
+
+internal const val hiddenSyncScopeColumnName = "_sync_scope_id"
 
 internal fun validatePullResponse(
     response: PullResponse,
@@ -67,21 +71,22 @@ internal fun validateBundle(bundle: Bundle) {
 internal fun validateBundleRow(row: BundleRow) {
     require(row.schema.isNotBlank()) { "bundle row schema must be non-empty" }
     require(row.table.isNotBlank()) { "bundle row table must be non-empty" }
-    require(row.key.isNotEmpty()) { "bundle row key must be non-empty" }
-    require(row.key.values.all { it.isNotBlank() }) { "bundle row key values must be non-empty strings" }
+    validateVisibleWireKey(row.key, "bundle row key")
     require(row.rowVersion > 0) { "bundle row row_version ${row.rowVersion} must be positive" }
     require(row.op in setOf("INSERT", "UPDATE", "DELETE")) { "bundle row op ${row.op} is unsupported" }
     if (row.op != "DELETE") {
         require(row.payload != null) { "bundle row payload must be present for ${row.op}" }
+        validateVisibleWirePayload(row.payload, "bundle row payload")
     }
 }
 
 internal fun validateSnapshotRow(row: SnapshotRow) {
     require(row.schema.isNotBlank()) { "snapshot row schema must be non-empty" }
     require(row.table.isNotBlank()) { "snapshot row table must be non-empty" }
-    require(row.key.isNotEmpty()) { "snapshot row key must be non-empty" }
+    validateVisibleWireKey(row.key, "snapshot row key")
     require(row.rowVersion > 0) { "snapshot row row_version ${row.rowVersion} must be positive" }
     require(row.payload !is JsonNull) { "snapshot row payload must be present" }
+    validateVisibleWirePayload(row.payload, "snapshot row payload")
 }
 
 @OptIn(ExperimentalTime::class)
@@ -207,6 +212,24 @@ internal fun committedPushBundleFromCommitResponse(
     )
 }
 
+internal fun validatePushConflictDetails(details: PushConflictDetails) {
+    require(details.schema.isNotBlank()) { "push conflict schema must be non-empty" }
+    require(details.table.isNotBlank()) { "push conflict table must be non-empty" }
+    validateVisibleWireKey(details.key, "push conflict key")
+    require(details.op in setOf("INSERT", "UPDATE", "DELETE")) {
+        "push conflict op ${details.op} is unsupported"
+    }
+    require(details.baseRowVersion >= 0) {
+        "push conflict base_row_version ${details.baseRowVersion} must be non-negative"
+    }
+    require(details.serverRowVersion >= 0) {
+        "push conflict server_row_version ${details.serverRowVersion} must be non-negative"
+    }
+    if (details.serverRow != null && details.serverRow !is JsonNull) {
+        validateVisibleWirePayload(details.serverRow, "push conflict server_row")
+    }
+}
+
 internal fun validateCommittedBundleRowsResponse(
     response: CommittedBundleRowsResponse,
     committed: CommittedPushBundle,
@@ -251,5 +274,27 @@ private fun parseOversqliteRfc3339Instant(value: String): Instant {
         Instant.parse(value)
     } catch (e: Exception) {
         throw IllegalArgumentException("oversqlite timestamp must be RFC3339/ISO-8601 instant: '$value'", e)
+    }
+}
+
+private fun validateVisibleWireKey(
+    key: SyncKey,
+    label: String,
+) {
+    require(key.isNotEmpty()) { "$label must be non-empty" }
+    require(hiddenSyncScopeColumnName !in key.keys) {
+        "$label must not include hidden server column $hiddenSyncScopeColumnName"
+    }
+    require(key.values.all { it.isNotBlank() }) { "$label values must be non-empty strings" }
+}
+
+private fun validateVisibleWirePayload(
+    payload: JsonElement?,
+    label: String,
+) {
+    val payloadObject = payload as? JsonObject
+        ?: error("$label must be a JSON object")
+    require(hiddenSyncScopeColumnName !in payloadObject.keys) {
+        "$label must not include hidden server column $hiddenSyncScopeColumnName"
     }
 }

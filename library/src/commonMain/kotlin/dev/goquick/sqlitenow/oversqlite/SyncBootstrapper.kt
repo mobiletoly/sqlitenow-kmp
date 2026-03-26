@@ -169,6 +169,9 @@ internal class SyncBootstrapper(
             }
 
             val tableInfo = tableInfoCache.get(db, tableName)
+            require(hiddenSyncScopeColumnName.lowercase() !in tableInfo.columnNamesLower) {
+                "table ${syncTable.tableName} must not declare reserved server column $hiddenSyncScopeColumnName in local oversqlite schema"
+            }
             tableInfoByName[tableName] = tableInfo
             val syncKeyColumn = configuredPrimaryKeyColumn(tableInfo, syncTable, keyColumns.single())
             pkByTable[tableName] = syncKeyColumn
@@ -209,12 +212,24 @@ internal class SyncBootstrapper(
         syncTable: SyncTable,
         configuredKeyColumn: String,
     ): String {
+        val primaryKeyColumns = tableInfo.columns.filter { it.isPrimaryKey }
+        require(primaryKeyColumns.size == 1) {
+            "table ${syncTable.tableName} must declare exactly one local SQLite PRIMARY KEY column for oversqlite sync"
+        }
+
+        val primaryKeyColumn = primaryKeyColumns.single()
         for (column in tableInfo.columns) {
             if (!column.name.equals(configuredKeyColumn, ignoreCase = true)) {
                 continue
             }
             require(column.isPrimaryKey) {
                 "configured primary key column ${column.name} for table ${syncTable.tableName} is not declared as PRIMARY KEY"
+            }
+            require(primaryKeyColumn.name.equals(column.name, ignoreCase = true)) {
+                "table ${syncTable.tableName} must use its only local SQLite PRIMARY KEY column as the visible sync key"
+            }
+            require(column.kind == ColumnKind.TEXT || column.kind.isBlobKind()) {
+                "configured primary key column ${column.name} for table ${syncTable.tableName} must be TEXT PRIMARY KEY or BLOB PRIMARY KEY"
             }
             return column.name
         }

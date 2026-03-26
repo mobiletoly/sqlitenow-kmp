@@ -22,6 +22,11 @@ Start `nethttp_server` from `go-oversync` first, then run:
 ```
 
 The tests reset the local example server state through `POST /test/reset` before each scenario.
+The tracked phase-8 key-shape contract for this lane is:
+
+- local sync keys may be `TEXT PRIMARY KEY` or `BLOB PRIMARY KEY`
+- generated annotation-driven sync config and manual `SyncTable(...)` config should both work
+- unsupported integer-like sync keys should fail before any sync mutation is attempted
 
 ## Current Coverage
 
@@ -36,6 +41,7 @@ Checklist:
 - [x] Verify both devices converge on the committed server state
 - [x] Hydrate a fresh device from real-server snapshot state
 - [x] Reset example server state before each scenario
+- [x] Manual `SyncTable(...)` config remains covered for `TEXT PRIMARY KEY` local sync tables
 
 ## Planned Next Slices
 
@@ -83,9 +89,23 @@ Tables:
 - `file_reviews`
 
 Checklist:
-- [x] Push and pull BLOB-backed rows through real HTTP
+- [x] Push and pull `BLOB PRIMARY KEY` local sync rows through real HTTP
 - [x] Hydrate BLOB-backed rows from snapshot state
 - [x] Dependent-row behavior converges across devices
+
+### RealServerGeneratedConfigTest
+
+Goal:
+- verify annotation-generated sync table metadata works end-to-end against the real server and
+  keep an explicit rejection lane for unsupported local key types
+
+File:
+- `library-oversqlite-test/composeApp/src/androidDeviceTest/kotlin/dev/goquick/sqlitenow/oversqlite/e2e/RealServerGeneratedConfigTest.kt`
+
+Checklist:
+- [x] Generated annotation-driven sync config converges against real `nethttp_server`
+- [x] Generated sync metadata remains explicit in client setup, not implicit runtime defaults
+- [x] Unsupported integer local sync keys fail bootstrap before sync mutation is attempted
 
 ### RealServerRecoveryTest
 

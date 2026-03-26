@@ -4,25 +4,20 @@ import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-/**
- * Test to verify that the syncKeyColumnName annotation is properly handled
- * in code generation and generates correct SyncTable objects.
- */
 class SyncKeyColumnNameAnnotationTest {
 
     @TempDir
     lateinit var tempDir: File
 
     @Test
-    @DisplayName("Test syncKeyColumnName annotation generates correct SyncTable objects")
-    fun testSyncKeyColumnNameAnnotation() {
-        // Create test schema with syncKeyColumnName annotation
+    @DisplayName("enableSync tables emit explicit SyncTable metadata for text and blob primary keys")
+    fun syncKeyColumnNameAnnotation_generatesExplicitSyncTables() {
         val schemaDir = File(tempDir, "schema")
         schemaDir.mkdirs()
 
-        // Create table with explicit syncKeyColumnName annotation
         File(schemaDir, "users.sql").writeText(
             """
             -- @@{enableSync=true, syncKeyColumnName=uuid}
@@ -31,10 +26,9 @@ class SyncKeyColumnNameAnnotationTest {
                 name TEXT NOT NULL,
                 email TEXT UNIQUE NOT NULL
             );
-        """.trimIndent()
+            """.trimIndent()
         )
 
-        // Create table with enableSync but no explicit syncKeyColumnName (should auto-detect)
         File(schemaDir, "products.sql").writeText(
             """
             -- @@{enableSync=true}
@@ -43,27 +37,22 @@ class SyncKeyColumnNameAnnotationTest {
                 name TEXT NOT NULL,
                 price REAL NOT NULL
             );
-        """.trimIndent()
+            """.trimIndent()
         )
 
-        // Create table with traditional id primary key
-        File(schemaDir, "orders.sql").writeText(
+        File(schemaDir, "blob_docs.sql").writeText(
             """
             -- @@{enableSync=true}
-            CREATE TABLE orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_uuid TEXT NOT NULL,
-                product_code TEXT NOT NULL,
-                quantity INTEGER NOT NULL DEFAULT 1
+            CREATE TABLE blob_docs (
+                id BLOB PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL
             );
-        """.trimIndent()
+            """.trimIndent()
         )
 
-        // Create output directory
         val outputDir = File(tempDir, "generated")
         outputDir.mkdirs()
 
-        // Generate database files
         generateDatabaseFiles(
             dbName = "TestDatabase",
             sqlDir = tempDir,
@@ -73,49 +62,33 @@ class SyncKeyColumnNameAnnotationTest {
             debug = false,
         )
 
-        // Check that the generated database file contains correct SyncTable objects
         val generatedFiles = outputDir.walkTopDown()
             .filter { it.isFile && it.extension == "kt" }
             .toList()
-
         val databaseFile = generatedFiles.find { it.name.contains("TestDatabase") }
         assertTrue(databaseFile != null, "Database file should be generated")
 
         val generatedContent = databaseFile.readText()
-        println("Generated content:")
-        println(generatedContent)
-
-        // Verify that SyncTable objects are generated correctly
         assertTrue(
             generatedContent.contains("syncTables: List<SyncTable>"),
             "Should generate syncTables property with correct type"
         )
-
-        // Verify explicit syncKeyColumnName annotation is used
         assertTrue(
             generatedContent.contains("SyncTable(tableName = \"users\", syncKeyColumnName = \"uuid\")"),
             "Should use explicit syncKeyColumnName from annotation"
         )
-
-        // Verify auto-detected primary key is used
         assertTrue(
             generatedContent.contains("SyncTable(tableName = \"products\", syncKeyColumnName = \"code\")"),
             "Should auto-detect primary key column name"
         )
-
-        // Verify default id primary key is still materialized explicitly for runtime bootstrap.
         assertTrue(
-            generatedContent.contains("SyncTable(tableName = \"orders\", syncKeyColumnName = \"id\")"),
-            "Should emit explicit syncKeyColumnName for default id primary key"
+            generatedContent.contains("SyncTable(tableName = \"blob_docs\", syncKeyColumnName = \"id\")"),
+            "Should allow blob primary key sync tables"
         )
-
-        // Verify buildOversqliteConfig function is generated
         assertTrue(
             generatedContent.contains("fun buildOversqliteConfig"),
             "Should generate buildOversqliteConfig function"
         )
-
-        // Verify the function uses syncTables parameter
         assertTrue(
             generatedContent.contains("OversqliteConfig(schema, syncTables"),
             "buildOversqliteConfig should use syncTables parameter"
@@ -123,13 +96,83 @@ class SyncKeyColumnNameAnnotationTest {
     }
 
     @Test
-    @DisplayName("Test that tables without enableSync annotation are not included in syncTables")
-    fun testNonSyncTablesExcluded() {
-        // Create test schema with mixed sync and non-sync tables
+    @DisplayName("enableSync rejects unsupported integer primary keys")
+    fun syncKeyColumnNameAnnotation_rejectsIntegerSyncTables() {
         val schemaDir = File(tempDir, "schema")
         schemaDir.mkdirs()
 
-        // Sync table
+        File(schemaDir, "orders.sql").writeText(
+            """
+            -- @@{enableSync=true}
+            CREATE TABLE orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                quantity INTEGER NOT NULL DEFAULT 1
+            );
+            """.trimIndent()
+        )
+
+        val outputDir = File(tempDir, "generated")
+        outputDir.mkdirs()
+
+        val error = assertFailsWith<IllegalArgumentException> {
+            generateDatabaseFiles(
+                dbName = "TestDatabase",
+                sqlDir = tempDir,
+                packageName = "com.test.db",
+                outDir = outputDir,
+                schemaDatabaseFile = null,
+                debug = false,
+            )
+        }
+
+        assertTrue(
+            error.message?.contains("TEXT PRIMARY KEY or BLOB PRIMARY KEY") == true,
+            "Should reject integer sync primary keys with a clear error"
+        )
+    }
+
+    @Test
+    @DisplayName("enableSync rejects unsupported bigint primary keys")
+    fun syncKeyColumnNameAnnotation_rejectsBigIntSyncTables() {
+        val schemaDir = File(tempDir, "schema")
+        schemaDir.mkdirs()
+
+        File(schemaDir, "events.sql").writeText(
+            """
+            -- @@{enableSync=true}
+            CREATE TABLE events (
+                event_id BIGINT PRIMARY KEY NOT NULL,
+                title TEXT NOT NULL
+            );
+            """.trimIndent()
+        )
+
+        val outputDir = File(tempDir, "generated")
+        outputDir.mkdirs()
+
+        val error = assertFailsWith<IllegalArgumentException> {
+            generateDatabaseFiles(
+                dbName = "TestDatabase",
+                sqlDir = tempDir,
+                packageName = "com.test.db",
+                outDir = outputDir,
+                schemaDatabaseFile = null,
+                debug = false,
+            )
+        }
+
+        assertTrue(
+            error.message?.contains("TEXT PRIMARY KEY or BLOB PRIMARY KEY") == true,
+            "Should reject bigint sync primary keys with a clear error"
+        )
+    }
+
+    @Test
+    @DisplayName("tables without enableSync annotation are not included in syncTables")
+    fun testNonSyncTablesExcluded() {
+        val schemaDir = File(tempDir, "schema")
+        schemaDir.mkdirs()
+
         File(schemaDir, "sync_table.sql").writeText(
             """
             -- @@{enableSync=true, syncKeyColumnName=custom_id}
@@ -137,24 +180,21 @@ class SyncKeyColumnNameAnnotationTest {
                 custom_id TEXT PRIMARY KEY NOT NULL,
                 data TEXT NOT NULL
             );
-        """.trimIndent()
+            """.trimIndent()
         )
 
-        // Non-sync table
         File(schemaDir, "regular_table.sql").writeText(
             """
             CREATE TABLE regular_table (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 info TEXT NOT NULL
             );
-        """.trimIndent()
+            """.trimIndent()
         )
 
-        // Create output directory
         val outputDir = File(tempDir, "generated")
         outputDir.mkdirs()
 
-        // Generate database files
         generateDatabaseFiles(
             dbName = "TestDatabase",
             sqlDir = tempDir,
@@ -164,23 +204,17 @@ class SyncKeyColumnNameAnnotationTest {
             debug = false,
         )
 
-        // Check generated content
         val generatedFiles = outputDir.walkTopDown()
             .filter { it.isFile && it.extension == "kt" }
             .toList()
-
         val databaseFile = generatedFiles.find { it.name.contains("TestDatabase") }
         assertTrue(databaseFile != null, "Database file should be generated")
 
         val generatedContent = databaseFile.readText()
-
-        // Verify only sync table is included
         assertTrue(
             generatedContent.contains("SyncTable(tableName = \"sync_table\", syncKeyColumnName = \"custom_id\")"),
             "Should include sync table with custom primary key"
         )
-
-        // Verify non-sync table is not included
         assertTrue(
             !generatedContent.contains("regular_table"),
             "Should not include non-sync table in syncTables"

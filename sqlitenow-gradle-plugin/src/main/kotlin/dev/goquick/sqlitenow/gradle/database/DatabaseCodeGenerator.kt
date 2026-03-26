@@ -44,6 +44,7 @@ import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
 import dev.goquick.sqlitenow.gradle.processing.SharedResultManager
 import dev.goquick.sqlitenow.gradle.processing.SharedResultTypeUtils
 import dev.goquick.sqlitenow.gradle.processing.StatementUtils
+import dev.goquick.sqlitenow.gradle.sqlinspect.CreateTableStatement
 import java.io.File
 
 /**
@@ -403,12 +404,8 @@ class DatabaseCodeGenerator(
             val syncTableInitializers = syncTables.map { table ->
                 // Always materialize the resolved sync key into generated code so runtime bootstrap
                 // does not depend on any implicit SyncTable default.
-                val primaryKeyColumn = table.annotations.syncKeyColumnName ?: findPrimaryKeyColumn(table)
-                val syncKeyParam = if (primaryKeyColumn != null) {
-                    ", syncKeyColumnName = \"$primaryKeyColumn\""
-                } else {
-                    ""
-                }
+                val primaryKeyColumn = resolveOversqliteSyncKeyColumn(table)
+                val syncKeyParam = ", syncKeyColumnName = \"$primaryKeyColumn\""
                 "%T(tableName = \"${table.name}\"$syncKeyParam)"
             }
 
@@ -703,6 +700,41 @@ class DatabaseCodeGenerator(
         } else {
             null // No primary key or composite primary key
         }
+    }
+
+    private fun resolveOversqliteSyncKeyColumn(table: AnnotatedCreateTableStatement): String {
+        require(table.findColumnByName(hiddenSyncScopeColumnName) == null) {
+            "table ${table.name} annotated with enableSync=true must not declare reserved server column $hiddenSyncScopeColumnName"
+        }
+        val primaryKeyColumns = table.columns.filter { it.src.primaryKey }
+        require(primaryKeyColumns.size == 1) {
+            "table ${table.name} annotated with enableSync=true must declare exactly one PRIMARY KEY column"
+        }
+
+        val primaryKeyColumn = primaryKeyColumns.single()
+        val resolvedSyncKey = table.annotations.syncKeyColumnName ?: primaryKeyColumn.src.name
+        val configuredColumn = table.findColumnByName(resolvedSyncKey)
+            ?: error("table ${table.name} annotated with enableSync=true does not contain sync key column $resolvedSyncKey")
+
+        require(configuredColumn.src.primaryKey) {
+            "table ${table.name} annotated with enableSync=true must use its PRIMARY KEY column as the visible sync key"
+        }
+        require(primaryKeyColumn.src.name.equals(configuredColumn.src.name, ignoreCase = true)) {
+            "table ${table.name} annotated with enableSync=true must use its only PRIMARY KEY column as the visible sync key"
+        }
+        require(isSupportedOversqliteSyncKeyType(configuredColumn.src)) {
+            "table ${table.name} annotated with enableSync=true must use TEXT PRIMARY KEY or BLOB PRIMARY KEY for its visible sync key"
+        }
+        return configuredColumn.src.name
+    }
+
+    private fun isSupportedOversqliteSyncKeyType(column: CreateTableStatement.Column): Boolean {
+        val type = column.dataType.trim().lowercase()
+        return type.contains("text") || type.contains("blob")
+    }
+
+    private companion object {
+        const val hiddenSyncScopeColumnName = "_sync_scope_id"
     }
 
     /** Generates an adapter wrapper class for a specific namespace. */

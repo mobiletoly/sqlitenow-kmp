@@ -33,9 +33,9 @@ class RealServerBlobAndCascadeTest {
         val pullDb = newInMemoryDb()
         val hydrateDb = newInMemoryDb()
         try {
-            createBusinessRichSchemaTables(seedDb)
-            createBusinessRichSchemaTables(pullDb)
-            createBusinessRichSchemaTables(hydrateDb)
+            createBusinessBlobKeyTables(seedDb)
+            createBusinessBlobKeyTables(pullDb)
+            createBusinessBlobKeyTables(hydrateDb)
 
             val seedClient = newRealServerClient(seedDb, config, seedHttp, syncTables = syncTables)
             val pullClient = newRealServerClient(pullDb, config, pullHttp, syncTables = syncTables)
@@ -73,11 +73,13 @@ class RealServerBlobAndCascadeTest {
         assertEquals(2L, scalarLong(db, "SELECT COUNT(*) FROM files"))
         assertEquals(2L, scalarLong(db, "SELECT COUNT(*) FROM file_reviews"))
         for (row in rows) {
-            assertEquals("File ${row.label}", scalarText(db, "SELECT name FROM files WHERE id = '${row.fileId}'"))
-            assertEquals(16L, scalarLong(db, "SELECT length(data) FROM files WHERE id = '${row.fileId}'"))
-            assertEquals(row.dataHex.uppercase(), scalarText(db, "SELECT hex(data) FROM files WHERE id = '${row.fileId}'"))
-            assertEquals("Review ${row.label}", scalarText(db, "SELECT review FROM file_reviews WHERE id = '${row.reviewId}'"))
-            assertEquals(row.fileId, scalarText(db, "SELECT file_id FROM file_reviews WHERE id = '${row.reviewId}'"))
+            val fileHex = uuidTextToBlobHex(row.fileId)
+            val reviewHex = uuidTextToBlobHex(row.reviewId)
+            assertEquals("File ${row.label}", scalarText(db, "SELECT name FROM files WHERE lower(hex(id)) = '$fileHex'"))
+            assertEquals(16L, scalarLong(db, "SELECT length(data) FROM files WHERE lower(hex(id)) = '$fileHex'"))
+            assertEquals(row.dataHex.uppercase(), scalarText(db, "SELECT hex(data) FROM files WHERE lower(hex(id)) = '$fileHex'"))
+            assertEquals("Review ${row.label}", scalarText(db, "SELECT review FROM file_reviews WHERE lower(hex(id)) = '$reviewHex'"))
+            assertEquals(fileHex, scalarText(db, "SELECT lower(hex(file_id)) FROM file_reviews WHERE lower(hex(id)) = '$reviewHex'"))
         }
     }
 }

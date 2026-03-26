@@ -129,10 +129,13 @@ CREATE TABLE orders (
 - Only tables with `enableSync=true` will be synchronized
 - Tables without this annotation remain local-only
 - You can mix sync-enabled and local-only tables in the same database
+- Sync-enabled tables must expose exactly one visible sync key column, and it must be the local SQLite `PRIMARY KEY`
 - **Primary keys must contain UUID data as either TEXT strings or BLOB bytes**
+- `INTEGER` and `BIGINT` primary keys are not supported for sync-enabled tables
 - Use `syncKeyColumnName` annotation for custom primary key column names
 - The system can auto-detect primary key columns if not explicitly specified
 - **Foreign keys must match the type of the referenced primary key** (TEXT or BLOB)
+- Sync-enabled local tables must not include the reserved server column `_sync_scope_id`
 
 ### UUID Generation in Your App
 

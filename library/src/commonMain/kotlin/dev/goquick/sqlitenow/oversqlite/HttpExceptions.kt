@@ -62,5 +62,6 @@ internal fun decodePushConflictExceptionOrNull(
         httpErrorJson.decodeFromString<PushConflictResponse>(rawBody)
     }.getOrNull() ?: return null
     if (response.error != "push_conflict" || response.conflict == null) return null
+    validatePushConflictDetails(response.conflict)
     return PushConflictException(rawBody = rawBody, response = response)
 }

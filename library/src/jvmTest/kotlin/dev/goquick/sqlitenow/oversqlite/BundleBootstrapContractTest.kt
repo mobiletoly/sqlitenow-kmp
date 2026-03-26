@@ -81,6 +81,71 @@ class BundleBootstrapContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
+    fun bootstrap_acceptsBlobPrimaryKeySyncTables() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createBlobUsersTable(db)
+        val server = newServer()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.bootstrap("user-1", "device-a").getOrThrow()
+
+            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM sqlite_master WHERE name = '_sync_client_state'"))
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun bootstrap_rejectsUnsupportedIntegerAndBigIntSyncKeys() = runBlocking {
+        suspend fun assertRejected(
+            db: SafeSQLiteConnection,
+            expectedType: String,
+        ) {
+            val server = newServer()
+            val http = newHttpClient(server)
+            try {
+                val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+                val error = client.bootstrap("user-1", "device-a").exceptionOrNull()
+                assertTrue(error != null)
+                assertTrue(error.message?.contains("TEXT PRIMARY KEY or BLOB PRIMARY KEY") == true, "expected $expectedType rejection")
+            } finally {
+                http.close()
+                server.stop(0)
+                db.close()
+            }
+        }
+
+        val integerDb = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createIntegerUsersTable(integerDb)
+        assertRejected(integerDb, "INTEGER")
+
+        val bigIntDb = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createBigIntUsersTable(bigIntDb)
+        assertRejected(bigIntDb, "BIGINT")
+    }
+
+    @Test
+    fun bootstrap_rejectsReservedServerScopeColumnInLocalSchema() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTableWithReservedScopeColumn(db)
+        val server = newServer()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            val error = client.bootstrap("user-1", "device-a").exceptionOrNull()
+            assertTrue(error != null)
+            assertTrue(error.message?.contains("must not declare reserved server column _sync_scope_id") == true)
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
     fun bootstrap_rejectsNonFkClosedManagedSchema() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersAndPostsTables(db)

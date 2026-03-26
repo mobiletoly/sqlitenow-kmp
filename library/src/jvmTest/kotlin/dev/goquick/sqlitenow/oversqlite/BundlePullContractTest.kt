@@ -565,6 +565,125 @@ class BundlePullContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
+    fun pullToStable_rejectsHiddenScopeColumnInBundlePayload() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer().apply {
+            createContext("/sync/pull") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "stable_bundle_seq": 1,
+                      "has_more": false,
+                      "bundles": [
+                        {
+                          "bundle_seq": 1,
+                          "source_id": "peer-a",
+                          "source_bundle_id": 11,
+                          "rows": [
+                            {
+                              "schema": "main",
+                              "table": "users",
+                              "key": {"id":"user-1"},
+                              "op": "INSERT",
+                              "row_version": 2,
+                              "payload": {
+                                "id":"user-1",
+                                "_sync_scope_id":"forbidden",
+                                "name":"Ada"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                    """.trimIndent()
+                )
+            }
+        }
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.bootstrap("user-1", "device-a").getOrThrow()
+
+            val error = client.pullToStable().exceptionOrNull()
+            assertTrue(error != null)
+            assertTrue(error.message?.contains("_sync_scope_id") == true)
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun hydrate_rejectsHiddenScopeColumnInSnapshotPayload() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer().apply {
+            createContext("/sync/snapshot-sessions") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-hidden-scope",
+                      "snapshot_bundle_seq": 3,
+                      "row_count": 1,
+                      "byte_count": 32,
+                      "expires_at": "2026-03-22T00:00:00Z"
+                    }
+                    """.trimIndent()
+                )
+            }
+            createContext("/sync/snapshot-sessions/snapshot-hidden-scope") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-hidden-scope",
+                      "snapshot_bundle_seq": 3,
+                      "next_row_ordinal": 1,
+                      "has_more": false,
+                      "rows": [
+                        {
+                          "schema": "main",
+                          "table": "users",
+                          "key": {"id":"user-1"},
+                          "row_version": 2,
+                          "payload": {
+                            "id":"user-1",
+                            "_sync_scope_id":"forbidden",
+                            "name":"Ada"
+                          }
+                        }
+                      ]
+                    }
+                    """.trimIndent()
+                )
+            }
+        }
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.bootstrap("user-1", "device-a").getOrThrow()
+
+            val error = client.hydrate().exceptionOrNull()
+            assertTrue(error != null)
+            assertTrue(error.message?.contains("_sync_scope_id") == true)
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
     fun pullToStable_rejectsMalformedPullResponse() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)

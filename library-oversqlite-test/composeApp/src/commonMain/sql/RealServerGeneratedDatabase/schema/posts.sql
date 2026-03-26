@@ -1,0 +1,9 @@
+-- @@{enableSync=true}
+CREATE TABLE posts (
+    id TEXT PRIMARY KEY NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    author_id TEXT REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
