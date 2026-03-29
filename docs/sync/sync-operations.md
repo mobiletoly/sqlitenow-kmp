@@ -1,261 +1,149 @@
 ---
 layout: doc
-title: Sync Operations
+title: Sync Operations Reference
 permalink: /sync/sync-operations/
 parent: Sync
 ---
 
-# Sync Operations
+# Sync Operations Reference
 
-The current KMP `oversqlite` client exposes a small bundle-era API:
+This page describes the current Oversqlite operations.
 
-- `bootstrap(userId, sourceId)`
-- `pushPending()`
-- `pullToStable()`
-- `sync()`
-- `hydrate()`
-- `recover()`
-- `lastBundleSeqSeen()`
+## Lifecycle Operations
 
-All sync operations require a successful `bootstrap(...)` first.
+### `open(sourceId)`
 
-## Bootstrap
+Prepares the local runtime and binds or validates the app-owned install `sourceId`. Local-only.
+Call on every launch.
 
-`bootstrap(userId, sourceId)` prepares the local database for sync. It validates the managed
-tables, creates the sync metadata tables, binds the current user/device identity, and installs the
-change-capture triggers.
+### `attach(userId)`
 
-```kotlin
-client.bootstrap(userId = userId, sourceId = deviceId).getOrThrow()
-```
+Attaches or resumes the authenticated account scope. Required before connected sync operations.
 
-Call bootstrap after authentication and before any sync operation. Client construction alone does
-not create sync metadata or install triggers.
+### `syncStatus()`
 
-Note on foreign keys:
+Returns the current authority and pending-sync status for the attached scope.
 
-- oversqlite apply runs inside a transaction that defers foreign-key checks while authoritative
-  remote bundles are replayed
-- because of that, `DEFERRABLE INITIALLY DEFERRED` is the recommended schema default for
-  sync-managed foreign keys
-- `INITIALLY IMMEDIATE` mainly changes how your own non-sync local writes behave outside apply
-  transactions
+Requires successful `open(sourceId)` and `attach(userId)`.
 
-## Push Pending
+### `detach()`
 
-`pushPending()` freezes all currently dirty rows into one logical outbound bundle, uploads that
-bundle through the server's chunked push-session transport, fetches the committed authoritative
-rows back, and replays them locally. If the push is accepted and replay completes, the matching
-frozen dirty rows are cleared.
+Safely detaches the currently attached account.
+
+Returns:
+
+- `DetachOutcome.DETACHED`
+- `DetachOutcome.BLOCKED_UNSYNCED_DATA`
+
+If blocked, local attached state is preserved.
+
+### `syncThenDetach()`
+
+Runs bounded best-effort `sync()` rounds and then attempts `detach()`.
 
 ```kotlin
-val result = client.pushPending()
-result.onFailure { error ->
-    logger.e(error) { "pushPending failed" }
+val result = client.syncThenDetach().getOrThrow()
+if (result.isSuccess()) {
+    // Detached successfully.
+} else {
+    // result.detach == BLOCKED_UNSYNCED_DATA
+    // result.syncRounds and result.remainingPendingRowCount explain what happened.
 }
 ```
 
-Use `pushPending()` when:
+This is convenience sugar over `sync()` plus `detach()`. It is not a separate lifecycle model.
 
-- you want to flush local edits before the app backgrounds
-- the user taps a manual sync button
-- you are running a periodic upload job
+## Connected Sync Operations
 
-Notes:
+These operations require successful `open(sourceId)` and `attach(userId)`.
 
-- `uploadLimit` is a per-chunk limit, not a total-dirty-row ceiling
-- the client keeps new local writes in `_sync_dirty_rows` while an earlier frozen outbound snapshot
-  is in flight
-- create only one `OversqliteClient` per local database at a time; sync-operation serialization is
-  enforced per client instance, not across multiple client objects
+### `pushPending()`
 
-## Pull To Stable
+Freezes the current dirty snapshot into one logical outbound bundle and uploads it.
 
-`pullToStable()` downloads remote bundles until the server's current stable bundle sequence is fully
-applied locally. It fails if the local database still has dirty rows, because pull applies
-authoritative remote history and must not mix with unpushed local edits.
+Returns `PushReport` with:
 
-```kotlin
-val result = client.pullToStable()
-result.onFailure { error ->
-    logger.e(error) { "pullToStable failed" }
-}
-```
+- `PushOutcome.NO_CHANGE`
+- `PushOutcome.COMMITTED`
 
-If the server has already pruned the requested history, `pullToStable()` falls back to snapshot
-hydration automatically.
+### `pullToStable()`
 
-## Sync
+Pulls and applies remote bundles until the local client is at the authoritative stable bundle
+sequence.
 
-`sync()` is the default interactive operation. It runs push first and then pull.
+Returns `RemoteSyncReport`.
 
-```kotlin
-client.sync().getOrThrow()
-```
+### `sync()`
 
-Use `sync()` when you want the standard "send local changes, then catch up on remote changes"
-behavior.
+Runs the standard interactive flow:
 
-## Hydrate
+1. `pushPending()`
+2. `pullToStable()`
 
-`hydrate()` rebuilds the local managed tables from a full server snapshot. Snapshot rows are staged
-in `_sync_snapshot_stage` and become visible to application queries only after the final apply step
-commits.
+Returns `SyncReport`.
 
-```kotlin
-client.hydrate().getOrThrow()
-```
+## Recovery Operations
 
-Use `hydrate()` for:
+### `rebuild(RebuildMode.KEEP_SOURCE)`
 
-- first-time device setup
-- local database replacement from server state
-- automatic prune fallback after pull can no longer replay history incrementally
+Replaces local managed state from the authoritative snapshot while preserving the current internal
+source identity.
 
-Hydration is chunked internally. The public API no longer exposes paging or window parameters.
+### `rebuild(RebuildMode.ROTATE_SOURCE, newSourceId)`
 
-## Recover
+Replaces local managed state from the authoritative snapshot and rotates to a fresh caller-provided
+source identity.
 
-`recover()` also rebuilds from snapshot, but it rotates the local `sourceId` and resets local
-bundle state as part of recovery.
+### `rotateSource(newSourceId)`
 
-```kotlin
-client.recover().getOrThrow()
-```
+Rotates the current source identity without discarding pending local edits.
 
-Use `recover()` when the device should be treated as a fresh sync source after severe local state
-loss.
+Use this only for advanced recovery.
 
-## Last Bundle Seq Seen
+## Result Types
 
-`lastBundleSeqSeen()` returns the last remote bundle sequence durably applied locally.
+### `OpenState`
 
-```kotlin
-val lastSeen = client.lastBundleSeqSeen().getOrThrow()
-```
+- `ReadyAnonymous`
+- `ReadyAttached(scope)`
+- `AttachRecoveryRequired(targetScope)`
 
-This is mainly useful for diagnostics, status surfaces, or advanced telemetry.
+### `AttachResult`
 
-## Pause / Resume Controls
+- `Connected(outcome, status, restore)`
+- `RetryLater(retryAfterSeconds)`
 
-The client can temporarily suppress uploads or downloads:
+### `AttachOutcome`
 
-```kotlin
-client.pauseUploads()
-client.resumeUploads()
+- `RESUMED_ATTACHED_STATE`
+- `USED_REMOTE_STATE`
+- `SEEDED_FROM_LOCAL`
+- `STARTED_EMPTY`
 
-client.pauseDownloads()
-client.resumeDownloads()
-```
+### `DetachOutcome`
 
-This is useful around bulk local imports or temporary UI flows where remote apply should be delayed.
+- `DETACHED`
+- `BLOCKED_UNSYNCED_DATA`
 
-## Recommended Patterns
+### `RebuildMode`
 
-### First Device Restore
+- `KEEP_SOURCE`
+- `ROTATE_SOURCE`
 
-```kotlin
-client.bootstrap(userId = userId, sourceId = deviceId).getOrThrow()
-client.hydrate().getOrThrow()
-```
+## Exceptions You Should Recognize
 
-### Returning Device Catch-Up
+### `SourceSequenceMismatchException`
 
-```kotlin
-client.bootstrap(userId = userId, sourceId = deviceId).getOrThrow()
-client.pullToStable().getOrThrow()
-```
+The current source stream no longer matches what the server has already committed for that stream.
+Treat this as an explicit recovery condition, not as a transient transport failure.
 
-### Manual Sync Button
+### `SourceBindingMismatchException`
 
-```kotlin
-syncButton.onClick {
-    coroutineScope.launch {
-        client.sync().getOrThrow()
-    }
-}
-```
+`open(sourceId)` was called with a different value than the one already durably bound to the local
+database. Default handling is explicit app-owned reset/recovery of the local Oversqlite database or
+local sync state, not retry-with-random-id behavior.
 
-### Event-Driven Sync
+### `SourceRotationBlockedException`
 
-```kotlin
-class SyncManager(
-    private val client: OversqliteClient,
-) {
-    suspend fun onAppForegrounded() {
-        client.sync().getOrThrow()
-    }
-
-    suspend fun onAppBackgrounded() {
-        client.pushPending().getOrThrow()
-    }
-}
-```
-
-## Error Handling
-
-- `bootstrap(...)` failures usually mean unsupported local schema/configuration and should be fixed
-  before sync is retried.
-- `pushPending()` failures leave dirty rows intact unless an accepted bundle was fully replayed.
-- `SyncOperationInProgressException` means another sync operation already owns that client-local
-  lock; treat it as expected contention rather than a user-facing sync failure.
-- `pullToStable()` failures leave the durable checkpoint at the last successfully applied bundle.
-- `hydrate()` and `recover()` use staged snapshot rows so partial downloads do not become partially
-  visible local state.
-
-## Conflict Resolution
-
-Conflicts are resolved by the configured resolver when remote authoritative state and local changes
-disagree. For most applications, `ServerWinsResolver` is the simplest default:
-
-```kotlin
-val client = database.newOversqliteClient(
-    schema = "myapp",
-    httpClient = httpClient,
-    resolver = ServerWinsResolver,
-)
-```
-
-`ClientWinsResolver` is the built-in client-wins convenience option:
-
-```kotlin
-val client = database.newOversqliteClient(
-    schema = "myapp",
-    httpClient = httpClient,
-    resolver = ClientWinsResolver,
-)
-```
-
-Custom resolvers decide per conflict by returning one of:
-
-- `MergeResult.AcceptServer`
-- `MergeResult.KeepLocal`
-- `MergeResult.KeepMerged(mergedPayload)`
-
-Example:
-
-```kotlin
-val client = database.newOversqliteClient(
-    schema = "myapp",
-    httpClient = httpClient,
-    resolver = Resolver { conflict ->
-        when (conflict.table) {
-            "notes" -> MergeResult.KeepLocal
-            "profiles" -> MergeResult.KeepMerged(mergeProfile(conflict.serverRow, conflict.localPayload))
-            else -> MergeResult.AcceptServer
-        }
-    },
-)
-```
-
-Important:
-
-- `resolver` is configured once when the client is created
-- `KeepLocal` and `KeepMerged(...)` are conflict-time return values from that resolver
-- `KeepMerged(...)` is for advanced row-preserving merges, not a top-level client mode
-
----
-
-**Next Steps**: Review [Bootstrap & Hydration]({{ site.baseurl }}/sync/bootstrap-hydration/) for
-device setup flows or [Reactive Sync Updates]({{ site.baseurl }}/sync/reactive-updates/) for UI
-integration patterns.
+Source rotation was requested while another non-rotatable durable lifecycle operation was still
+active.

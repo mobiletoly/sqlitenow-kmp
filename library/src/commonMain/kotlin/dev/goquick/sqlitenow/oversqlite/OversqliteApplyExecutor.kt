@@ -20,7 +20,7 @@ import dev.goquick.sqlitenow.core.TransactionMode
 
 internal class OversqliteApplyExecutor(
     private val db: SafeSQLiteConnection,
-    private val clientStateStore: OversqliteClientStateStore,
+    private val applyStateStore: OversqliteApplyStateStore,
 ) {
     suspend fun <T> inApplyModeTransaction(
         state: RuntimeState,
@@ -30,10 +30,12 @@ internal class OversqliteApplyExecutor(
             db.execSQL("PRAGMA defer_foreign_keys = ON")
             val statementCache = StatementCache(db)
             try {
-                clientStateStore.setApplyMode(state.userId, true, statementCache)
-                val result = block(statementCache)
-                clientStateStore.setApplyMode(state.userId, false, statementCache)
-                result
+                applyStateStore.setApplyMode(true, statementCache)
+                try {
+                    block(statementCache)
+                } finally {
+                    applyStateStore.setApplyMode(false, statementCache)
+                }
             } finally {
                 statementCache.close()
             }

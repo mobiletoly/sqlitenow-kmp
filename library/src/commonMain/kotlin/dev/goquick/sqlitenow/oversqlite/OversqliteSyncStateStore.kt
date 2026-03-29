@@ -16,9 +16,10 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import dev.goquick.sqlitenow.core.sqlite.use
 
 internal class OversqliteSyncStateStore(
-    private val db: SafeSQLiteConnection,
+    internal val db: SafeSQLiteConnection,
 ) {
     suspend fun loadStructuredRowState(
         schemaName: String,
@@ -95,6 +96,26 @@ internal class OversqliteSyncStateStore(
             st.bindText(1, schemaName)
             st.bindText(2, tableName)
             st.step()
+        }
+    }
+
+    suspend fun countLiveStructuredRows(): Long {
+        return db.prepare(
+            """
+            SELECT COUNT(*)
+            FROM _sync_row_state
+            WHERE deleted = 0
+            """.trimIndent(),
+        ).use { st ->
+            check(st.step())
+            st.getLong(0)
+        }
+    }
+
+    suspend fun countDirtyRows(): Int {
+        return db.prepare("SELECT COUNT(*) FROM _sync_dirty_rows").use { st ->
+            check(st.step())
+            st.getLong(0).toInt()
         }
     }
 

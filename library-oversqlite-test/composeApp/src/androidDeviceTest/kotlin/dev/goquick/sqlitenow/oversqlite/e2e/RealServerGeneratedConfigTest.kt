@@ -18,8 +18,8 @@ class RealServerGeneratedConfigTest {
         resetRealServerState(config.baseUrl)
 
         val userId = randomUserId()
-        val deviceA = randomDeviceId("generated-a")
-        val deviceB = randomDeviceId("generated-b")
+        val deviceA = randomSourceId("generated-a")
+        val deviceB = randomSourceId("generated-b")
 
         val tokenA = issueDummySigninToken(config.baseUrl, userId, deviceA)
         val tokenB = issueDummySigninToken(config.baseUrl, userId, deviceB)
@@ -48,8 +48,8 @@ class RealServerGeneratedConfigTest {
                 ),
             )
 
-            clientA.bootstrap(userId, deviceA).getOrThrow()
-            clientB.bootstrap(userId, deviceB).getOrThrow()
+            clientA.openAndAttach(userId, deviceA).getOrThrow()
+            clientB.openAndAttach(userId, deviceB).getOrThrow()
 
             val authorId = randomRowId()
             val postId = randomRowId()
@@ -82,7 +82,7 @@ class RealServerGeneratedConfigTest {
     }
 
     @Test
-    fun unsupportedIntegerPrimaryKeyFailsBootstrapBeforeSyncMutation() = runBlocking {
+    fun unsupportedIntegerPrimaryKeyFailsOpenBeforeSyncMutation() = runBlocking {
         val config = requireRealServerConfig()
         val http = newAuthenticatedHttpClient(config.baseUrl, "unused-token")
         val db = newInMemoryDb()
@@ -96,7 +96,9 @@ class RealServerGeneratedConfigTest {
                 syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
             )
 
-            val error = client.bootstrap(randomUserId(), randomDeviceId("invalid-key")).exceptionOrNull()
+            val error = runCatching {
+                client.openAndAttach(randomUserId(), randomSourceId("invalid-key")).getOrThrow()
+            }.exceptionOrNull()
             assertTrue(error?.message?.contains("TEXT PRIMARY KEY or BLOB PRIMARY KEY") == true)
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
         } finally {

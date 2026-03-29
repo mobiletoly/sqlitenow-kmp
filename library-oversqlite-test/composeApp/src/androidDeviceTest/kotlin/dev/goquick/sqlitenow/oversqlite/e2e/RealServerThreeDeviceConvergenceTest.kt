@@ -1,6 +1,7 @@
 package dev.goquick.sqlitenow.oversqlite.e2e
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.goquick.sqlitenow.oversqlite.RebuildMode
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -14,9 +15,9 @@ class RealServerThreeDeviceConvergenceTest {
         resetRealServerState(config.baseUrl)
 
         val userId = randomUserId()
-        val deviceA = randomDeviceId("three-a")
-        val deviceB = randomDeviceId("three-b")
-        val deviceC = randomDeviceId("three-c")
+        val deviceA = randomSourceId("three-a")
+        val deviceB = randomSourceId("three-b")
+        val deviceC = randomSourceId("three-c")
 
         val tokenA = issueDummySigninToken(config.baseUrl, userId, deviceA)
         val tokenB = issueDummySigninToken(config.baseUrl, userId, deviceB)
@@ -57,12 +58,12 @@ class RealServerThreeDeviceConvergenceTest {
                 downloadLimit = 2,
             )
 
-            clientA.bootstrap(userId, deviceA).getOrThrow()
-            clientB.bootstrap(userId, deviceB).getOrThrow()
-            clientC.bootstrap(userId, deviceC).getOrThrow()
-            clientA.hydrate().getOrThrow()
-            clientB.hydrate().getOrThrow()
-            clientC.hydrate().getOrThrow()
+            clientA.openAndAttach(userId, deviceA).getOrThrow()
+            clientB.openAndAttach(userId, deviceB).getOrThrow()
+            clientC.openAndAttach(userId, deviceC).getOrThrow()
+            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientC.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
             val hotGraph = insertHotGraph(dbA)
             insertRichSchemaBatch(dbA, "three-a-0")
@@ -89,9 +90,9 @@ class RealServerThreeDeviceConvergenceTest {
             clientB.pullToStable().getOrThrow()
             clientC.pullToStable().getOrThrow()
 
-            assertEquals(4L, clientA.lastBundleSeqSeen().getOrThrow())
-            assertEquals(4L, clientB.lastBundleSeqSeen().getOrThrow())
-            assertEquals(4L, clientC.lastBundleSeqSeen().getOrThrow())
+            assertEquals(4L, clientA.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(4L, clientB.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(4L, clientC.syncStatus().getOrThrow().lastBundleSeqSeen)
 
             assertHotGraphDrivenCounts(dbA, rounds = 3, extraRichBatches = 1)
             assertHotGraphDrivenCounts(dbB, rounds = 3, extraRichBatches = 1)

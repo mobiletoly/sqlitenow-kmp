@@ -148,22 +148,25 @@ Important consequences:
 
 ## 4. Bootstrap and Identity Binding
 
-`bootstrap(userId, sourceId)` performs:
+`open(sourceId)` performs:
 
 1. create metadata tables if needed
 2. validate sync table configuration against the live schema
 3. validate FK closure and compute table ordering
-4. persist or reconcile client identity in `_sync_client_state`
+4. bind or validate the app-owned install `sourceId` in `_sync_attachment_state`
 5. install triggers for managed tables
 
 Identity behavior matters:
 
-- same user + same source id: continue normally
-- same user + different source id: managed tables are cleared, `rebuild_required = 1`, and the new
-  identity is persisted
-- different user on same database: managed state is cleared and client identity is rebound
+- same durable source id: continue normally
+- different durable source id on the same local database: fail closed with
+  `SourceBindingMismatchException`
+- different user on the same database: local attachment may change through `detach()` and later
+  `attach(userId)`, but the install `sourceId` stays the same unless the app explicitly resets or
+  rotates it
 
-This is why `recover()` may rotate source identity as part of rebuilding.
+The runtime does not silently generate a replacement source id and does not silently rebind an
+existing local database to another source identity.
 
 ## 5. High-Level Client Operations
 
@@ -214,7 +217,7 @@ The interactive happy path:
 1. `pushPending()`
 2. `pullToStable()`
 
-### 5.4 `hydrate()`
+### 5.4 `rebuild(RebuildMode.KEEP_SOURCE, newSourceId = null)`
 
 Purpose:
 
@@ -225,16 +228,18 @@ Used when:
 - provisioning a new follower
 - local state is empty and a full rebuild is desired
 
-### 5.5 `recover()`
+### 5.5 `rebuild(RebuildMode.ROTATE_SOURCE, newSourceId)` / `rotateSource(newSourceId)`
 
 Purpose:
 
-- rebuild local managed tables from a full server snapshot and rotate local source identity
+- rebuild local managed tables from a full server snapshot and rotate local source identity, or
+  rotate source identity without discarding pending local edits
 
 Used when:
 
 - the current local source identity must no longer continue replaying previous outbound state
-- the client was rebound or local state was invalidated
+- the app intentionally abandons the current local source identity
+- local state was invalidated and the caller has chosen an explicit fresh source id
 
 ## 6. Server Protocol
 
@@ -309,8 +314,9 @@ Snapshot rebuild is authoritative and clears managed local state before replay.
 
 Behavior:
 
-- `hydrate()` keeps current `source_id`
-- `recover()` rotates `source_id` and resets `next_source_bundle_id = 1`
+- `rebuild(RebuildMode.KEEP_SOURCE, null)` keeps current `source_id`
+- `rebuild(RebuildMode.ROTATE_SOURCE, newSourceId)` rotates `source_id` and resets
+  `next_source_bundle_id = 1`
 - both clear `_sync_dirty_rows`, `_sync_push_outbound`, `_sync_push_stage`, and managed business
   rows before authoritative snapshot application
 
@@ -332,7 +338,7 @@ Composite foreign keys are currently rejected by validation.
 - sync serialization is enforced per client instance
 - `pushPending()` freezes transport state before upload
 - `pullToStable()` must not run while outbound replay is pending
-- `hydrate()` and `recover()` are full rebuild operations, not incremental pulls
+- `rebuild(...)` is a full rebuild operation, not an incremental pull
 - business-table triggers should never fire while authoritative rows are being applied
 - `last_bundle_seq_seen` advances only after authoritative replay succeeds locally
 

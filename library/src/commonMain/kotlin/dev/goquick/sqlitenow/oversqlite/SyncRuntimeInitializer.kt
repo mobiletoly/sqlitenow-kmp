@@ -18,8 +18,6 @@ package dev.goquick.sqlitenow.oversqlite
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.sqlite.getColumnNames
 import dev.goquick.sqlitenow.core.sqlite.use
-import kotlin.uuid.ExperimentalUuidApi
-import kotlin.uuid.Uuid
 
 internal data class ValidatedSyncTable(
     val tableName: String,
@@ -35,40 +33,47 @@ internal data class ValidatedConfig(
     val tableInfoByName: Map<String, TableInfo>,
 )
 
-internal class SyncBootstrapper(
+internal class SyncRuntimeInitializer(
     private val config: OversqliteConfig,
     private val tableInfoCache: TableInfoCache,
 ) {
-    suspend fun bootstrap(
+    suspend fun prepareLocalRuntime(
         db: SafeSQLiteConnection,
-        userId: String,
-        sourceId: String,
-    ): Result<ValidatedConfig> = runCatching {
+        managedTableStore: OversqliteManagedTableStore,
+    ): ValidatedConfig {
         require(config.schema.isNotBlank()) { "config.schema must be provided" }
-        require(userId.isNotBlank()) { "userId must be provided" }
-        require(sourceId.isNotBlank()) { "sourceId must be provided" }
-
         initializeDatabase(db)
+        managedTableStore.initializeControlTables()
         val validated = validateConfig(db)
-        persistClientIdentity(db, validated, userId.trim(), sourceId.trim())
+        managedTableStore.registerManagedTables(validated)
         installTriggers(db, validated)
-        validated
+        return validated
     }
 
-    private suspend fun initializeDatabase(db: SafeSQLiteConnection) {
+    suspend fun capturePreexistingAnonymousRows(
+        db: SafeSQLiteConnection,
+        validated: ValidatedConfig,
+    ) {
+        ensureInitialBindStateClear(db)
+        adoptExistingManagedRows(db, validated)
+    }
+
+    internal suspend fun initializeDatabase(db: SafeSQLiteConnection) {
         db.execSQL("PRAGMA foreign_keys = ON")
         db.execSQL(
             """
-            CREATE TABLE IF NOT EXISTS _sync_client_state (
-              user_id TEXT NOT NULL PRIMARY KEY,
-              source_id TEXT NOT NULL,
-              schema_name TEXT NOT NULL DEFAULT '',
-              next_source_bundle_id INTEGER NOT NULL DEFAULT 1,
-              last_bundle_seq_seen INTEGER NOT NULL DEFAULT 0,
-              apply_mode INTEGER NOT NULL DEFAULT 0,
-              rebuild_required INTEGER NOT NULL DEFAULT 0
+            CREATE TABLE IF NOT EXISTS _sync_apply_state (
+              singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),
+              apply_mode INTEGER NOT NULL DEFAULT 0
             )
             """.trimIndent()
+        )
+        db.execSQL(
+            """
+            INSERT INTO _sync_apply_state(singleton_key, apply_mode)
+            VALUES(1, 0)
+            ON CONFLICT(singleton_key) DO NOTHING
+            """.trimIndent(),
         )
         db.execSQL(
             """
@@ -115,35 +120,120 @@ internal class SyncBootstrapper(
         )
         db.execSQL(
             """
-            CREATE TABLE IF NOT EXISTS _sync_push_outbound (
-              source_bundle_id INTEGER NOT NULL,
-              row_ordinal INTEGER NOT NULL,
-              schema_name TEXT NOT NULL,
-              table_name TEXT NOT NULL,
-              key_json TEXT NOT NULL,
-              op TEXT NOT NULL CHECK (op IN ('INSERT','UPDATE','DELETE')),
-              base_row_version INTEGER NOT NULL DEFAULT 0,
-              payload TEXT,
-              PRIMARY KEY (source_bundle_id, row_ordinal)
+            CREATE TABLE IF NOT EXISTS _sync_source_state (
+              source_id TEXT NOT NULL PRIMARY KEY,
+              next_source_bundle_id INTEGER NOT NULL DEFAULT 1,
+              replaced_by_source_id TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
             )
             """.trimIndent()
         )
         db.execSQL(
             """
-            CREATE TABLE IF NOT EXISTS _sync_push_stage (
-              bundle_seq INTEGER NOT NULL,
+            CREATE TABLE IF NOT EXISTS _sync_attachment_state (
+              singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),
+              current_source_id TEXT NOT NULL DEFAULT '',
+              binding_state TEXT NOT NULL DEFAULT 'anonymous' CHECK (binding_state IN ('anonymous', 'attached')),
+              attached_user_id TEXT NOT NULL DEFAULT '',
+              schema_name TEXT NOT NULL DEFAULT '',
+              last_bundle_seq_seen INTEGER NOT NULL DEFAULT 0,
+              rebuild_required INTEGER NOT NULL DEFAULT 0,
+              pending_initialization_id TEXT NOT NULL DEFAULT ''
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            INSERT INTO _sync_attachment_state(
+              singleton_key,
+              current_source_id,
+              binding_state,
+              attached_user_id,
+              schema_name,
+              last_bundle_seq_seen,
+              rebuild_required,
+              pending_initialization_id
+            )
+            VALUES(1, '', 'anonymous', '', '', 0, 0, '')
+            ON CONFLICT(singleton_key) DO NOTHING
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS _sync_operation_state (
+              singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),
+              kind TEXT NOT NULL DEFAULT 'none' CHECK (kind IN ('none', 'remote_replace')),
+              target_user_id TEXT NOT NULL DEFAULT '',
+              staged_snapshot_id TEXT NOT NULL DEFAULT '',
+              snapshot_bundle_seq INTEGER NOT NULL DEFAULT 0,
+              snapshot_row_count INTEGER NOT NULL DEFAULT 0
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            INSERT INTO _sync_operation_state(
+              singleton_key,
+              kind,
+              target_user_id,
+              staged_snapshot_id,
+              snapshot_bundle_seq,
+              snapshot_row_count
+            )
+            VALUES(1, 'none', '', '', 0, 0)
+            ON CONFLICT(singleton_key) DO NOTHING
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS _sync_outbox_bundle (
+              singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),
+              state TEXT NOT NULL DEFAULT 'none' CHECK (state IN ('none', 'prepared', 'committed_remote')),
+              source_id TEXT NOT NULL DEFAULT '',
+              source_bundle_id INTEGER NOT NULL DEFAULT 0,
+              initialization_id TEXT NOT NULL DEFAULT '',
+              canonical_request_hash TEXT NOT NULL DEFAULT '',
+              row_count INTEGER NOT NULL DEFAULT 0,
+              remote_bundle_hash TEXT NOT NULL DEFAULT '',
+              remote_bundle_seq INTEGER NOT NULL DEFAULT 0
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            INSERT INTO _sync_outbox_bundle(
+              singleton_key,
+              state,
+              source_id,
+              source_bundle_id,
+              initialization_id,
+              canonical_request_hash,
+              row_count,
+              remote_bundle_hash,
+              remote_bundle_seq
+            )
+            VALUES(1, 'none', '', 0, '', '', 0, '', 0)
+            ON CONFLICT(singleton_key) DO NOTHING
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS _sync_outbox_rows (
+              source_bundle_id INTEGER NOT NULL,
               row_ordinal INTEGER NOT NULL,
               schema_name TEXT NOT NULL,
               table_name TEXT NOT NULL,
               key_json TEXT NOT NULL,
+              wire_key_json TEXT NOT NULL,
               op TEXT NOT NULL CHECK (op IN ('INSERT','UPDATE','DELETE')),
-              row_version INTEGER NOT NULL,
-              payload TEXT,
-              PRIMARY KEY (bundle_seq, row_ordinal)
+              base_row_version INTEGER NOT NULL DEFAULT 0,
+              local_payload TEXT,
+              wire_payload TEXT,
+              PRIMARY KEY (source_bundle_id, row_ordinal)
             )
             """.trimIndent()
         )
-        db.execSQL("UPDATE _sync_client_state SET apply_mode = 0 WHERE apply_mode = 1")
+        db.execSQL("UPDATE _sync_apply_state SET apply_mode = 0 WHERE singleton_key = 1")
     }
 
     private suspend fun validateConfig(db: SafeSQLiteConnection): ValidatedConfig {
@@ -314,69 +404,118 @@ internal class SyncBootstrapper(
         return ordered.mapIndexed { index, tableName -> tableName to index }.toMap()
     }
 
-    private suspend fun persistClientIdentity(
+    private suspend fun ensureInitialBindStateClear(
         db: SafeSQLiteConnection,
-        validated: ValidatedConfig,
-        userId: String,
-        sourceId: String,
     ) {
-        val identities = mutableListOf<PersistedClientIdentity>()
-        db.prepare(
-            """
-            SELECT user_id, source_id, schema_name
-            FROM _sync_client_state
-            ORDER BY user_id
-            """.trimIndent()
-        ).use { st ->
-            while (st.step()) {
-                identities += PersistedClientIdentity(
-                    userId = st.getText(0),
-                    sourceId = st.getText(1),
-                    schemaName = st.getText(2),
-                )
-            }
+        val rowStateCount = scalarCount(db, "SELECT COUNT(*) FROM _sync_row_state")
+        val dirtyCount = scalarCount(db, "SELECT COUNT(*) FROM _sync_dirty_rows")
+        val outboxRowCount = scalarCount(db, "SELECT COUNT(*) FROM _sync_outbox_rows")
+        val incompatibilities = buildList {
+            if (rowStateCount > 0) add("_sync_row_state=$rowStateCount")
+            if (dirtyCount > 0) add("_sync_dirty_rows=$dirtyCount")
+            if (outboxRowCount > 0) add("_sync_outbox_rows=$outboxRowCount")
         }
-
-        if (identities.isEmpty()) {
-            insertClientIdentity(db, userId, sourceId, config.schema.trim(), rebuildRequired = false)
-            return
-        }
-
-        if (identities.size == 1 && identities[0].userId == userId) {
-            val persisted = identities[0]
-            val persistedSchema = persisted.schemaName.trim()
-            val configuredSchema = config.schema.trim()
-            require(persistedSchema.isEmpty() || persistedSchema == configuredSchema) {
-                "client state for user $userId is bound to schema ${persisted.schemaName}, not $configuredSchema"
-            }
-            if (persisted.sourceId == sourceId) {
-                if (persistedSchema.isEmpty()) {
-                    db.prepare(
-                        """
-                        UPDATE _sync_client_state
-                        SET schema_name = ?, apply_mode = 0
-                        WHERE user_id = ?
-                        """.trimIndent()
-                    ).use { st ->
-                        st.bindText(1, configuredSchema)
-                        st.bindText(2, userId)
-                        st.step()
-                    }
-                }
-                return
-            }
-        }
-
-        db.transaction {
-            db.execSQL("UPDATE _sync_client_state SET apply_mode = 1")
-            clearManagedState(db, validated)
-            db.execSQL("DELETE FROM _sync_snapshot_stage")
-            db.execSQL("DELETE FROM _sync_client_state")
-            insertClientIdentity(db, userId, sourceId, config.schema.trim(), rebuildRequired = true)
+        require(incompatibilities.isEmpty()) {
+            "oversqlite cannot treat this database as first local capture because existing sync state is already present: " +
+                incompatibilities.joinToString(", ")
         }
     }
 
-    private suspend fun clearManagedState(
+    private suspend fun adoptExistingManagedRows(
+        db: SafeSQLiteConnection,
+        validated: ValidatedConfig,
+    ) {
+        val statementCache = StatementCache(db)
+        try {
+            var dirtyOrdinal = 0L
+            val orderedTables = validated.tables.sortedBy { validated.tableOrder[it.tableName] ?: Int.MAX_VALUE }
+            for (table in orderedTables) {
+                dirtyOrdinal = adoptExistingRowsForTable(
+                    db = db,
+                    validated = validated,
+                    table = table,
+                    startingDirtyOrdinal = dirtyOrdinal,
+                    statementCache = statementCache,
+                )
+            }
+        } finally {
+            statementCache.close()
+        }
+    }
+
+    private suspend fun adoptExistingRowsForTable(
+        db: SafeSQLiteConnection,
+        validated: ValidatedConfig,
+        table: ValidatedSyncTable,
+        startingDirtyOrdinal: Long,
+        statementCache: StatementCache,
+    ): Long {
+        val tableInfo = validated.tableInfoByName[table.tableName]
+            ?: tableInfoCache.get(db, table.tableName)
+        val keyExpr = buildKeyJsonObjectExprHexAware(tableInfo, table.syncKeyColumnName, "existing_row")
+        val payloadExpr = buildJsonObjectExprHexAware(tableInfo, "existing_row")
+        var nextDirtyOrdinal = startingDirtyOrdinal
+        db.prepare(
+            """
+            SELECT $keyExpr, $payloadExpr
+            FROM ${quoteIdent(table.tableName)} existing_row
+            ORDER BY existing_row.${quoteIdent(table.syncKeyColumnName)}
+            """.trimIndent()
+        ).use { st ->
+            while (st.step()) {
+                nextDirtyOrdinal++
+                insertDirtyRow(
+                    db = db,
+                    schemaName = validated.schema,
+                    tableName = table.tableName,
+                    keyJson = st.getText(0),
+                    payload = st.getText(1),
+                    dirtyOrdinal = nextDirtyOrdinal,
+                    statementCache = statementCache,
+                )
+            }
+        }
+        return nextDirtyOrdinal
+    }
+
+    private suspend fun insertDirtyRow(
+        db: SafeSQLiteConnection,
+        schemaName: String,
+        tableName: String,
+        keyJson: String,
+        payload: String,
+        dirtyOrdinal: Long,
+        statementCache: StatementCache? = null,
+    ) {
+        db.withPreparedStatement(
+            sql = """
+                INSERT INTO _sync_dirty_rows(
+                  schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at
+                )
+                VALUES(?, ?, ?, 'INSERT', 0, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+            """.trimIndent(),
+            statementCache = statementCache,
+        ) { st ->
+            st.bindText(1, schemaName)
+            st.bindText(2, tableName)
+            st.bindText(3, keyJson)
+            st.bindText(4, payload)
+            st.bindLong(5, dirtyOrdinal)
+            st.step()
+        }
+    }
+
+    private suspend fun scalarCount(
+        db: SafeSQLiteConnection,
+        sql: String,
+    ): Long {
+        return db.prepare(sql).use { st ->
+            check(st.step())
+            st.getLong(0)
+        }
+    }
+
+    suspend fun clearManagedState(
         db: SafeSQLiteConnection,
         validated: ValidatedConfig,
     ) {
@@ -391,31 +530,21 @@ internal class SyncBootstrapper(
             }
         }
         db.execSQL("DELETE FROM _sync_dirty_rows")
-        db.execSQL("DELETE FROM _sync_push_outbound")
-        db.execSQL("DELETE FROM _sync_push_stage")
-    }
-
-    private suspend fun insertClientIdentity(
-        db: SafeSQLiteConnection,
-        userId: String,
-        sourceId: String,
-        schemaName: String,
-        rebuildRequired: Boolean,
-    ) {
-        db.prepare(
+        db.execSQL("DELETE FROM _sync_outbox_rows")
+        db.execSQL(
             """
-            INSERT INTO _sync_client_state(
-              user_id, source_id, schema_name, next_source_bundle_id, last_bundle_seq_seen, apply_mode, rebuild_required
-            )
-            VALUES(?, ?, ?, 1, 0, 0, ?)
+            UPDATE _sync_outbox_bundle
+            SET state = 'none',
+                source_id = '',
+                source_bundle_id = 0,
+                initialization_id = '',
+                canonical_request_hash = '',
+                row_count = 0,
+                remote_bundle_hash = '',
+                remote_bundle_seq = 0
+            WHERE singleton_key = 1
             """.trimIndent()
-        ).use { st ->
-            st.bindText(1, userId)
-            st.bindText(2, sourceId)
-            st.bindText(3, schemaName)
-            st.bindLong(4, if (rebuildRequired) 1 else 0)
-            st.step()
-        }
+        )
     }
 
     private suspend fun installTriggers(
@@ -448,6 +577,9 @@ internal class SyncBootstrapper(
         )
 
         val triggers = listOf(
+            "trg_${table.tableName}_bi_guard" to guardInsertTriggerSql(table.tableName),
+            "trg_${table.tableName}_bu_guard" to guardUpdateTriggerSql(table.tableName),
+            "trg_${table.tableName}_bd_guard" to guardDeleteTriggerSql(table.tableName),
             "trg_${table.tableName}_ai" to insertTriggerSql(data),
             "trg_${table.tableName}_au" to updateTriggerSql(data),
             "trg_${table.tableName}_ad" to deleteTriggerSql(data),
@@ -491,12 +623,6 @@ internal class SyncBootstrapper(
     }
 }
 
-private data class PersistedClientIdentity(
-    val userId: String,
-    val sourceId: String,
-    val schemaName: String,
-)
-
 private data class TriggerData(
     val schemaName: String,
     val tableName: String,
@@ -529,7 +655,7 @@ private fun normalizeTriggerSql(sql: String): String {
 private fun insertTriggerSql(data: TriggerData): String = """
 CREATE TRIGGER IF NOT EXISTS trg_${data.tableName}_ai
 AFTER INSERT ON ${quoteIdent(data.tableName)}
-WHEN COALESCE((SELECT apply_mode FROM _sync_client_state LIMIT 1), 0) = 0
+WHEN COALESCE((SELECT apply_mode FROM _sync_apply_state WHERE singleton_key = 1), 0) = 0
 BEGIN
   INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at)
   VALUES (
@@ -563,10 +689,70 @@ BEGIN
 END
 """.trimIndent()
 
+private fun guardInsertTriggerSql(tableName: String): String = """
+CREATE TRIGGER IF NOT EXISTS trg_${tableName}_bi_guard
+BEFORE INSERT ON ${quoteIdent(tableName)}
+WHEN EXISTS (
+  SELECT 1
+  FROM _sync_operation_state
+  WHERE singleton_key = 1
+    AND kind != 'none'
+)
+  AND NOT EXISTS (
+    SELECT 1
+    FROM _sync_apply_state
+    WHERE singleton_key = 1
+      AND apply_mode = 1
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'SYNC_TRANSITION_PENDING');
+END
+""".trimIndent()
+
+private fun guardUpdateTriggerSql(tableName: String): String = """
+CREATE TRIGGER IF NOT EXISTS trg_${tableName}_bu_guard
+BEFORE UPDATE ON ${quoteIdent(tableName)}
+WHEN EXISTS (
+  SELECT 1
+  FROM _sync_operation_state
+  WHERE singleton_key = 1
+    AND kind != 'none'
+)
+  AND NOT EXISTS (
+    SELECT 1
+    FROM _sync_apply_state
+    WHERE singleton_key = 1
+      AND apply_mode = 1
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'SYNC_TRANSITION_PENDING');
+END
+""".trimIndent()
+
+private fun guardDeleteTriggerSql(tableName: String): String = """
+CREATE TRIGGER IF NOT EXISTS trg_${tableName}_bd_guard
+BEFORE DELETE ON ${quoteIdent(tableName)}
+WHEN EXISTS (
+  SELECT 1
+  FROM _sync_operation_state
+  WHERE singleton_key = 1
+    AND kind != 'none'
+)
+  AND NOT EXISTS (
+    SELECT 1
+    FROM _sync_apply_state
+    WHERE singleton_key = 1
+      AND apply_mode = 1
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'SYNC_TRANSITION_PENDING');
+END
+""".trimIndent()
+
 private fun updateTriggerSql(data: TriggerData): String = """
 CREATE TRIGGER IF NOT EXISTS trg_${data.tableName}_au
 AFTER UPDATE ON ${quoteIdent(data.tableName)}
-WHEN COALESCE((SELECT apply_mode FROM _sync_client_state LIMIT 1), 0) = 0
+WHEN COALESCE((SELECT apply_mode FROM _sync_apply_state WHERE singleton_key = 1), 0) = 0
 BEGIN
   INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at)
   SELECT
@@ -626,7 +812,7 @@ END
 private fun deleteTriggerSql(data: TriggerData): String = """
 CREATE TRIGGER IF NOT EXISTS trg_${data.tableName}_ad
 AFTER DELETE ON ${quoteIdent(data.tableName)}
-WHEN COALESCE((SELECT apply_mode FROM _sync_client_state LIMIT 1), 0) = 0
+WHEN COALESCE((SELECT apply_mode FROM _sync_apply_state WHERE singleton_key = 1), 0) = 0
 BEGIN
   INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at)
   VALUES (
@@ -686,6 +872,3 @@ internal fun buildKeyJsonObjectExprHexAware(
 }
 
 internal fun quoteIdent(identifier: String): String = "\"${identifier.replace("\"", "\"\"")}\""
-
-@OptIn(ExperimentalUuidApi::class)
-internal fun randomSourceId(): String = Uuid.random().toString()

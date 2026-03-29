@@ -49,13 +49,13 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             val clientB = newClient(dbB, httpB, uploadLimit = 2, downloadLimit = 2)
             val clientC = newClient(dbC, httpC, uploadLimit = 2, downloadLimit = 2)
 
-            clientA.bootstrap(userId = "user-1", sourceId = "device-a").getOrThrow()
-            clientB.bootstrap(userId = "user-1", sourceId = "device-b").getOrThrow()
-            clientC.bootstrap(userId = "user-1", sourceId = "device-c").getOrThrow()
+            clientA.openAndConnect(userId = "user-1").getOrThrow()
+            clientB.openAndConnect(userId = "user-1").getOrThrow()
+            clientC.openAndConnect(userId = "user-1").getOrThrow()
 
-            clientA.hydrate().getOrThrow()
-            clientB.hydrate().getOrThrow()
-            clientC.hydrate().getOrThrow()
+            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientC.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
             insertUser(dbA, "u1", "Ada")
             insertPost(dbA, "p1", "u1", "Ada Post")
@@ -68,11 +68,11 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             assertTrue(server.uploadedChunkCount >= 3)
 
             clientB.pullToStable().getOrThrow()
-            clientC.hydrate().getOrThrow()
+            clientC.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
-            assertEquals(1L, clientA.lastBundleSeqSeen().getOrThrow())
-            assertEquals(1L, clientB.lastBundleSeqSeen().getOrThrow())
-            assertEquals(1L, clientC.lastBundleSeqSeen().getOrThrow())
+            assertEquals(1L, clientA.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(1L, clientB.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(1L, clientC.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals(3L, scalarLong(dbB, "SELECT COUNT(*) FROM users"))
             assertEquals(3L, scalarLong(dbB, "SELECT COUNT(*) FROM posts"))
             assertEquals(3L, scalarLong(dbC, "SELECT COUNT(*) FROM users"))
@@ -93,28 +93,23 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun pullToStable_notifiesUpdatedTablesForPulledBundles() = runTest {
+    fun pullToStable_succeedsWithoutSqliteNowInvalidationBinding() = runTest {
         val server = MockSyncServer()
         val leaderDb = newDb()
         val followerDb = newDb()
         val leaderHttp = server.newHttpClient()
         val followerHttp = server.newHttpClient()
-        val notifiedTables = mutableListOf<Set<String>>()
         try {
             createUsersAndPostsTables(leaderDb)
             createUsersAndPostsTables(followerDb)
 
             val leader = newClient(leaderDb, leaderHttp)
-            val follower = newClient(
-                followerDb,
-                followerHttp,
-                tablesUpdateListener = { notifiedTables += it },
-            )
+            val follower = newClient(followerDb, followerHttp)
 
-            leader.bootstrap(userId = "user-1", sourceId = "leader-device").getOrThrow()
-            follower.bootstrap(userId = "user-1", sourceId = "follower-device").getOrThrow()
-            leader.hydrate().getOrThrow()
-            follower.hydrate().getOrThrow()
+            leader.openAndConnect(userId = "user-1").getOrThrow()
+            follower.openAndConnect(userId = "user-1").getOrThrow()
+            leader.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            follower.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
             insertUser(leaderDb, "u1", "Ada")
             leader.pushPending().getOrThrow()
@@ -122,7 +117,6 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             follower.pullToStable().getOrThrow()
 
             assertEquals("Ada", scalarText(followerDb, "SELECT name FROM users WHERE id = 'u1'"))
-            assertTrue(notifiedTables.contains(setOf("users")))
         } finally {
             leaderHttp.close()
             followerHttp.close()
@@ -143,10 +137,10 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             val clientA = newClient(dbA, server.newHttpClient())
             val clientB = newClient(dbB, server.newHttpClient())
 
-            clientA.bootstrap(userId = "user-1", sourceId = "device-a").getOrThrow()
-            clientB.bootstrap(userId = "user-1", sourceId = "device-b").getOrThrow()
-            clientA.hydrate().getOrThrow()
-            clientB.hydrate().getOrThrow()
+            clientA.openAndConnect(userId = "user-1").getOrThrow()
+            clientB.openAndConnect(userId = "user-1").getOrThrow()
+            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
             insertUser(dbA, "u1", "From A")
             clientA.pushPending().getOrThrow()
@@ -155,11 +149,11 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             clientB.pushPending().getOrThrow()
             clientB.pullToStable().getOrThrow()
 
-            assertEquals(2L, clientB.lastBundleSeqSeen().getOrThrow())
+            assertEquals(2L, clientB.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals("From A", scalarText(dbB, "SELECT name FROM users WHERE id = 'u1'"))
             assertEquals("From B", scalarText(dbB, "SELECT name FROM users WHERE id = 'u2'"))
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
         } finally {
             dbA.close()
             dbB.close()
@@ -184,12 +178,12 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             val clientB = newClient(dbB, httpB)
             val clientC = newClient(dbC, httpC)
 
-            clientA.bootstrap(userId = "user-1", sourceId = "device-a").getOrThrow()
-            clientB.bootstrap(userId = "user-1", sourceId = "device-b").getOrThrow()
-            clientC.bootstrap(userId = "user-1", sourceId = "device-c").getOrThrow()
-            clientA.hydrate().getOrThrow()
-            clientB.hydrate().getOrThrow()
-            clientC.hydrate().getOrThrow()
+            clientA.openAndConnect(userId = "user-1").getOrThrow()
+            clientB.openAndConnect(userId = "user-1").getOrThrow()
+            clientC.openAndConnect(userId = "user-1").getOrThrow()
+            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientC.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
             insertUser(dbA, "u1", "From A")
             clientA.pushPending().getOrThrow()
@@ -204,9 +198,9 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             clientB.pullToStable().getOrThrow()
             clientC.pullToStable().getOrThrow()
 
-            assertEquals(3L, clientA.lastBundleSeqSeen().getOrThrow())
-            assertEquals(3L, clientB.lastBundleSeqSeen().getOrThrow())
-            assertEquals(3L, clientC.lastBundleSeqSeen().getOrThrow())
+            assertEquals(3L, clientA.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(3L, clientB.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(3L, clientC.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals(3L, scalarLong(dbA, "SELECT COUNT(*) FROM users"))
             assertEquals(3L, scalarLong(dbB, "SELECT COUNT(*) FROM users"))
             assertEquals(3L, scalarLong(dbC, "SELECT COUNT(*) FROM users"))
@@ -216,9 +210,9 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             assertEquals(0L, scalarLong(dbA, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             assertEquals(0L, scalarLong(dbC, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbA, "SELECT COUNT(*) FROM _sync_push_outbound"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_push_outbound"))
-            assertEquals(0L, scalarLong(dbC, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(dbA, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            assertEquals(0L, scalarLong(dbC, "SELECT COUNT(*) FROM _sync_outbox_rows"))
         } finally {
             httpA.close()
             httpB.close()
@@ -237,6 +231,8 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
         val httpA = server.newHttpClient()
         val httpB = server.newHttpClient()
         val restartedHttpB = server.newHttpClient()
+        val sourceIdA = "restart-a-source"
+        val sourceIdB = "restart-b-source"
         try {
             createUsersAndPostsTables(dbA)
             createUsersAndPostsTables(dbB)
@@ -244,10 +240,10 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             val clientA = newClient(dbA, httpA)
             val clientB = newClient(dbB, httpB)
 
-            clientA.bootstrap(userId = "user-1", sourceId = "device-a").getOrThrow()
-            clientB.bootstrap(userId = "user-1", sourceId = "device-b").getOrThrow()
-            clientA.hydrate().getOrThrow()
-            clientB.hydrate().getOrThrow()
+            clientA.openAndConnect(userId = "user-1", sourceId = sourceIdA).getOrThrow()
+            clientB.openAndConnect(userId = "user-1", sourceId = sourceIdB).getOrThrow()
+            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
             insertUser(dbA, "u1", "From A")
             clientA.pushPending().getOrThrow()
@@ -256,14 +252,14 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             clientB.pushPending().getOrThrow()
 
             val restartedClientB = newClient(dbB, restartedHttpB)
-            restartedClientB.bootstrap(userId = "user-1", sourceId = "device-b").getOrThrow()
+            restartedClientB.openAndConnect(userId = "user-1", sourceId = sourceIdB).getOrThrow()
             restartedClientB.pullToStable().getOrThrow()
 
-            assertEquals(2L, restartedClientB.lastBundleSeqSeen().getOrThrow())
+            assertEquals(2L, restartedClientB.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals("From A", scalarText(dbB, "SELECT name FROM users WHERE id = 'u1'"))
             assertEquals("From B", scalarText(dbB, "SELECT name FROM users WHERE id = 'u2'"))
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
         } finally {
             httpA.close()
             httpB.close()
@@ -291,12 +287,12 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             val clientB = newClient(dbB, httpB, resolver = ClientWinsResolver)
             val clientC = newClient(dbC, httpC)
 
-            clientA.bootstrap(userId = "user-1", sourceId = "device-a").getOrThrow()
-            clientB.bootstrap(userId = "user-1", sourceId = "device-b").getOrThrow()
-            clientC.bootstrap(userId = "user-1", sourceId = "device-c").getOrThrow()
-            clientA.hydrate().getOrThrow()
-            clientB.hydrate().getOrThrow()
-            clientC.hydrate().getOrThrow()
+            clientA.openAndConnect(userId = "user-1").getOrThrow()
+            clientB.openAndConnect(userId = "user-1").getOrThrow()
+            clientC.openAndConnect(userId = "user-1").getOrThrow()
+            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientC.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
             insertUser(dbA, "u1", "Original")
             clientA.pushPending().getOrThrow()
@@ -315,9 +311,9 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             clientA.pullToStable().getOrThrow()
             clientC.pullToStable().getOrThrow()
 
-            assertEquals(4L, clientA.lastBundleSeqSeen().getOrThrow())
-            assertEquals(4L, clientB.lastBundleSeqSeen().getOrThrow())
-            assertEquals(4L, clientC.lastBundleSeqSeen().getOrThrow())
+            assertEquals(4L, clientA.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(4L, clientB.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(4L, clientC.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals("Client Wins", scalarText(dbA, "SELECT name FROM users WHERE id = 'u1'"))
             assertEquals("Client Wins", scalarText(dbB, "SELECT name FROM users WHERE id = 'u1'"))
             assertEquals("Client Wins", scalarText(dbC, "SELECT name FROM users WHERE id = 'u1'"))
@@ -325,7 +321,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             assertEquals("Peer Row", scalarText(dbB, "SELECT name FROM users WHERE id = 'u2'"))
             assertEquals("Peer Row", scalarText(dbC, "SELECT name FROM users WHERE id = 'u2'"))
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
         } finally {
             httpA.close()
             httpB.close()
@@ -354,12 +350,12 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             val clientB = newClient(dbB, httpB, resolver = Resolver { MergeResult.KeepLocal })
             val observer = newClient(observerDb, observerHttp)
 
-            clientA.bootstrap(userId = "user-1", sourceId = "device-a").getOrThrow()
-            clientB.bootstrap(userId = "user-1", sourceId = "device-b").getOrThrow()
-            observer.bootstrap(userId = "user-1", sourceId = "observer-device").getOrThrow()
-            clientA.hydrate().getOrThrow()
-            clientB.hydrate().getOrThrow()
-            observer.hydrate().getOrThrow()
+            clientA.openAndConnect(userId = "user-1").getOrThrow()
+            clientB.openAndConnect(userId = "user-1").getOrThrow()
+            observer.openAndConnect(userId = "user-1").getOrThrow()
+            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            observer.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
             insertUser(dbA, "u1", "Original")
             clientA.pushPending().getOrThrow()
@@ -373,7 +369,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             clientB.pushPending().getOrThrow()
 
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
             assertEquals("Local Name", scalarText(dbB, "SELECT name FROM users WHERE id = 'u1'"))
             clientB.pullToStable().getOrThrow()
 
@@ -407,12 +403,12 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             val clientB = newClient(dbB, httpB, resolver = updatedAtResolver())
             val observer = newClient(observerDb, observerHttp)
 
-            clientA.bootstrap(userId = "user-1", sourceId = "device-a").getOrThrow()
-            clientB.bootstrap(userId = "user-1", sourceId = "device-b").getOrThrow()
-            observer.bootstrap(userId = "user-1", sourceId = "observer-device").getOrThrow()
-            clientA.hydrate().getOrThrow()
-            clientB.hydrate().getOrThrow()
-            observer.hydrate().getOrThrow()
+            clientA.openAndConnect(userId = "user-1").getOrThrow()
+            clientB.openAndConnect(userId = "user-1").getOrThrow()
+            observer.openAndConnect(userId = "user-1").getOrThrow()
+            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            observer.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
             dbA.execSQL(
                 """
@@ -435,7 +431,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             assertEquals("Local Newer", scalarText(observerDb, "SELECT name FROM users WHERE id = 'u1'"))
             assertEquals("2026-03-24T00:00:20Z", scalarText(observerDb, "SELECT updated_at FROM users WHERE id = 'u1'"))
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
         } finally {
             httpA.close()
             httpB.close()
@@ -464,12 +460,12 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             val clientB = newClient(dbB, httpB, resolver = updatedAtResolver())
             val observer = newClient(observerDb, observerHttp)
 
-            clientA.bootstrap(userId = "user-1", sourceId = "device-a").getOrThrow()
-            clientB.bootstrap(userId = "user-1", sourceId = "device-b").getOrThrow()
-            observer.bootstrap(userId = "user-1", sourceId = "observer-device").getOrThrow()
-            clientA.hydrate().getOrThrow()
-            clientB.hydrate().getOrThrow()
-            observer.hydrate().getOrThrow()
+            clientA.openAndConnect(userId = "user-1").getOrThrow()
+            clientB.openAndConnect(userId = "user-1").getOrThrow()
+            observer.openAndConnect(userId = "user-1").getOrThrow()
+            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            observer.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
             dbA.execSQL(
                 """
@@ -492,7 +488,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             assertEquals("Server Newer", scalarText(observerDb, "SELECT name FROM users WHERE id = 'u1'"))
             assertEquals("2026-03-24T00:00:20Z", scalarText(observerDb, "SELECT updated_at FROM users WHERE id = 'u1'"))
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
         } finally {
             httpA.close()
             httpB.close()
@@ -521,12 +517,12 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             val clientB = newClient(dbB, httpB, resolver = ClientWinsResolver)
             val observer = newClient(observerDb, observerHttp)
 
-            clientA.bootstrap(userId = "user-1", sourceId = "device-a").getOrThrow()
-            clientB.bootstrap(userId = "user-1", sourceId = "device-b").getOrThrow()
-            observer.bootstrap(userId = "user-1", sourceId = "observer-device").getOrThrow()
-            clientA.hydrate().getOrThrow()
-            clientB.hydrate().getOrThrow()
-            observer.hydrate().getOrThrow()
+            clientA.openAndConnect(userId = "user-1").getOrThrow()
+            clientB.openAndConnect(userId = "user-1").getOrThrow()
+            observer.openAndConnect(userId = "user-1").getOrThrow()
+            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            observer.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
             insertUser(dbA, "u1", "Original")
             clientA.pushPending().getOrThrow()
@@ -542,7 +538,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             assertEquals("Client Wins", scalarText(dbB, "SELECT name FROM users WHERE id = 'u1'"))
             assertEquals("Client Wins", scalarText(observerDb, "SELECT name FROM users WHERE id = 'u1'"))
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
         } finally {
             httpA.close()
             httpB.close()
@@ -582,12 +578,12 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             )
             val observer = newClient(observerDb, observerHttp)
 
-            clientA.bootstrap(userId = "user-1", sourceId = "device-a").getOrThrow()
-            clientB.bootstrap(userId = "user-1", sourceId = "device-b").getOrThrow()
-            observer.bootstrap(userId = "user-1", sourceId = "observer-device").getOrThrow()
-            clientA.hydrate().getOrThrow()
-            clientB.hydrate().getOrThrow()
-            observer.hydrate().getOrThrow()
+            clientA.openAndConnect(userId = "user-1").getOrThrow()
+            clientB.openAndConnect(userId = "user-1").getOrThrow()
+            observer.openAndConnect(userId = "user-1").getOrThrow()
+            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            observer.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
             insertUser(dbA, "u1", "Original")
             clientA.pushPending().getOrThrow()
@@ -631,12 +627,12 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             val clientB = newClient(dbB, httpB, resolver = ClientWinsResolver)
             val observer = newClient(observerDb, observerHttp)
 
-            clientA.bootstrap(userId = "user-1", sourceId = "device-a").getOrThrow()
-            clientB.bootstrap(userId = "user-1", sourceId = "device-b").getOrThrow()
-            observer.bootstrap(userId = "user-1", sourceId = "observer-device").getOrThrow()
-            clientA.hydrate().getOrThrow()
-            clientB.hydrate().getOrThrow()
-            observer.hydrate().getOrThrow()
+            clientA.openAndConnect(userId = "user-1").getOrThrow()
+            clientB.openAndConnect(userId = "user-1").getOrThrow()
+            observer.openAndConnect(userId = "user-1").getOrThrow()
+            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            observer.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
             insertUser(dbA, "u1", "Original")
             clientA.pushPending().getOrThrow()
@@ -654,7 +650,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             assertEquals("Client Name", scalarText(observerDb, "SELECT name FROM users WHERE id = 'u1'"))
             assertEquals("Sibling Post", scalarText(observerDb, "SELECT title FROM posts WHERE id = 'p1'"))
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
         } finally {
             httpA.close()
             httpB.close()
@@ -701,10 +697,10 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             val clientA = newClient(dbA, httpA)
             val clientB = newClient(dbB, httpB, resolver = ClientWinsResolver)
 
-            clientA.bootstrap(userId = "user-1", sourceId = "device-a").getOrThrow()
-            clientB.bootstrap(userId = "user-1", sourceId = "device-b").getOrThrow()
-            clientA.hydrate().getOrThrow()
-            clientB.hydrate().getOrThrow()
+            clientA.openAndConnect(userId = "user-1").getOrThrow()
+            clientB.openAndConnect(userId = "user-1").getOrThrow()
+            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
             insertUser(dbA, "u1", "Original")
             clientA.pushPending().getOrThrow()
@@ -719,7 +715,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             exhausted as PushConflictRetryExhaustedException
             assertEquals(2, exhausted.retryCount)
             assertEquals(1, exhausted.remainingDirtyCount)
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
             assertEquals(1L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             assertEquals("Replay Me", scalarText(dbB, "SELECT name FROM users WHERE id = 'u1'"))
 
@@ -728,7 +724,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             clientA.pullToStable().getOrThrow()
 
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
             assertEquals("Replay Me", scalarText(dbA, "SELECT name FROM users WHERE id = 'u1'"))
         } finally {
             httpA.close()
@@ -752,10 +748,10 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             val leader = newClient(leaderDb, leaderHttp, uploadLimit = 2, downloadLimit = 2)
             val follower = newClient(followerDb, followerHttp, uploadLimit = 2, downloadLimit = 2)
 
-            leader.bootstrap(userId = "user-1", sourceId = "leader-device").getOrThrow()
-            follower.bootstrap(userId = "user-1", sourceId = "follower-device").getOrThrow()
-            leader.hydrate().getOrThrow()
-            follower.hydrate().getOrThrow()
+            leader.openAndConnect(userId = "user-1").getOrThrow()
+            follower.openAndConnect(userId = "user-1").getOrThrow()
+            leader.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            follower.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
             insertUser(leaderDb, "u1", "Seed")
             leader.pushPending().getOrThrow()
@@ -763,7 +759,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
 
             val sourceBefore = scalarText(
                 followerDb,
-                "SELECT source_id FROM _sync_client_state WHERE user_id = 'user-1'",
+                "SELECT current_source_id FROM _sync_attachment_state",
             )
 
             updateUserName(leaderDb, "u1", "Latest")
@@ -773,11 +769,11 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             server.retainedBundleFloor = 2
             follower.pullToStable().getOrThrow()
 
-            assertEquals(2L, follower.lastBundleSeqSeen().getOrThrow())
-            assertEquals(sourceBefore, scalarText(followerDb, "SELECT source_id FROM _sync_client_state WHERE user_id = 'user-1'"))
+            assertEquals(2L, follower.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(sourceBefore, scalarText(followerDb, "SELECT current_source_id FROM _sync_attachment_state"))
             assertEquals("Latest", scalarText(followerDb, "SELECT name FROM users WHERE id = 'u1'"))
             assertEquals("Latest Post", scalarText(followerDb, "SELECT title FROM posts WHERE id = 'p1'"))
-            assertEquals(0L, scalarLong(followerDb, "SELECT rebuild_required FROM _sync_client_state WHERE user_id = 'user-1'"))
+            assertEquals(0L, scalarLong(followerDb, "SELECT rebuild_required FROM _sync_attachment_state"))
             assertEquals(0L, scalarLong(followerDb, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
             assertEquals(0L, scalarLong(followerDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
         } finally {
@@ -806,9 +802,9 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             val recoverClient = newClient(recoverDb, recoverHttp)
             val verifyClient = newClient(verifyDb, verifyHttp)
 
-            seedClient.bootstrap(userId = "user-1", sourceId = "seed-device").getOrThrow()
-            recoverClient.bootstrap(userId = "user-1", sourceId = "recover-device").getOrThrow()
-            verifyClient.bootstrap(userId = "user-1", sourceId = "verify-device").getOrThrow()
+            seedClient.openAndConnect(userId = "user-1").getOrThrow()
+            recoverClient.openAndConnect(userId = "user-1").getOrThrow()
+            verifyClient.openAndConnect(userId = "user-1").getOrThrow()
 
             insertUser(seedDb, "u1", "Recover Seed")
             insertPost(seedDb, "p1", "u1", "Recover Seed Post")
@@ -816,16 +812,25 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
 
             val sourceBefore = scalarText(
                 recoverDb,
-                "SELECT source_id FROM _sync_client_state WHERE user_id = 'user-1'",
+                "SELECT current_source_id FROM _sync_attachment_state",
             )
-            recoverClient.recover().getOrThrow()
+            recoverClient.rebuild(
+                mode = RebuildMode.ROTATE_SOURCE,
+                newSourceId = "recover-client-rotated-source",
+            ).getOrThrow()
 
             val sourceAfter = scalarText(
                 recoverDb,
-                "SELECT source_id FROM _sync_client_state WHERE user_id = 'user-1'",
+                "SELECT current_source_id FROM _sync_attachment_state",
             )
             assertNotEquals(sourceBefore, sourceAfter)
-            assertEquals(1L, scalarLong(recoverDb, "SELECT next_source_bundle_id FROM _sync_client_state WHERE user_id = 'user-1'"))
+            assertEquals(
+                1L,
+                scalarLong(
+                    recoverDb,
+                    "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$sourceAfter'",
+                ),
+            )
             assertEquals("Recover Seed", scalarText(recoverDb, "SELECT name FROM users WHERE id = 'u1'"))
             assertEquals("Recover Seed Post", scalarText(recoverDb, "SELECT title FROM posts WHERE id = 'p1'"))
 
@@ -834,7 +839,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             recoverClient.pushPending().getOrThrow()
             verifyClient.pullToStable().getOrThrow()
 
-            assertEquals(2L, verifyClient.lastBundleSeqSeen().getOrThrow())
+            assertEquals(2L, verifyClient.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals(2L, scalarLong(verifyDb, "SELECT COUNT(*) FROM users"))
             assertEquals(2L, scalarLong(verifyDb, "SELECT COUNT(*) FROM posts"))
             assertEquals("Recover Followup", scalarText(verifyDb, "SELECT title FROM posts WHERE id = 'p2'"))

@@ -2,6 +2,7 @@ package dev.goquick.sqlitenow.oversqlite.e2e
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.oversqlite.PushConflictRetryExhaustedException
+import dev.goquick.sqlitenow.oversqlite.RebuildMode
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -16,9 +17,9 @@ class RealServerLongHorizonDivergentWriterStressTest {
         resetRealServerState(config.baseUrl)
 
         val userId = randomUserId()
-        val leaderDevice = randomDeviceId("divergent-leader")
-        val writerDevice = randomDeviceId("divergent-writer")
-        val observerDevice = randomDeviceId("divergent-observer")
+        val leaderDevice = randomSourceId("divergent-leader")
+        val writerDevice = randomSourceId("divergent-writer")
+        val observerDevice = randomSourceId("divergent-observer")
 
         val leaderToken = issueDummySigninToken(config.baseUrl, userId, leaderDevice)
         val writerToken = issueDummySigninToken(config.baseUrl, userId, writerDevice)
@@ -59,12 +60,12 @@ class RealServerLongHorizonDivergentWriterStressTest {
                 downloadLimit = 2,
             )
 
-            leader.bootstrap(userId, leaderDevice).getOrThrow()
-            writer.bootstrap(userId, writerDevice).getOrThrow()
-            observer.bootstrap(userId, observerDevice).getOrThrow()
-            leader.hydrate().getOrThrow()
-            writer.hydrate().getOrThrow()
-            observer.hydrate().getOrThrow()
+            leader.openAndAttach(userId, leaderDevice).getOrThrow()
+            writer.openAndAttach(userId, writerDevice).getOrThrow()
+            observer.openAndAttach(userId, observerDevice).getOrThrow()
+            leader.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            writer.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            observer.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
             val hotGraph = insertHotGraph(leaderDb)
             leader.pushPending().getOrThrow()
@@ -96,24 +97,24 @@ class RealServerLongHorizonDivergentWriterStressTest {
                 assertTrue(error is PushConflictRetryExhaustedException)
                 error as PushConflictRetryExhaustedException
                 remainingDirtyByAttempt += error.remainingDirtyCount.toLong()
-                assertEquals(0L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_push_outbound"))
+                assertEquals(0L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_outbox_rows"))
             }
 
             assertTrue(pushCompleted)
             assertEquals(listOf(6L, 3L), remainingDirtyByAttempt)
             assertEquals(0L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_outbox_rows"))
 
             writer.pullToStable().getOrThrow()
             observer.pullToStable().getOrThrow()
-            assertEquals(7L, observer.lastBundleSeqSeen().getOrThrow())
+            assertEquals(7L, observer.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertHotGraphDrivenCounts(observerDb, rounds)
             assertHotGraphState(observerDb, hotGraph, rounds)
             assertRoundPresence(observerDb, "divergent-leader-6")
             assertForeignKeyIntegrity(observerDb)
             assertEquals(0L, scalarLong(observerDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(7L, writer.lastBundleSeqSeen().getOrThrow())
-            assertEquals(0L, scalarLong(writerDb, "SELECT rebuild_required FROM _sync_client_state WHERE user_id = '$userId'"))
+            assertEquals(7L, writer.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(0L, scalarLong(writerDb, "SELECT rebuild_required FROM _sync_attachment_state"))
             assertHotGraphDrivenCounts(writerDb, rounds)
             assertHotGraphState(writerDb, hotGraph, rounds)
             assertForeignKeyIntegrity(writerDb)
@@ -123,9 +124,9 @@ class RealServerLongHorizonDivergentWriterStressTest {
             leader.pullToStable().getOrThrow()
             observer.pullToStable().getOrThrow()
 
-            assertEquals(8L, leader.lastBundleSeqSeen().getOrThrow())
-            assertEquals(8L, writer.lastBundleSeqSeen().getOrThrow())
-            assertEquals(8L, observer.lastBundleSeqSeen().getOrThrow())
+            assertEquals(8L, leader.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(8L, writer.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(8L, observer.syncStatus().getOrThrow().lastBundleSeqSeen)
 
             assertHotGraphDrivenCounts(leaderDb, rounds, extraRichBatches = 1)
             assertHotGraphDrivenCounts(writerDb, rounds, extraRichBatches = 1)

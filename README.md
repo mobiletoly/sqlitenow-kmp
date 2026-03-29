@@ -192,8 +192,13 @@ val syncClient = db.newOversqliteClient(
     resolver = ServerWinsResolver
 )
 
-// Bootstrap new device
-syncClient.bootstrap(userId = "user123", sourceId = "device456").getOrThrow()
+// Load one app-owned install source id from durable storage.
+val sourceId = loadOrCreateInstallSourceId()
+
+// Open local runtime and attach the authenticated account.
+// If your backend binds auth to source identity, use the same exact sourceId for auth too.
+syncClient.open(sourceId).getOrThrow()
+syncClient.attach(userId = "user123").getOrThrow()
 
 // Perform full sync (upload local changes, download remote changes)
 syncClient.sync().getOrThrow()

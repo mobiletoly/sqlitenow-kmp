@@ -1,6 +1,7 @@
 package dev.goquick.sqlitenow.oversqlite.e2e
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.goquick.sqlitenow.oversqlite.RebuildMode
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -14,8 +15,8 @@ class RealServerStaleFollowerPruneRecoveryStressTest {
         resetRealServerState(config.baseUrl)
 
         val userId = randomUserId()
-        val leaderDevice = randomDeviceId("prune-leader")
-        val followerDevice = randomDeviceId("prune-follower")
+        val leaderDevice = randomSourceId("prune-leader")
+        val followerDevice = randomSourceId("prune-follower")
 
         val leaderToken = issueDummySigninToken(config.baseUrl, userId, leaderDevice)
         val followerToken = issueDummySigninToken(config.baseUrl, userId, followerDevice)
@@ -44,10 +45,10 @@ class RealServerStaleFollowerPruneRecoveryStressTest {
                 downloadLimit = 2,
             )
 
-            leader.bootstrap(userId, leaderDevice).getOrThrow()
-            follower.bootstrap(userId, followerDevice).getOrThrow()
-            leader.hydrate().getOrThrow()
-            follower.hydrate().getOrThrow()
+            leader.openAndAttach(userId, leaderDevice).getOrThrow()
+            follower.openAndAttach(userId, followerDevice).getOrThrow()
+            leader.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            follower.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
             val hotGraph = insertHotGraph(leaderDb)
             leader.pushPending().getOrThrow()
@@ -61,23 +62,23 @@ class RealServerStaleFollowerPruneRecoveryStressTest {
 
                 if (round == 3) {
                     follower.pullToStable().getOrThrow()
-                    assertEquals(4L, follower.lastBundleSeqSeen().getOrThrow())
+                    assertEquals(4L, follower.syncStatus().getOrThrow().lastBundleSeqSeen)
                 }
             }
 
-            val followerSourceIdBefore = scalarText(followerDb, "SELECT source_id FROM _sync_client_state WHERE user_id = '$userId'")
-            val leaderBundleSeq = leader.lastBundleSeqSeen().getOrThrow()
+            val followerSourceIdBefore = scalarText(followerDb, "SELECT current_source_id FROM _sync_attachment_state")
+            val leaderBundleSeq = leader.syncStatus().getOrThrow().lastBundleSeqSeen
             assertEquals(9L, leaderBundleSeq)
 
             setRetainedBundleFloor(config.baseUrl, userId, leaderBundleSeq)
 
             follower.pullToStable().getOrThrow()
 
-            assertEquals(leaderBundleSeq, follower.lastBundleSeqSeen().getOrThrow())
-            assertEquals(followerSourceIdBefore, scalarText(followerDb, "SELECT source_id FROM _sync_client_state WHERE user_id = '$userId'"))
-            assertEquals(0L, scalarLong(followerDb, "SELECT rebuild_required FROM _sync_client_state WHERE user_id = '$userId'"))
+            assertEquals(leaderBundleSeq, follower.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(followerSourceIdBefore, scalarText(followerDb, "SELECT current_source_id FROM _sync_attachment_state"))
+            assertEquals(0L, scalarLong(followerDb, "SELECT rebuild_required FROM _sync_attachment_state"))
             assertEquals(0L, scalarLong(followerDb, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
-            assertEquals(0L, scalarLong(followerDb, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(followerDb, "SELECT COUNT(*) FROM _sync_outbox_rows"))
             assertEquals(0L, scalarLong(followerDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
 
             assertHotGraphDrivenCounts(leaderDb, rounds)

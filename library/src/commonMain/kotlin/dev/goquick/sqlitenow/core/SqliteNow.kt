@@ -152,6 +152,8 @@ open class SqliteNowDatabase private constructor(
                     }
                 }
 
+                c.setTableInvalidationListener(::notifyTablesChanged)
+
                 // Publish only after successful initialization/migrations
                 _conn = c
             } catch (t: Throwable) {
@@ -220,6 +222,7 @@ open class SqliteNowDatabase private constructor(
     suspend fun close() = openCloseMutex.withLock {
         _conn?.let { c ->
             _conn = null
+            c.setTableInvalidationListener(null)
             c.close()
             tableChangeScope.cancel()
         }
@@ -241,6 +244,18 @@ open class SqliteNowDatabase private constructor(
      */
     suspend fun persistSnapshotNow() {
         conn.persistSnapshotNow()
+    }
+
+    /**
+     * Reports out-of-band table changes so reactive queries can re-run.
+     *
+     * This is intended for external writers that mutate tables outside generated SQLiteNow execute
+     * helpers but still want SQLiteNow's reactive flows to observe those changes.
+     *
+     * @throws IllegalStateException if the database is not open
+     */
+    fun reportExternalTableChanges(affectedTables: Set<String>) {
+        conn.reportExternalTableChanges(affectedTables)
     }
 
     private suspend fun ensureBootstrapUserVersion(connection: SafeSQLiteConnection) {

@@ -7,6 +7,7 @@ import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.sqlite.use
 import dev.goquick.sqlitenow.oversqlite.DefaultOversqliteClient
 import dev.goquick.sqlitenow.oversqlite.OversqliteConfig
+import dev.goquick.sqlitenow.oversqlite.OversqliteTransientRetryPolicy
 import dev.goquick.sqlitenow.oversqlite.Resolver
 import dev.goquick.sqlitenow.oversqlite.ServerWinsResolver
 import dev.goquick.sqlitenow.oversqlite.SyncTable
@@ -24,9 +25,14 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assume.assumeTrue
 import java.time.OffsetDateTime
@@ -83,6 +89,12 @@ internal data class RealServerConfig(
     val schema: String,
 )
 
+internal data class InterceptedHttpResponse(
+    val statusCode: Int,
+    val body: String,
+    val contentType: String = "application/json",
+)
+
 internal fun requireRealServerConfig(): RealServerConfig {
     val args = instrumentationArgs()
     val enabled = args.getString("oversqliteRealServer")?.trim().orEmpty()
@@ -104,8 +116,38 @@ private fun instrumentationArgs(): Bundle =
 internal suspend fun newInMemoryDb(debug: Boolean = false): SafeSQLiteConnection =
     BundledSqliteConnectionProvider.openConnection(":memory:", debug)
 
-internal fun newAuthenticatedHttpClient(baseUrl: String, token: String): HttpClient {
+internal fun newAuthenticatedHttpClient(
+    baseUrl: String,
+    token: String,
+    beforeSend: suspend (String) -> Unit = {},
+    afterResponse: suspend (String) -> Unit = {},
+    overrideResponse: (String) -> InterceptedHttpResponse? = { null },
+): HttpClient {
     return HttpClient(OkHttp) {
+        engine {
+            config {
+                addInterceptor { chain ->
+                    val path = chain.request().url.encodedPath
+                    runBlocking {
+                        beforeSend(path)
+                    }
+                    val response =
+                        overrideResponse(path)?.let { intercepted ->
+                            Response.Builder()
+                                .request(chain.request())
+                                .protocol(Protocol.HTTP_1_1)
+                                .code(intercepted.statusCode)
+                                .message("Intercepted")
+                                .body(intercepted.body.toResponseBody(intercepted.contentType.toMediaType()))
+                                .build()
+                        } ?: chain.proceed(chain.request())
+                    runBlocking {
+                        afterResponse(path)
+                    }
+                    response
+                }
+            }
+        }
         install(ContentNegotiation) {
             json(e2eJson)
         }
@@ -116,7 +158,7 @@ internal fun newAuthenticatedHttpClient(baseUrl: String, token: String): HttpCli
     }
 }
 
-internal suspend fun issueDummySigninToken(baseUrl: String, userId: String, deviceId: String): String {
+internal suspend fun issueDummySigninToken(baseUrl: String, userId: String, sourceId: String): String {
     val http = HttpClient(OkHttp) {
         install(ContentNegotiation) {
             json(e2eJson)
@@ -128,7 +170,7 @@ internal suspend fun issueDummySigninToken(baseUrl: String, userId: String, devi
     return try {
         http.post("/dummy-signin") {
             header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
-            setBody(DummySigninRequest(user = userId, password = "anything", device = deviceId))
+            setBody(DummySigninRequest(user = userId, password = "anything", device = sourceId))
         }.body<DummySigninResponse>().token
     } finally {
         http.close()
@@ -216,6 +258,26 @@ internal suspend fun createBusinessSubsetTables(db: SafeSQLiteConnection) {
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
+        """.trimIndent()
+    )
+}
+
+internal suspend fun insertBusinessUserAndPost(
+    db: SafeSQLiteConnection,
+    userId: String,
+    postId: String,
+    suffix: String,
+) {
+    db.execSQL(
+        """
+        INSERT INTO users(id, name, email)
+        VALUES('$userId', 'User $suffix', '$suffix@example.com')
+        """.trimIndent()
+    )
+    db.execSQL(
+        """
+        INSERT INTO posts(id, title, content, author_id)
+        VALUES('$postId', 'Title $suffix', 'Payload $suffix', '$userId')
         """.trimIndent()
     )
 }
@@ -318,7 +380,7 @@ internal suspend fun createBusinessIntegerKeyTables(db: SafeSQLiteConnection) {
 internal fun randomUserId(prefix: String = "oversqlite-e2e-user"): String =
     "$prefix-${UUID.randomUUID()}"
 
-internal fun randomDeviceId(prefix: String = "device"): String =
+internal fun randomSourceId(prefix: String = "source"): String =
     "$prefix-${UUID.randomUUID()}"
 
 internal fun randomRowId(): String =
@@ -887,6 +949,7 @@ internal fun newRealServerClient(
     ),
     uploadLimit: Int = 200,
     downloadLimit: Int = 1000,
+    transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy(),
     resolver: Resolver = ServerWinsResolver,
 ): DefaultOversqliteClient {
     return newRealServerClient(
@@ -897,6 +960,7 @@ internal fun newRealServerClient(
             uploadLimit = uploadLimit,
             downloadLimit = downloadLimit,
             syncTables = syncTables,
+            transientRetryPolicy = transientRetryPolicy,
         ),
         resolver = resolver,
     )
@@ -913,7 +977,6 @@ internal fun newRealServerClient(
         config = oversqliteConfig,
         http = http,
         resolver = resolver,
-        tablesUpdateListener = { },
     )
 }
 

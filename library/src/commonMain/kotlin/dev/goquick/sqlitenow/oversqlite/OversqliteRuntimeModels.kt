@@ -19,6 +19,7 @@ internal data class RuntimeState(
     val validated: ValidatedConfig,
     val userId: String,
     val sourceId: String,
+    val pendingInitializationId: String = "",
 )
 
 internal data class DirtySnapshotRow(
@@ -59,6 +60,22 @@ internal data class PreparedPush(
 internal data class PushOutboundSnapshot(
     val sourceBundleId: Long,
     val rows: List<DirtyRowCapture>,
+    val canonicalRows: List<OversqliteOutboxRow>,
+    val canonicalRequestHash: String,
+    val remoteBundleSeq: Long = 0,
+    val remoteBundleHash: String = "",
+)
+
+internal val PushOutboundSnapshot.isRemoteCommitted: Boolean
+    get() = remoteBundleSeq > 0L && remoteBundleHash.isNotBlank()
+
+internal data class CanonicalOutboxComparableRow(
+    val rowOrdinal: Long,
+    val schemaName: String,
+    val tableName: String,
+    val wireKey: SyncKey,
+    val op: String,
+    val wirePayload: String?,
 )
 
 internal data class CommittedPushBundle(
@@ -67,9 +84,10 @@ internal data class CommittedPushBundle(
     val sourceBundleId: Long,
     val rowCount: Long,
     val bundleHash: String,
+    val requiresStrictOutboxMatch: Boolean = false,
 )
 
-internal data class StagedPushBundleRow(
+internal data class CommittedReplayRow(
     val schemaName: String,
     val tableName: String,
     val keyJson: String,

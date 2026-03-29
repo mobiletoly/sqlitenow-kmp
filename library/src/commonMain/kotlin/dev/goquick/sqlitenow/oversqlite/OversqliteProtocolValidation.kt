@@ -186,6 +186,7 @@ internal fun committedPushBundleFromCreateResponse(
         sourceBundleId = response.sourceBundleId,
         rowCount = response.rowCount,
         bundleHash = response.bundleHash,
+        requiresStrictOutboxMatch = true,
     )
 }
 

@@ -25,6 +25,8 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -62,16 +64,46 @@ suspend fun ensureSampleSyncServer(baseUrl: String) {
     }
 }
 
-// Fetches JWT from the example server's /dummy-signin endpoint.
-suspend fun fetchJwt(baseUrl: String, user: String, device: String, password: String = "demo"): String {
-    ensureSampleSyncServer(baseUrl)
+private suspend fun requestJwtToken(
+    baseUrl: String,
+    user: String,
+    sourceId: String,
+    password: String,
+): String {
     val http = HttpClient {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
     }
-    val resp: SigninResponse = http.post("$baseUrl/dummy-signin") {
-        contentType(ContentType.Application.Json)
-        setBody(SigninRequest(user, password, device))
-    }.body()
-    http.close()
-    return resp.token
+    return try {
+        val resp: SigninResponse = http.post("$baseUrl/dummy-signin") {
+            contentType(ContentType.Application.Json)
+            setBody(SigninRequest(user, password, sourceId))
+        }.body()
+        resp.token
+    } finally {
+        http.close()
+    }
+}
+
+// Fetches JWT from the example server's /dummy-signin endpoint.
+suspend fun fetchJwt(baseUrl: String, user: String, sourceId: String, password: String = "demo"): String {
+    ensureSampleSyncServer(baseUrl)
+    return requestJwtToken(
+        baseUrl = baseUrl,
+        user = user,
+        sourceId = sourceId,
+        password = password,
+    )
+}
+
+// Refresh needs to outlive the failed request scope; otherwise nested network calls can inherit
+// a completed parent job from the original 401 response path.
+suspend fun refreshJwt(baseUrl: String, user: String, sourceId: String, password: String = "demo"): String {
+    return withContext(NonCancellable) {
+        requestJwtToken(
+            baseUrl = baseUrl,
+            user = user,
+            sourceId = sourceId,
+            password = password,
+        )
+    }
 }

@@ -54,6 +54,7 @@ data class PushSessionCreateRequest(
     @SerialName("source_id") val sourceId: String,
     @SerialName("source_bundle_id") val sourceBundleId: Long,
     @SerialName("planned_row_count") val plannedRowCount: Long,
+    @SerialName("initialization_id") val initializationId: String? = null,
 )
 
 @Serializable
@@ -67,6 +68,20 @@ data class PushSessionCreateResponse(
     @SerialName("source_bundle_id") val sourceBundleId: Long = 0,
     @SerialName("row_count") val rowCount: Long = 0,
     @SerialName("bundle_hash") val bundleHash: String = "",
+)
+
+@Serializable
+data class ConnectRequest(
+    @SerialName("source_id") val sourceId: String,
+    @SerialName("has_local_pending_rows") val hasLocalPendingRows: Boolean,
+)
+
+@Serializable
+data class ConnectResponse(
+    val resolution: String,
+    @SerialName("initialization_id") val initializationId: String = "",
+    @SerialName("lease_expires_at") val leaseExpiresAt: String = "",
+    @SerialName("retry_after_seconds") val retryAfterSeconds: Int = 0,
 )
 
 @Serializable
@@ -107,6 +122,32 @@ data class PullResponse(
     @SerialName("stable_bundle_seq") val stableBundleSeq: Long,
     val bundles: List<Bundle>,
     @SerialName("has_more") val hasMore: Boolean,
+)
+
+@Serializable
+data class CapabilitiesResponse(
+    @SerialName("protocol_version") val protocolVersion: String = "",
+    @SerialName("schema_version") val schemaVersion: Int = 0,
+    val features: Map<String, Boolean> = emptyMap(),
+    @SerialName("bundle_limits") val bundleLimits: BundleCapabilitiesLimits? = null,
+)
+
+@Serializable
+data class BundleCapabilitiesLimits(
+    @SerialName("max_rows_per_bundle") val maxRowsPerBundle: Int = 0,
+    @SerialName("max_bytes_per_bundle") val maxBytesPerBundle: Int = 0,
+    @SerialName("max_bundles_per_pull") val maxBundlesPerPull: Int = 0,
+    @SerialName("default_rows_per_push_chunk") val defaultRowsPerPushChunk: Int = 0,
+    @SerialName("max_rows_per_push_chunk") val maxRowsPerPushChunk: Int = 0,
+    @SerialName("push_session_ttl_seconds") val pushSessionTtlSeconds: Int = 0,
+    @SerialName("default_rows_per_committed_bundle_chunk") val defaultRowsPerCommittedBundleChunk: Int = 0,
+    @SerialName("max_rows_per_committed_bundle_chunk") val maxRowsPerCommittedBundleChunk: Int = 0,
+    @SerialName("default_rows_per_snapshot_chunk") val defaultRowsPerSnapshotChunk: Int = 0,
+    @SerialName("max_rows_per_snapshot_chunk") val maxRowsPerSnapshotChunk: Int = 0,
+    @SerialName("snapshot_session_ttl_seconds") val snapshotSessionTtlSeconds: Int = 0,
+    @SerialName("max_rows_per_snapshot_session") val maxRowsPerSnapshotSession: Long = 0,
+    @SerialName("max_bytes_per_snapshot_session") val maxBytesPerSnapshotSession: Long = 0,
+    @SerialName("initialization_lease_ttl_seconds") val initializationLeaseTtlSeconds: Int = 0,
 )
 
 @Serializable
@@ -161,6 +202,12 @@ data class PushConflictResponse(
     val conflict: PushConflictDetails? = null,
 )
 
+/**
+ * Static oversqlite client configuration.
+ *
+ * This config is lifecycle-neutral: it describes the local schema and runtime behavior, but it
+ * does not bind a user or source identity up front.
+ */
 data class OversqliteConfig(
     val schema: String,
     val syncTables: List<SyncTable>,
@@ -168,10 +215,25 @@ data class OversqliteConfig(
     val downloadLimit: Int = 1000,
     val snapshotChunkRows: Int = 1000,
     val verboseLogs: Boolean = false,
+    val transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy(),
 )
 
+/**
+ * Declares one sync-managed local table.
+ *
+ * Exactly one visible local primary-key column must be exposed as the sync key, either via
+ * [syncKeyColumnName] or [syncKeyColumns]. The runtime currently expects exactly one key column.
+ */
 data class SyncTable(
     val tableName: String,
     val syncKeyColumnName: String? = null,
     val syncKeyColumns: List<String> = emptyList(),
+)
+
+/** Bounded transient retry policy for transport/availability failures. */
+data class OversqliteTransientRetryPolicy(
+    val maxAttempts: Int = 3,
+    val initialBackoffMillis: Long = 150,
+    val maxBackoffMillis: Long = 1_500,
+    val jitterRatio: Double = 0.2,
 )

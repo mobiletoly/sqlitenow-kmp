@@ -491,28 +491,10 @@ class DatabaseCodeGenerator(
                     .addStatement("val cfg = buildOversqliteConfig(schema, uploadLimit, downloadLimit, verboseLogs)")
                     .apply {
                         val clientClass = ClassName("dev.goquick.sqlitenow.oversqlite", "DefaultOversqliteClient")
-                        if (debug) {
-                            addStatement(
-                                """
-                                    return %T(
-                                        db = this.connection(),
-                                        config = cfg,
-                                        http = httpClient,
-                                        resolver = resolver,
-                                        tablesUpdateListener = { tables ->
-                                            sqliteNowLogger.d { "notifyTablesChanged -> " + tables.joinToString(", ") }
-                                            notifyTablesChanged(tables)
-                                        }
-                                    )
-                                """.trimIndent(),
-                                clientClass,
-                            )
-                        } else {
-                            addStatement(
-                                "return %T(db = this.connection(), config = cfg, http = httpClient, resolver = resolver, tablesUpdateListener = { notifyTablesChanged(it) })",
-                                clientClass,
-                            )
-                        }
+                        addStatement(
+                            "return %T(db = this.connection(), config = cfg, http = httpClient, resolver = resolver)",
+                            clientClass,
+                        )
                     }
                     .build()
             )

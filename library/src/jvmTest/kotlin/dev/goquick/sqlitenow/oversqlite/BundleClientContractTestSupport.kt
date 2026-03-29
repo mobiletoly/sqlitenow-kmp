@@ -49,18 +49,70 @@ open class BundleClientContractTestSupport {
         http: HttpClient,
         syncTables: List<SyncTable>,
         uploadLimit: Int = 200,
+        transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy(),
         resolver: Resolver = ServerWinsResolver,
     ): DefaultOversqliteClient {
         return DefaultOversqliteClient(
             db = db,
-            config = OversqliteConfig(schema = "main", syncTables = syncTables, uploadLimit = uploadLimit),
+            config = OversqliteConfig(
+                schema = "main",
+                syncTables = syncTables,
+                uploadLimit = uploadLimit,
+                transientRetryPolicy = transientRetryPolicy,
+            ),
             http = http,
             resolver = resolver,
-            tablesUpdateListener = { }
         )
     }
 
-    protected fun newServer(): HttpServer = HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
+    protected fun newServer(): HttpServer {
+        val server = HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/sync/capabilities") { exchange ->
+            if (exchange.requestMethod != "GET") {
+                exchange.sendResponseHeaders(405, -1)
+                exchange.close()
+                return@createContext
+            }
+            respondJson(
+                exchange,
+                200,
+                json.encodeToString(
+                    CapabilitiesResponse.serializer(),
+                    CapabilitiesResponse(
+                        protocolVersion = "v1",
+                        schemaVersion = 1,
+                        features = mapOf("connect_lifecycle" to true),
+                    ),
+                ),
+            )
+        }
+        server.createContext("/sync/connect") { exchange ->
+            if (exchange.requestMethod != "POST") {
+                exchange.sendResponseHeaders(405, -1)
+                exchange.close()
+                return@createContext
+            }
+            val request = json.decodeFromString(
+                ConnectRequest.serializer(),
+                exchange.requestBody.readBytes().decodeToString(),
+            )
+            val response = if (request.hasLocalPendingRows) {
+                ConnectResponse(
+                    resolution = "initialize_local",
+                    initializationId = "init-connect",
+                    leaseExpiresAt = "2099-01-01T00:00:00Z",
+                )
+            } else {
+                ConnectResponse(resolution = "initialize_empty")
+            }
+            respondJson(
+                exchange,
+                200,
+                json.encodeToString(ConnectResponse.serializer(), response),
+            )
+        }
+        return server
+    }
 
     protected fun newHttpClient(server: HttpServer): HttpClient =
         HttpClient(CIO) {
@@ -125,6 +177,29 @@ open class BundleClientContractTestSupport {
               id TEXT PRIMARY KEY NOT NULL,
               user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
               title TEXT NOT NULL
+            )
+            """.trimIndent()
+        )
+    }
+
+    protected suspend fun createActivityProgramTables(db: SafeSQLiteConnection) {
+        db.execSQL("CREATE TABLE activity (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL)")
+        db.execSQL(
+            """
+            CREATE TABLE program_item (
+              id TEXT PRIMARY KEY NOT NULL,
+              activity_id TEXT NOT NULL REFERENCES activity(id),
+              title TEXT NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE daily_log (
+              id TEXT PRIMARY KEY NOT NULL,
+              activity_id TEXT NOT NULL REFERENCES activity(id),
+              program_item_id TEXT NOT NULL REFERENCES program_item(id),
+              notes TEXT NOT NULL
             )
             """.trimIndent()
         )
@@ -283,6 +358,182 @@ open class BundleClientContractTestSupport {
         )
     }
 
+    protected suspend fun createSyncMetadataTables(db: SafeSQLiteConnection) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS _sync_apply_state (
+              singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),
+              apply_mode INTEGER NOT NULL DEFAULT 0
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            INSERT INTO _sync_apply_state(singleton_key, apply_mode)
+            VALUES(1, 0)
+            ON CONFLICT(singleton_key) DO NOTHING
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS _sync_row_state (
+              schema_name TEXT NOT NULL,
+              table_name TEXT NOT NULL,
+              key_json TEXT NOT NULL,
+              row_version INTEGER NOT NULL DEFAULT 0,
+              deleted INTEGER NOT NULL DEFAULT 0,
+              updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+              PRIMARY KEY (schema_name, table_name, key_json)
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS _sync_dirty_rows (
+              schema_name TEXT NOT NULL,
+              table_name TEXT NOT NULL,
+              key_json TEXT NOT NULL,
+              op TEXT NOT NULL CHECK (op IN ('INSERT','UPDATE','DELETE')),
+              base_row_version INTEGER NOT NULL DEFAULT 0,
+              payload TEXT,
+              dirty_ordinal INTEGER NOT NULL DEFAULT 0,
+              updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+              PRIMARY KEY (schema_name, table_name, key_json)
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_sync_dirty_rows_dirty_ordinal ON _sync_dirty_rows(dirty_ordinal)")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS _sync_snapshot_stage (
+              snapshot_id TEXT NOT NULL,
+              row_ordinal INTEGER NOT NULL,
+              schema_name TEXT NOT NULL,
+              table_name TEXT NOT NULL,
+              key_json TEXT NOT NULL,
+              row_version INTEGER NOT NULL,
+              payload TEXT NOT NULL,
+              PRIMARY KEY (snapshot_id, row_ordinal)
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS _sync_source_state (
+              source_id TEXT NOT NULL PRIMARY KEY,
+              next_source_bundle_id INTEGER NOT NULL DEFAULT 1,
+              replaced_by_source_id TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS _sync_attachment_state (
+              singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),
+              current_source_id TEXT NOT NULL DEFAULT '',
+              binding_state TEXT NOT NULL DEFAULT 'anonymous' CHECK (binding_state IN ('anonymous', 'attached')),
+              attached_user_id TEXT NOT NULL DEFAULT '',
+              schema_name TEXT NOT NULL DEFAULT '',
+              last_bundle_seq_seen INTEGER NOT NULL DEFAULT 0,
+              rebuild_required INTEGER NOT NULL DEFAULT 0,
+              pending_initialization_id TEXT NOT NULL DEFAULT ''
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            INSERT INTO _sync_attachment_state(
+              singleton_key,
+              current_source_id,
+              binding_state,
+              attached_user_id,
+              schema_name,
+              last_bundle_seq_seen,
+              rebuild_required,
+              pending_initialization_id
+            )
+            VALUES (1, '', 'anonymous', '', '', 0, 0, '')
+            ON CONFLICT(singleton_key) DO NOTHING
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS _sync_operation_state (
+              singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),
+              kind TEXT NOT NULL DEFAULT 'none' CHECK (kind IN ('none', 'remote_replace')),
+              target_user_id TEXT NOT NULL DEFAULT '',
+              staged_snapshot_id TEXT NOT NULL DEFAULT '',
+              snapshot_bundle_seq INTEGER NOT NULL DEFAULT 0,
+              snapshot_row_count INTEGER NOT NULL DEFAULT 0
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            INSERT INTO _sync_operation_state(
+              singleton_key,
+              kind,
+              target_user_id,
+              staged_snapshot_id,
+              snapshot_bundle_seq,
+              snapshot_row_count
+            )
+            VALUES (1, 'none', '', '', 0, 0)
+            ON CONFLICT(singleton_key) DO NOTHING
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS _sync_outbox_bundle (
+              singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),
+              state TEXT NOT NULL DEFAULT 'none' CHECK (state IN ('none', 'prepared', 'committed_remote')),
+              source_id TEXT NOT NULL DEFAULT '',
+              source_bundle_id INTEGER NOT NULL DEFAULT 0,
+              initialization_id TEXT NOT NULL DEFAULT '',
+              canonical_request_hash TEXT NOT NULL DEFAULT '',
+              row_count INTEGER NOT NULL DEFAULT 0,
+              remote_bundle_hash TEXT NOT NULL DEFAULT '',
+              remote_bundle_seq INTEGER NOT NULL DEFAULT 0
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            INSERT INTO _sync_outbox_bundle(
+              singleton_key,
+              state,
+              source_id,
+              source_bundle_id,
+              initialization_id,
+              canonical_request_hash,
+              row_count,
+              remote_bundle_hash,
+              remote_bundle_seq
+            )
+            VALUES (1, 'none', '', 0, '', '', 0, '', 0)
+            ON CONFLICT(singleton_key) DO NOTHING
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS _sync_outbox_rows (
+              source_bundle_id INTEGER NOT NULL,
+              row_ordinal INTEGER NOT NULL,
+              schema_name TEXT NOT NULL,
+              table_name TEXT NOT NULL,
+              key_json TEXT NOT NULL,
+              wire_key_json TEXT NOT NULL,
+              op TEXT NOT NULL CHECK (op IN ('INSERT','UPDATE','DELETE')),
+              base_row_version INTEGER NOT NULL DEFAULT 0,
+              local_payload TEXT,
+              wire_payload TEXT,
+              PRIMARY KEY (source_bundle_id, row_ordinal)
+            )
+            """.trimIndent()
+        )
+    }
+
     protected suspend fun scalarLong(db: SafeSQLiteConnection, sql: String): Long {
         return db.prepare(sql).use { st ->
             check(st.step())
@@ -420,9 +671,12 @@ open class BundleClientContractTestSupport {
 
         var nextBundleSeq = 1L
         var commitError: ((Long, Int) -> Pair<Int, String>?)? = null
+        var committedBundleChunkError: ((Long, Long?) -> Pair<Int, String>?)? = null
         var bundleChunkOverride: ((StoredBundle, Long?, Int) -> CommittedBundleRowsResponse)? = null
         var beforeCreateSessionResponse: (() -> Unit)? = null
+        var beforeCommitResponse: ((Long, Int) -> Unit)? = null
         var beforeCommittedBundleChunkResponse: ((Long, Long?) -> Unit)? = null
+        var beforePullResponse: ((Long, Long) -> Unit)? = null
 
         private val sessionsById = linkedMapOf<String, SessionState>()
         private val appliedBySourceBundleId = linkedMapOf<Pair<String, Long>, StoredBundle>()
@@ -516,6 +770,7 @@ open class BundleClientContractTestSupport {
                             respondJson(exchange, status, body)
                             return@createContext
                         }
+                        beforeCommitResponse?.invoke(session.sourceBundleId, session.rows.size)
 
                         val existing = appliedBySourceBundleId[session.sourceId to session.sourceBundleId]
                         if (existing != null) {
@@ -589,9 +844,13 @@ open class BundleClientContractTestSupport {
             server.createContext("/sync/committed-bundles/") { exchange ->
                 val path = exchange.requestURI.path.removePrefix("/sync/committed-bundles/")
                 val bundleSeq = path.substringBefore('/').toLong()
-                val bundle = bundles.first { it.bundleSeq == bundleSeq }
                 val afterRowOrdinal = queryParam(exchange, "after_row_ordinal").toLongOrNull()
                 val maxRows = queryParam(exchange, "max_rows").toIntOrNull() ?: 1000
+                committedBundleChunkError?.invoke(bundleSeq, afterRowOrdinal)?.let { (status, body) ->
+                    respondJson(exchange, status, body)
+                    return@createContext
+                }
+                val bundle = bundles.first { it.bundleSeq == bundleSeq }
                 beforeCommittedBundleChunkResponse?.invoke(bundleSeq, afterRowOrdinal)
                 val response = bundleChunkOverride?.invoke(bundle, afterRowOrdinal, maxRows)
                     ?: buildCommittedBundleChunk(bundle, afterRowOrdinal, maxRows)
@@ -607,6 +866,7 @@ open class BundleClientContractTestSupport {
                 val targetBundleSeq = queryParam(exchange, "target_bundle_seq").toLongOrNull() ?: 0L
                 val stableBundleSeq = bundles.maxOfOrNull { it.bundleSeq } ?: 0L
                 val ceiling = if (targetBundleSeq > 0) targetBundleSeq else stableBundleSeq
+                beforePullResponse?.invoke(afterBundleSeq, stableBundleSeq)
                 val responseBundles = bundles
                     .filter { it.bundleSeq > afterBundleSeq && it.bundleSeq <= ceiling }
                     .map { stored ->

@@ -29,5 +29,5 @@ object AuthPrefs {
 object AuthKeys {
     const val Username = "username"
     const val Token = "token"
-    const val DeviceId = "device_id"
+    const val SourceId = "source_id"
 }

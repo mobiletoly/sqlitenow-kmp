@@ -93,6 +93,20 @@ class SyncKeyColumnNameAnnotationTest {
             generatedContent.contains("OversqliteConfig(schema, syncTables"),
             "buildOversqliteConfig should use syncTables parameter"
         )
+        assertTrue(
+            generatedContent.contains("fun newOversqliteClient("),
+            "Should generate newOversqliteClient helper for sync-enabled databases"
+        )
+        assertTrue(
+            generatedContent.contains(
+                "return DefaultOversqliteClient(db = this.connection(), config = cfg, http = httpClient, resolver = resolver)"
+            ),
+            "Generated oversqlite helper should bind directly to the database connection without callback glue"
+        )
+        assertTrue(
+            !generatedContent.contains("tablesUpdateListener"),
+            "Generated oversqlite helper should not emit tablesUpdateListener wiring"
+        )
     }
 
     @Test

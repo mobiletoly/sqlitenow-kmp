@@ -14,8 +14,8 @@ class RealServerChunkedPushTransportTest {
         resetRealServerState(config.baseUrl)
 
         val userId = randomUserId()
-        val deviceA = randomDeviceId("chunk-a")
-        val deviceB = randomDeviceId("chunk-b")
+        val deviceA = randomSourceId("chunk-a")
+        val deviceB = randomSourceId("chunk-b")
         val uploadLimit = 4
         val insertedPairs = 7
 
@@ -44,8 +44,8 @@ class RealServerChunkedPushTransportTest {
                 downloadLimit = 2,
             )
 
-            clientA.bootstrap(userId, deviceA).getOrThrow()
-            clientB.bootstrap(userId, deviceB).getOrThrow()
+            clientA.openAndAttach(userId, deviceA).getOrThrow()
+            clientB.openAndAttach(userId, deviceB).getOrThrow()
 
             insertUserAndPostBatch(
                 db = dbA,
@@ -71,8 +71,8 @@ class RealServerChunkedPushTransportTest {
                     "SELECT COUNT(*) FROM posts WHERE title = 'Chunked title offline-large-6' AND content = 'Chunked payload offline-large-6'"
                 )
             )
-            assertEquals(1L, clientA.lastBundleSeqSeen().getOrThrow())
-            assertEquals(1L, clientB.lastBundleSeqSeen().getOrThrow())
+            assertEquals(1L, clientA.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(1L, clientB.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals(0L, scalarLong(dbA, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
         } finally {

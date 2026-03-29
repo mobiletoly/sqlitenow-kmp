@@ -14,8 +14,8 @@ class RealServerStressTest {
         resetRealServerState(config.baseUrl)
 
         val userId = randomUserId()
-        val deviceA = randomDeviceId("stress-a")
-        val deviceB = randomDeviceId("stress-b")
+        val deviceA = randomSourceId("stress-a")
+        val deviceB = randomSourceId("stress-b")
 
         val tokenA = issueDummySigninToken(config.baseUrl, userId, deviceA)
         val tokenB = issueDummySigninToken(config.baseUrl, userId, deviceB)
@@ -42,8 +42,8 @@ class RealServerStressTest {
                 downloadLimit = 2,
             )
 
-            clientA.bootstrap(userId, deviceA).getOrThrow()
-            clientB.bootstrap(userId, deviceB).getOrThrow()
+            clientA.openAndAttach(userId, deviceA).getOrThrow()
+            clientB.openAndAttach(userId, deviceB).getOrThrow()
 
             repeat(6) { batch ->
                 insertUserAndPostBatch(
@@ -64,7 +64,7 @@ class RealServerStressTest {
                 1L,
                 scalarLong(dbB, "SELECT COUNT(*) FROM posts WHERE title = 'A title seed-a-5-4' AND content = 'A payload seed-a-5-4'")
             )
-            assertEquals(6L, clientB.lastBundleSeqSeen().getOrThrow())
+            assertEquals(6L, clientB.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
 
             repeat(4) { batch ->
@@ -92,8 +92,8 @@ class RealServerStressTest {
                 1L,
                 scalarLong(dbB, "SELECT COUNT(*) FROM posts WHERE title = 'B title seed-b-3-4' AND content = 'B payload seed-b-3-4'")
             )
-            assertEquals(10L, clientA.lastBundleSeqSeen().getOrThrow())
-            assertEquals(10L, clientB.lastBundleSeqSeen().getOrThrow())
+            assertEquals(10L, clientA.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(10L, clientB.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals(0L, scalarLong(dbA, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
         } finally {

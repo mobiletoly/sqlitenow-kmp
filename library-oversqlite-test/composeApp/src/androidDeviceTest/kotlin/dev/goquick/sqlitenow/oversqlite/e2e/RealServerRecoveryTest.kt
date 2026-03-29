@@ -1,6 +1,7 @@
 package dev.goquick.sqlitenow.oversqlite.e2e
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.goquick.sqlitenow.oversqlite.RebuildMode
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -15,9 +16,9 @@ class RealServerRecoveryTest {
         resetRealServerState(config.baseUrl)
 
         val userId = randomUserId()
-        val seedDevice = randomDeviceId("recover-seed")
-        val recoverDevice = randomDeviceId("recover-target")
-        val verifyDevice = randomDeviceId("recover-verify")
+        val seedDevice = randomSourceId("recover-seed")
+        val recoverDevice = randomSourceId("recover-target")
+        val verifyDevice = randomSourceId("recover-verify")
 
         val seedToken = issueDummySigninToken(config.baseUrl, userId, seedDevice)
         val recoverToken = issueDummySigninToken(config.baseUrl, userId, recoverDevice)
@@ -37,9 +38,9 @@ class RealServerRecoveryTest {
             val recoverClient = newRealServerClient(recoverDb, config, recoverHttp)
             val verifyClient = newRealServerClient(verifyDb, config, verifyHttp)
 
-            seedClient.bootstrap(userId, seedDevice).getOrThrow()
-            recoverClient.bootstrap(userId, recoverDevice).getOrThrow()
-            verifyClient.bootstrap(userId, verifyDevice).getOrThrow()
+            seedClient.openAndAttach(userId, seedDevice).getOrThrow()
+            recoverClient.openAndAttach(userId, recoverDevice).getOrThrow()
+            verifyClient.openAndAttach(userId, verifyDevice).getOrThrow()
 
             val authorId = randomRowId()
             val postId = randomRowId()
@@ -59,20 +60,23 @@ class RealServerRecoveryTest {
 
             val sourceBefore = scalarText(
                 recoverDb,
-                "SELECT source_id FROM _sync_client_state WHERE user_id = '$userId'",
+                "SELECT current_source_id FROM _sync_attachment_state",
             )
-            recoverClient.recover().getOrThrow()
+            recoverClient.rebuild(
+                mode = RebuildMode.ROTATE_SOURCE,
+                newSourceId = randomSourceId("recover-rotated"),
+            ).getOrThrow()
 
             val sourceAfter = scalarText(
                 recoverDb,
-                "SELECT source_id FROM _sync_client_state WHERE user_id = '$userId'",
+                "SELECT current_source_id FROM _sync_attachment_state",
             )
             assertNotEquals(sourceBefore, sourceAfter)
             assertEquals(
                 1L,
                 scalarLong(
                     recoverDb,
-                    "SELECT next_source_bundle_id FROM _sync_client_state WHERE user_id = '$userId'",
+                    "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$sourceAfter'",
                 ),
             )
             assertEquals("Recover Seed", scalarText(recoverDb, "SELECT name FROM users WHERE id = '$authorId'"))
@@ -85,7 +89,7 @@ class RealServerRecoveryTest {
             val rotatedToken = issueDummySigninToken(config.baseUrl, userId, sourceAfter)
             recoverHttp = newAuthenticatedHttpClient(config.baseUrl, rotatedToken)
             val postRecoverClient = newRealServerClient(recoverDb, config, recoverHttp)
-            postRecoverClient.bootstrap(userId, sourceAfter).getOrThrow()
+            postRecoverClient.openAndAttach(userId, sourceAfter).getOrThrow()
 
             val newAuthorId = randomRowId()
             val newPostId = randomRowId()

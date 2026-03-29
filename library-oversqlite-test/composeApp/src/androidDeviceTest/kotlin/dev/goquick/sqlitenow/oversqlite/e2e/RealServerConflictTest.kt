@@ -65,7 +65,7 @@ class RealServerConflictTest {
             clientB.pushPending().getOrThrow()
 
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
             assertEquals("Grace Client", scalarText(dbB, "SELECT name FROM users WHERE id = '$rowId'"))
 
             observerClient.pullToStable().getOrThrow()
@@ -98,7 +98,7 @@ class RealServerConflictTest {
             clientB.pushPending().getOrThrow()
 
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
             assertEquals("Grace Server", scalarText(dbB, "SELECT name FROM users WHERE id = '$rowId'"))
 
             observerClient.pullToStable().getOrThrow()
@@ -130,7 +130,7 @@ class RealServerConflictTest {
             clientB.pushPending().getOrThrow()
 
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
             assertEquals("Grace Client", scalarText(dbB, "SELECT name FROM users WHERE id = '$rowId'"))
 
             observerClient.pullToStable().getOrThrow()
@@ -190,7 +190,7 @@ class RealServerConflictTest {
                 parseUpdatedAtMillis(seenLocalUpdatedAt)
             )
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
             assertEquals("Grace Client Newer", scalarText(dbB, "SELECT name FROM users WHERE id = '$rowId'"))
             assertEquals(
                 parseUpdatedAtMillis("2026-03-24T00:00:20Z"),
@@ -241,9 +241,9 @@ class RealServerConflictTest {
             clientA.pullToStable().getOrThrow()
             observerClient.pullToStable().getOrThrow()
 
-            assertEquals(4L, clientA.lastBundleSeqSeen().getOrThrow())
-            assertEquals(4L, clientB.lastBundleSeqSeen().getOrThrow())
-            assertEquals(4L, observerClient.lastBundleSeqSeen().getOrThrow())
+            assertEquals(4L, clientA.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(4L, clientB.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(4L, observerClient.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals("Grace Client", scalarText(dbA, "SELECT name FROM users WHERE id = '$rowId'"))
             assertEquals("Grace Client", scalarText(dbB, "SELECT name FROM users WHERE id = '$rowId'"))
             assertEquals("Grace Client", scalarText(observerDb, "SELECT name FROM users WHERE id = '$rowId'"))
@@ -251,7 +251,7 @@ class RealServerConflictTest {
             assertEquals("Peer Row", scalarText(dbB, "SELECT name FROM users WHERE id = '$peerRowId'"))
             assertEquals("Peer Row", scalarText(observerDb, "SELECT name FROM users WHERE id = '$peerRowId'"))
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
         }
     }
 
@@ -288,7 +288,7 @@ class RealServerConflictTest {
             clientB.pushPending().getOrThrow()
 
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
             assertEquals("Grace Client", scalarText(dbB, "SELECT name FROM users WHERE id = '$rowId'"))
             assertEquals(
                 "grace.server@example.com",
@@ -336,7 +336,7 @@ class RealServerConflictTest {
             clientB.pushPending().getOrThrow()
 
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
             assertEquals("Grace Client", scalarText(dbB, "SELECT name FROM users WHERE id = '$conflictedRowId'"))
             assertEquals("Ada Client", scalarText(dbB, "SELECT name FROM users WHERE id = '$siblingRowId'"))
 
@@ -379,9 +379,9 @@ private suspend fun withConflictHarness(
     resetRealServerState(config.baseUrl)
 
     val userId = randomUserId(prefix)
-    val deviceA = randomDeviceId("$prefix-a")
-    val deviceB = randomDeviceId("$prefix-b")
-    val observerDevice = randomDeviceId("$prefix-observer")
+    val deviceA = randomSourceId("$prefix-a")
+    val deviceB = randomSourceId("$prefix-b")
+    val observerDevice = randomSourceId("$prefix-observer")
 
     val tokenA = issueDummySigninToken(config.baseUrl, userId, deviceA)
     val tokenB = issueDummySigninToken(config.baseUrl, userId, deviceB)
@@ -406,9 +406,9 @@ private suspend fun withConflictHarness(
         )
         val observerClient = newRealServerClient(observerDb, config, httpObserver)
 
-        clientA.bootstrap(userId, deviceA).getOrThrow()
-        clientB.bootstrap(userId, deviceB).getOrThrow()
-        observerClient.bootstrap(userId, observerDevice).getOrThrow()
+        clientA.openAndAttach(userId, deviceA).getOrThrow()
+        clientB.openAndAttach(userId, deviceB).getOrThrow()
+        observerClient.openAndAttach(userId, observerDevice).getOrThrow()
 
         ConflictHarness(
             userId = userId,

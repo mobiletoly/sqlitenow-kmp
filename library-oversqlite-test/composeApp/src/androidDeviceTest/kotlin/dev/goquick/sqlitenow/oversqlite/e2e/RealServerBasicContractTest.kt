@@ -1,6 +1,7 @@
 package dev.goquick.sqlitenow.oversqlite.e2e
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.goquick.sqlitenow.oversqlite.RebuildMode
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -14,8 +15,8 @@ class RealServerBasicContractTest {
         resetRealServerState(config.baseUrl)
 
         val userId = randomUserId()
-        val deviceA = randomDeviceId("device-a")
-        val deviceB = randomDeviceId("device-b")
+        val deviceA = randomSourceId("device-a")
+        val deviceB = randomSourceId("device-b")
 
         val tokenA = issueDummySigninToken(config.baseUrl, userId, deviceA)
         val tokenB = issueDummySigninToken(config.baseUrl, userId, deviceB)
@@ -30,8 +31,8 @@ class RealServerBasicContractTest {
             val clientA = newRealServerClient(dbA, config, httpA)
             val clientB = newRealServerClient(dbB, config, httpB)
 
-            clientA.bootstrap(userId, deviceA).getOrThrow()
-            clientB.bootstrap(userId, deviceB).getOrThrow()
+            clientA.openAndAttach(userId, deviceA).getOrThrow()
+            clientB.openAndAttach(userId, deviceB).getOrThrow()
 
             val authorId = randomRowId()
             val postId = randomRowId()
@@ -70,8 +71,8 @@ class RealServerBasicContractTest {
         resetRealServerState(config.baseUrl)
 
         val userId = randomUserId()
-        val deviceA = randomDeviceId("device-a")
-        val deviceB = randomDeviceId("device-b")
+        val deviceA = randomSourceId("device-a")
+        val deviceB = randomSourceId("device-b")
 
         val tokenA = issueDummySigninToken(config.baseUrl, userId, deviceA)
         val tokenB = issueDummySigninToken(config.baseUrl, userId, deviceB)
@@ -86,8 +87,8 @@ class RealServerBasicContractTest {
             val clientA = newRealServerClient(dbA, config, httpA)
             val clientB = newRealServerClient(dbB, config, httpB)
 
-            clientA.bootstrap(userId, deviceA).getOrThrow()
-            clientB.bootstrap(userId, deviceB).getOrThrow()
+            clientA.openAndAttach(userId, deviceA).getOrThrow()
+            clientB.openAndAttach(userId, deviceB).getOrThrow()
 
             val firstAuthorId = randomRowId()
             dbA.execSQL(
@@ -108,11 +109,11 @@ class RealServerBasicContractTest {
             clientB.pushPending().getOrThrow()
             clientB.pullToStable().getOrThrow()
 
-            assertEquals(2L, clientB.lastBundleSeqSeen().getOrThrow())
+            assertEquals(2L, clientB.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals("From A", scalarText(dbB, "SELECT name FROM users WHERE id = '$firstAuthorId'"))
             assertEquals("From B", scalarText(dbB, "SELECT name FROM users WHERE id = '$secondAuthorId'"))
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
         } finally {
             httpA.close()
             httpB.close()
@@ -127,9 +128,9 @@ class RealServerBasicContractTest {
         resetRealServerState(config.baseUrl)
 
         val userId = randomUserId()
-        val deviceA = randomDeviceId("device-a")
-        val deviceB = randomDeviceId("device-b")
-        val deviceC = randomDeviceId("device-c")
+        val deviceA = randomSourceId("device-a")
+        val deviceB = randomSourceId("device-b")
+        val deviceC = randomSourceId("device-c")
 
         val tokenA = issueDummySigninToken(config.baseUrl, userId, deviceA)
         val tokenB = issueDummySigninToken(config.baseUrl, userId, deviceB)
@@ -149,9 +150,9 @@ class RealServerBasicContractTest {
             val clientB = newRealServerClient(dbB, config, httpB)
             val clientC = newRealServerClient(dbC, config, httpC)
 
-            clientA.bootstrap(userId, deviceA).getOrThrow()
-            clientB.bootstrap(userId, deviceB).getOrThrow()
-            clientC.bootstrap(userId, deviceC).getOrThrow()
+            clientA.openAndAttach(userId, deviceA).getOrThrow()
+            clientB.openAndAttach(userId, deviceB).getOrThrow()
+            clientC.openAndAttach(userId, deviceC).getOrThrow()
 
             val userA = randomRowId()
             dbA.execSQL(
@@ -184,9 +185,9 @@ class RealServerBasicContractTest {
             clientB.pullToStable().getOrThrow()
             clientC.pullToStable().getOrThrow()
 
-            assertEquals(3L, clientA.lastBundleSeqSeen().getOrThrow())
-            assertEquals(3L, clientB.lastBundleSeqSeen().getOrThrow())
-            assertEquals(3L, clientC.lastBundleSeqSeen().getOrThrow())
+            assertEquals(3L, clientA.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(3L, clientB.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(3L, clientC.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals(3L, scalarLong(dbA, "SELECT COUNT(*) FROM users"))
             assertEquals(3L, scalarLong(dbB, "SELECT COUNT(*) FROM users"))
             assertEquals(3L, scalarLong(dbC, "SELECT COUNT(*) FROM users"))
@@ -212,8 +213,8 @@ class RealServerBasicContractTest {
         resetRealServerState(config.baseUrl)
 
         val userId = randomUserId()
-        val deviceA = randomDeviceId("device-a")
-        val deviceB = randomDeviceId("device-b")
+        val deviceA = randomSourceId("device-a")
+        val deviceB = randomSourceId("device-b")
 
         val tokenA = issueDummySigninToken(config.baseUrl, userId, deviceA)
         val tokenB = issueDummySigninToken(config.baseUrl, userId, deviceB)
@@ -228,8 +229,8 @@ class RealServerBasicContractTest {
             val clientA = newRealServerClient(dbA, config, httpA)
             val clientB = newRealServerClient(dbB, config, httpB)
 
-            clientA.bootstrap(userId, deviceA).getOrThrow()
-            clientB.bootstrap(userId, deviceB).getOrThrow()
+            clientA.openAndAttach(userId, deviceA).getOrThrow()
+            clientB.openAndAttach(userId, deviceB).getOrThrow()
 
             val firstAuthorId = randomRowId()
             dbA.execSQL(
@@ -250,14 +251,14 @@ class RealServerBasicContractTest {
             clientB.pushPending().getOrThrow()
 
             val restartedClientB = newRealServerClient(dbB, config, httpB)
-            restartedClientB.bootstrap(userId, deviceB).getOrThrow()
+            restartedClientB.openAndAttach(userId, deviceB).getOrThrow()
             restartedClientB.pullToStable().getOrThrow()
 
-            assertEquals(2L, restartedClientB.lastBundleSeqSeen().getOrThrow())
+            assertEquals(2L, restartedClientB.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals("From A", scalarText(dbB, "SELECT name FROM users WHERE id = '$firstAuthorId'"))
             assertEquals("From B", scalarText(dbB, "SELECT name FROM users WHERE id = '$secondAuthorId'"))
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_push_outbound"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
         } finally {
             httpA.close()
             httpB.close()
@@ -272,8 +273,8 @@ class RealServerBasicContractTest {
         resetRealServerState(config.baseUrl)
 
         val userId = randomUserId()
-        val seedDevice = randomDeviceId("device-seed")
-        val restoreDevice = randomDeviceId("device-restore")
+        val seedDevice = randomSourceId("device-seed")
+        val restoreDevice = randomSourceId("device-restore")
 
         val seedToken = issueDummySigninToken(config.baseUrl, userId, seedDevice)
         val restoreToken = issueDummySigninToken(config.baseUrl, userId, restoreDevice)
@@ -288,8 +289,8 @@ class RealServerBasicContractTest {
             val seedClient = newRealServerClient(seedDb, config, seedHttp)
             val restoreClient = newRealServerClient(restoreDb, config, restoreHttp)
 
-            seedClient.bootstrap(userId, seedDevice).getOrThrow()
-            restoreClient.bootstrap(userId, restoreDevice).getOrThrow()
+            seedClient.openAndAttach(userId, seedDevice).getOrThrow()
+            restoreClient.openAndAttach(userId, restoreDevice).getOrThrow()
 
             repeat(8) { index ->
                 val authorId = randomRowId()
@@ -309,15 +310,15 @@ class RealServerBasicContractTest {
             }
 
             seedClient.pushPending().getOrThrow()
-            restoreClient.hydrate().getOrThrow()
+            restoreClient.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
             assertEquals(8L, scalarLong(restoreDb, "SELECT COUNT(*) FROM users"))
             assertEquals(8L, scalarLong(restoreDb, "SELECT COUNT(*) FROM posts"))
             assertEquals(0L, scalarLong(restoreDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             assertEquals(0L, scalarLong(restoreDb, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
             assertEquals(
-                scalarLong(seedDb, "SELECT last_bundle_seq_seen FROM _sync_client_state WHERE user_id = '$userId'"),
-                restoreClient.lastBundleSeqSeen().getOrThrow(),
+                scalarLong(seedDb, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"),
+                restoreClient.syncStatus().getOrThrow().lastBundleSeqSeen,
             )
         } finally {
             seedHttp.close()

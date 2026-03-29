@@ -1,295 +1,170 @@
 ---
 layout: doc
-title: Core Concepts
+title: Sync Core Concepts
 permalink: /sync/core-concepts/
 parent: Sync
 ---
 
-# Core Concepts
-
-Understanding the fundamental concepts of SQLiteNow's synchronization system is essential before implementing sync in your application. This guide explains the key concepts without diving into implementation details.
+# Sync Core Concepts
 
-## What is Synchronization?
-
-Synchronization is the process of keeping data consistent across multiple devices. When a user makes changes on one device, those changes are automatically propagated to all their other devices. SQLiteNow's sync system handles this complex process automatically while providing offline-first capabilities.
+Oversqlite requires one app-owned install `sourceId`. App code passes that value into
+`open(sourceId)` and reuses the same exact string for auth whenever the server binds auth to source
+identity.
 
-## The Sync Ecosystem
-
-### Users
-A **user** represents a person who owns multiple devices. In the sync system, each user has a unique identifier that remains constant across all their devices. Users can sign in on multiple devices and expect their data to be available everywhere.
+## Three Different Identities
 
-**Key Characteristics:**
-- Each user has a globally unique identifier
-- The user ID never changes for a given person
-- One user can have many devices
-- Users can sign out and sign back in without losing sync capability
+### Install Source Identity
 
-### Devices
-A **device** represents a specific installation of your application. Each device has its own unique identifier that distinguishes it from other devices, even those belonging to the same user.
+This is the stable install-scoped `sourceId` that the app owns.
 
-**Key Characteristics:**
-- Each device has a globally unique identifier
-- Device IDs persist across app launches and updates
-- Device IDs are independent of the user (same device can be used by different users)
-- Each app installation gets its own device ID
+Oversqlite treats it as an opaque string and compares it exactly as provided. It does not trim,
+normalize, case-fold, or reinterpret the value.
 
-### The User-Device Relationship
-- **One user, many devices**: A user can have your app installed on their phone, tablet, laptop, etc.
-- **One device, multiple users**: A shared device (like a family tablet) can be used by different users
-- **Device independence**: Each device tracks its own sync state independently
+Rules:
 
-## Bootstrap: Preparing the Local Database
+- reuse the same `sourceId` for the lifetime of one local install / local data set
+- reuse it across app launches, sign-out/sign-in, and account switching on the same install
+- use different `sourceId` values for different installs/devices, even for the same account
+- if local app data is wiped and the local database is recreated, generating a new `sourceId` is
+  correct
 
-**Bootstrap** is the process of preparing the local database for sync operations. Unlike traditional "registration" processes, bootstrap is called every time your app launches and a user signs in.
+### Attached Account Identity
 
-### What Happens During Bootstrap?
-- **Database Configuration**: Sets up SQLite pragmas (foreign keys, WAL mode, timeouts)
-- **Metadata Tables**: Creates or ensures sync system tables exist (`_sync_client_state`, `_sync_row_state`, `_sync_dirty_rows`, `_sync_snapshot_stage`)
-- **Client State Setup**: Creates or updates the client record for this user-device combination
-- **Trigger Creation**: Creates or recreates SQLite triggers that track changes on sync-enabled tables
-- **Apply Mode Reset**: Resets the database to normal operation mode (not applying remote changes)
+This is the authenticated `userId` you pass to `attach(userId)`.
 
-### When Bootstrap Occurs
-- **Every App Launch**: Bootstrap is called each time the user signs in
-- **User Switching**: When switching between different user accounts on the same device
-- **After Database Changes**: Ensures triggers and metadata are always current
+Account attachment decides which remote sync scope is currently active for the local database.
 
-### Why Bootstrap Every Time?
-- **Idempotent Operation**: Bootstrap is safe to run multiple times - it only creates what's missing
-- **Trigger Maintenance**: Ensures sync triggers are always present and up-to-date
-- **Database Consistency**: Guarantees the database is properly configured for sync operations
-- **User Switching**: Handles cases where different users sign in on the same device
+### Auth Identity
 
-### Bootstrap is Not...
-- **Data Transfer**: Bootstrap doesn't move data between devices (that's hydration)
-- **Server Communication**: Bootstrap only prepares the local database
-- **Authentication**: Bootstrap assumes the user is already authenticated
+This is whatever your backend uses in tokens or sessions.
 
-## Hydration: Bulk Data Loading
-
-**Hydration** is the process of downloading the complete dataset from the server to populate a device. This is typically used for new devices or recovery scenarios where you need to rebuild the local database.
-
-### What Happens During Hydration?
-1. **Snapshot Start**: Server exposes a consistent snapshot of all managed user data
-2. **Chunked Download**: Device downloads snapshot rows in chunks
-3. **Stage Storage**: Downloaded rows are written into `_sync_snapshot_stage`
-4. **Final Apply**: Managed tables are rebuilt from the staged snapshot in one controlled apply step
-5. **Metadata Update**: Sync metadata is updated to reflect the current server bundle state
-6. **Trigger Restoration**: Change-tracking triggers are re-enabled for normal local edits
+If your server binds auth to source identity, the same exact app-owned `sourceId` must be used both
+for auth and for `open(sourceId)`.
 
-### When to Use Hydration
-- **New User Sign-In**: When a user signs in for the first time (not session restoration)
-- **Recovery Scenarios**: After app reinstall or database corruption
-- **Complete Refresh**: When you need to rebuild local state from server
-- **Large Dataset Sync**: More efficient than incremental sync for bulk data
-
-### When Hydration is NOT Used
-- **Session Restoration**: When restoring a saved session, incremental sync is used instead
-- **Regular App Launches**: Existing users get incremental sync, not full hydration
-- **User Switching Back**: If a user has used the device before, incremental sync is sufficient
-
-### Hydration vs Regular Sync
-- **Hydration**: Bulk transfer of complete dataset, triggers disabled, uses snapshots
-- **Regular Sync**: Incremental updates of only changed data, triggers enabled, real-time
-
-## Change Tracking
-
-SQLiteNow automatically tracks changes to your data when sync is enabled on a table.
-
-### What Gets Tracked?
-- **INSERT operations**: New records are marked for upload
-- **UPDATE operations**: Modified records are marked for upload
-- **DELETE operations**: Deleted records are marked for upload
-
-### How Tracking Works
-- **Automatic**: No manual intervention required once configured
-- **Table-Level**: Only tables configured for sync are tracked
-- **Transparent**: Your app code doesn't need to change
-- **Efficient**: Only actual changes are tracked, not every database access
-
-### Table Configuration Methods
-- **SQLiteNow Annotations**: Tables marked with `enableSync=true` are automatically registered for sync
-- **Manual Configuration**: Tables can be manually specified during oversqlite client configuration
-- **Mixed Approach**: You can combine both annotation-based and manual table configuration
-
-For sync-enabled tables, both generated annotation-based config and manual `SyncTable(...)`
-configuration obey the same runtime contract:
-
-- exactly one visible local sync key column
-- that visible sync key must be the local SQLite `PRIMARY KEY`
-- the local sync key type must be `TEXT` or `BLOB`
-- local sync-enabled tables must not include the reserved server column `_sync_scope_id`
-
-### Foreign Key Recommendation For Sync Schemas
-
-For foreign keys between sync-managed tables, prefer `DEFERRABLE INITIALLY DEFERRED`.
-
-Why this is the default recommendation:
-
-- oversqlite apply transactions already defer foreign-key checks while authoritative bundles are
-  replayed
-- `INITIALLY DEFERRED` makes ordinary app writes behave more like sync apply, which reduces
-  surprises
-- it is more tolerant of valid multi-step local transactions that temporarily create rows out of
-  parent/child order before commit
+## Lifecycle Model
 
-Use `DEFERRABLE INITIALLY IMMEDIATE` only when you specifically want non-sync application writes
-to fail on foreign-key violations at statement time unless those transactions explicitly defer
-checks themselves. In practice, `INITIALLY IMMEDIATE` is mainly a stricter rule for your own local
-write paths, not a sync feature.
+Oversqlite lifecycle is:
 
-### Change Metadata
-Each change includes:
-- **What changed**: The actual data that was modified
-- **When it changed**: Timestamp of the modification
-- **Where it changed**: Which device made the change
-- **Change type**: INSERT, UPDATE, or DELETE
-
-## Sync Operations
-
-### Upload
-**Push** is the process of sending local dirty rows to the server.
-
-- **Purpose**: Share your device's changes with other devices
-- **Frequency**: Can be triggered manually or automatically
-- **Batching**: Pending local rows are frozen as one logical bundle and uploaded through chunked
-  push sessions
-- **Conflict Detection**: Server checks for conflicts with other devices' changes
-
-### Download
-**Pull** is the process of receiving authoritative bundles from other devices via the server.
-
-- **Purpose**: Get changes made on other devices
-- **Frequency**: Can be triggered manually or automatically
-- **Filtering**: Only receives bundles newer than what the device already has
-- **Conflict Resolution**: Applies conflict resolution rules when needed
-
-### Bidirectional Sync
-Most sync operations involve both upload and download:
-1. Upload local changes first
-2. Download remote changes second
-3. Handle any conflicts that arise
-
-## Conflict Resolution
-
-**Conflicts** occur when the same data is modified on multiple devices before they sync.
-
-### When Conflicts Happen
-- User edits a note on their phone
-- User edits the same note on their laptop
-- Both devices try to sync before seeing each other's changes
-
-### Resolution Strategies
-- **Version-Based Detection**: Conflicts are detected from `base_row_version` versus the
-  authoritative server `row_version`, not from wall-clock timestamps
-- **Whole-Bundle Failure**: A conflicting push fails closed instead of partially applying stale rows
-- **Default Resolver**: The default KMP resolver is server-wins (`ServerWinsResolver`)
-- **Custom Merge Logic**: Applications configure a client-wide `Resolver`, which then returns
-  `AcceptServer`, `KeepLocal`, or `KeepMerged(...)` for each conflict
-
-### Conflict Prevention
-- **Frequent Sync**: Sync often to minimize conflict windows
-- **User Awareness**: Show sync status to users
-- **Optimistic UI**: Show changes immediately, handle conflicts in background
-
-## Offline-First Architecture
-
-SQLiteNow's sync system is designed to work offline-first.
-
-### Core Principles
-- **Local Database is Primary**: Your app always works with local data
-- **Sync is Secondary**: Network operations happen in the background
-- **Graceful Degradation**: App works fully even without network
-- **Eventual Consistency**: Data becomes consistent across devices over time
-
-### Benefits
-- **Always Responsive**: No waiting for network requests
-- **Works Anywhere**: Functions without internet connection
-- **Better UX**: Users never see loading spinners for basic operations
-- **Resilient**: Handles network interruptions gracefully
-
-This architecture ensures your app provides a smooth user experience regardless of network conditions while maintaining data consistency across all devices.
-
-## Security and Privacy
-
-### Authentication
-Sync operations require proper authentication to ensure data security:
-- **JWT Tokens**: Industry-standard tokens for secure API access
-- **Token Refresh**: Automatic renewal of expired tokens
-- **User Authorization**: Only authenticated users can access their data
-
-### Data Privacy
-- **User Isolation**: Each user's data is completely separate
-- **Device Privacy**: Device IDs don't contain personal information
-- **Encryption**: Data is encrypted in transit between devices and server
-
-### Access Control
-- **User-Scoped Data**: Users can only sync their own data
-- **Device Registration**: Only registered devices can participate in sync
-- **Revocation**: Devices can be removed from sync if compromised
-
-## Sync Lifecycle
-
-Understanding the complete lifecycle helps you implement sync correctly:
-
-### 1. App Installation
-- Generate unique device ID
-- Store device ID persistently
-- App is ready for sync when user signs in
-
-### 2. New User Sign-In (First Time)
-- Authenticate user with your backend
-- **Bootstrap device** (prepares database for sync)
-- **Hydrate device** with user's complete dataset
-- Begin regular sync operations
-
-### 3. Session Restoration (Returning User)
-- Authenticate user with your backend (restore saved session)
-- **Bootstrap device** (prepares database for sync)
-- **Incremental sync** to catch up on changes (no hydration)
-- Resume regular sync operations
-
-### 4. Regular Usage
-- User makes changes to data
-- Changes are automatically tracked by triggers (created during bootstrap)
-- Periodic sync pushes local bundles and pulls remote bundles
-- Conflicts are resolved automatically
-
-### 5. User Sign-Out
-- Stop sync operations
-- Optionally clear local data
-- Device ID remains for future use
-
-### 6. User Sign-In (Different User)
-- Authenticate new user
-- **Bootstrap device** for new user (same device, different user)
-- **Hydrate with new user's data** (different user = different dataset)
-- Resume sync operations
-
-## Performance Considerations
-
-### Sync Frequency
-- **Too Frequent**: Wastes battery and bandwidth
-- **Too Infrequent**: Users see stale data, more conflicts
-- **Adaptive**: Sync more often when app is active, less when idle
-
-### Data Volume
-- **Large Datasets**: Hydration is chunked internally through staged snapshot apply
-- **Small Changes**: Incremental sync is very efficient
-- **Bulk Operations**: Consider batching for better performance
-
-### Network Conditions
-- **Poor Connectivity**: Sync operations will retry automatically
-- **Offline Mode**: App continues working, sync resumes when online
-- **Background Sync**: Sync can continue when app is backgrounded
-
-## Next Steps
-
-Now that you understand the core concepts, you're ready to:
-
-1. **[Getting Started]({{ site.baseurl }}/sync/getting-started/)** - Implement sync in your application
-2. **[Bootstrap & Hydration]({{ site.baseurl }}/sync/bootstrap-hydration/)** - Deep dive into device setup
-3. **[Sync Operations]({{ site.baseurl }}/sync/sync-operations/)** - Learn about upload/download mechanics
-4. **[Authentication]({{ site.baseurl }}/sync/authentication/)** - Set up secure authentication
-
-The concepts covered here form the foundation for all sync operations. Understanding them will help you implement sync correctly and troubleshoot issues when they arise.
+1. `open(sourceId)`
+2. `attach(userId)` when an authenticated session exists
+3. normal sync operations
+4. `detach()` or `syncThenDetach()` when leaving the attached account
+
+### `open(sourceId)`
+
+`open(sourceId)` is local-only.
+
+It validates sync metadata, creates control tables, binds or validates the durable local
+`sourceId`, and repairs interrupted local lifecycle state. It never talks to the server and never
+attaches an account.
+
+Call it on every launch before any lifecycle-aware sync operation, using the same app-owned install
+`sourceId`.
+
+### `attach(userId)`
+
+`attach(userId)` is the account-binding step. It may:
+
+- resume the same attached account
+- use authoritative remote state
+- authorize a first local seed
+- start an authoritative empty scope
+- return `RetryLater`
+
+Call it whenever an authenticated session exists, not only on the first login gesture.
+
+### `detach()`
+
+`detach()` safely removes the current attached scope from the local database.
+
+It is fail-closed: if attached pending sync data still exists, it returns
+`DetachOutcome.BLOCKED_UNSYNCED_DATA` and makes no destructive local changes.
+
+`detach()` does not change the install `sourceId`.
+
+### `syncThenDetach()`
+
+`syncThenDetach()` is bounded convenience sugar. It runs `sync()` and then tries `detach()`. If new
+local writes arrive during the previous round, it may retry a small number of times. It never loops
+forever, and it returns the final blocked outcome explicitly if detach still cannot proceed.
+
+## Authority States
+
+For the currently attached account, Oversqlite reports:
+
+- `PENDING_LOCAL_SEED`
+- `AUTHORITATIVE_EMPTY`
+- `AUTHORITATIVE_MATERIALIZED`
+
+These are scope/materialization states, not authentication states.
+
+## Rebuild And Recovery
+
+### `rebuild(RebuildMode.KEEP_SOURCE)`
+
+Replaces local managed tables from the current authoritative remote snapshot while preserving the
+same `sourceId`.
+
+Use this when local managed state must be rebuilt, but the current source identity is still valid.
+
+### `rebuild(RebuildMode.ROTATE_SOURCE, newSourceId)`
+
+Rebuilds local managed tables from the remote snapshot and rotates to a fresh caller-provided
+`newSourceId`.
+
+Use this when recovery must abandon the current local source identity.
+
+### `rotateSource(newSourceId)`
+
+`rotateSource(newSourceId)` is the advanced API. It rotates the current source identity without
+discarding pending local edits.
+
+This is not normal login/logout lifecycle. Reach for it only when the current source identity must
+be replaced as part of explicit recovery.
+
+## `SourceBindingMismatchException`
+
+This means the app called `open(sourceId)` with a different value than the one already durably
+bound to the local database.
+
+Default app behavior:
+
+- stop sync
+- treat the condition as a local identity/storage bug or wrong DB reuse
+- use an explicit app-owned reset path that recreates the local Oversqlite database or local sync
+  state
+
+Only advanced apps that already persist and trust the original install `sourceId` outside the
+Oversqlite database should attempt recovery by reopening with that exact original value.
+
+Do not:
+
+- silently generate a fresh `sourceId` and retry
+- silently rebind an existing local database to another `sourceId`
+- treat this as a transient network error
+
+## What `open(sourceId)` Does Not Mean
+
+`open(sourceId)` does not mean:
+
+- the account is attached
+- the server session is connected
+- the local DB was synchronized
+- remote state was rebuilt
+
+`OpenState.ReadyAttached(userId)` means durable local attachment metadata exists. You should still
+call `attach(userId)` when an authenticated session is present so the client can resume connected
+sync operations.
+
+## Reliable Source Continuity
+
+Because source identity is install-scoped, the local install can:
+
+- detach from user A
+- attach user B
+- detach again
+- reattach user A later
+
+while keeping the same source identity across those transitions.
+
+The same user on two different devices must still use two different `sourceId` values.

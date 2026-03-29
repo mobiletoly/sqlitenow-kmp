@@ -10,9 +10,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
-class AndroidBundleBootstrapSmokeTest {
+class AndroidLifecycleSmokeTest {
     @Test
-    fun bootstrapCreatesBundleMetadata_andCapturesDirtyRows() = runBlocking {
+    fun openCreatesBundleMetadata_andCapturesDirtyRows() = runBlocking {
         val db = newInMemoryDb()
         val http = newNoopHttpClient()
         try {
@@ -24,10 +24,9 @@ class AndroidBundleBootstrapSmokeTest {
                     syncTables = listOf(SyncTable("users", syncKeyColumnName = "id"))
                 ),
                 http = http,
-                tablesUpdateListener = { }
             )
 
-            client.bootstrap("user-1", "device-a").getOrThrow()
+            client.open("device-a").getOrThrow()
             db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
 
             val dirtyCount = db.prepare("SELECT COUNT(*) FROM _sync_dirty_rows").use { st ->
@@ -38,7 +37,26 @@ class AndroidBundleBootstrapSmokeTest {
                 check(st.step())
                 st.getText(0)
             }
-            val applyMode = db.prepare("SELECT apply_mode FROM _sync_client_state WHERE user_id='user-1'").use { st ->
+            val unexpectedControlTableCount = db.prepare(
+                """
+                SELECT COUNT(*)
+                FROM sqlite_master
+                WHERE type = 'table'
+                  AND name GLOB '_sync_*'
+                  AND name NOT IN (
+                    '_sync_apply_state',
+                    '_sync_attachment_state',
+                    '_sync_dirty_rows',
+                    '_sync_managed_tables',
+                    '_sync_operation_state',
+                    '_sync_outbox_bundle',
+                    '_sync_outbox_rows',
+                    '_sync_row_state',
+                    '_sync_snapshot_stage',
+                    '_sync_source_state'
+                  )
+                """.trimIndent()
+            ).use { st ->
                 check(st.step())
                 st.getLong(0)
             }
@@ -46,7 +64,7 @@ class AndroidBundleBootstrapSmokeTest {
 
             assertEquals(1L, dirtyCount)
             assertEquals("user-1", parsedKey["id"]?.jsonPrimitive?.content)
-            assertEquals(0L, applyMode)
+            assertEquals(0L, unexpectedControlTableCount)
         } finally {
             http.close()
             db.close()

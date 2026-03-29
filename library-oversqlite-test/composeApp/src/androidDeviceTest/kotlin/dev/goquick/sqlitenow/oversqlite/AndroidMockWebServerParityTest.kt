@@ -3,12 +3,19 @@ package dev.goquick.sqlitenow.oversqlite
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.sqlite.use
+import dev.goquick.sqlitenow.oversqlite.e2e.generated.RealServerGeneratedDatabase
+import dev.goquick.sqlitenow.oversqlite.e2e.generated.UserSelectAllResult
+import dev.goquick.sqlitenow.oversqlite.e2e.generated.VersionBasedDatabaseMigrations
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
@@ -25,6 +32,103 @@ import java.util.concurrent.TimeUnit
 @RunWith(AndroidJUnit4::class)
 class AndroidMockWebServerParityTest {
     @Test
+    fun generatedHelper_pullToStableReEmitsGeneratedReactiveQuery() = runBlocking {
+        val server = MockWebServer()
+        server.start()
+        val http = newMockWebServerHttpClient(server)
+        val database = RealServerGeneratedDatabase(":memory:", VersionBasedDatabaseMigrations(), debug = true)
+        try {
+            enqueueCapabilities(server)
+            enqueueInitializeEmptyConnect(server)
+            server.enqueue(
+                jsonMockResponse(
+                    """
+                        {
+                          "stable_bundle_seq": 1,
+                          "has_more": false,
+                          "bundles": [
+                            {
+                              "bundle_seq": 1,
+                              "source_id": "peer-a",
+                              "source_bundle_id": 11,
+                              "rows": [
+                                {
+                                  "schema": "main",
+                                  "table": "users",
+                                  "key": {"id":"user-1"},
+                                  "op": "INSERT",
+                                  "row_version": 1,
+                                  "payload": {
+                                    "id":"user-1",
+                                    "name":"Generated Ada",
+                                    "email":"generated-ada@example.com",
+                                    "created_at":"2026-03-22T00:00:00Z",
+                                    "updated_at":"2026-03-22T00:00:00Z"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                    """.trimIndent()
+                )
+            )
+
+            database.open()
+            database.enableTableChangeNotifications()
+            val client = database.newOversqliteClient(schema = "main", httpClient = http)
+            client.openAndConnect("user-1", "device-a").getOrThrow()
+
+            val emissions = mutableListOf<List<UserSelectAllResult>>()
+            val firstEmission = CompletableDeferred<Unit>()
+            val collector = launch {
+                database.user.selectAll.asFlow().take(2).collect { rows ->
+                    emissions += rows
+                    if (!firstEmission.isCompleted) {
+                        firstEmission.complete(Unit)
+                    }
+                }
+            }
+
+            withTimeout(5_000) {
+                firstEmission.await()
+                client.pullToStable().getOrThrow()
+                collector.join()
+            }
+
+            assertEquals(2, emissions.size)
+            assertEquals(emptyList<UserSelectAllResult>(), emissions.first())
+            assertEquals(
+                listOf(
+                    UserSelectAllResult(
+                        id = "user-1",
+                        name = "Generated Ada",
+                        email = "generated-ada@example.com",
+                    )
+                ),
+                emissions.last(),
+            )
+
+            val capabilitiesRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(capabilitiesRequest)
+            assertEquals("/sync/capabilities", capabilitiesRequest?.url?.encodedPath)
+
+            val connectRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(connectRequest)
+            assertEquals("/sync/connect", connectRequest?.url?.encodedPath)
+
+            val pullRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(pullRequest)
+            assertEquals("/sync/pull", pullRequest?.url?.encodedPath)
+            assertEquals("0", pullRequest?.url?.queryParameter("after_bundle_seq"))
+        } finally {
+            http.close()
+            server.close()
+            database.close()
+        }
+    }
+
+    @Test
     fun pushPullHydrate_workAgainstMockWebServer3() = runBlocking {
         val db = newInMemoryDb()
         val server = MockWebServer()
@@ -32,6 +136,9 @@ class AndroidMockWebServerParityTest {
         val http = newMockWebServerHttpClient(server)
         try {
             db.execSQL("CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)")
+            val committedBundleHash = "334a3338e0a497a647a6eb263d78db3b5df06702597ce166111603e9395956ba"
+            enqueueCapabilities(server)
+            enqueueInitializeEmptyConnect(server)
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -64,7 +171,7 @@ class AndroidMockWebServerParityTest {
                           "source_id": "device-a",
                           "source_bundle_id": 1,
                           "row_count": 1,
-                          "bundle_hash": "8376a4098c0c17075d513e3a3bbdc7f198c4aa6e49f9595cfa1ad7595dae83c2"
+                          "bundle_hash": "$committedBundleHash"
                         }
                     """.trimIndent()
                 )
@@ -77,7 +184,7 @@ class AndroidMockWebServerParityTest {
                           "source_id": "device-a",
                           "source_bundle_id": 1,
                           "row_count": 1,
-                          "bundle_hash": "8376a4098c0c17075d513e3a3bbdc7f198c4aa6e49f9595cfa1ad7595dae83c2",
+                          "bundle_hash": "$committedBundleHash",
                           "next_row_ordinal": 0,
                           "has_more": false,
                           "rows": [
@@ -87,7 +194,7 @@ class AndroidMockWebServerParityTest {
                               "key": {"id":"user-1"},
                               "op": "INSERT",
                               "row_version": 7,
-                              "payload": {"id":"user-1","name":"Ada Server"}
+                              "payload": {"id":"user-1","name":"Ada Local"}
                             }
                           ]
                         }
@@ -164,25 +271,32 @@ class AndroidMockWebServerParityTest {
                     syncTables = listOf(SyncTable("users", syncKeyColumnName = "id"))
                 ),
                 http = http,
-                tablesUpdateListener = { }
             )
 
-            client.bootstrap("user-1", "device-a").getOrThrow()
+            client.openAndConnect("user-1", "device-a").getOrThrow()
             db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada Local')")
 
             client.pushPending().getOrThrow()
-            assertEquals("Ada Server", scalarText(db, "SELECT name FROM users WHERE id = 'user-1'"))
+            assertEquals("Ada Local", scalarText(db, "SELECT name FROM users WHERE id = 'user-1'"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(1L, client.lastBundleSeqSeen().getOrThrow())
+            assertEquals(1L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
 
             client.pullToStable().getOrThrow()
             assertEquals("Grace Hopper", scalarText(db, "SELECT name FROM users WHERE id = 'user-2'"))
-            assertEquals(2L, client.lastBundleSeqSeen().getOrThrow())
+            assertEquals(2L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
 
             client.hydrate().getOrThrow()
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM users"))
             assertEquals("Katherine Johnson", scalarText(db, "SELECT name FROM users WHERE id = 'user-3'"))
-            assertEquals(9L, client.lastBundleSeqSeen().getOrThrow())
+            assertEquals(9L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
+
+            val capabilitiesRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(capabilitiesRequest)
+            assertEquals("/sync/capabilities", capabilitiesRequest?.url?.encodedPath)
+
+            val connectRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(connectRequest)
+            assertEquals("/sync/connect", connectRequest?.url?.encodedPath)
 
             val createPushRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(createPushRequest)
@@ -244,6 +358,8 @@ class AndroidMockWebServerParityTest {
         val http = newMockWebServerHttpClient(server)
         try {
             db.execSQL("CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)")
+            enqueueCapabilities(server)
+            enqueueInitializeEmptyConnect(server)
             server.enqueue(
                 MockResponse.Builder()
                     .code(409)
@@ -294,14 +410,21 @@ class AndroidMockWebServerParityTest {
                     syncTables = listOf(SyncTable("users", syncKeyColumnName = "id"))
                 ),
                 http = http,
-                tablesUpdateListener = { }
             )
 
-            client.bootstrap("user-1", "device-a").getOrThrow()
+            client.openAndConnect("user-1", "device-a").getOrThrow()
             client.pullToStable().getOrThrow()
 
             assertEquals("Ada", scalarText(db, "SELECT name FROM users WHERE id = 'user-1'"))
-            assertEquals(9L, client.lastBundleSeqSeen().getOrThrow())
+            assertEquals(9L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
+
+            val capabilitiesRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(capabilitiesRequest)
+            assertEquals("/sync/capabilities", capabilitiesRequest?.url?.encodedPath)
+
+            val connectRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(connectRequest)
+            assertEquals("/sync/connect", connectRequest?.url?.encodedPath)
 
             val pullRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(pullRequest)
@@ -355,6 +478,10 @@ class AndroidMockWebServerParityTest {
                 """.trimIndent()
             )
 
+            enqueueCapabilities(server)
+            enqueueInitializeEmptyConnect(server)
+            enqueueCapabilities(server)
+            enqueueInitializeEmptyConnect(server)
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -433,7 +560,6 @@ class AndroidMockWebServerParityTest {
                     syncTables = listOf(SyncTable("files", syncKeyColumnName = "id"))
                 ),
                 http = pullHttp,
-                tablesUpdateListener = { }
             )
             val hydrateClient = DefaultOversqliteClient(
                 db = hydrateDb,
@@ -442,11 +568,10 @@ class AndroidMockWebServerParityTest {
                     syncTables = listOf(SyncTable("files", syncKeyColumnName = "id"))
                 ),
                 http = hydrateHttp,
-                tablesUpdateListener = { }
             )
 
-            pullClient.bootstrap("user-1", "device-pull").getOrThrow()
-            hydrateClient.bootstrap("user-1", "device-hydrate").getOrThrow()
+            pullClient.openAndConnect("user-1", "device-pull").getOrThrow()
+            hydrateClient.openAndConnect("user-1", "device-hydrate").getOrThrow()
 
             pullClient.pullToStable().getOrThrow()
             hydrateClient.hydrate().getOrThrow()
@@ -483,6 +608,8 @@ class AndroidMockWebServerParityTest {
 
             val bundleHash = "dcde4c0ea8f55eea93a935cf27d9982ff4e130543ae48cb4c355928c998d7fbd"
 
+            enqueueCapabilities(server)
+            enqueueInitializeEmptyConnect(server)
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -557,10 +684,9 @@ class AndroidMockWebServerParityTest {
                     syncTables = listOf(SyncTable("files", syncKeyColumnName = "id"))
                 ),
                 http = http,
-                tablesUpdateListener = { }
             )
 
-            client.bootstrap("user-1", "device-a").getOrThrow()
+            client.openAndConnect("user-1", "device-a").getOrThrow()
             db.execSQL(
                 """
                 INSERT INTO files(id, name, data)
@@ -568,6 +694,14 @@ class AndroidMockWebServerParityTest {
                 """.trimIndent()
             )
             client.pushPending().getOrThrow()
+
+            val capabilitiesRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(capabilitiesRequest)
+            assertEquals("/sync/capabilities", capabilitiesRequest?.url?.encodedPath)
+
+            val connectRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(connectRequest)
+            assertEquals("/sync/connect", connectRequest?.url?.encodedPath)
 
             val createPushRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(createPushRequest)
@@ -614,6 +748,34 @@ class AndroidMockWebServerParityTest {
             .setHeader("Content-Type", "application/json")
             .body(body)
             .build()
+    }
+
+    private fun enqueueCapabilities(server: MockWebServer) {
+        server.enqueue(
+            jsonMockResponse(
+                """
+                    {
+                      "protocol_version": "v1",
+                      "schema_version": 1,
+                      "features": {
+                        "connect_lifecycle": true
+                      }
+                    }
+                """.trimIndent()
+            )
+        )
+    }
+
+    private fun enqueueInitializeEmptyConnect(server: MockWebServer) {
+        server.enqueue(
+            jsonMockResponse(
+                """
+                    {
+                      "resolution": "initialize_empty"
+                    }
+                """.trimIndent()
+            )
+        )
     }
 
     private suspend fun scalarLong(db: SafeSQLiteConnection, sql: String): Long {

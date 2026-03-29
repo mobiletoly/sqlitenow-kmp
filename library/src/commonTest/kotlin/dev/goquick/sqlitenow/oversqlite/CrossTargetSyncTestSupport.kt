@@ -43,7 +43,6 @@ internal open class CrossTargetSyncTestSupport {
         uploadLimit: Int = 200,
         downloadLimit: Int = 1000,
         resolver: Resolver = ServerWinsResolver,
-        tablesUpdateListener: (Set<String>) -> Unit = { },
     ): DefaultOversqliteClient {
         return DefaultOversqliteClient(
             db = db,
@@ -58,7 +57,6 @@ internal open class CrossTargetSyncTestSupport {
             ),
             http = http,
             resolver = resolver,
-            tablesUpdateListener = tablesUpdateListener,
         )
     }
 
@@ -129,6 +127,9 @@ internal open class CrossTargetSyncTestSupport {
         private val committedBySourceBundle = linkedMapOf<String, StoredBundle>()
         private val pushSessions = linkedMapOf<String, PushSession>()
         private val snapshotSessions = linkedMapOf<String, SnapshotSessionState>()
+        private var scopeInitialized = false
+        private var initializingSourceId: String? = null
+        private var initializationId: String? = null
 
         var retainedBundleFloor: Long = 0
         var uploadedChunkCount: Int = 0
@@ -137,6 +138,7 @@ internal open class CrossTargetSyncTestSupport {
         private var nextBundleSeq = 1L
         private var nextPushId = 1L
         private var nextSnapshotId = 1L
+        private var nextInitializationId = 1L
 
         fun newHttpClient(): HttpClient {
             return HttpClient(MockEngine { request ->
@@ -152,6 +154,21 @@ internal open class CrossTargetSyncTestSupport {
         }
 
         private suspend fun MockRequestHandleScope.handle(request: HttpRequestData) = when {
+            request.method.value == "GET" && request.url.encodedPath == "/sync/capabilities" ->
+                jsonResponse(
+                    json.encodeToString(
+                        CapabilitiesResponse.serializer(),
+                        CapabilitiesResponse(
+                            protocolVersion = "v1",
+                            schemaVersion = 1,
+                            features = mapOf("connect_lifecycle" to true),
+                        ),
+                    ),
+                )
+
+            request.method.value == "POST" && request.url.encodedPath == "/sync/connect" ->
+                handleConnect(request)
+
             request.method.value == "POST" && request.url.encodedPath == "/sync/push-sessions" ->
                 handleCreatePushSession(request)
 
@@ -200,10 +217,105 @@ internal open class CrossTargetSyncTestSupport {
             )
         }
 
-        private suspend fun MockRequestHandleScope.handleCreatePushSession(request: HttpRequestData) =
+        private suspend fun MockRequestHandleScope.handleConnect(request: HttpRequestData) =
             try {
+                val connect = json.decodeFromString(ConnectRequest.serializer(), request.bodyText())
+                when {
+                    scopeInitialized || bundles.isNotEmpty() -> {
+                        scopeInitialized = true
+                        jsonResponse(
+                            json.encodeToString(
+                                ConnectResponse.serializer(),
+                                ConnectResponse(resolution = "remote_authoritative"),
+                            ),
+                        )
+                    }
+
+                    initializingSourceId != null -> {
+                        if (initializingSourceId == connect.sourceId) {
+                            if (connect.hasLocalPendingRows) {
+                                jsonResponse(
+                                    json.encodeToString(
+                                        ConnectResponse.serializer(),
+                                        ConnectResponse(
+                                            resolution = "initialize_local",
+                                            initializationId = initializationId.orEmpty(),
+                                            leaseExpiresAt = "2099-01-01T00:00:00Z",
+                                        ),
+                                    ),
+                                )
+                            } else {
+                                scopeInitialized = true
+                                initializingSourceId = null
+                                initializationId = null
+                                jsonResponse(
+                                    json.encodeToString(
+                                        ConnectResponse.serializer(),
+                                        ConnectResponse(resolution = "initialize_empty"),
+                                    ),
+                                )
+                            }
+                        } else {
+                            jsonResponse(
+                                json.encodeToString(
+                                    ConnectResponse.serializer(),
+                                    ConnectResponse(
+                                        resolution = "retry_later",
+                                        retryAfterSeconds = 1,
+                                        leaseExpiresAt = "2099-01-01T00:00:00Z",
+                                    ),
+                                ),
+                            )
+                        }
+                    }
+
+                    connect.hasLocalPendingRows -> {
+                        val nextId = "init-${nextInitializationId++}"
+                        initializingSourceId = connect.sourceId
+                        initializationId = nextId
+                        jsonResponse(
+                            json.encodeToString(
+                                ConnectResponse.serializer(),
+                                ConnectResponse(
+                                    resolution = "initialize_local",
+                                    initializationId = nextId,
+                                    leaseExpiresAt = "2099-01-01T00:00:00Z",
+                                ),
+                            ),
+                        )
+                    }
+
+                    else -> {
+                        scopeInitialized = true
+                        jsonResponse(
+                            json.encodeToString(
+                                ConnectResponse.serializer(),
+                                ConnectResponse(resolution = "initialize_empty"),
+                            ),
+                        )
+                    }
+                }
+            } catch (t: Throwable) {
+                errorResponse("invalid_request", t.message ?: "connect failed")
+            }
+
+        private suspend fun MockRequestHandleScope.handleCreatePushSession(
+            request: HttpRequestData,
+        ): io.ktor.client.request.HttpResponseData {
+            return try {
                 val body = request.bodyText()
                 val create = json.decodeFromString(PushSessionCreateRequest.serializer(), body)
+                val expectedInitializationId = initializationId
+                if (expectedInitializationId != null) {
+                    if (create.initializationId.isNullOrBlank()) {
+                        return errorResponse("initialization_stale", "initialization_id is required", HttpStatusCode.Conflict)
+                    }
+                    if (create.initializationId != expectedInitializationId) {
+                        return errorResponse("initialization_stale", "initialization_id does not match active lease", HttpStatusCode.Conflict)
+                    }
+                } else if (!create.initializationId.isNullOrBlank()) {
+                    return errorResponse("initialization_stale", "scope is no longer initializing", HttpStatusCode.Conflict)
+                }
                 val existing = committedBySourceBundle["${create.sourceId}\u0000${create.sourceBundleId}"]
                 if (existing != null) {
                     jsonResponse(
@@ -242,6 +354,7 @@ internal open class CrossTargetSyncTestSupport {
             } catch (t: Throwable) {
                 errorResponse("invalid_request", t.message ?: "push create failed")
             }
+        }
 
         private suspend fun MockRequestHandleScope.handlePushChunk(request: HttpRequestData) : io.ktor.client.request.HttpResponseData {
             return try {
@@ -362,6 +475,11 @@ internal open class CrossTargetSyncTestSupport {
                 )
                 bundles += stored
                 committedBySourceBundle["${stored.sourceId}\u0000${stored.sourceBundleId}"] = stored
+                if (initializingSourceId == session.sourceId) {
+                    scopeInitialized = true
+                    initializingSourceId = null
+                    initializationId = null
+                }
                 jsonResponse(
                     json.encodeToString(
                         PushSessionCommitResponse.serializer(),
@@ -416,7 +534,7 @@ internal open class CrossTargetSyncTestSupport {
         private suspend fun MockRequestHandleScope.handleCreateSnapshotSession() = try {
             val snapshotRows = currentSnapshotRows()
             val snapshotId = "snapshot-${nextSnapshotId++}"
-            val stableBundleSeq = bundles.lastOrNull()?.bundleSeq ?: 0L
+            val stableBundleSeq = bundles.lastOrNull()?.bundleSeq ?: if (scopeInitialized) 0L else 0L
             snapshotSessions[snapshotId] = SnapshotSessionState(
                 snapshotId = snapshotId,
                 snapshotBundleSeq = stableBundleSeq,

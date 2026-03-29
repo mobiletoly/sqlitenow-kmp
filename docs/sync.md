@@ -52,7 +52,7 @@ OverSqlite follows a simple but powerful client-server pattern:
 2. **Connect to sync HTTP server**, developer's own server that uses go-oversync library to handle 
    sync requests and synchronize data with PostgreSQL tables
 3. **Configure authentication** between your app and the sync server
-4. **Bootstrap your device** to prepare for sync operations
+4. **Open local runtime and connect the current account**
 5. **Sync regularly** to keep data consistent across devices
 
 OverSqlite handles all the complex aspects automatically - change tracking, conflict resolution,
@@ -97,7 +97,7 @@ Start here to understand the fundamental concepts of SQLiteNow's synchronization
 
 ### [Core Concepts →]({{ site.baseurl }}/sync/core-concepts/)
 
-Learn about users, devices, bootstrap, hydration, and other essential sync concepts.
+Learn about users, sources, open/connect, hydration, and other essential sync concepts.
 
 ## Getting Started
 
@@ -107,9 +107,9 @@ Ready to implement sync? Follow our step-by-step guide.
 
 Quick start guide with step-by-step instructions to enable sync in your application.
 
-### [Bootstrap & Hydration →]({{ site.baseurl }}/sync/bootstrap-hydration/)
+### [Open, Connect & Rebuild →]({{ site.baseurl }}/sync/open-connect-rebuild/)
 
-Understand the two-phase process of setting up sync for new devices and initial data loading.
+Understand local startup, account attachment, hydration, and recovery flows.
 
 ### [Sync Operations →]({{ site.baseurl }}/sync/sync-operations/)
 
@@ -132,7 +132,7 @@ Set up your sync server to handle client requests and manage data synchronizatio
 <div class="doc-nav-grid">
   <a href="{{ site.baseurl }}/sync/core-concepts/" class="doc-nav-card">
     <h3>🎯 Core Concepts</h3>
-    <p>Users, devices, bootstrap, hydration, and fundamental sync principles</p>
+    <p>Users, sources, lifecycle attachment, hydration, and fundamental sync principles</p>
   </a>
 
   <a href="{{ site.baseurl }}/sync/getting-started/" class="doc-nav-card">
@@ -140,9 +140,9 @@ Set up your sync server to handle client requests and manage data synchronizatio
     <p>Quick start guide to enable sync in your application</p>
   </a>
 
-  <a href="{{ site.baseurl }}/sync/bootstrap-hydration/" class="doc-nav-card">
-    <h3>🔄 Bootstrap & Hydration</h3>
-    <p>Setting up new devices and initial data loading</p>
+  <a href="{{ site.baseurl }}/sync/open-connect-rebuild/" class="doc-nav-card">
+    <h3>🔄 Open, Connect & Rebuild</h3>
+    <p>Local startup, account attachment, and rebuild operations</p>
   </a>
 
   <a href="{{ site.baseurl }}/sync/sync-operations/" class="doc-nav-card">

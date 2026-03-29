@@ -15,26 +15,106 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
-class RebuildRequiredException : RuntimeException(
-    "client rebuild is required; run hydrate or recover before syncing"
+/**
+ * Thrown when [OversqliteClient.open] receives a `sourceId` that does not match the durable local
+ * source binding already stored in the database.
+ *
+ * This is a fail-closed local identity error, not a transient transport failure. Typical app
+ * handling is to stop sync and run an explicit app-owned reset path that recreates the local
+ * Oversqlite database or local sync state. Only apps that persist and trust the original install
+ * `sourceId` outside Oversqlite should retry with a different value, and only if that value is the
+ * original one.
+ */
+class SourceBindingMismatchException(
+    val persistedSourceId: String,
+    val requestedSourceId: String,
+) : RuntimeException(
+    "persisted source_id \"$persistedSourceId\" does not match requested source_id " +
+        "\"$requestedSourceId\""
 )
 
+@Deprecated(
+    message = "Use SourceBindingMismatchException",
+    replaceWith = ReplaceWith("SourceBindingMismatchException"),
+)
+typealias SourceMismatchException = SourceBindingMismatchException
+
+/** Thrown when the server does not advertise the required connect-lifecycle capability. */
+class ConnectLifecycleUnsupportedException(
+    val reason: String? = null,
+) : RuntimeException(
+    if (reason.isNullOrBlank()) {
+        "server does not support the oversqlite connect lifecycle"
+    } else {
+        "server does not support the oversqlite connect lifecycle: $reason"
+    }
+)
+
+/** Thrown when a database already attached to one user is asked to attach as another user. */
+class ConnectBindingConflictException(
+    val attachedUserId: String,
+    val requestedUserId: String,
+) : RuntimeException(
+    "local database is already attached to user \"$attachedUserId\"; detach before " +
+        "attaching user \"$requestedUserId\""
+)
+
+/** Thrown when local lifecycle state is incompatible with the requested attach flow. */
+class ConnectLocalStateConflictException(
+    val reason: String,
+) : RuntimeException(
+    "local sync state is incompatible with the requested attach lifecycle: $reason"
+)
+
+/** Thrown when a pending remote-authoritative replacement must be completed by [OversqliteClient.attach]. */
+class RemoteReplacePendingException(
+    val targetUserId: String,
+) : RuntimeException(
+    "remote-authoritative replacement for user \"$targetUserId\" is pending and must be finalized by attach(userId)"
+)
+
+/** Thrown while a destructive local lifecycle transition is still in progress. */
+class DestructiveTransitionInProgressException(
+    val transitionKind: String,
+) : RuntimeException(
+    "destructive local lifecycle transition \"$transitionKind\" is in progress"
+)
+
+/** Thrown when a lifecycle-aware sync operation is called before [OversqliteClient.open]. */
+class OpenRequiredException(
+    val operation: String,
+) : RuntimeException("open(sourceId) must be called before $operation")
+
+/** Thrown when a lifecycle-aware sync operation is called before [OversqliteClient.attach]. */
+class ConnectRequiredException(
+    val operation: String,
+) : RuntimeException("attach(userId) must complete successfully before $operation")
+
+/** Thrown when the client must rebuild from snapshot before it can continue syncing. */
+class RebuildRequiredException : RuntimeException(
+    "client rebuild is required; run rebuild(...) before syncing"
+)
+
+/** Thrown when the same client instance is already running another sync operation. */
 class SyncOperationInProgressException : RuntimeException(
     "another sync operation is already in progress for this client"
 )
 
+/** Thrown when rebuild/recovery is attempted while staged outbound push replay is still pending. */
 class PendingPushReplayException(
     val outboundCount: Int,
 ) : RuntimeException(
     "cannot rebuild while $outboundCount staged push rows are pending authoritative replay"
 )
 
+/** Thrown when a configured conflict resolver returns a structurally invalid decision. */
 class InvalidConflictResolutionException(
     val conflict: ConflictContext,
     val result: MergeResult,
     message: String,
 ) : RuntimeException(message)
 
+/** Thrown after automatic push-conflict retries are exhausted. */
 class PushConflictRetryExhaustedException(
     val retryCount: Int,
     val remainingDirtyCount: Int,
@@ -43,11 +123,54 @@ class PushConflictRetryExhaustedException(
         "$remainingDirtyCount dirty rows remain replayable"
 )
 
+/** Thrown when [OversqliteClient.detach] is blocked by unsynced attached rows. */
+class SignOutBlockedException(
+    val pendingRowCount: Long,
+) : RuntimeException(
+    "cannot detach while $pendingRowCount attached sync rows are pending upload"
+)
+
+/** Thrown when a previously granted initialization lease is stale or expired. */
+class InitializationLeaseInvalidException(
+    val reasonCode: String,
+) : RuntimeException(
+    "initialization lease is no longer valid: $reasonCode; call attach(userId) again"
+)
+
+/** Thrown when a reused source bundle sequence cannot be proven to match server history. */
+class SourceSequenceMismatchException(
+    message: String,
+) : RuntimeException(message)
+
+/** Thrown when source rotation is requested while a non-rotatable lifecycle operation is active. */
+class SourceRotationBlockedException(
+    reason: String,
+) : RuntimeException("source rotation is currently blocked: $reason")
+
+/** Returns `true` when [error] represents normal local sync-operation contention. */
 fun isExpectedSyncContention(error: Throwable?): Boolean {
     if (error == null) return false
     var current: Throwable? = error
     while (current != null) {
         if (current is SyncOperationInProgressException) {
+            return true
+        }
+        current = current.cause
+    }
+    return false
+}
+
+/** Returns `true` when [error] represents a lifecycle-precondition failure instead of transport failure. */
+fun isLifecyclePreconditionError(error: Throwable?): Boolean {
+    if (error == null) return false
+    var current: Throwable? = error
+    while (current != null) {
+        if (
+            current is OpenRequiredException ||
+            current is ConnectRequiredException ||
+            current is DestructiveTransitionInProgressException ||
+            current is SourceBindingMismatchException
+        ) {
             return true
         }
         current = current.cause

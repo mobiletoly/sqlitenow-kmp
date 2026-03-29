@@ -26,7 +26,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 
 internal class OversqliteStageStore(
-    private val db: SafeSQLiteConnection,
+    internal val db: SafeSQLiteConnection,
     private val localStore: OversqliteLocalStore,
     private val syncStateStore: OversqliteSyncStateStore,
     private val json: Json,
@@ -83,231 +83,6 @@ internal class OversqliteStageStore(
             rows = preparedRows,
             discardedRows = discardedRows,
         )
-    }
-
-    suspend fun freezePushOutboundSnapshot(prepared: PreparedPush) {
-        if (prepared.rows.isEmpty() && prepared.discardedRows.isEmpty()) return
-
-        db.transaction(TransactionMode.IMMEDIATE) {
-            val statementCache = StatementCache(db)
-            try {
-                prepared.rows.forEachIndexed { index, row ->
-                    db.withPreparedStatement(
-                        sql = """
-                            INSERT INTO _sync_push_outbound (
-                              source_bundle_id, row_ordinal, schema_name, table_name, key_json, op, base_row_version, payload
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        """.trimIndent(),
-                        statementCache = statementCache,
-                    ) { st ->
-                        st.bindLong(1, prepared.sourceBundleId)
-                        st.bindLong(2, index.toLong())
-                        st.bindText(3, row.schemaName)
-                        st.bindText(4, row.tableName)
-                        st.bindText(5, row.keyJson)
-                        st.bindText(6, row.op)
-                        st.bindLong(7, row.baseRowVersion)
-                        if (row.localPayload == null) st.bindNull(8) else st.bindText(8, row.localPayload)
-                        st.step()
-                    }
-                }
-
-                for (discarded in prepared.discardedRows) {
-                    syncStateStore.deleteDirtyRow(discarded.schemaName, discarded.tableName, discarded.keyJson, statementCache)
-                }
-                for (row in prepared.rows) {
-                    syncStateStore.deleteDirtyRow(row.schemaName, row.tableName, row.keyJson, statementCache)
-                }
-            } finally {
-                statementCache.close()
-            }
-        }
-    }
-
-    suspend fun loadPushOutboundSnapshot(state: RuntimeState): PushOutboundSnapshot? {
-        var sourceBundleId: Long? = null
-        val rows = mutableListOf<DirtyRowCapture>()
-        db.prepare(
-            """
-            SELECT source_bundle_id, schema_name, table_name, key_json, op, base_row_version, payload, row_ordinal
-            FROM _sync_push_outbound
-            ORDER BY source_bundle_id, row_ordinal
-            """.trimIndent()
-        ).use { st ->
-            while (st.step()) {
-                val rowSourceBundleId = st.getLong(0)
-                if (sourceBundleId == null) {
-                    sourceBundleId = rowSourceBundleId
-                } else {
-                    require(sourceBundleId == rowSourceBundleId) {
-                        "outbound push snapshot contains multiple source_bundle_id values ($sourceBundleId and $rowSourceBundleId)"
-                    }
-                }
-                val tableName = st.getText(2)
-                val keyJson = st.getText(3)
-                val (localPk, wireKey) = localStore.decodeDirtyKeyForPush(state, tableName, keyJson)
-                rows += DirtyRowCapture(
-                    schemaName = st.getText(1),
-                    tableName = tableName,
-                    keyJson = keyJson,
-                    localPk = localPk,
-                    wireKey = wireKey,
-                    op = st.getText(4),
-                    baseRowVersion = st.getLong(5),
-                    localPayload = if (st.isNull(6)) null else st.getText(6),
-                    dirtyOrdinal = st.getLong(7),
-                )
-            }
-        }
-
-        return sourceBundleId?.let {
-            PushOutboundSnapshot(
-                sourceBundleId = it,
-                rows = rows,
-            )
-        }
-    }
-
-    suspend fun stageCommittedBundleChunk(
-        state: RuntimeState,
-        chunk: CommittedBundleRowsResponse,
-        afterRowOrdinal: Long?,
-    ) {
-        var rowOrdinal = afterRowOrdinal ?: -1L
-        db.transaction(TransactionMode.IMMEDIATE) {
-            val statementCache = StatementCache(db)
-            try {
-                for (row in chunk.rows) {
-                    require(row.schema == state.validated.schema) {
-                        "committed bundle row schema ${row.schema} does not match client schema ${state.validated.schema}"
-                    }
-                    validateBundleRow(row)
-                    val (keyJson, _) = localStore.bundleRowKeyToLocalKey(state, row.table, row.key)
-                    rowOrdinal++
-                    db.withPreparedStatement(
-                        sql = """
-                            INSERT INTO _sync_push_stage (
-                              bundle_seq, row_ordinal, schema_name, table_name, key_json, op, row_version, payload
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        """.trimIndent(),
-                        statementCache = statementCache,
-                    ) { st ->
-                        st.bindLong(1, chunk.bundleSeq)
-                        st.bindLong(2, rowOrdinal)
-                        st.bindText(3, row.schema)
-                        st.bindText(4, row.table)
-                        st.bindText(5, keyJson)
-                        st.bindText(6, row.op)
-                        st.bindLong(7, row.rowVersion)
-                        if (row.op == "DELETE" || row.payload == null) st.bindNull(8) else st.bindText(8, row.payload.toString())
-                        st.step()
-                    }
-                }
-            } finally {
-                statementCache.close()
-            }
-        }
-    }
-
-    suspend fun computeStagedPushBundleHash(
-        state: RuntimeState,
-        bundleSeq: Long,
-    ): String {
-        val rows = mutableListOf<JsonElement>()
-        db.prepare(
-            """
-            SELECT row_ordinal, schema_name, table_name, key_json, op, row_version, payload
-            FROM _sync_push_stage
-            WHERE bundle_seq = ?
-            ORDER BY row_ordinal
-            """.trimIndent()
-        ).use { st ->
-            st.bindLong(1, bundleSeq)
-            while (st.step()) {
-                val rowOrdinal = st.getLong(0)
-                val schemaName = st.getText(1)
-                val tableName = st.getText(2)
-                val keyJson = st.getText(3)
-                val op = st.getText(4)
-                val rowVersion = st.getLong(5)
-                val payloadText = if (st.isNull(6)) null else st.getText(6)
-                val (_, wireKey) = localStore.decodeDirtyKeyForPush(state, tableName, keyJson)
-                rows += buildJsonObject {
-                    put("row_ordinal", JsonPrimitive(rowOrdinal))
-                    put("schema", JsonPrimitive(schemaName))
-                    put("table", JsonPrimitive(tableName))
-                    put("key", buildJsonObject {
-                        for ((key, value) in wireKey.entries.sortedBy { it.key }) {
-                            put(key, JsonPrimitive(value))
-                        }
-                    })
-                    put("op", JsonPrimitive(op))
-                    put("row_version", JsonPrimitive(rowVersion))
-                    put("payload", payloadText?.let { json.parseToJsonElement(it) } ?: JsonNull)
-                }
-            }
-        }
-        return sha256Hex(canonicalizeJsonElement(JsonArray(rows)).encodeToByteArray())
-    }
-
-    suspend fun loadStagedPushBundleRows(
-        state: RuntimeState,
-        bundleSeq: Long,
-    ): List<StagedPushBundleRow> {
-        val rows = mutableListOf<StagedPushBundleRow>()
-        db.prepare(
-            """
-            SELECT schema_name, table_name, key_json, op, row_version, payload
-            FROM _sync_push_stage
-            WHERE bundle_seq = ?
-            ORDER BY row_ordinal
-            """.trimIndent()
-        ).use { st ->
-            st.bindLong(1, bundleSeq)
-            while (st.step()) {
-                val schemaName = st.getText(0)
-                val tableName = st.getText(1)
-                val keyJson = st.getText(2)
-                val (localPk, wireKey) = localStore.decodeDirtyKeyForPush(state, tableName, keyJson)
-                rows += StagedPushBundleRow(
-                    schemaName = schemaName,
-                    tableName = tableName,
-                    keyJson = keyJson,
-                    localPk = localPk,
-                    wireKey = wireKey,
-                    op = st.getText(3),
-                    rowVersion = st.getLong(4),
-                    payload = if (st.isNull(5)) null else st.getText(5),
-                )
-            }
-        }
-        return rows
-    }
-
-    suspend fun deletePushStage(
-        bundleSeq: Long,
-        statementCache: StatementCache? = null,
-    ) {
-        db.withPreparedStatement(
-            sql = "DELETE FROM _sync_push_stage WHERE bundle_seq = ?",
-            statementCache = statementCache,
-        ) { st ->
-            st.bindLong(1, bundleSeq)
-            st.step()
-        }
-    }
-
-    suspend fun deletePushOutboundSnapshot(
-        sourceBundleId: Long,
-        statementCache: StatementCache? = null,
-    ) {
-        db.withPreparedStatement(
-            sql = "DELETE FROM _sync_push_outbound WHERE source_bundle_id = ?",
-            statementCache = statementCache,
-        ) { st ->
-            st.bindLong(1, sourceBundleId)
-            st.step()
-        }
     }
 
     suspend fun stageSnapshotChunk(
@@ -393,6 +168,17 @@ internal class OversqliteStageStore(
             statementCache = statementCache,
         ) { st ->
             st.bindText(1, snapshotId)
+            st.step()
+        }
+    }
+
+    suspend fun clearAllSnapshotStages(
+        statementCache: StatementCache? = null,
+    ) {
+        db.withPreparedStatement(
+            sql = "DELETE FROM _sync_snapshot_stage",
+            statementCache = statementCache,
+        ) { st ->
             st.step()
         }
     }

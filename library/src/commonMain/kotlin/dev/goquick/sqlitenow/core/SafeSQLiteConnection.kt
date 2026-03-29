@@ -36,6 +36,7 @@ class SafeSQLiteConnection internal constructor(
 ) {
     val dispatcher: CoroutineDispatcher = sqliteConnectionDispatcher()
     private var activeTransactionDepth: Int = 0
+    private var tableInvalidationListener: ((Set<String>) -> Unit)? = null
 
     internal val restoredFromSnapshot: Boolean
         get() = persistenceController.restoredFromSnapshot
@@ -158,6 +159,17 @@ class SafeSQLiteConnection internal constructor(
             }
             persistenceController.flush(ref)
         }
+    }
+
+    internal fun reportExternalTableChanges(affectedTables: Set<String>) {
+        if (affectedTables.isEmpty()) return
+        val normalized = affectedTables.mapTo(linkedSetOf()) { it.lowercase() }
+        if (normalized.isEmpty()) return
+        tableInvalidationListener?.invoke(normalized)
+    }
+
+    internal fun setTableInvalidationListener(listener: ((Set<String>) -> Unit)?) {
+        tableInvalidationListener = listener
     }
 }
 

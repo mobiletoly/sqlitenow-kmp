@@ -1,6 +1,7 @@
 package dev.goquick.sqlitenow.oversqlite.e2e
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.goquick.sqlitenow.oversqlite.RebuildMode
 import dev.goquick.sqlitenow.oversqlite.SyncTable
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -15,9 +16,9 @@ class RealServerFkTopologyTest {
         resetRealServerState(config.baseUrl)
 
         val userId = randomUserId()
-        val seedDevice = randomDeviceId("fk-seed")
-        val pullDevice = randomDeviceId("fk-pull")
-        val hydrateDevice = randomDeviceId("fk-hydrate")
+        val seedDevice = randomSourceId("fk-seed")
+        val pullDevice = randomSourceId("fk-pull")
+        val hydrateDevice = randomSourceId("fk-hydrate")
         val syncTables = listOf(
             SyncTable("categories", syncKeyColumnName = "id"),
             SyncTable("teams", syncKeyColumnName = "id"),
@@ -42,16 +43,16 @@ class RealServerFkTopologyTest {
             val pullClient = newRealServerClient(pullDb, config, pullHttp, syncTables = syncTables)
             val hydrateClient = newRealServerClient(hydrateDb, config, hydrateHttp, syncTables = syncTables)
 
-            seedClient.bootstrap(userId, seedDevice).getOrThrow()
-            pullClient.bootstrap(userId, pullDevice).getOrThrow()
-            hydrateClient.bootstrap(userId, hydrateDevice).getOrThrow()
+            seedClient.openAndAttach(userId, seedDevice).getOrThrow()
+            pullClient.openAndAttach(userId, pullDevice).getOrThrow()
+            hydrateClient.openAndAttach(userId, hydrateDevice).getOrThrow()
 
             insertCategoryGraph(seedDb, "fk-topology")
             insertTeamGraph(seedDb, "fk-topology")
 
             seedClient.pushPending().getOrThrow()
             pullClient.pullToStable().getOrThrow()
-            hydrateClient.hydrate().getOrThrow()
+            hydrateClient.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
             assertTopologyState(pullDb, "pull")
             assertTopologyState(hydrateDb, "hydrate")

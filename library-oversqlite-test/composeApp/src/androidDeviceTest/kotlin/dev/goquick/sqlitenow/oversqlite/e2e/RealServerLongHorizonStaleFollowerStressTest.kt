@@ -1,6 +1,7 @@
 package dev.goquick.sqlitenow.oversqlite.e2e
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.goquick.sqlitenow.oversqlite.RebuildMode
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -15,8 +16,8 @@ class RealServerLongHorizonStaleFollowerStressTest {
         resetRealServerState(config.baseUrl)
 
         val userId = randomUserId()
-        val leaderDevice = randomDeviceId("leader")
-        val followerDevice = randomDeviceId("follower")
+        val leaderDevice = randomSourceId("leader")
+        val followerDevice = randomSourceId("follower")
         val uploadLimit = 8
 
         val leaderToken = issueDummySigninToken(config.baseUrl, userId, leaderDevice)
@@ -46,10 +47,10 @@ class RealServerLongHorizonStaleFollowerStressTest {
                 downloadLimit = 2,
             )
 
-            leader.bootstrap(userId, leaderDevice).getOrThrow()
-            follower.bootstrap(userId, followerDevice).getOrThrow()
-            leader.hydrate().getOrThrow()
-            follower.hydrate().getOrThrow()
+            leader.openAndAttach(userId, leaderDevice).getOrThrow()
+            follower.openAndAttach(userId, followerDevice).getOrThrow()
+            leader.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            follower.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
             val hotGraph = insertHotGraph(leaderDb)
             leader.pushPending().getOrThrow()
@@ -68,13 +69,13 @@ class RealServerLongHorizonStaleFollowerStressTest {
 
                 if (round in followerCheckpoints) {
                     follower.pullToStable().getOrThrow()
-                    assertEquals((round + 1).toLong(), follower.lastBundleSeqSeen().getOrThrow())
+                    assertEquals((round + 1).toLong(), follower.syncStatus().getOrThrow().lastBundleSeqSeen)
                     assertEquals(0L, scalarLong(followerDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
                 }
             }
 
-            assertEquals(13L, leader.lastBundleSeqSeen().getOrThrow())
-            assertEquals(13L, follower.lastBundleSeqSeen().getOrThrow())
+            assertEquals(13L, leader.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(13L, follower.syncStatus().getOrThrow().lastBundleSeqSeen)
 
             assertHotGraphDrivenCounts(leaderDb, rounds)
             assertHotGraphDrivenCounts(followerDb, rounds)

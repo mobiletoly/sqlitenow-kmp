@@ -1,6 +1,8 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.BundledSqliteConnectionProvider
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -9,7 +11,7 @@ import kotlin.test.assertTrue
 
 class BundleSnapshotContractTest : BundleClientContractTestSupport() {
     @Test
-    fun hydrate_rejectsSnapshotSessionWithMalformedExpiresAt() = runBlocking {
+    fun hydrate_rejectsSnapshotSessionWithMalformedExpiresAt() = runBlocking<Unit> {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
         val server = newServer().apply {
@@ -32,10 +34,15 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
         server.start()
         val http = newHttpClient(server)
         try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.bootstrap("user-1", "device-a").getOrThrow()
+            val client = newClient(
+                db,
+                http,
+                syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+                transientRetryPolicy = OversqliteTransientRetryPolicy(maxAttempts = 1),
+            )
+            client.openAndConnect("user-1").getOrThrow()
 
-            val error = client.hydrate().exceptionOrNull()
+            val error = client.rebuild(RebuildMode.KEEP_SOURCE).exceptionOrNull()
             assertTrue(error != null)
             assertTrue(error.message?.contains("oversqlite timestamp must be RFC3339/ISO-8601 instant") == true)
         } finally {
@@ -46,7 +53,77 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
-    fun hydrate_oneChunkStagesBeforeFinalApply_andClearsStaleStageFirst() = runBlocking {
+    fun hydrate_reportsRestoreSummary_andProgressPhases() = runBlocking<Unit> {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer().apply {
+            createContext("/sync/snapshot-sessions") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-report",
+                      "snapshot_bundle_seq": 5,
+                      "row_count": 1,
+                      "byte_count": 32,
+                      "expires_at": "2026-03-22T00:00:00Z"
+                    }
+                    """.trimIndent(),
+                )
+            }
+            createContext("/sync/snapshot-sessions/snapshot-report") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-report",
+                      "snapshot_bundle_seq": 5,
+                      "rows": [
+                        {
+                          "schema": "main",
+                          "table": "users",
+                          "key": {"id":"user-1"},
+                          "row_version": 1,
+                          "payload": {"id":"user-1","name":"Ada"}
+                        }
+                      ],
+                      "next_row_ordinal": 1,
+                      "has_more": false
+                    }
+                    """.trimIndent(),
+                )
+            }
+        }
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.openAndConnect("user-1").getOrThrow()
+            val observedProgress = mutableListOf<OversqliteProgress>()
+            val collectJob = launch(start = CoroutineStart.UNDISPATCHED) {
+                client.progress.collect { observedProgress += it }
+            }
+
+            val report = client.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+
+            collectJob.cancel()
+            assertEquals(RemoteSyncOutcome.APPLIED_SNAPSHOT, report.outcome)
+            assertEquals(RestoreSummary(bundleSeq = 5, rowCount = 1), report.restore)
+            assertEquals(AuthorityStatus.AUTHORITATIVE_MATERIALIZED, report.status.authority)
+            assertTrue(observedProgress.contains(OversqliteProgress.Active(OversqliteOperation.REBUILD_KEEP_SOURCE, OversqlitePhase.STAGING_REMOTE_STATE)))
+            assertTrue(observedProgress.contains(OversqliteProgress.Active(OversqliteOperation.REBUILD_KEEP_SOURCE, OversqlitePhase.APPLYING_REMOTE_STATE)))
+            assertEquals(OversqliteProgress.Idle, client.progress.value)
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun hydrate_oneChunkStagesBeforeFinalApply_andClearsStaleStageFirst() = runBlocking<Unit> {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
         val server = newServer().apply {
@@ -92,8 +169,13 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
         server.start()
         val http = newHttpClient(server)
         try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.bootstrap("user-1", "device-a").getOrThrow()
+            val client = newClient(
+                db,
+                http,
+                syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+                transientRetryPolicy = OversqliteTransientRetryPolicy(maxAttempts = 1),
+            )
+            client.openAndConnect("user-1").getOrThrow()
             db.execSQL(
                 """
                 INSERT INTO _sync_snapshot_stage(snapshot_id, row_ordinal, schema_name, table_name, key_json, row_version, payload)
@@ -101,10 +183,10 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
                 """.trimIndent()
             )
 
-            val error = client.hydrate().exceptionOrNull()
+            val error = client.rebuild(RebuildMode.KEEP_SOURCE).exceptionOrNull()
             assertTrue(error != null)
             assertTrue(error.message?.contains("payload for users must contain every table column") == true)
-            assertEquals(0L, client.lastBundleSeqSeen().getOrThrow())
+            assertEquals(0L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
             assertEquals("snapshot-one", scalarText(db, "SELECT DISTINCT snapshot_id FROM _sync_snapshot_stage"))
@@ -116,7 +198,7 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
-    fun hydrate_multiChunkStaysInvisibleUntilFinalApply() = runBlocking {
+    fun hydrate_multiChunkStaysInvisibleUntilFinalApply() = runBlocking<Unit> {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
         val requestedOrdinals = mutableListOf<String>()
@@ -190,16 +272,21 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
         server.start()
         val http = newHttpClient(server)
         try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.bootstrap("user-1", "device-a").getOrThrow()
+            val client = newClient(
+                db,
+                http,
+                syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+                transientRetryPolicy = OversqliteTransientRetryPolicy(maxAttempts = 1),
+            )
+            client.openAndConnect("user-1").getOrThrow()
 
-            val error = client.hydrate().exceptionOrNull()
+            val error = client.rebuild(RebuildMode.KEEP_SOURCE).exceptionOrNull()
             assertTrue(error != null)
             assertTrue(error.message?.contains("payload for users must contain every table column") == true)
             assertEquals(listOf("0", "1"), requestedOrdinals)
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
             assertEquals(2L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
-            assertEquals(0L, client.lastBundleSeqSeen().getOrThrow())
+            assertEquals(0L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
         } finally {
             http.close()
             server.stop(0)
@@ -208,7 +295,7 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
-    fun hydrate_blobPrimaryKeySnapshotConvertsWireUuidOnlyOnce() = runBlocking {
+    fun hydrate_blobPrimaryKeySnapshotConvertsWireUuidOnlyOnce() = runBlocking<Unit> {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createBlobDocsTable(db)
         val server = newServer().apply {
@@ -259,11 +346,11 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
         val http = newHttpClient(server)
         try {
             val client = newClient(db, http, syncTables = listOf(SyncTable("blob_docs", syncKeyColumnName = "id")))
-            client.bootstrap("user-1", "device-a").getOrThrow()
+            client.openAndConnect("user-1").getOrThrow()
 
-            client.hydrate().getOrThrow()
+            client.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
-            assertEquals(7L, client.lastBundleSeqSeen().getOrThrow())
+            assertEquals(7L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM blob_docs"))
             assertEquals("601C32ED8299C541C389749094A88CF2", scalarText(db, "SELECT hex(id) FROM blob_docs"))
             assertEquals("010203", scalarText(db, "SELECT hex(payload) FROM blob_docs"))
@@ -276,7 +363,7 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
-    fun hydrate_restartClearsStageAndRestartsFromZero() = runBlocking {
+    fun hydrate_restartClearsStageAndRestartsFromZero() = runBlocking<Unit> {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
         val requestedOrdinals = mutableListOf<String>()
@@ -377,20 +464,25 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
         server.start()
         val http = newHttpClient(server)
         try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.bootstrap("user-1", "device-a").getOrThrow()
+            val client = newClient(
+                db,
+                http,
+                syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+                transientRetryPolicy = OversqliteTransientRetryPolicy(maxAttempts = 1),
+            )
+            client.openAndConnect("user-1").getOrThrow()
 
-            val firstError = client.hydrate().exceptionOrNull()
+            val firstError = client.rebuild(RebuildMode.KEEP_SOURCE).exceptionOrNull()
             assertTrue(firstError != null)
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
 
-            client.hydrate().getOrThrow()
+            client.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
             assertEquals(listOf("a:0", "a:1", "b:0"), requestedOrdinals)
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
             assertEquals("Grace", scalarText(db, "SELECT name FROM users WHERE id = 'user-2'"))
-            assertEquals(12L, client.lastBundleSeqSeen().getOrThrow())
+            assertEquals(12L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
         } finally {
             http.close()
             server.stop(0)
@@ -399,7 +491,7 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
-    fun hydrate_selfReferentialRowsSurviveChunkBoundaries() = runBlocking {
+    fun hydrate_selfReferentialRowsSurviveChunkBoundaries() = runBlocking<Unit> {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createEmployeesTable(db)
         val server = newServer().apply {
@@ -470,11 +562,11 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
         val http = newHttpClient(server)
         try {
             val client = newClient(db, http, syncTables = listOf(SyncTable("employees", syncKeyColumnName = "id")))
-            client.bootstrap("user-1", "device-a").getOrThrow()
+            client.openAndConnect("user-1").getOrThrow()
 
-            client.hydrate().getOrThrow()
+            client.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
-            assertEquals(5L, client.lastBundleSeqSeen().getOrThrow())
+            assertEquals(5L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals(2L, scalarLong(db, "SELECT COUNT(*) FROM employees"))
             assertEquals("employee-1", scalarText(db, "SELECT manager_id FROM employees WHERE id = 'employee-2'"))
             assertEquals("Alice", scalarText(db, "SELECT name FROM employees WHERE id = 'employee-1'"))
@@ -486,7 +578,7 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
-    fun hydrate_cyclicFkGraphsSurviveChunkBoundaries() = runBlocking {
+    fun hydrate_cyclicFkGraphsSurviveChunkBoundaries() = runBlocking<Unit> {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createAuthorsAndProfilesCycleTables(db)
         val server = newServer().apply {
@@ -564,11 +656,11 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
                     SyncTable("profiles", syncKeyColumnName = "id"),
                 )
             )
-            client.bootstrap("user-1", "device-a").getOrThrow()
+            client.openAndConnect("user-1").getOrThrow()
 
-            client.hydrate().getOrThrow()
+            client.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
 
-            assertEquals(6L, client.lastBundleSeqSeen().getOrThrow())
+            assertEquals(6L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals("profile-1", scalarText(db, "SELECT profile_id FROM authors WHERE id = 'author-1'"))
             assertEquals("author-1", scalarText(db, "SELECT author_id FROM profiles WHERE id = 'profile-1'"))
             assertEquals("Cyclic", scalarText(db, "SELECT bio FROM profiles WHERE id = 'profile-1'"))
@@ -580,7 +672,7 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
-    fun recover_failedFinalApplyLeavesSourceIdUnchanged() = runBlocking {
+    fun recover_failedFinalApplyLeavesSourceIdUnchanged() = runBlocking<Unit> {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
         val server = newServer().apply {
@@ -627,14 +719,17 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
         val http = newHttpClient(server)
         try {
             val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.bootstrap("user-1", "device-a").getOrThrow()
-            val originalSourceId = scalarText(db, "SELECT source_id FROM _sync_client_state WHERE user_id = 'user-1'")
+            client.openAndConnect("user-1").getOrThrow()
+            val originalSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
 
-            val error = client.recover().exceptionOrNull()
+            val error = client.rebuild(
+                mode = RebuildMode.ROTATE_SOURCE,
+                newSourceId = "recover-fail-source",
+            ).exceptionOrNull()
             assertTrue(error != null)
             assertTrue(error.message?.contains("payload for users must contain every table column") == true)
-            assertEquals(originalSourceId, scalarText(db, "SELECT source_id FROM _sync_client_state WHERE user_id = 'user-1'"))
-            assertEquals(0L, client.lastBundleSeqSeen().getOrThrow())
+            assertEquals(originalSourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
+            assertEquals(0L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
         } finally {
             http.close()
             server.stop(0)
@@ -643,7 +738,7 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
-    fun recover_rotatesSourceId_andResetsBundleState() = runBlocking {
+    fun recover_rotatesSourceId_andResetsBundleState() = runBlocking<Unit> {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
         val server = newServer().apply {
@@ -690,15 +785,22 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
         val http = newHttpClient(server)
         try {
             val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.bootstrap("user-1", "device-a").getOrThrow()
-            db.execSQL("UPDATE _sync_client_state SET next_source_bundle_id = 5, last_bundle_seq_seen = 4 WHERE user_id = 'user-1'")
+            client.openAndConnect("user-1").getOrThrow()
+            val sourceBefore = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
+            db.execSQL("UPDATE _sync_source_state SET next_source_bundle_id = 5 WHERE source_id = '$sourceBefore'")
+            db.execSQL("UPDATE _sync_attachment_state SET last_bundle_seq_seen = 4 WHERE singleton_key = 1")
 
-            client.recover().getOrThrow()
+            client.rebuild(
+                mode = RebuildMode.ROTATE_SOURCE,
+                newSourceId = "recover-rotated-source",
+            ).getOrThrow()
 
-            val newSourceId = scalarText(db, "SELECT source_id FROM _sync_client_state WHERE user_id = 'user-1'")
-            assertNotEquals("device-a", newSourceId)
-            assertEquals(1L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_client_state WHERE user_id = 'user-1'"))
-            assertEquals(9L, client.lastBundleSeqSeen().getOrThrow())
+            val newSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
+            assertNotEquals(sourceBefore, newSourceId)
+            assertEquals(newSourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
+            assertEquals(newSourceId, scalarText(db, "SELECT replaced_by_source_id FROM _sync_source_state WHERE source_id = '$sourceBefore'"))
+            assertEquals(1L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$newSourceId'"))
+            assertEquals(9L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
         } finally {
             http.close()
             server.stop(0)
@@ -707,7 +809,7 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
-    fun recover_sourceRotationClearsManagedTables_andRemainingLocalSyncState() = runBlocking {
+    fun recover_sourceRotationClearsManagedTables_andRemainingLocalSyncState() = runBlocking<Unit> {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
         val server = newServer().apply {
@@ -754,11 +856,12 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
         val http = newHttpClient(server)
         try {
             val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.bootstrap("user-1", "device-a").getOrThrow()
+            client.openAndConnect("user-1").getOrThrow()
+            val sourceBefore = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
 
-            db.execSQL("UPDATE _sync_client_state SET apply_mode = 1 WHERE user_id = 'user-1'")
+            db.execSQL("UPDATE _sync_apply_state SET apply_mode = 1 WHERE singleton_key = 1")
             db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada stale')")
-            db.execSQL("UPDATE _sync_client_state SET apply_mode = 0 WHERE user_id = 'user-1'")
+            db.execSQL("UPDATE _sync_apply_state SET apply_mode = 0 WHERE singleton_key = 1")
             db.execSQL(
                 """
                 INSERT INTO _sync_row_state(schema_name, table_name, key_json, row_version, deleted)
@@ -767,33 +870,38 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
             )
             db.execSQL(
                 """
-                INSERT INTO _sync_push_stage(bundle_seq, row_ordinal, schema_name, table_name, key_json, op, row_version, payload)
-                VALUES (7, 0, 'main', 'users', '{"id":"user-1"}', 'INSERT', 7, '{"id":"user-1","name":"Ada staged"}')
-                """.trimIndent()
-            )
-            db.execSQL(
-                """
                 INSERT INTO _sync_snapshot_stage(snapshot_id, row_ordinal, schema_name, table_name, key_json, row_version, payload)
                 VALUES ('stale-snapshot', 0, 'main', 'users', '{"id":"user-9"}', 9, '{"id":"user-9","name":"Old snapshot"}')
                 """.trimIndent()
             )
-            db.execSQL("UPDATE _sync_client_state SET next_source_bundle_id = 5, last_bundle_seq_seen = 4, rebuild_required = 1 WHERE user_id = 'user-1'")
+            db.execSQL("UPDATE _sync_source_state SET next_source_bundle_id = 5 WHERE source_id = '$sourceBefore'")
+            db.execSQL(
+                """
+                UPDATE _sync_attachment_state
+                SET last_bundle_seq_seen = 4,
+                    rebuild_required = 1
+                WHERE singleton_key = 1
+                """.trimIndent()
+            )
 
-            client.recover().getOrThrow()
+            client.rebuild(
+                mode = RebuildMode.ROTATE_SOURCE,
+                newSourceId = "recover-reset-source",
+            ).getOrThrow()
 
-            val newSourceId = scalarText(db, "SELECT source_id FROM _sync_client_state WHERE user_id = 'user-1'")
-            assertNotEquals("device-a", newSourceId)
-            assertEquals(1L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_client_state WHERE user_id = 'user-1'"))
-            assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_client_state WHERE user_id = 'user-1'"))
-            assertEquals(11L, client.lastBundleSeqSeen().getOrThrow())
+            val newSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
+            assertNotEquals(sourceBefore, newSourceId)
+            assertEquals(newSourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
+            assertEquals(1L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$newSourceId'"))
+            assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_attachment_state WHERE singleton_key = 1"))
+            assertEquals(11L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM users"))
             assertEquals("Grace", scalarText(db, "SELECT name FROM users WHERE id = 'user-2'"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users WHERE id = 'user-1'"))
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_row_state WHERE table_name = 'users'"))
             assertEquals(11L, scalarLong(db, "SELECT row_version FROM _sync_row_state WHERE table_name = 'users' AND key_json = '{\"id\":\"user-2\"}'"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_push_outbound"))
-            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_push_stage"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
         } finally {
             http.close()
@@ -803,7 +911,7 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
-    fun hydrateAndRecover_clearRebuildRequired_andAllowNormalSyncAgain() = runBlocking {
+    fun hydrateAndRecover_clearRebuildRequired_andAllowNormalSyncAgain() = runBlocking<Unit> {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
         val server = newServer().apply {
@@ -863,20 +971,23 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
         val http = newHttpClient(server)
         try {
             val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.bootstrap("user-1", "device-a").getOrThrow()
+            client.openAndConnect("user-1").getOrThrow()
 
-            db.execSQL("UPDATE _sync_client_state SET rebuild_required = 1 WHERE user_id = 'user-1'")
+            db.execSQL("UPDATE _sync_attachment_state SET rebuild_required = 1 WHERE singleton_key = 1")
             assertTrue(client.sync().exceptionOrNull() is RebuildRequiredException)
 
-            client.hydrate().getOrThrow()
-            assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_client_state WHERE user_id = 'user-1'"))
+            client.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_attachment_state WHERE singleton_key = 1"))
             client.sync().getOrThrow()
 
-            db.execSQL("UPDATE _sync_client_state SET rebuild_required = 1 WHERE user_id = 'user-1'")
+            db.execSQL("UPDATE _sync_attachment_state SET rebuild_required = 1 WHERE singleton_key = 1")
             assertTrue(client.sync().exceptionOrNull() is RebuildRequiredException)
 
-            client.recover().getOrThrow()
-            assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_client_state WHERE user_id = 'user-1'"))
+            client.rebuild(
+                mode = RebuildMode.ROTATE_SOURCE,
+                newSourceId = "recover-rebuild-source",
+            ).getOrThrow()
+            assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_attachment_state WHERE singleton_key = 1"))
             client.sync().getOrThrow()
         } finally {
             http.close()

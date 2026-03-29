@@ -17,45 +17,332 @@ package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.sqliteNetworkDispatcher
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.flow.StateFlow
 
 /**
- * Bundle-era KMP oversqlite client.
+ * Public oversqlite lifecycle and sync API.
  *
- * Construction is side-effect free. Call [bootstrap] successfully before running any sync
- * operation. Create at most one client instance per local database at a time; runtime sync
- * serialization is enforced per client instance, not across multiple client objects that point at
- * the same database.
+ * Construction is side-effect free. A client is not usable for account-backed sync until
+ * [open] has initialized the local runtime for the app-owned install `sourceId` and [attach] has
+ * attached or resumed an authenticated account scope.
+ *
+ * Create at most one client instance per local database at a time. Sync serialization is enforced
+ * per client instance, not across multiple client objects that point at the same database.
  */
 interface OversqliteClient {
+    /** Coarse UI-oriented progress for the active lifecycle-aware operation, if any. */
+    val progress: StateFlow<OversqliteProgress>
+
+    /** Temporarily suppresses automatic/background uploads without changing local dirty tracking. */
     suspend fun pauseUploads()
+
+    /** Re-enables uploads after a prior [pauseUploads] call. */
     suspend fun resumeUploads()
+
+    /** Temporarily suppresses automatic/background downloads without changing local attachment state. */
     suspend fun pauseDownloads()
+
+    /** Re-enables downloads after a prior [pauseDownloads] call. */
     suspend fun resumeDownloads()
 
-    /** Validates local sync schema, creates metadata, binds user/source identity, and installs triggers. */
-    suspend fun bootstrap(userId: String, sourceId: String): Result<Unit>
+    /**
+     * Performs the local-only startup phase for this database bound to the caller-provided
+     * [sourceId].
+     *
+     * This validates sync-managed table configuration, creates or repairs lifecycle metadata,
+     * installs write-guard and change-capture triggers, durably binds or validates the current
+     * source identity, and captures pre-existing managed rows exactly once as anonymous pending sync
+     * data.
+     *
+     * [open] never contacts the server and never attaches an authenticated user. Call it on every
+     * app launch before any other lifecycle-aware sync operation.
+     *
+     * [sourceId] is an opaque app-owned string. Oversqlite treats it as exact-match data: it does
+     * not normalize, trim, case-fold, or reinterpret the provided value.
+     *
+     * The same install-scoped [sourceId] should be reused across app launches, sign-out/sign-in,
+     * and account switching on one local installation. Different installs/devices must use
+     * different source ids, even for the same account.
+     */
+    suspend fun open(sourceId: String): Result<OpenState>
 
-    /** Freezes local dirty rows into one logical bundle and uploads it through chunked push sessions. */
-    suspend fun pushPending(): Result<Unit>
+    /**
+     * Resolves or resumes account attachment for the authenticated [userId].
+     *
+     * This is the only operation that may move the local database into an attached account state.
+     * Depending on local state and server authority, it may:
+     * - resume the same attached account locally
+     * - attach to an already-authoritative remote scope
+     * - authorize the first local seed upload
+     * - establish an authoritative empty scope
+     * - ask the caller to retry later without treating the condition as auth failure
+     *
+     * Call [attach] whenever an authenticated user session exists, not only on the initial
+     * sign-in gesture.
+     *
+     * [attach] is account-scoped. It must not be used to change install/source identity. The
+     * current install-scoped `sourceId` remains the same across sign-out/sign-in and account
+     * switching on one local installation.
+     */
+    suspend fun attach(userId: String): Result<AttachResult>
 
-    /** Pulls authoritative remote bundles until the current stable bundle sequence is fully applied. */
-    suspend fun pullToStable(): Result<Unit>
+    /**
+     * Returns the canonical sync status for the currently connected scope.
+     *
+     * Requires successful [open] and [attach].
+     */
+    suspend fun syncStatus(): Result<SyncStatus>
 
-    /** Runs the standard interactive sync flow: push first, then pull. */
-    suspend fun sync(): Result<Unit>
+    /**
+     * Detaches safely from the currently attached account.
+     *
+     * If unsynced attached sync data exists, returns [DetachOutcome.BLOCKED_UNSYNCED_DATA] and
+     * makes no destructive local changes. On success, detach clears sync-managed local state and
+     * returns the database to anonymous lifecycle state.
+     *
+     * [detach] does not change the install-scoped `sourceId`. Reattaching the same or a different
+     * account on the same local installation reuses the same source identity unless the app
+     * explicitly resets or rotates local identity.
+     */
+    suspend fun detach(): Result<DetachOutcome>
 
-    /** Rebuilds local managed tables from a full staged server snapshot. */
-    suspend fun hydrate(): Result<Unit>
+    /**
+     * Freezes local dirty rows into one logical bundle and uploads it through chunked push
+     * sessions.
+     *
+     * Requires successful [open] and [attach].
+     */
+    suspend fun pushPending(): Result<PushReport>
 
-    /** Rebuilds from snapshot and rotates local source identity as part of recovery. */
-    suspend fun recover(): Result<Unit>
+    /**
+     * Pulls authoritative remote bundles until the current stable bundle sequence is fully applied.
+     *
+     * Requires successful [open] and [attach].
+     */
+    suspend fun pullToStable(): Result<RemoteSyncReport>
 
-    /** Returns the last remote bundle sequence durably applied locally. */
-    suspend fun lastBundleSeqSeen(): Result<Long>
+    /**
+     * Runs the standard interactive sync flow: push first, then pull.
+     *
+     * Requires successful [open] and [attach].
+     */
+    suspend fun sync(): Result<SyncReport>
 
+    /**
+     * Runs bounded best-effort sync rounds and then attempts [detach].
+     *
+     * This is convenience sugar over [sync] plus [detach]. It may run multiple sync rounds when
+     * fresh local writes arrive during the previous round. It never loops indefinitely; if detach
+     * remains blocked, the final blocked outcome is returned explicitly.
+     *
+     * Requires successful [open] and [attach].
+     */
+    suspend fun syncThenDetach(): Result<SyncThenDetachResult>
+
+    /**
+     * Rebuilds local managed tables from a full staged server snapshot using the requested [mode].
+     *
+     * Requires successful [open] and [attach].
+     *
+     * When [mode] is [RebuildMode.ROTATE_SOURCE], callers must provide a fresh app-owned
+     * [newSourceId]. When [mode] is [RebuildMode.KEEP_SOURCE], [newSourceId] must be `null`.
+     */
+    suspend fun rebuild(
+        mode: RebuildMode = RebuildMode.KEEP_SOURCE,
+        newSourceId: String? = null,
+    ): Result<RemoteSyncReport>
+
+    /**
+     * Rotates the current source stream to the caller-provided [newSourceId] without discarding
+     * pending local edits.
+     *
+     * This is an advanced recovery API and may be blocked while another non-rotatable durable
+     * lifecycle operation is active.
+     *
+     * [newSourceId] is install-scoped, not account-scoped. It must be a fresh app-owned source id
+     * that is different from the currently bound source.
+     */
+    suspend fun rotateSource(newSourceId: String): Result<SourceRotationResult>
+
+    /** Releases client-owned resources. */
     fun close()
 }
 
+/** Local readiness returned by [OversqliteClient.open]. */
+sealed interface OpenState {
+    /** The local runtime is ready, but no account is currently attached. */
+    data object ReadyAnonymous : OpenState
+
+    /** The local runtime is ready and already attached to [scope]. */
+    data class ReadyAttached(
+        val scope: String,
+    ) : OpenState
+
+    /**
+     * A remote-authoritative replacement was interrupted and must be completed by a matching later
+     * [OversqliteClient.attach] call for [targetScope].
+     */
+    data class AttachRecoveryRequired(
+        val targetScope: String,
+    ) : OpenState
+}
+
+/** Result of [OversqliteClient.attach]. */
+sealed interface AttachResult {
+    /** The database is attached and ready for normal sync operations. */
+    data class Connected(
+        val outcome: AttachOutcome,
+        val status: SyncStatus,
+        val restore: RestoreSummary? = null,
+    ) : AttachResult
+
+    /**
+     * Account attachment is pending and should be retried after [retryAfterSeconds].
+     *
+     * This is a normal lifecycle outcome, not an authentication failure.
+     */
+    data class RetryLater(
+        val retryAfterSeconds: Long,
+    ) : AttachResult
+}
+
+/** Successful attachment/resume outcomes returned from [AttachResult.Connected]. */
+enum class AttachOutcome {
+    /** The same user/source attachment was already present locally and was resumed. */
+    RESUMED_ATTACHED_STATE,
+
+    /** The server scope was already authoritative and local managed tables were rebuilt from it. */
+    USED_REMOTE_STATE,
+
+    /** The server granted this source the right to seed first data from local pending rows. */
+    SEEDED_FROM_LOCAL,
+
+    /** The server established an authoritative empty scope without requiring a first seed push. */
+    STARTED_EMPTY,
+}
+
+/** Public result of [OversqliteClient.detach]. */
+sealed interface DetachOutcome {
+    /** Detach succeeded and the local database returned to anonymous lifecycle state. */
+    data object DETACHED : DetachOutcome
+
+    /** Detach was refused because attached sync rows are still pending upload. */
+    data object BLOCKED_UNSYNCED_DATA : DetachOutcome
+}
+
+enum class RebuildMode {
+    KEEP_SOURCE,
+    ROTATE_SOURCE,
+}
+
+data class SourceRotationResult(
+    val sourceId: String,
+)
+
+/** Canonical sync status for the currently connected scope. */
+data class SyncStatus(
+    val authority: AuthorityStatus,
+    val pending: PendingSyncStatus,
+    val lastBundleSeqSeen: Long,
+)
+
+/** Library-level authority/materialization state for the currently connected scope. */
+enum class AuthorityStatus {
+    PENDING_LOCAL_SEED,
+    AUTHORITATIVE_EMPTY,
+    AUTHORITATIVE_MATERIALIZED,
+}
+
+/** Summary of a snapshot-based restore applied locally. */
+data class RestoreSummary(
+    val bundleSeq: Long,
+    val rowCount: Long,
+)
+
+/** Public result of [OversqliteClient.pushPending]. */
+data class PushReport(
+    val outcome: PushOutcome,
+    val status: SyncStatus,
+)
+
+enum class PushOutcome {
+    NO_CHANGE,
+    COMMITTED,
+}
+
+/** Public result of [OversqliteClient.pullToStable] and [OversqliteClient.rebuild]. */
+data class RemoteSyncReport(
+    val outcome: RemoteSyncOutcome,
+    val status: SyncStatus,
+    val restore: RestoreSummary? = null,
+    val rotatedSourceId: String? = null,
+)
+
+enum class RemoteSyncOutcome {
+    ALREADY_AT_TARGET,
+    APPLIED_INCREMENTAL,
+    APPLIED_SNAPSHOT,
+}
+
+/** Public result of [OversqliteClient.sync]. */
+data class SyncReport(
+    val pushOutcome: PushOutcome,
+    val remoteOutcome: RemoteSyncOutcome,
+    val status: SyncStatus,
+    val restore: RestoreSummary? = null,
+)
+
+/** Public result of [OversqliteClient.syncThenDetach]. */
+data class SyncThenDetachResult(
+    val lastSync: SyncReport,
+    val detach: DetachOutcome,
+    val syncRounds: Int,
+    val remainingPendingRowCount: Long,
+) {
+    fun isSuccess(): Boolean = detach == DetachOutcome.DETACHED
+}
+
+/** High-level pending sync status returned by [OversqliteClient.pendingSyncStatus]. */
+data class PendingSyncStatus(
+    /** `true` when any local sync-managed pending rows still exist. */
+    val hasPendingSyncData: Boolean,
+
+    /** Total number of local pending sync rows currently tracked by the runtime. */
+    val pendingRowCount: Long,
+
+    /** `true` when plain [OversqliteClient.detach] would currently refuse to proceed. */
+    val blocksDetach: Boolean,
+)
+
+/** Coarse UI-oriented progress state for lifecycle-aware operations. */
+sealed interface OversqliteProgress {
+    data object Idle : OversqliteProgress
+
+    data class Active(
+        val operation: OversqliteOperation,
+        val phase: OversqlitePhase,
+    ) : OversqliteProgress
+}
+
+enum class OversqliteOperation {
+    ATTACH,
+    PUSH_PENDING,
+    PULL_TO_STABLE,
+    SYNC,
+    REBUILD_KEEP_SOURCE,
+    REBUILD_ROTATE_SOURCE,
+}
+
+enum class OversqlitePhase {
+    ATTACHING,
+    SEEDING,
+    PUSHING,
+    PULLING,
+    STAGING_REMOTE_STATE,
+    APPLYING_REMOTE_STATE,
+}
+
+/** Small holder for platform-specific dispatchers used by oversqlite internals. */
 open class PlatformDispatchers {
     open val io: CoroutineDispatcher = sqliteNetworkDispatcher()
 }

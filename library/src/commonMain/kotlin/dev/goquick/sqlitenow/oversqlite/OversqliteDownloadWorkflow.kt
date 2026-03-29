@@ -19,7 +19,9 @@ import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import kotlinx.serialization.json.Json
 
 internal data class DownloadWorkflowResult(
+    val outcome: RemoteSyncOutcome,
     val updatedTables: Set<String>,
+    val restore: RestoreSummary? = null,
     val rotatedSourceId: String? = null,
 )
 
@@ -27,7 +29,10 @@ internal class OversqliteDownloadWorkflow(
     private val db: SafeSQLiteConnection,
     private val config: OversqliteConfig,
     private val remoteApi: OversqliteRemoteApi,
-    private val clientStateStore: OversqliteClientStateStore,
+    private val sourceStateStore: OversqliteSourceStateStore,
+    private val outboxStateStore: OversqliteOutboxStateStore,
+    private val attachmentStateStore: OversqliteAttachmentStateStore,
+    private val operationStateStore: OversqliteOperationStateStore,
     private val syncStateStore: OversqliteSyncStateStore,
     private val localStore: OversqliteLocalStore,
     private val bundleApplier: OversqliteBundleApplier,
@@ -36,22 +41,30 @@ internal class OversqliteDownloadWorkflow(
     private val json: Json,
     private val log: ((() -> String)) -> Unit,
 ) {
-    suspend fun pullToStable(state: RuntimeState): DownloadWorkflowResult {
-        if (clientStateStore.isRebuildRequired(state.userId)) {
+    suspend fun pullToStable(
+        state: RuntimeState,
+        onPhaseChanged: suspend (OversqlitePhase) -> Unit = {},
+    ): DownloadWorkflowResult {
+        if (attachmentStateStore.loadState().rebuildRequired) {
             throw RebuildRequiredException()
         }
-        val initialDirtyCount = clientStateStore.pendingDirtyCount()
-        val initialOutboundCount = clientStateStore.pendingPushOutboundCount()
+        val initialDirtyCount = syncStateStore.countDirtyRows()
+        val initialOutboundCount = outboxStateStore.countRows()
         log {
             "oversqlite pullToStable start user=${state.userId} source=${state.sourceId} " +
                 "pendingDirty=$initialDirtyCount pendingOutbound=$initialOutboundCount"
         }
         return try {
-            val result = DownloadWorkflowResult(updatedTables = pullIncremental(state))
+            onPhaseChanged(OversqlitePhase.PULLING)
+            val pullResult = pullIncremental(state)
+            val result = DownloadWorkflowResult(
+                outcome = pullResult.outcome,
+                updatedTables = pullResult.updatedTables,
+            )
             log { "oversqlite pullToStable finished successfully" }
             result
         } catch (e: HistoryPrunedException) {
-            val result = rebuildFromSnapshot(state, rotateSource = false)
+            val result = rebuildFromSnapshot(state, rotatedSourceId = null, onPhaseChanged = onPhaseChanged)
             log { "oversqlite pullToStable recovered via snapshot rebuild updatedTables=${result.updatedTables}" }
             result
         }
@@ -59,11 +72,13 @@ internal class OversqliteDownloadWorkflow(
 
     suspend fun rebuildFromSnapshot(
         state: RuntimeState,
-        rotateSource: Boolean,
+        rotatedSourceId: String?,
+        onPhaseChanged: suspend (OversqlitePhase) -> Unit = {},
     ): DownloadWorkflowResult {
         requireSnapshotRebuildState()
 
-        clientStateStore.clearSnapshotStage()
+        onPhaseChanged(OversqlitePhase.STAGING_REMOTE_STATE)
+        stageStore.clearAllSnapshotStages()
         val session = remoteApi.createSnapshotSession()
         try {
             var afterRowOrdinal = 0L
@@ -81,16 +96,18 @@ internal class OversqliteDownloadWorkflow(
                 afterRowOrdinal = chunk.nextRowOrdinal
             }
 
-            return applyStagedSnapshot(state, session, rotateSource)
+            onPhaseChanged(OversqlitePhase.APPLYING_REMOTE_STATE)
+            return applyStagedSnapshot(state, session, rotatedSourceId)
         } finally {
             remoteApi.deleteSnapshotSessionBestEffort(session.snapshotId)
         }
     }
 
-    private suspend fun pullIncremental(state: RuntimeState): Set<String> {
+    private suspend fun pullIncremental(state: RuntimeState): IncrementalPullResult {
         requireIncrementalPullState(state)
 
-        var afterBundleSeq = clientStateStore.loadLastBundleSeqSeen(state.userId)
+        val initialBundleSeq = attachmentStateStore.loadState().lastBundleSeqSeen
+        var afterBundleSeq = initialBundleSeq
         val maxBundles = config.downloadLimit.takeIf { it > 0 } ?: 1000
         var targetBundleSeq = 0L
         val updatedTables = linkedSetOf<String>()
@@ -111,7 +128,14 @@ internal class OversqliteDownloadWorkflow(
             }
 
             if (afterBundleSeq >= response.stableBundleSeq) {
-                return updatedTables
+                return IncrementalPullResult(
+                    updatedTables = updatedTables,
+                    outcome = if (afterBundleSeq == initialBundleSeq && response.stableBundleSeq == initialBundleSeq) {
+                        RemoteSyncOutcome.ALREADY_AT_TARGET
+                    } else {
+                        RemoteSyncOutcome.APPLIED_INCREMENTAL
+                    },
+                )
             }
             if (!response.hasMore && response.bundles.isEmpty()) {
                 error("pull ended before reaching stable bundle seq ${response.stableBundleSeq}")
@@ -139,19 +163,15 @@ internal class OversqliteDownloadWorkflow(
                 updatedTables += row.table.lowercase()
             }
 
-            clientStateStore.markBundleSeen(
-                userId = state.userId,
-                bundleSeq = bundle.bundleSeq,
-                statementCache = statementCache,
-            )
+            attachmentStateStore.markBundleSeen(bundle.bundleSeq, statementCache)
             updatedTables
         }
     }
 
-    private suspend fun applyStagedSnapshot(
+    internal suspend fun applyStagedSnapshot(
         state: RuntimeState,
         session: SnapshotSession,
-        rotateSource: Boolean,
+        rotatedSourceId: String?,
     ): DownloadWorkflowResult {
         return applyExecutor.inApplyModeTransaction(state) { statementCache ->
             clearManagedTables(state, statementCache)
@@ -174,17 +194,32 @@ internal class OversqliteDownloadWorkflow(
                 "staged snapshot row count $stagedRowCount does not match expected row_count ${session.rowCount}"
             }
 
-            val rotatedSourceId = if (rotateSource) randomSourceId() else null
-            clientStateStore.markSnapshotApplied(
+            if (rotatedSourceId != null) {
+                sourceStateStore.ensureSource(rotatedSourceId)
+                if (state.sourceId != rotatedSourceId) {
+                    sourceStateStore.markRotated(state.sourceId, rotatedSourceId)
+                }
+            }
+            val currentSourceId = rotatedSourceId ?: state.sourceId
+            attachmentStateStore.persistAttachedState(
+                sourceId = currentSourceId,
                 userId = state.userId,
-                snapshotBundleSeq = session.snapshotBundleSeq,
-                newSourceId = rotatedSourceId,
+                schemaName = state.validated.schema,
+                lastBundleSeqSeen = session.snapshotBundleSeq,
+                rebuildRequired = false,
+                pendingInitializationId = "",
                 statementCache = statementCache,
             )
+            operationStateStore.persistState(OversqliteOperationState(), statementCache)
 
             stageStore.deleteSnapshotStage(session.snapshotId, statementCache)
             DownloadWorkflowResult(
+                outcome = RemoteSyncOutcome.APPLIED_SNAPSHOT,
                 updatedTables = state.validated.tables.map { it.tableName.lowercase() }.toSet(),
+                restore = RestoreSummary(
+                    bundleSeq = session.snapshotBundleSeq,
+                    rowCount = session.rowCount,
+                ),
                 rotatedSourceId = rotatedSourceId,
             )
         }
@@ -199,24 +234,23 @@ internal class OversqliteDownloadWorkflow(
             syncStateStore.clearStructuredRowState(state.validated.schema, table.tableName, statementCache)
         }
         syncStateStore.clearDirtyRows()
-        db.execSQL("DELETE FROM _sync_push_outbound")
-        db.execSQL("DELETE FROM _sync_push_stage")
+        outboxStateStore.clearBundleAndRows(statementCache)
     }
 
     private suspend fun requireIncrementalPullState(state: RuntimeState) {
         requireSnapshotRebuildState()
-        if (clientStateStore.isRebuildRequired(state.userId)) {
+        if (attachmentStateStore.loadState().rebuildRequired) {
             throw RebuildRequiredException()
         }
     }
 
     private suspend fun requireSnapshotRebuildState() {
-        val pendingOutboundCount = clientStateStore.pendingPushOutboundCount()
+        val pendingOutboundCount = outboxStateStore.countRows()
         if (pendingOutboundCount > 0) {
             throw PendingPushReplayException(pendingOutboundCount)
         }
 
-        val pendingCount = clientStateStore.pendingDirtyCount()
+        val pendingCount = syncStateStore.countDirtyRows()
         if (pendingCount > 0) {
             throw DirtyStateRejectedException(pendingCount)
         }
@@ -224,3 +258,8 @@ internal class OversqliteDownloadWorkflow(
 
     private fun snapshotChunkRows(): Int = config.snapshotChunkRows.takeIf { it > 0 } ?: 1000
 }
+
+internal data class IncrementalPullResult(
+    val updatedTables: Set<String>,
+    val outcome: RemoteSyncOutcome,
+)

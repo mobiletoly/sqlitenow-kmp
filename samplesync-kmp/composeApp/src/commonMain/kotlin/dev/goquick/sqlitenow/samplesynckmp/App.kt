@@ -37,6 +37,7 @@ import androidx.compose.material.OutlinedTextField
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -60,9 +61,13 @@ import dev.goquick.sqlitenow.core.util.jsonDecodeListFromSqlite
 import dev.goquick.sqlitenow.core.util.jsonEncodeToSqlite
 import dev.goquick.sqlitenow.core.util.toSqliteDate
 import dev.goquick.sqlitenow.core.util.toRfc3339String
+import dev.goquick.sqlitenow.oversqlite.AttachResult
 import dev.goquick.sqlitenow.oversqlite.MergeResult
+import dev.goquick.sqlitenow.oversqlite.OpenState
 import dev.goquick.sqlitenow.oversqlite.OversqliteClient
 import dev.goquick.sqlitenow.oversqlite.Resolver
+import dev.goquick.sqlitenow.oversqlite.SyncReport
+import dev.goquick.sqlitenow.oversqlite.SyncThenDetachResult
 import dev.goquick.sqlitenow.samplesynckmp.db.AddressType
 import dev.goquick.sqlitenow.samplesynckmp.db.CommentQuery
 import dev.goquick.sqlitenow.samplesynckmp.db.CommentRow
@@ -73,14 +78,16 @@ import dev.goquick.sqlitenow.samplesynckmp.db.PersonRow
 import dev.goquick.sqlitenow.samplesynckmp.db.VersionBasedDatabaseMigrations
 import dev.goquick.sqlitenow.samplesynckmp.model.PersonNote
 import io.ktor.client.HttpClient
-import io.ktor.client.plugins.auth.Auth
-import io.ktor.client.plugins.auth.providers.BearerTokens
-import io.ktor.client.plugins.auth.providers.bearer
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
+import io.ktor.client.request.header
 import io.ktor.serialization.kotlinx.json.json
+import io.ktor.http.HttpHeaders
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -88,6 +95,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.datetime.LocalDate
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -103,6 +111,7 @@ import kotlin.uuid.Uuid
 
 private const val periodicSyncEnabled = false
 private const val periodicSyncIntervalMs = 10_000L
+private const val sampleAttachMaxAttempts = 3
 
 private val firstNames = listOf(
     // Traditional English names
@@ -282,57 +291,151 @@ private fun JsonElement?.updatedAtOrNull(): Instant? {
     return runCatching { Instant.fromRfc3339String(value) }.getOrNull()
 }
 
-/**
- * Common function to set up sync client for both session restore and new sign-in
- */
+private data class SampleSyncSession(
+    val client: OversqliteClient,
+    val httpClient: HttpClient,
+)
+
+private suspend fun attachUntilConnected(
+    client: OversqliteClient,
+    user: String,
+): AttachResult.Connected {
+    repeat(sampleAttachMaxAttempts) { attempt ->
+        when (val attach = client.attach(user).getOrThrow()) {
+            is AttachResult.Connected -> return attach
+            is AttachResult.RetryLater -> {
+                if (attempt == sampleAttachMaxAttempts - 1) {
+                    throw IllegalStateException(
+                        "Attach kept asking to retry later for user=$user " +
+                            "after $sampleAttachMaxAttempts attempts"
+                    )
+                }
+                appLog.i {
+                    "Attach asked to retry later for user=$user " +
+                        "in ${attach.retryAfterSeconds}s (attempt ${attempt + 1}/$sampleAttachMaxAttempts)"
+                }
+                delay(attach.retryAfterSeconds.coerceAtLeast(1) * 1_000)
+            }
+        }
+    }
+    error("attachUntilConnected exhausted attempts unexpectedly")
+}
+
+private fun buildSyncReportMessage(report: SyncReport): String = buildString {
+    append("Push: ")
+    append(report.pushOutcome)
+    append('\n')
+    append("Pull: ")
+    append(report.remoteOutcome)
+    append('\n')
+    append("Pending rows: ")
+    append(report.status.pending.pendingRowCount)
+    report.restore?.let { restore ->
+        append('\n')
+        append("Restored snapshot: bundle=")
+        append(restore.bundleSeq)
+        append(", rows=")
+        append(restore.rowCount)
+    }
+}
+
+private fun buildDetachReportMessage(result: SyncThenDetachResult): String = buildString {
+    if (result.isSuccess()) {
+        append("Signed out successfully after ")
+        append(result.syncRounds)
+        append(" sync round(s).")
+    } else {
+        append("Sign out stayed attached after ")
+        append(result.syncRounds)
+        append(" sync round(s). ")
+        append(result.remainingPendingRowCount)
+        append(" pending row(s) still remain.")
+    }
+}
+
+private fun clearSavedAuth() {
+    AuthPrefs.remove(AuthKeys.Token)
+    AuthPrefs.remove(AuthKeys.Username)
+}
+
+private fun loadOrCreateSourceId(): String {
+    val existing = AuthPrefs.get(AuthKeys.SourceId)
+    if (!existing.isNullOrEmpty()) {
+        return existing
+    }
+    val created = generateSourceId()
+    AuthPrefs.set(AuthKeys.SourceId, created)
+    return created
+}
+
 private suspend fun setupSyncClient(
     baseUrl: String,
     user: String,
-    deviceId: String,
-    password: String,
-    isSessionRestore: Boolean,
-    onSuccess: (OversqliteClient) -> Unit,
+    sourceId: String,
+    token: String,
+    resourceScope: CoroutineScope,
+    onSuccess: (SampleSyncSession) -> Unit,
     onError: (Exception) -> Unit
 ) {
+    var httpClient: HttpClient? = null
+    var client: OversqliteClient? = null
     try {
         ensureSampleSyncServer(baseUrl)
 
-        val httpClient = createAuthenticatedHttpClient(
-            baseUrl = baseUrl,
-            username = user,
-            deviceId = deviceId,
-            password = password
-        )
+        // Build long-lived session resources from their own scope so later sync requests do not
+        // inherit the completed sign-in coroutine job.
+        withContext(resourceScope.coroutineContext) {
+            httpClient = createAuthenticatedHttpClient(
+                baseUrl = baseUrl,
+                token = token,
+            )
 
-        val client = db.newOversqliteClient(
-            schema = "business",
-            httpClient = httpClient,
-            resolver = updatedAtWinsResolver,
-            verboseLogs = true,
-        )
+            client = db.newOversqliteClient(
+                schema = "business",
+                httpClient = httpClient,
+                resolver = updatedAtWinsResolver,
+                verboseLogs = true,
+            )
+        }
 
-        // Bootstrap is always required
-        client.bootstrap(userId = user, sourceId = deviceId).getOrThrow()
-        logLocalSyncState("after bootstrap")
+        val sessionHttpClient = checkNotNull(httpClient)
+        val sessionClient = checkNotNull(client)
 
-        if (isSessionRestore) {
-            // For session restore, do incremental sync to catch up
-            client.pullToStable().getOrThrow()
-            appLog.d { "restore: pullToStable complete" }
-        } else {
-            // For new sign-in, do full hydration
-            appLog.i { "Sign-in success for user=$user; starting hydrate" }
-            val hydrateRes = client.hydrate()
-            if (hydrateRes.isFailure) {
-                appLog.e(hydrateRes.exceptionOrNull()) { "Hydrate failed" }
-            } else {
-                appLog.i { "Hydrate complete" }
-                logLocalSyncState("after hydrate")
+        when (val openState = sessionClient.open(sourceId).getOrThrow()) {
+            OpenState.ReadyAnonymous -> Unit
+            is OpenState.ReadyAttached -> {
+                if (openState.scope != user) {
+                    throw IllegalStateException(
+                        "Local sync state is still attached to ${openState.scope}. " +
+                            "Sign back into that user or clear the sample database before switching accounts."
+                    )
+                }
+            }
+            is OpenState.AttachRecoveryRequired -> {
+                if (openState.targetScope != user) {
+                    throw IllegalStateException(
+                        "Local sync recovery is pending for ${openState.targetScope}. " +
+                            "Sign back into that user or clear the sample database before switching accounts."
+                    )
+                }
             }
         }
 
-        onSuccess(client)
+        val attach = attachUntilConnected(sessionClient, user)
+        appLog.i { "Attach complete for user=$user outcome=${attach.outcome}" }
+        logLocalSyncState("after attach")
+
+        val initialSync = sessionClient.sync().getOrThrow()
+        appLog.i {
+            "Initial sync complete for user=$user " +
+                "push=${initialSync.pushOutcome} pull=${initialSync.remoteOutcome}"
+        }
+        logLocalSyncState("after initial sync")
+
+        onSuccess(SampleSyncSession(client = sessionClient, httpClient = sessionHttpClient))
     } catch (e: Exception) {
+        client?.close()
+        httpClient?.close()
         onError(e)
     }
 }
@@ -342,20 +445,22 @@ private suspend fun setupSyncClient(
 @Preview
 fun App() {
     val coroutineScope = rememberCoroutineScope()
+    val sessionResourceScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
     var persons by remember {
         mutableStateOf<List<PersonRow>>(emptyList())
     }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
-    var syncClient by remember { mutableStateOf<OversqliteClient?>(null) }
-    var bootstrapDone by remember { mutableStateOf(false) }
+    var syncSession by remember { mutableStateOf<SampleSyncSession?>(null) }
+    var lifecycleReady by remember { mutableStateOf(false) }
     var signedIn by remember { mutableStateOf(false) }
     var skippedSignin by remember { mutableStateOf(false) }
     var showSigninDialog by remember { mutableStateOf(true) }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var signingIn by remember { mutableStateOf(false) }
-    var deviceId by remember { mutableStateOf("") }
+    var signingOut by remember { mutableStateOf(false) }
+    var sourceId by remember { mutableStateOf("") }
     var reportMessage by remember { mutableStateOf<String?>(null) }
     var isDatabaseOpen by remember { mutableStateOf(false) }
     val syncTrigger = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
@@ -370,6 +475,20 @@ fun App() {
         "http://10.0.2.2:8080"
     } else {
         "http://127.0.0.1:8080"
+    }
+
+    DisposableEffect(syncSession) {
+        val session = syncSession
+        onDispose {
+            session?.client?.close()
+            session?.httpClient?.close()
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            sessionResourceScope.cancel()
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -400,40 +519,44 @@ fun App() {
             }
     }
 
-    // Load persisted auth and device id, and restore signed-in session if token exists.
+    // Load persisted auth and install-scoped source id, then restore signed-in session if token exists.
     LaunchedEffect(isDatabaseOpen) {
         if (!isDatabaseOpen) {
             return@LaunchedEffect
         }
-        // Ensure device id exists
-        val existingDevice = AuthPrefs.get(AuthKeys.DeviceId)
-        val did = existingDevice ?: generateDeviceId().also { AuthPrefs.set(AuthKeys.DeviceId, it) }
-        deviceId = did
+        val persistedSourceId = loadOrCreateSourceId()
+        sourceId = persistedSourceId
 
-        val savedToken = AuthPrefs.get(AuthKeys.Token)
         val savedUser = AuthPrefs.get(AuthKeys.Username)
-        if (!savedToken.isNullOrBlank() && !savedUser.isNullOrBlank()) {
+        if (!savedUser.isNullOrBlank()) {
             try {
+                val token = fetchJwt(
+                    baseUrl = baseUrl,
+                    user = savedUser,
+                    sourceId = persistedSourceId,
+                    password = "demo",
+                )
+                AuthPrefs.set(AuthKeys.Token, token)
                 setupSyncClient(
                     baseUrl = baseUrl,
                     user = savedUser,
-                    deviceId = did,
-                    password = "demo",
-                    isSessionRestore = true,
-                    onSuccess = { client ->
-                        syncClient = client
-                        bootstrapDone = true
+                    sourceId = persistedSourceId,
+                    token = token,
+                    resourceScope = sessionResourceScope,
+                    onSuccess = { session ->
+                        syncSession = session
+                        lifecycleReady = true
                         signedIn = true
                         skippedSignin = false
                         showSigninDialog = false
                         username = savedUser
-                        appLog.i { "Restored session for user=$savedUser device=$did" }
-                        syncTrigger.tryEmit(Unit)
+                        appLog.i { "Restored session for user=$savedUser source=$persistedSourceId" }
                     },
                     onError = { error ->
                         appLog.e(error) { "Failed to restore session; showing sign-in" }
+                        syncSession = null
                         signedIn = false
-                        bootstrapDone = false
+                        lifecycleReady = false
                         showSigninDialog = true
                     }
                 )
@@ -441,35 +564,28 @@ fun App() {
                 // Fallback to signed-out state if token invalid
                 appLog.e(e) { "Failed to restore session; showing sign-in" }
                 signedIn = false
-                bootstrapDone = false
+                lifecycleReady = false
                 showSigninDialog = true
             }
         }
     }
     // Sync worker: runs on demand when triggered, with debounce/coalescing
-    LaunchedEffect(syncClient) {
-        val client = syncClient ?: return@LaunchedEffect
+    LaunchedEffect(syncSession) {
+        val client = syncSession?.client ?: return@LaunchedEffect
         appLog.i { "Sync worker active" }
         syncTrigger
             .debounce(700)
             .collectLatest {
                 try {
                     ensureSampleSyncServer(baseUrl)
-                    logLocalSyncState("before pushPending")
-                    client.pushPending()
+                    logLocalSyncState("before sync")
+                    client.sync()
                         .onFailure {
-                            appLog.e(it) { "pushPending failed" }
-                            errorMessage = "Push failed: ${it.message ?: "unknown"}"
+                            appLog.e(it) { "sync failed" }
+                            errorMessage = "Sync failed: ${it.message ?: "unknown"}"
                             return@collectLatest
                         }
-                    logLocalSyncState("after pushPending")
-                    client.pullToStable()
-                        .onFailure {
-                            appLog.e(it) { "pullToStable failed" }
-                            errorMessage = "Pull failed: ${it.message ?: "unknown"}"
-                            return@collectLatest
-                        }
-                    logLocalSyncState("after pullToStable")
+                    logLocalSyncState("after sync")
                     appLog.i { "Sync cycle complete" }
                 } catch (e: Exception) {
                     appLog.e(e) { "Sync cycle failed" }
@@ -479,8 +595,8 @@ fun App() {
     }
 
     // Periodic nudge (e.g., every 60s) only when signed in
-    LaunchedEffect(signedIn, bootstrapDone) {
-        if (signedIn && bootstrapDone) {
+    LaunchedEffect(signedIn, lifecycleReady) {
+        if (signedIn && lifecycleReady) {
             if (!periodicSyncEnabled) {
                 appLog.i { "Periodic sync disabled" }
                 return@LaunchedEffect
@@ -508,13 +624,48 @@ fun App() {
                 signedIn = signedIn,
                 skippedSignin = skippedSignin,
                 username = username,
-                onSignInClick = { showSigninDialog = true }
+                signingOut = signingOut,
+                onSignInClick = { showSigninDialog = true },
+                onSignOutClick = {
+                    if (signingOut) {
+                        return@SignInSection
+                    }
+                    signingOut = true
+                    coroutineScope.launch {
+                        try {
+                            val client =
+                                syncSession?.client ?: run { errorMessage = "Not signed in"; return@launch }
+                            ensureSampleSyncServer(baseUrl)
+                            val result = client.syncThenDetach().getOrThrow()
+                            reportMessage = buildDetachReportMessage(result)
+                            if (result.isSuccess()) {
+                                clearSavedAuth()
+                                syncSession = null
+                                lifecycleReady = false
+                                signedIn = false
+                                skippedSignin = true
+                                showSigninDialog = false
+                                username = ""
+                                password = ""
+                                errorMessage = null
+                            } else {
+                                errorMessage =
+                                    "Sign out blocked: ${result.remainingPendingRowCount} pending row(s) still need sync."
+                            }
+                        } catch (e: Exception) {
+                            appLog.e(e) { "Sign out failed" }
+                            errorMessage = "Sign out failed: ${e.message}"
+                        } finally {
+                            signingOut = false
+                        }
+                    }
+                }
             )
 
             // Actions row: Add Person + Sync
             ActionButtonsRow(
                 signedIn = signedIn,
-                bootstrapDone = bootstrapDone,
+                lifecycleReady = lifecycleReady,
                 onAddPerson = {
                     coroutineScope.launch {
                         addRandomPerson { error ->
@@ -527,35 +678,16 @@ fun App() {
                 onSync = {
                     coroutineScope.launch {
                         val client =
-                            syncClient ?: run { errorMessage = "Not signed in"; return@launch }
+                            syncSession?.client ?: run { errorMessage = "Not signed in"; return@launch }
                         try {
                             ensureSampleSyncServer(baseUrl)
-                            val report = StringBuilder()
-                            logLocalSyncState("manual sync before pushPending")
-                            val pushResult = client.pushPending()
-                            pushResult.onSuccess {
-                                report.append("Push: ok")
-                            }.onFailure { err ->
-                                appLog.e(err) { "Push failed" }
-                                report.append("Push failed: ").append(err.message ?: "unknown error")
-                            }
-                            if (pushResult.isSuccess) {
-                                logLocalSyncState("manual sync after pushPending")
-                            }
-                            if (report.isNotEmpty()) report.append('\n')
-                            val pullResult = client.pullToStable()
-                            pullResult.onSuccess {
-                                report.append("Pull: ok")
-                            }.onFailure { err ->
-                                appLog.e(err) { "Pull failed" }
-                                report.append("Pull failed: ").append(err.message ?: "unknown error")
-                            }
-                            if (pullResult.isSuccess) {
-                                logLocalSyncState("manual sync after pullToStable")
-                            }
-                            reportMessage = report.toString()
+                            logLocalSyncState("manual sync before sync")
+                            val report = client.sync().getOrThrow()
+                            logLocalSyncState("manual sync after sync")
+                            reportMessage = buildSyncReportMessage(report)
                             errorMessage = null
                         } catch (e: Exception) {
+                            appLog.e(e) { "Manual sync failed" }
                             errorMessage = "Sync failed: ${e.message}"
                             reportMessage = null
                         }
@@ -662,11 +794,13 @@ fun App() {
                     coroutineScope.launch {
                         try {
                             val displayUser = username.ifBlank { "user-sample" }
-                            appLog.i { "Signing in user='${displayUser}' device=${deviceId}" }
+                            val installSourceId = loadOrCreateSourceId()
+                            sourceId = installSourceId
+                            appLog.i { "Signing in user='${displayUser}' source=$installSourceId" }
                             val token = fetchJwt(
                                 baseUrl,
                                 user = displayUser,
-                                device = deviceId,
+                                sourceId = installSourceId,
                                 password = password.ifBlank { "demo" })
 
                             // Save token first so the HttpClient can use it
@@ -676,24 +810,26 @@ fun App() {
                             setupSyncClient(
                                 baseUrl = baseUrl,
                                 user = finalUser,
-                                deviceId = deviceId,
-                                password = password.ifBlank { "demo" },
-                                isSessionRestore = false,
-                                onSuccess = { client ->
-                                    syncClient = client
-                                    bootstrapDone = true
+                                sourceId = installSourceId,
+                                token = token,
+                                resourceScope = sessionResourceScope,
+                                onSuccess = { session ->
+                                    syncSession = session
+                                    lifecycleReady = true
                                     signedIn = true
                                     skippedSignin = false
                                     showSigninDialog = false
                                     AuthPrefs.set(AuthKeys.Username, finalUser)
-                                    AuthPrefs.set(AuthKeys.DeviceId, deviceId)
+                                    AuthPrefs.set(AuthKeys.SourceId, installSourceId)
                                 },
                                 onError = { error ->
+                                    clearSavedAuth()
                                     appLog.e(error) { "Sign-in failed" }
                                     errorMessage = "Sign-in failed: ${error.message}"
                                 }
                             )
                         } catch (e: Exception) {
+                            clearSavedAuth()
                             appLog.e(e) { "Sign-in failed" }
                             errorMessage = "Sign-in failed: ${e.message}"
                         } finally {
@@ -893,64 +1029,35 @@ fun PersonCard(
 }
 
 /**
- * Creates an authenticated HttpClient with JWT token management.
- * This handles token refresh automatically when the server returns 401.
+ * Creates a simple authenticated HttpClient for the sample.
+ *
+ * The sample uses the same direct Authorization-header pattern as the real-server smoke tests.
+ * That path is reliable across repeated attach/sync cycles and avoids the extra auth-plugin
+ * request pipeline that was cancelling later sample sync requests before they reached the server.
  */
 private fun createAuthenticatedHttpClient(
     baseUrl: String,
-    username: String,
-    deviceId: String,
-    password: String
+    token: String,
 ): HttpClient {
     return HttpClient {
         install(ContentNegotiation) {
             json(Json { ignoreUnknownKeys = true })
         }
-        install(Auth) {
-            bearer {
-                loadTokens {
-                    // Load initial token
-                    val savedToken = AuthPrefs.get(AuthKeys.Token)
-                    if (!savedToken.isNullOrBlank()) {
-                        BearerTokens(accessToken = savedToken, refreshToken = null)
-                    } else {
-                        null
-                    }
-                }
-                refreshTokens {
-                    // Refresh token when needed (401 response)
-                    try {
-                        appLog.i { "Refreshing JWT token for user=$username" }
-                        val newToken = fetchJwt(
-                            baseUrl = baseUrl,
-                            user = username,
-                            device = deviceId,
-                            password = password
-                        )
-                        // Save the new token
-                        AuthPrefs.set(AuthKeys.Token, newToken)
-                        BearerTokens(accessToken = newToken, refreshToken = null)
-                    } catch (e: Exception) {
-                        appLog.e(e) { "Failed to refresh token" }
-                        null // This will cause auth to fail and user needs to sign in again
-                    }
-                }
-            }
-        }
         defaultRequest {
             url(baseUrl)
+            header(HttpHeaders.Authorization, "Bearer $token")
         }
     }
 }
 
-private fun generateDeviceId(): String {
+private fun generateSourceId(): String {
     val alphabet = "abcdef0123456789"
     val sb = StringBuilder()
     repeat(8) {
         val idx = Random.nextInt(alphabet.length)
         sb.append(alphabet[idx])
     }
-    return "device-" + sb.toString()
+    return "source-" + sb.toString()
 }
 
 // Helper function to add a random person
@@ -1126,28 +1233,36 @@ private suspend fun logLocalSyncState(label: String, personId: ByteArray? = null
             }
         }
 
-        val clientState = connection.prepare(
+        val syncState = connection.prepare(
             """
-            SELECT user_id, source_id, next_source_bundle_id, last_bundle_seq_seen, rebuild_required, apply_mode
-            FROM _sync_client_state
-            LIMIT 1
+            SELECT
+              (SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1),
+              (SELECT source_id FROM _sync_source_state WHERE source_id = (
+                SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1
+              )),
+              (SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = (
+                SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1
+              )),
+              (SELECT last_bundle_seq_seen FROM _sync_attachment_state WHERE singleton_key = 1),
+              (SELECT rebuild_required FROM _sync_attachment_state WHERE singleton_key = 1),
+              (SELECT apply_mode FROM _sync_apply_state WHERE singleton_key = 1)
             """.trimIndent()
         ).use { st ->
             if (!st.step()) {
                 "<missing>"
             } else {
                 buildString {
-                    append("user=")
+                    append("attachment.currentSourceId=")
                     append(st.getText(0))
-                    append(", source=")
+                    append(", source.sourceId=")
                     append(st.getText(1))
-                    append(", nextSourceBundleId=")
+                    append(", source.nextSourceBundleId=")
                     append(st.getLong(2))
-                    append(", lastBundleSeqSeen=")
+                    append(", attachment.lastBundleSeqSeen=")
                     append(st.getLong(3))
-                    append(", rebuildRequired=")
+                    append(", attachment.rebuildRequired=")
                     append(st.getLong(4) == 1L)
-                    append(", applyMode=")
+                    append(", apply.applyMode=")
                     append(st.getLong(5) == 1L)
                 }
             }
@@ -1174,8 +1289,8 @@ private suspend fun logLocalSyncState(label: String, personId: ByteArray? = null
             buildString {
                 append("Local sync state [")
                 append(label)
-                append("] clientState=")
-                append(clientState)
+                append("] syncState=")
+                append(syncState)
                 append("; dirtyRows=")
                 append(if (dirtyRows.isEmpty()) "<none>" else dirtyRows.joinToString(" | "))
                 append("; rowState=")
@@ -1269,7 +1384,9 @@ private fun SignInSection(
     signedIn: Boolean,
     skippedSignin: Boolean,
     username: String,
-    onSignInClick: () -> Unit
+    signingOut: Boolean,
+    onSignInClick: () -> Unit,
+    onSignOutClick: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -1277,11 +1394,22 @@ private fun SignInSection(
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (signedIn) {
-            Text(
-                text = "Signed in as ${username.ifBlank { "(anonymous)" }}",
-                fontSize = 14.sp,
-                color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f)
-            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Signed in as ${username.ifBlank { "(anonymous)" }}",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f)
+                )
+                TextButton(
+                    onClick = onSignOutClick,
+                    enabled = !signingOut
+                ) {
+                    Text(if (signingOut) "Signing Out..." else "Sign Out")
+                }
+            }
         } else if (skippedSignin) {
             Button(onClick = onSignInClick) { Text("Sign In") }
         } else {
@@ -1297,7 +1425,7 @@ private fun SignInSection(
 @Composable
 private fun ActionButtonsRow(
     signedIn: Boolean,
-    bootstrapDone: Boolean,
+    lifecycleReady: Boolean,
     onAddPerson: () -> Unit,
     onSync: () -> Unit,
 ) {
@@ -1314,7 +1442,7 @@ private fun ActionButtonsRow(
 
         Button(
             onClick = onSync,
-            enabled = signedIn && bootstrapDone,
+            enabled = signedIn && lifecycleReady,
             modifier = Modifier.weight(1f),
             colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.secondary)
         ) { Text("Sync", fontSize = 16.sp) }

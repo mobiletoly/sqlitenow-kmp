@@ -60,6 +60,12 @@ the following properties:
 - `userPhone: String?` (custom name via annotation)
 - `createdAt: String`
 
+This introductory example keeps `created_at` as a raw `String`. If the column represents an
+absolute timestamp, prefer RFC3339/ISO-8601 text with an explicit zone and map it to
+`kotlin.time.Instant` with an adapter as shown below. SQLite `current_timestamp` produces
+SQLite-style text without an explicit zone, so it is not the recommended format for absolute
+instants.
+
 **Note: In current version when working with field-level annotations (such as `@@{ field=..., propertyName=... }` etc),
 you must always use `field` annotation to target specific column. It is a good idea to keep field-level annotations
 as close to the column definition as possible, but it is not required to do so.**

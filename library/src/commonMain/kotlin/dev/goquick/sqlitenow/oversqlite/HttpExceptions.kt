@@ -26,7 +26,7 @@ open class UploadHttpException(
     cause: Throwable? = null,
 ) : RuntimeException("Upload failed: HTTP $status - $rawBody", cause)
 
-class DownloadHttpException(
+open class DownloadHttpException(
     val status: HttpStatusCode,
     val rawBody: String,
     cause: Throwable? = null,
@@ -35,6 +35,10 @@ class DownloadHttpException(
 class HistoryPrunedException(
     message: String,
 ) : RuntimeException(message)
+
+class CommittedBundleNotFoundException(
+    rawBody: String,
+) : DownloadHttpException(HttpStatusCode.NotFound, rawBody)
 
 class PushConflictException(
     rawBody: String,
@@ -64,4 +68,16 @@ internal fun decodePushConflictExceptionOrNull(
     if (response.error != "push_conflict" || response.conflict == null) return null
     validatePushConflictDetails(response.conflict)
     return PushConflictException(rawBody = rawBody, response = response)
+}
+
+internal fun decodeCommittedBundleNotFoundExceptionOrNull(
+    status: HttpStatusCode,
+    rawBody: String,
+): CommittedBundleNotFoundException? {
+    if (status != HttpStatusCode.NotFound) return null
+    val error = runCatching {
+        httpErrorJson.decodeFromString<ErrorResponse>(rawBody)
+    }.getOrNull() ?: return null
+    if (error.error != "committed_bundle_not_found") return null
+    return CommittedBundleNotFoundException(rawBody = rawBody)
 }

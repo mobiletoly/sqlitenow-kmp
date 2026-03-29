@@ -61,6 +61,12 @@ specification.
 The sync protocol uses standard HTTP/JSON and is designed to be simple to implement while remaining
 powerful and scalable.
 
+If your server emits absolute timestamps in sync payloads, use RFC3339/ISO-8601 strings with an
+explicit zone such as `2026-03-24T18:42:11Z` or `2026-03-24T20:42:11+02:00`. Do not rely on naive
+local timestamp text such as `2026-03-24 18:42:11` if the value represents a real instant. On the
+client side, Oversqlite only gives special replay-equivalence handling to valid RFC3339 instants;
+naive timestamp text remains ordinary opaque payload text.
+
 ---
 
 **Next Steps**: Visit the [go-oversync repository](https://github.com/mobiletoly/go-oversync) to set

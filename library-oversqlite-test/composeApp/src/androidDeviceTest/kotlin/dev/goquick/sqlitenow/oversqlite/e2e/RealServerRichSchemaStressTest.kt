@@ -15,8 +15,8 @@ class RealServerRichSchemaStressTest {
         resetRealServerState(config.baseUrl)
 
         val userId = randomUserId()
-        val deviceA = randomDeviceId("rich-a")
-        val deviceB = randomDeviceId("rich-b")
+        val deviceA = randomSourceId("rich-a")
+        val deviceB = randomSourceId("rich-b")
         val syncTables = listOf(
             SyncTable("users", syncKeyColumnName = "id"),
             SyncTable("posts", syncKeyColumnName = "id"),
@@ -54,8 +54,8 @@ class RealServerRichSchemaStressTest {
                 downloadLimit = 2,
             )
 
-            clientA.bootstrap(userId, deviceA).getOrThrow()
-            clientB.bootstrap(userId, deviceB).getOrThrow()
+            clientA.openAndAttach(userId, deviceA).getOrThrow()
+            clientB.openAndAttach(userId, deviceB).getOrThrow()
 
             repeat(6) { batch ->
                 insertRichSchemaBatch(dbA, "seed-a-$batch")
@@ -65,7 +65,7 @@ class RealServerRichSchemaStressTest {
             clientB.pullToStable().getOrThrow()
 
             assertRichSchemaCounts(dbB, expectedBundles = 6)
-            assertEquals(6L, clientB.lastBundleSeqSeen().getOrThrow())
+            assertEquals(6L, clientB.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals(
                 1L,
                 scalarLong(
@@ -98,8 +98,8 @@ class RealServerRichSchemaStressTest {
 
             assertRichSchemaCounts(dbA, expectedBundles = 10)
             assertRichSchemaCounts(dbB, expectedBundles = 10)
-            assertEquals(10L, clientA.lastBundleSeqSeen().getOrThrow())
-            assertEquals(10L, clientB.lastBundleSeqSeen().getOrThrow())
+            assertEquals(10L, clientA.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(10L, clientB.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals(
                 1L,
                 scalarLong(

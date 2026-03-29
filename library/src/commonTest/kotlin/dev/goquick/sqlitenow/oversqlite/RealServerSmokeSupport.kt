@@ -11,6 +11,7 @@ import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
+import io.ktor.client.plugins.observer.ResponseObserver
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -19,6 +20,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.json.Json
 import kotlin.random.Random
+import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
 
 internal expect fun realServerSmokeEnv(name: String): String?
 
@@ -52,10 +55,16 @@ internal open class RealServerSmokeSupport : CrossTargetSyncTestSupport() {
     protected fun newRealServerHttpClient(
         baseUrl: String,
         token: String? = null,
+        afterResponse: suspend (String) -> Unit = {},
     ): HttpClient {
         return HttpClient {
             install(ContentNegotiation) {
                 json(smokeJson)
+            }
+            install(ResponseObserver) {
+                onResponse { response ->
+                    afterResponse(response.call.request.url.encodedPath)
+                }
             }
             defaultRequest {
                 url(baseUrl)
@@ -127,6 +136,13 @@ internal open class RealServerSmokeSupport : CrossTargetSyncTestSupport() {
         )
     }
 
+    protected suspend fun bootstrapInternalSourceId(
+        db: SafeSQLiteConnection,
+    ): String {
+        db.hashCode() // keep the callsite shape while source identity is now app-owned.
+        return randomSmokeUuid()
+    }
+
     protected suspend fun insertBusinessUserAndPost(
         db: SafeSQLiteConnection,
         userId: String,
@@ -152,6 +168,8 @@ internal open class RealServerSmokeSupport : CrossTargetSyncTestSupport() {
         http: HttpClient,
         uploadLimit: Int = 8,
         downloadLimit: Int = 8,
+        snapshotChunkRows: Int = 1000,
+        transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy(),
     ): DefaultOversqliteClient {
         return DefaultOversqliteClient(
             db = db,
@@ -163,9 +181,10 @@ internal open class RealServerSmokeSupport : CrossTargetSyncTestSupport() {
                 ),
                 uploadLimit = uploadLimit,
                 downloadLimit = downloadLimit,
+                snapshotChunkRows = snapshotChunkRows,
+                transientRetryPolicy = transientRetryPolicy,
             ),
             http = http,
-            tablesUpdateListener = { },
         )
     }
 
@@ -174,6 +193,9 @@ internal open class RealServerSmokeSupport : CrossTargetSyncTestSupport() {
         val partB = Random.nextInt().toString().removePrefix("-")
         return "$prefix-$partA-$partB"
     }
+
+    @OptIn(ExperimentalUuidApi::class)
+    protected fun randomSmokeUuid(): String = Uuid.random().toString()
 
     private suspend fun serverHealthAvailable(baseUrl: String): Boolean {
         val http = newRealServerHttpClient(baseUrl)
