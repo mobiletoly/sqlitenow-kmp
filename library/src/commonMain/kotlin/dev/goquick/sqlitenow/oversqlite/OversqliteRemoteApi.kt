@@ -43,7 +43,7 @@ internal class OversqliteRemoteApi(
                 method = "GET",
                 path = "/sync/capabilities",
             ) {
-                http.get("/sync/capabilities")
+                http.get("sync/capabilities")
             },
         )
     }
@@ -64,7 +64,7 @@ internal class OversqliteRemoteApi(
                 method = "POST",
                 path = "/sync/connect",
             ) {
-                http.post("/sync/connect") {
+                http.post("sync/connect") {
                     contentType(ContentType.Application.Json)
                     setBody(
                         ConnectRequest(
@@ -96,7 +96,7 @@ internal class OversqliteRemoteApi(
                 method = "POST",
                 path = "/sync/push-sessions",
             ) {
-                http.post("/sync/push-sessions") {
+                http.post("sync/push-sessions") {
                     contentType(ContentType.Application.Json)
                     setBody(
                         PushSessionCreateRequest(
@@ -136,7 +136,7 @@ internal class OversqliteRemoteApi(
                 method = "POST",
                 path = "/sync/push-sessions/$pushId/chunks",
             ) {
-                http.post("/sync/push-sessions/$pushId/chunks") {
+                http.post("sync/push-sessions/$pushId/chunks") {
                     contentType(ContentType.Application.Json)
                     setBody(request)
                 }
@@ -161,7 +161,7 @@ internal class OversqliteRemoteApi(
                 method = "POST",
                 path = "/sync/push-sessions/$pushId/commit",
             ) {
-                http.post("/sync/push-sessions/$pushId/commit")
+                http.post("sync/push-sessions/$pushId/commit")
             },
         ) { status, raw ->
             decodePushConflictExceptionOrNull(status, raw)
@@ -196,7 +196,7 @@ internal class OversqliteRemoteApi(
                 method = "GET",
                 path = path,
             ) {
-                http.get("/sync/committed-bundles/$bundleSeq/rows") {
+                http.get("sync/committed-bundles/$bundleSeq/rows") {
                     url {
                         if (afterRowOrdinal != null) {
                             parameters.append("after_row_ordinal", afterRowOrdinal.toString())
@@ -218,7 +218,7 @@ internal class OversqliteRemoteApi(
                 method = "DELETE",
                 path = "/sync/push-sessions/$pushId",
             ) {
-                http.delete("/sync/push-sessions/$pushId")
+                http.delete("sync/push-sessions/$pushId")
             }
         }.onFailure { error ->
             log {
@@ -238,7 +238,7 @@ internal class OversqliteRemoteApi(
                 method = "POST",
                 path = "/sync/snapshot-sessions",
             ) {
-                http.post("/sync/snapshot-sessions")
+                http.post("sync/snapshot-sessions")
             },
         )
         validateSnapshotSession(session)
@@ -268,7 +268,7 @@ internal class OversqliteRemoteApi(
                 method = "GET",
                 path = path,
             ) {
-                http.get("/sync/snapshot-sessions/$snapshotId") {
+                http.get("sync/snapshot-sessions/$snapshotId") {
                     url {
                         parameters.append("after_row_ordinal", afterRowOrdinal.toString())
                         parameters.append("max_rows", maxRows.toString())
@@ -288,7 +288,7 @@ internal class OversqliteRemoteApi(
                 method = "DELETE",
                 path = "/sync/snapshot-sessions/$snapshotId",
             ) {
-                http.delete("/sync/snapshot-sessions/$snapshotId")
+                http.delete("sync/snapshot-sessions/$snapshotId")
             }
         }.onFailure { error ->
             log {
@@ -322,7 +322,7 @@ internal class OversqliteRemoteApi(
                 method = "GET",
                 path = path,
             ) {
-                http.get("/sync/pull") {
+                http.get("sync/pull") {
                     url {
                         parameters.append("after_bundle_seq", afterBundleSeq.toString())
                         parameters.append("max_bundles", maxBundles.toString())

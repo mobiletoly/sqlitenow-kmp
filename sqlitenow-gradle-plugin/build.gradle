@@ -20,7 +20,7 @@ kotlin {
     // Set language version to 2.2 to support break/continue in inline lambdas
     compilerOptions {
         languageVersion.set(KotlinVersion.KOTLIN_2_3)
-        freeCompilerArgs.addAll("-Xmulti-dollar-interpolation", "-Xcontext-parameters")
+        freeCompilerArgs.addAll("-Xcontext-parameters")
     }
 }
 

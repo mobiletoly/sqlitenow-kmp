@@ -508,9 +508,9 @@ class DefaultOversqliteClient(
 
         validatedConfig = validated
         currentSourceId = attachmentState!!.currentSourceId
-        pendingInitializationId = attachmentState!!.pendingInitializationId
-        if (attachmentState!!.bindingState == attachmentBindingAttached && attachmentState!!.attachedUserId.isNotBlank()) {
-            currentUserId = attachmentState!!.attachedUserId
+        pendingInitializationId = attachmentState.pendingInitializationId
+        if (attachmentState.bindingState == attachmentBindingAttached && attachmentState.attachedUserId.isNotBlank()) {
+            currentUserId = attachmentState.attachedUserId
         } else {
             currentUserId = null
         }

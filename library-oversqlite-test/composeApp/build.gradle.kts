@@ -31,8 +31,7 @@ kotlin {
     }
 
     compilerOptions {
-        languageVersion.set(KotlinVersion.KOTLIN_2_2)
-        freeCompilerArgs.addAll("-Xmulti-dollar-interpolation")
+        languageVersion.set(KotlinVersion.KOTLIN_2_3)
     }
     sourceSets {
         commonMain.dependencies {
