@@ -3,12 +3,17 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.SqliteConnectionConfig
-import platform.Foundation.NSFileManager
-import platform.Foundation.NSTemporaryDirectory
-import platform.Foundation.NSUUID
+import kotlinx.cinterop.toKString
+import platform.posix.getenv
+import platform.posix.remove
 
-internal actual fun createTempSqliteNowTestDbPath(prefix: String): String =
-    "${NSTemporaryDirectory()}$prefix-${NSUUID().UUIDString}.db"
+internal actual fun createTempSqliteNowTestDbPath(prefix: String): String {
+    val tempDir =
+        getenv("TMPDIR")?.toKString()?.trimEnd('/')?.takeIf { it.isNotEmpty() }
+            ?: "/tmp"
+    val uniqueSuffix = "${kotlin.random.Random.nextLong()}-${kotlin.random.Random.nextLong()}"
+    return "$tempDir/$prefix-$uniqueSuffix.db"
+}
 
 internal actual fun createSqliteNowTestConnectionConfig(path: String): SqliteConnectionConfig =
     SqliteConnectionConfig()
@@ -21,5 +26,5 @@ internal actual suspend fun deleteTempSqliteNowTestDbArtifacts(path: String) {
 }
 
 private fun deleteIfExists(path: String) {
-    NSFileManager.defaultManager.removeItemAtPath(path, error = null)
+    remove(path)
 }

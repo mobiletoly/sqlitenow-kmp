@@ -39,6 +39,20 @@ fun registerOversqliteExecTask(
     }
 }
 
+fun registerCorePlatformExecTask(
+    name: String,
+    description: String,
+    arguments: List<String>,
+) {
+    tasks.register<Exec>(name) {
+        group = "verification"
+        this.description = description
+        workingDir = rootDir
+        executable = rootProject.file("gradlew").absolutePath
+        args(arguments + "--no-daemon")
+    }
+}
+
 tasks.register("oversqliteComprehensive") {
     group = "verification"
     description = "Runs the host-side oversqlite comprehensive suite."
@@ -57,6 +71,55 @@ tasks.register("oversqlitePlatformAll") {
         "oversqlitePlatformWasmBrowser",
     )
 }
+
+tasks.register("corePlatformAll") {
+    group = "verification"
+    description = "Runs the local-only SQLiteNow core platform harness across all configured runtime surfaces."
+    dependsOn(
+        "corePlatformAndroid",
+        "corePlatformJvm",
+        "corePlatformIosSimulatorArm64",
+        "corePlatformMacosArm64",
+        "corePlatformJsNode",
+        "corePlatformWasmBrowser",
+    )
+}
+
+registerCorePlatformExecTask(
+    name = "corePlatformAndroid",
+    description = "Runs the Android SQLiteNow core platform harness.",
+    arguments = listOf(":platform-core-test:harness:connectedAndroidDeviceTest"),
+)
+
+registerCorePlatformExecTask(
+    name = "corePlatformJvm",
+    description = "Runs the JVM SQLiteNow core platform harness.",
+    arguments = listOf(":platform-core-test:harness:jvmTest"),
+)
+
+registerCorePlatformExecTask(
+    name = "corePlatformIosSimulatorArm64",
+    description = "Runs the iOS simulator SQLiteNow core platform harness.",
+    arguments = listOf(":platform-core-test:harness:iosSimulatorArm64Test"),
+)
+
+registerCorePlatformExecTask(
+    name = "corePlatformMacosArm64",
+    description = "Runs the macOS SQLiteNow core platform harness.",
+    arguments = listOf(":platform-core-test:harness:macosArm64Test"),
+)
+
+registerCorePlatformExecTask(
+    name = "corePlatformJsNode",
+    description = "Runs the JS Node SQLiteNow core platform harness.",
+    arguments = listOf(":platform-core-test:harness:jsNodeTest"),
+)
+
+registerCorePlatformExecTask(
+    name = "corePlatformWasmBrowser",
+    description = "Runs the Wasm browser SQLiteNow core platform harness.",
+    arguments = listOf(":platform-core-test:harness:wasmJsBrowserTest"),
+)
 
 tasks.register("oversqliteRealserverJvm") {
     group = "verification"

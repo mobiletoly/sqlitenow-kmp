@@ -6,8 +6,11 @@ plugins {
     id("java-gradle-plugin")
 }
 
-group = "dev.goquick.sqlitenow"
-version = "0.7.0-SNAPSHOT"
+def sharedCoordinates = new Properties()
+file("../gradle.properties").withInputStream { sharedCoordinates.load(it) }
+
+group = sharedCoordinates.getProperty("sqlitenow.group")
+version = sharedCoordinates.getProperty("sqlitenow.version")
 
 repositories {
     mavenCentral()

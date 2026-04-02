@@ -15,8 +15,8 @@ plugins {
     id(libs.plugins.mavenPublish.get().pluginId)
 }
 
-group = "dev.goquick.sqlitenow"
-version = "0.7.0-SNAPSHOT"
+group = providers.gradleProperty("sqlitenow.group").get()
+version = providers.gradleProperty("sqlitenow.version").get()
 
 val isPublishingToMavenLocal =
     gradle.startParameter.taskNames.any { it.contains("publishToMavenLocal", ignoreCase = true) }
