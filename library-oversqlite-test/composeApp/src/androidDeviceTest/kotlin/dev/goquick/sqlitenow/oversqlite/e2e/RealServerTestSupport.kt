@@ -1003,16 +1003,20 @@ internal fun uuidTextToBlobHex(uuidText: String): String =
     uuidText.replace("-", "").lowercase()
 
 internal suspend fun scalarLong(db: SafeSQLiteConnection, sql: String): Long {
-    return db.prepare(sql).use { st ->
-        check(st.step())
-        st.getLong(0)
+    return db.withExclusiveAccess {
+        db.prepare(sql).use { st ->
+            check(st.step())
+            st.getLong(0)
+        }
     }
 }
 
 internal suspend fun scalarText(db: SafeSQLiteConnection, sql: String): String {
-    return db.prepare(sql).use { st ->
-        check(st.step())
-        st.getText(0)
+    return db.withExclusiveAccess {
+        db.prepare(sql).use { st ->
+            check(st.step())
+            st.getText(0)
+        }
     }
 }
 

@@ -100,22 +100,26 @@ internal class OversqliteSyncStateStore(
     }
 
     suspend fun countLiveStructuredRows(): Long {
-        return db.prepare(
-            """
-            SELECT COUNT(*)
-            FROM _sync_row_state
-            WHERE deleted = 0
-            """.trimIndent(),
-        ).use { st ->
-            check(st.step())
-            st.getLong(0)
+        return db.withExclusiveAccess {
+            db.prepare(
+                """
+                SELECT COUNT(*)
+                FROM _sync_row_state
+                WHERE deleted = 0
+                """.trimIndent(),
+            ).use { st ->
+                check(st.step())
+                st.getLong(0)
+            }
         }
     }
 
     suspend fun countDirtyRows(): Int {
-        return db.prepare("SELECT COUNT(*) FROM _sync_dirty_rows").use { st ->
-            check(st.step())
-            st.getLong(0).toInt()
+        return db.withExclusiveAccess {
+            db.prepare("SELECT COUNT(*) FROM _sync_dirty_rows").use { st ->
+                check(st.step())
+                st.getLong(0).toInt()
+            }
         }
     }
 

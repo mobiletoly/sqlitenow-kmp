@@ -20,48 +20,52 @@ import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
 
 internal class StatementCache(
     private val db: SafeSQLiteConnection,
-) : AutoCloseable {
+) {
     private val statements = linkedMapOf<String, SqliteStatement>()
     private var closed = false
 
     suspend fun get(sql: String): SqliteStatement {
-        check(!closed) { "statement cache is already closed" }
+        return db.withExclusiveAccess {
+            check(!closed) { "statement cache is already closed" }
 
-        val cached = statements[sql]
-        if (cached == null) {
-            return db.prepare(sql).also { statements[sql] = it }
-        }
+            val cached = statements[sql]
+            if (cached == null) {
+                return@withExclusiveAccess db.prepare(sql).also { statements[sql] = it }
+            }
 
-        return try {
-            cached.reset()
-            cached.clearBindings()
-            cached
-        } catch (_: Throwable) {
-            runCatching { cached.close() }
-            val replacement = db.prepare(sql)
-            statements[sql] = replacement
-            replacement
+            try {
+                cached.reset()
+                cached.clearBindings()
+                cached
+            } catch (_: Throwable) {
+                runCatching { cached.close() }
+                val replacement = db.prepare(sql)
+                statements[sql] = replacement
+                replacement
+            }
         }
     }
 
-    override fun close() {
-        if (closed) return
-        closed = true
+    suspend fun close() {
+        db.withExclusiveAccess {
+            if (closed) return@withExclusiveAccess
+            closed = true
 
-        var failure: Throwable? = null
-        val openStatements = statements.values.toList().asReversed()
-        statements.clear()
-        for (statement in openStatements) {
-            try {
-                statement.close()
-            } catch (closeError: Throwable) {
-                if (failure == null) {
-                    failure = closeError
+            var failure: Throwable? = null
+            val openStatements = statements.values.toList().asReversed()
+            statements.clear()
+            for (statement in openStatements) {
+                try {
+                    statement.close()
+                } catch (closeError: Throwable) {
+                    if (failure == null) {
+                        failure = closeError
+                    }
                 }
             }
-        }
-        if (failure != null) {
-            throw failure
+            if (failure != null) {
+                throw failure
+            }
         }
     }
 }

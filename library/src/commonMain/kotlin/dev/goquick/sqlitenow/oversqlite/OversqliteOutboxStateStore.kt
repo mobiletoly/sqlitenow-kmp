@@ -50,31 +50,33 @@ internal class OversqliteOutboxStateStore(
     internal val db: SafeSQLiteConnection,
 ) {
     suspend fun loadBundleState(): OversqliteOutboxBundleState {
-        return db.prepare(
-            """
-            SELECT state,
-                   source_id,
-                   source_bundle_id,
-                   initialization_id,
-                   canonical_request_hash,
-                   row_count,
-                   remote_bundle_hash,
-                   remote_bundle_seq
-            FROM _sync_outbox_bundle
-            WHERE singleton_key = 1
-            """.trimIndent(),
-        ).use { st ->
-            check(st.step()) { "_sync_outbox_bundle singleton row is missing" }
-            OversqliteOutboxBundleState(
-                state = st.getText(0),
-                sourceId = st.getText(1),
-                sourceBundleId = st.getLong(2),
-                initializationId = st.getText(3),
-                canonicalRequestHash = st.getText(4),
-                rowCount = st.getLong(5),
-                remoteBundleHash = st.getText(6),
-                remoteBundleSeq = st.getLong(7),
-            )
+        return db.withExclusiveAccess {
+            db.prepare(
+                """
+                SELECT state,
+                       source_id,
+                       source_bundle_id,
+                       initialization_id,
+                       canonical_request_hash,
+                       row_count,
+                       remote_bundle_hash,
+                       remote_bundle_seq
+                FROM _sync_outbox_bundle
+                WHERE singleton_key = 1
+                """.trimIndent(),
+            ).use { st ->
+                check(st.step()) { "_sync_outbox_bundle singleton row is missing" }
+                OversqliteOutboxBundleState(
+                    state = st.getText(0),
+                    sourceId = st.getText(1),
+                    sourceBundleId = st.getLong(2),
+                    initializationId = st.getText(3),
+                    canonicalRequestHash = st.getText(4),
+                    rowCount = st.getLong(5),
+                    remoteBundleHash = st.getText(6),
+                    remoteBundleSeq = st.getLong(7),
+                )
+            }
         }
     }
 
@@ -110,47 +112,51 @@ internal class OversqliteOutboxStateStore(
     }
 
     suspend fun loadRows(): List<OversqliteOutboxRow> {
-        return db.prepare(
-            """
-            SELECT source_bundle_id,
-                   row_ordinal,
-                   schema_name,
-                   table_name,
-                   key_json,
-                   wire_key_json,
-                   op,
-                   base_row_version,
-                   local_payload,
-                   wire_payload
-            FROM _sync_outbox_rows
-            ORDER BY source_bundle_id, row_ordinal
-            """.trimIndent(),
-        ).use { st ->
-            buildList {
-                while (st.step()) {
-                    add(
-                        OversqliteOutboxRow(
-                            sourceBundleId = st.getLong(0),
-                            rowOrdinal = st.getLong(1),
-                            schemaName = st.getText(2),
-                            tableName = st.getText(3),
-                            keyJson = st.getText(4),
-                            wireKeyJson = st.getText(5),
-                            op = st.getText(6),
-                            baseRowVersion = st.getLong(7),
-                            localPayload = if (st.isNull(8)) null else st.getText(8),
-                            wirePayload = if (st.isNull(9)) null else st.getText(9),
-                        ),
-                    )
+        return db.withExclusiveAccess {
+            db.prepare(
+                """
+                SELECT source_bundle_id,
+                       row_ordinal,
+                       schema_name,
+                       table_name,
+                       key_json,
+                       wire_key_json,
+                       op,
+                       base_row_version,
+                       local_payload,
+                       wire_payload
+                FROM _sync_outbox_rows
+                ORDER BY source_bundle_id, row_ordinal
+                """.trimIndent(),
+            ).use { st ->
+                buildList {
+                    while (st.step()) {
+                        add(
+                            OversqliteOutboxRow(
+                                sourceBundleId = st.getLong(0),
+                                rowOrdinal = st.getLong(1),
+                                schemaName = st.getText(2),
+                                tableName = st.getText(3),
+                                keyJson = st.getText(4),
+                                wireKeyJson = st.getText(5),
+                                op = st.getText(6),
+                                baseRowVersion = st.getLong(7),
+                                localPayload = if (st.isNull(8)) null else st.getText(8),
+                                wirePayload = if (st.isNull(9)) null else st.getText(9),
+                            ),
+                        )
+                    }
                 }
             }
         }
     }
 
     suspend fun countRows(): Int {
-        return db.prepare("SELECT COUNT(*) FROM _sync_outbox_rows").use { st ->
-            check(st.step())
-            st.getLong(0).toInt()
+        return db.withExclusiveAccess {
+            db.prepare("SELECT COUNT(*) FROM _sync_outbox_rows").use { st ->
+                check(st.step())
+                st.getLong(0).toInt()
+            }
         }
     }
 

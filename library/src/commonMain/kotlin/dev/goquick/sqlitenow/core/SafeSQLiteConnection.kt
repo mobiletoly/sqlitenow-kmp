@@ -18,8 +18,12 @@ package dev.goquick.sqlitenow.core
 import dev.goquick.sqlitenow.common.sqliteNowLogger
 import dev.goquick.sqlitenow.core.sqlite.SqliteConnection
 import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
+import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.coroutineContext
 
 /**
  * A thread-safe wrapper around SQLiteConnection that ensures that only one coroutine
@@ -33,10 +37,12 @@ class SafeSQLiteConnection internal constructor(
     val debug: Boolean = false,
     private val persistenceController: PersistenceController = NoopPersistenceController(),
     private val executionContextHook: SqliteNowContextHook? = null,
+    private val executionContext: SqliteConnectionExecutionContext,
 ) {
-    val dispatcher: CoroutineDispatcher = sqliteConnectionDispatcher()
+    val dispatcher: CoroutineDispatcher = executionContext.dispatcher
     private var activeTransactionDepth: Int = 0
     private var tableInvalidationListener: ((Set<String>) -> Unit)? = null
+    private val connectionMutex = Mutex()
 
     internal val restoredFromSnapshot: Boolean
         get() = persistenceController.restoredFromSnapshot
@@ -46,12 +52,30 @@ class SafeSQLiteConnection internal constructor(
     internal suspend fun <T> withDispatcherContext(block: suspend () -> T): T {
         val hook = executionContextHook
         val captured = hook?.capture()
-        return withContext(dispatcher) {
-            if (hook != null) {
-                hook.withCaptured(captured, block)
-            } else {
-                block()
+        val currentOwner = coroutineContext[ConnectionOwnerContext]
+        val alreadyOwnsConnection = currentOwner?.connection === this
+        val ownerToken = currentOwner?.token ?: Any()
+        if (alreadyOwnsConnection) {
+            return withContext(dispatcher + ConnectionOwnerContext(this, ownerToken)) {
+                if (hook != null) {
+                    hook.withCaptured(captured, block)
+                } else {
+                    block()
+                }
             }
+        }
+
+        connectionMutex.lock()
+        try {
+            return withContext(dispatcher + ConnectionOwnerContext(this, ownerToken)) {
+                if (hook != null) {
+                    hook.withCaptured(captured, block)
+                } else {
+                    block()
+                }
+            }
+        } finally {
+            connectionMutex.unlock()
         }
     }
 
@@ -76,6 +100,15 @@ class SafeSQLiteConnection internal constructor(
         }
     }
 
+    /**
+     * Runs a block with exclusive access to this connection for the full suspend block.
+     * Generated queries and handwritten multi-statement reads should prefer this over
+     * using [dispatcher] directly so active statements cannot overlap transactions.
+     */
+    suspend fun <T> withExclusiveAccess(block: suspend () -> T): T {
+        return withDispatcherContext(block)
+    }
+
     suspend fun execSQL(sql: String) {
         sqliteNowLogger.d { "SafeSQLiteConnection.execSQL: $sql" }
         withDispatcherContext {
@@ -93,10 +126,14 @@ class SafeSQLiteConnection internal constructor(
     }
 
     suspend fun close() {
-        withDispatcherContext {
-            sqliteNowLogger.d { "SafeSQLiteConnection.close" }
-            persistenceController.onClose(ref)
-            ref.close()
+        try {
+            withDispatcherContext {
+                sqliteNowLogger.d { "SafeSQLiteConnection.close" }
+                persistenceController.onClose(ref)
+                ref.close()
+            }
+        } finally {
+            executionContext.close()
         }
     }
 
@@ -171,6 +208,13 @@ class SafeSQLiteConnection internal constructor(
     internal fun setTableInvalidationListener(listener: ((Set<String>) -> Unit)?) {
         tableInvalidationListener = listener
     }
+}
+
+private class ConnectionOwnerContext(
+    val connection: SafeSQLiteConnection,
+    val token: Any,
+) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<ConnectionOwnerContext>
 }
 
 internal expect fun exportConnectionBytes(connection: SqliteConnection): ByteArray?

@@ -18,6 +18,7 @@ package dev.goquick.sqlitenow.core
 import dev.goquick.sqlitenow.common.sqliteNowLogger
 import dev.goquick.sqlitenow.core.persistence.SnapshotPersistenceController
 import dev.goquick.sqlitenow.core.sqlite.SqliteConnection
+import kotlinx.coroutines.withContext
 
 /**
  * Provides platform-specific [SafeSQLiteConnection] instances.
@@ -62,28 +63,37 @@ object BundledSqliteConnectionProvider : SqliteConnectionProvider {
         } else {
             null
         }
-        val connection = openBundledSqliteConnection(
-            dbName = dbName,
-            debug = debug,
-            initialBytes = restoredBytes,
-            config = config.copy(persistence = persistence),
-        )
-        val persistenceController = if (persistence != null) {
-            SnapshotPersistenceController(
-                persistence = persistence,
-                dbName = dbName,
-                autoFlush = config.autoFlushPersistence,
-                restoredFromSnapshot = restoredBytes != null,
+        val executionContext = createSqliteConnectionExecutionContext(dbName)
+        try {
+            val connection = withContext(executionContext.dispatcher) {
+                openBundledSqliteConnection(
+                    dbName = dbName,
+                    debug = debug,
+                    initialBytes = restoredBytes,
+                    config = config.copy(persistence = persistence),
+                )
+            }
+            val persistenceController = if (persistence != null) {
+                SnapshotPersistenceController(
+                    persistence = persistence,
+                    dbName = dbName,
+                    autoFlush = config.autoFlushPersistence,
+                    restoredFromSnapshot = restoredBytes != null,
+                )
+            } else {
+                NoopPersistenceController()
+            }
+            return SafeSQLiteConnection(
+                ref = connection,
+                debug = debug,
+                persistenceController = persistenceController,
+                executionContextHook = config.executionContextHook,
+                executionContext = executionContext,
             )
-        } else {
-            NoopPersistenceController()
+        } catch (t: Throwable) {
+            runCatching { executionContext.close() }
+            throw t
         }
-        return SafeSQLiteConnection(
-            ref = connection,
-            debug = debug,
-            persistenceController = persistenceController,
-            executionContextHook = config.executionContextHook,
-        )
     }
 }
 

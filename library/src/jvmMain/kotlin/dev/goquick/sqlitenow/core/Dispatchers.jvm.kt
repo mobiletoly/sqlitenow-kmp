@@ -18,8 +18,47 @@ package dev.goquick.sqlitenow.core
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.ExecutorCoroutineDispatcher
+import kotlinx.coroutines.asCoroutineDispatcher
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
-internal actual fun sqliteConnectionDispatcher(): CoroutineDispatcher =
-    Dispatchers.IO.limitedParallelism(1)
+private val sqliteConnectionThreadIds = AtomicInteger(0)
+
+internal actual fun createSqliteConnectionExecutionContext(nameHint: String): SqliteConnectionExecutionContext {
+    val dispatcher = Executors.newSingleThreadExecutor { runnable ->
+        Thread(
+            runnable,
+            "SqliteNow-${sanitizeSqliteConnectionName(nameHint)}-${sqliteConnectionThreadIds.incrementAndGet()}",
+        ).apply {
+            isDaemon = true
+        }
+    }.asCoroutineDispatcher()
+    return CloseableSqliteConnectionExecutionContext(dispatcher)
+}
 
 internal actual fun sqliteNetworkDispatcher(): CoroutineDispatcher = Dispatchers.IO
+
+private class CloseableSqliteConnectionExecutionContext(
+    override val dispatcher: ExecutorCoroutineDispatcher,
+) : SqliteConnectionExecutionContext {
+    override fun close() {
+        dispatcher.close()
+    }
+}
+
+private fun sanitizeSqliteConnectionName(nameHint: String): String {
+    val sanitized = buildString(nameHint.length) {
+        for (ch in nameHint) {
+            append(
+                when {
+                    ch.isLetterOrDigit() -> ch
+                    ch == '-' || ch == '_' || ch == '.' -> ch
+                    else -> '_'
+                },
+            )
+        }
+    }.trim('_')
+    if (sanitized.isEmpty()) return "db"
+    return sanitized.takeLast(24)
+}

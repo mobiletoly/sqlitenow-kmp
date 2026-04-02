@@ -18,5 +18,13 @@ package dev.goquick.sqlitenow.core
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 
-internal actual fun sqliteConnectionDispatcher(): CoroutineDispatcher = Dispatchers.Default
+internal actual fun createSqliteConnectionExecutionContext(nameHint: String): SqliteConnectionExecutionContext =
+    SharedSqliteConnectionExecutionContext(Dispatchers.Default)
+
 internal actual fun sqliteNetworkDispatcher(): CoroutineDispatcher = Dispatchers.Default
+
+private class SharedSqliteConnectionExecutionContext(
+    override val dispatcher: CoroutineDispatcher,
+) : SqliteConnectionExecutionContext {
+    override fun close() = Unit
+}

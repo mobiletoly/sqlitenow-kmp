@@ -17,5 +17,11 @@ package dev.goquick.sqlitenow.core
 
 import kotlinx.coroutines.CoroutineDispatcher
 
-internal expect fun sqliteConnectionDispatcher(): CoroutineDispatcher
+internal interface SqliteConnectionExecutionContext {
+    val dispatcher: CoroutineDispatcher
+
+    fun close()
+}
+
+internal expect fun createSqliteConnectionExecutionContext(nameHint: String): SqliteConnectionExecutionContext
 internal expect fun sqliteNetworkDispatcher(): CoroutineDispatcher

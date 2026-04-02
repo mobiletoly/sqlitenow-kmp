@@ -56,18 +56,20 @@ internal class OversqliteManagedTableStore(
     }
 
     suspend fun loadManagedTables(schemaName: String): List<String> {
-        return db.prepare(
-            """
-            SELECT table_name
-            FROM _sync_managed_tables
-            WHERE schema_name = ?
-            ORDER BY table_name
-            """.trimIndent(),
-        ).use { st ->
-            st.bindText(1, schemaName)
-            buildList {
-                while (st.step()) {
-                    add(st.getText(0).lowercase())
+        return db.withExclusiveAccess {
+            db.prepare(
+                """
+                SELECT table_name
+                FROM _sync_managed_tables
+                WHERE schema_name = ?
+                ORDER BY table_name
+                """.trimIndent(),
+            ).use { st ->
+                st.bindText(1, schemaName)
+                buildList {
+                    while (st.step()) {
+                        add(st.getText(0).lowercase())
+                    }
                 }
             }
         }

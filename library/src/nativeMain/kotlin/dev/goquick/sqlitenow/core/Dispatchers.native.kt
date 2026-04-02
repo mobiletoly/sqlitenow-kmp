@@ -19,7 +19,13 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 
-internal actual fun sqliteConnectionDispatcher(): CoroutineDispatcher =
-    Dispatchers.IO.limitedParallelism(1)
+internal actual fun createSqliteConnectionExecutionContext(nameHint: String): SqliteConnectionExecutionContext =
+    SharedSqliteConnectionExecutionContext(Dispatchers.IO.limitedParallelism(1))
 
 internal actual fun sqliteNetworkDispatcher(): CoroutineDispatcher = Dispatchers.IO
+
+private class SharedSqliteConnectionExecutionContext(
+    override val dispatcher: CoroutineDispatcher,
+) : SqliteConnectionExecutionContext {
+    override fun close() = Unit
+}

@@ -29,57 +29,63 @@ internal class OversqliteSourceStateStore(
     internal val db: SafeSQLiteConnection,
 ) {
     suspend fun loadState(sourceId: String): OversqliteSourceState? {
-        return db.prepare(
-            """
-            SELECT source_id, next_source_bundle_id, replaced_by_source_id, created_at
-            FROM _sync_source_state
-            WHERE source_id = ?
-            """.trimIndent(),
-        ).use { st ->
-            st.bindText(1, sourceId)
-            if (!st.step()) {
-                null
-            } else {
-                OversqliteSourceState(
-                    sourceId = st.getText(0),
-                    nextSourceBundleId = st.getLong(1),
-                    replacedBySourceId = st.getText(2),
-                    createdAt = st.getText(3),
-                )
+        return db.withExclusiveAccess {
+            db.prepare(
+                """
+                SELECT source_id, next_source_bundle_id, replaced_by_source_id, created_at
+                FROM _sync_source_state
+                WHERE source_id = ?
+                """.trimIndent(),
+            ).use { st ->
+                st.bindText(1, sourceId)
+                if (!st.step()) {
+                    null
+                } else {
+                    OversqliteSourceState(
+                        sourceId = st.getText(0),
+                        nextSourceBundleId = st.getLong(1),
+                        replacedBySourceId = st.getText(2),
+                        createdAt = st.getText(3),
+                    )
+                }
             }
         }
     }
 
     suspend fun ensureSource(sourceId: String, initialNextSourceBundleId: Long = 1L) {
-        db.prepare(
-            """
-            INSERT INTO _sync_source_state(source_id, next_source_bundle_id, replaced_by_source_id)
-            VALUES(?, ?, '')
-            ON CONFLICT(source_id) DO NOTHING
-            """.trimIndent(),
-        ).use { st ->
-            st.bindText(1, sourceId)
-            st.bindLong(2, initialNextSourceBundleId)
-            st.step()
+        db.withExclusiveAccess {
+            db.prepare(
+                """
+                INSERT INTO _sync_source_state(source_id, next_source_bundle_id, replaced_by_source_id)
+                VALUES(?, ?, '')
+                ON CONFLICT(source_id) DO NOTHING
+                """.trimIndent(),
+            ).use { st ->
+                st.bindText(1, sourceId)
+                st.bindLong(2, initialNextSourceBundleId)
+                st.step()
+            }
         }
     }
 
     suspend fun upsertNextSourceBundleIdFloor(sourceId: String, nextSourceBundleId: Long) {
-        db.prepare(
-            """
-            INSERT INTO _sync_source_state(source_id, next_source_bundle_id, replaced_by_source_id)
-            VALUES(?, ?, '')
-            ON CONFLICT(source_id) DO UPDATE SET
-              next_source_bundle_id = CASE
-                WHEN _sync_source_state.next_source_bundle_id < excluded.next_source_bundle_id
-                THEN excluded.next_source_bundle_id
-                ELSE _sync_source_state.next_source_bundle_id
-              END
-            """.trimIndent(),
-        ).use { st ->
-            st.bindText(1, sourceId)
-            st.bindLong(2, nextSourceBundleId)
-            st.step()
+        db.withExclusiveAccess {
+            db.prepare(
+                """
+                INSERT INTO _sync_source_state(source_id, next_source_bundle_id, replaced_by_source_id)
+                VALUES(?, ?, '')
+                ON CONFLICT(source_id) DO UPDATE SET
+                  next_source_bundle_id = CASE
+                    WHEN _sync_source_state.next_source_bundle_id < excluded.next_source_bundle_id
+                    THEN excluded.next_source_bundle_id
+                    ELSE _sync_source_state.next_source_bundle_id
+                  END
+                """.trimIndent(),
+            ).use { st ->
+                st.bindText(1, sourceId)
+                st.bindLong(2, nextSourceBundleId)
+                st.step()
+            }
         }
     }
 
@@ -87,16 +93,18 @@ internal class OversqliteSourceStateStore(
         previousSourceId: String,
         replacementSourceId: String,
     ) {
-        db.prepare(
-            """
-            UPDATE _sync_source_state
-            SET replaced_by_source_id = ?
-            WHERE source_id = ?
-            """.trimIndent(),
-        ).use { st ->
-            st.bindText(1, replacementSourceId)
-            st.bindText(2, previousSourceId)
-            st.step()
+        db.withExclusiveAccess {
+            db.prepare(
+                """
+                UPDATE _sync_source_state
+                SET replaced_by_source_id = ?
+                WHERE source_id = ?
+                """.trimIndent(),
+            ).use { st ->
+                st.bindText(1, replacementSourceId)
+                st.bindText(2, previousSourceId)
+                st.step()
+            }
         }
     }
 

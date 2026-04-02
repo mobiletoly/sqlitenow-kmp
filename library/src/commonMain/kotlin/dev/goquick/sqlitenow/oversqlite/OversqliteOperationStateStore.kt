@@ -66,27 +66,29 @@ internal class OversqliteOperationStateStore(
     private val db: SafeSQLiteConnection,
 ) {
     suspend fun loadState(): OversqliteOperationState {
-        return db.prepare(
-            """
-            SELECT kind, target_user_id, staged_snapshot_id, snapshot_bundle_seq, snapshot_row_count,
-                   source_recovery_reason, source_recovery_source_id, source_recovery_source_bundle_id,
-                   source_recovery_intent_state
-            FROM _sync_operation_state
-            WHERE singleton_key = 1
-            """.trimIndent(),
-        ).use { st ->
-            check(st.step()) { "_sync_operation_state singleton row is missing" }
-            OversqliteOperationState(
-                kind = st.getText(0),
-                targetUserId = st.getText(1),
-                stagedSnapshotId = st.getText(2),
-                snapshotBundleSeq = st.getLong(3),
-                snapshotRowCount = st.getLong(4),
-                sourceRecoveryReason = st.getText(5),
-                sourceRecoverySourceId = st.getText(6),
-                sourceRecoverySourceBundleId = st.getLong(7),
-                sourceRecoveryIntentState = st.getText(8),
-            )
+        return db.withExclusiveAccess {
+            db.prepare(
+                """
+                SELECT kind, target_user_id, staged_snapshot_id, snapshot_bundle_seq, snapshot_row_count,
+                       source_recovery_reason, source_recovery_source_id, source_recovery_source_bundle_id,
+                       source_recovery_intent_state
+                FROM _sync_operation_state
+                WHERE singleton_key = 1
+                """.trimIndent(),
+            ).use { st ->
+                check(st.step()) { "_sync_operation_state singleton row is missing" }
+                OversqliteOperationState(
+                    kind = st.getText(0),
+                    targetUserId = st.getText(1),
+                    stagedSnapshotId = st.getText(2),
+                    snapshotBundleSeq = st.getLong(3),
+                    snapshotRowCount = st.getLong(4),
+                    sourceRecoveryReason = st.getText(5),
+                    sourceRecoverySourceId = st.getText(6),
+                    sourceRecoverySourceBundleId = st.getLong(7),
+                    sourceRecoveryIntentState = st.getText(8),
+                )
+            }
         }
     }
 

@@ -29,6 +29,10 @@ internal data class RealServerSmokeConfig(
     val baseUrl: String,
 )
 
+internal data class RealServerSharedStressConfig(
+    val baseUrl: String,
+)
+
 internal open class RealServerSmokeSupport : CrossTargetSyncTestSupport() {
     private val smokeJson = Json { ignoreUnknownKeys = true }
     private val expectedRealServerAppName = "nethttp-server-example"
@@ -73,6 +77,18 @@ internal open class RealServerSmokeSupport : CrossTargetSyncTestSupport() {
                 }
             }
         }
+    }
+
+    protected suspend fun requireRealServerSharedStressConfig(): RealServerSharedStressConfig? {
+        if (!realServerSmokeFlagEnabled("OVERSQLITE_REAL_SERVER_SHARED_STRESS")) {
+            println(
+                "Skipping real-server shared-connection stress test; " +
+                    "set OVERSQLITE_REAL_SERVER_SHARED_STRESS=true to enable it locally.",
+            )
+            return null
+        }
+        val smoke = requireRealServerSmokeConfig() ?: return null
+        return RealServerSharedStressConfig(baseUrl = smoke.baseUrl)
     }
 
     protected suspend fun issueDummySigninToken(
@@ -227,6 +243,13 @@ internal open class RealServerSmokeSupport : CrossTargetSyncTestSupport() {
             response.body<RealServerStatusResponse>()
         } finally {
             http.close()
+        }
+    }
+
+    private fun realServerSmokeFlagEnabled(name: String): Boolean {
+        return when (realServerSmokeEnv(name)?.trim()?.lowercase()) {
+            "1", "true", "yes", "on" -> true
+            else -> false
         }
     }
 }

@@ -63,7 +63,7 @@ internal class MigratorCodeGenerator(
         if (debug) {
             codeBlockBuilder.add("return conn.withContextAndTrace {\n")
         } else {
-            codeBlockBuilder.add("return withContext(conn.dispatcher) {\n")
+            codeBlockBuilder.add("return conn.withExclusiveAccess {\n")
         }
 
         // Handle initial setup when currentVersion is -1
@@ -80,7 +80,7 @@ internal class MigratorCodeGenerator(
         if (debug) {
             codeBlockBuilder.add("        return@withContextAndTrace ${migrationInspector.latestVersion}\n")
         } else {
-            codeBlockBuilder.add("        return@withContext ${migrationInspector.latestVersion}\n")
+            codeBlockBuilder.add("        return@withExclusiveAccess ${migrationInspector.latestVersion}\n")
         }
         codeBlockBuilder.add("    }\n")
         codeBlockBuilder.add("\n")

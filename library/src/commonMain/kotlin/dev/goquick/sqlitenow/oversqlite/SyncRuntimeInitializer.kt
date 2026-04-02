@@ -246,25 +246,28 @@ internal class SyncRuntimeInitializer(
     }
 
     private suspend fun ensureOperationStateSchema(db: SafeSQLiteConnection) {
-        val createSql = db.prepare(
-            """
-            SELECT sql
-            FROM sqlite_master
-            WHERE type = 'table' AND name = '_sync_operation_state'
-            """.trimIndent(),
-        ).use { st ->
-            if (!st.step() || st.isNull(0)) {
-                ""
-            } else {
-                st.getText(0)
-            }
-        }
-        val columnNames = db.prepare("PRAGMA table_info(_sync_operation_state)").use { st ->
-            buildSet {
-                while (st.step()) {
-                    add(st.getText(1).lowercase())
+        val (createSql, columnNames) = db.withExclusiveAccess {
+            val createSql = db.prepare(
+                """
+                SELECT sql
+                FROM sqlite_master
+                WHERE type = 'table' AND name = '_sync_operation_state'
+                """.trimIndent(),
+            ).use { st ->
+                if (!st.step() || st.isNull(0)) {
+                    ""
+                } else {
+                    st.getText(0)
                 }
             }
+            val columnNames = db.prepare("PRAGMA table_info(_sync_operation_state)").use { st ->
+                buildSet {
+                    while (st.step()) {
+                        add(st.getText(1).lowercase())
+                    }
+                }
+            }
+            createSql to columnNames
         }
         val hasCurrentSchema =
             "source_recovery" in createSql &&
@@ -276,23 +279,25 @@ internal class SyncRuntimeInitializer(
             return
         }
 
-        val existingRow = db.prepare(
-            """
-            SELECT kind, target_user_id, staged_snapshot_id, snapshot_bundle_seq, snapshot_row_count
-            FROM _sync_operation_state
-            WHERE singleton_key = 1
-            """.trimIndent(),
-        ).use { st ->
-            if (!st.step()) {
-                null
-            } else {
-                OversqliteOperationState(
-                    kind = st.getText(0),
-                    targetUserId = st.getText(1),
-                    stagedSnapshotId = st.getText(2),
-                    snapshotBundleSeq = st.getLong(3),
-                    snapshotRowCount = st.getLong(4),
-                )
+        val existingRow = db.withExclusiveAccess {
+            db.prepare(
+                """
+                SELECT kind, target_user_id, staged_snapshot_id, snapshot_bundle_seq, snapshot_row_count
+                FROM _sync_operation_state
+                WHERE singleton_key = 1
+                """.trimIndent(),
+            ).use { st ->
+                if (!st.step()) {
+                    null
+                } else {
+                    OversqliteOperationState(
+                        kind = st.getText(0),
+                        targetUserId = st.getText(1),
+                        stagedSnapshotId = st.getText(2),
+                        snapshotBundleSeq = st.getLong(3),
+                        snapshotRowCount = st.getLong(4),
+                    )
+                }
             }
         }
 
@@ -568,24 +573,26 @@ internal class SyncRuntimeInitializer(
         val keyExpr = buildKeyJsonObjectExprHexAware(tableInfo, table.syncKeyColumnName, "existing_row")
         val payloadExpr = buildJsonObjectExprHexAware(tableInfo, "existing_row")
         var nextDirtyOrdinal = startingDirtyOrdinal
-        db.prepare(
-            """
-            SELECT $keyExpr, $payloadExpr
-            FROM ${quoteIdent(table.tableName)} existing_row
-            ORDER BY existing_row.${quoteIdent(table.syncKeyColumnName)}
-            """.trimIndent()
-        ).use { st ->
-            while (st.step()) {
-                nextDirtyOrdinal++
-                insertDirtyRow(
-                    db = db,
-                    schemaName = validated.schema,
-                    tableName = table.tableName,
-                    keyJson = st.getText(0),
-                    payload = st.getText(1),
-                    dirtyOrdinal = nextDirtyOrdinal,
-                    statementCache = statementCache,
-                )
+        db.withExclusiveAccess {
+            db.prepare(
+                """
+                SELECT $keyExpr, $payloadExpr
+                FROM ${quoteIdent(table.tableName)} existing_row
+                ORDER BY existing_row.${quoteIdent(table.syncKeyColumnName)}
+                """.trimIndent()
+            ).use { st ->
+                while (st.step()) {
+                    nextDirtyOrdinal++
+                    insertDirtyRow(
+                        db = db,
+                        schemaName = validated.schema,
+                        tableName = table.tableName,
+                        keyJson = st.getText(0),
+                        payload = st.getText(1),
+                        dirtyOrdinal = nextDirtyOrdinal,
+                        statementCache = statementCache,
+                    )
+                }
             }
         }
         return nextDirtyOrdinal
@@ -622,9 +629,11 @@ internal class SyncRuntimeInitializer(
         db: SafeSQLiteConnection,
         sql: String,
     ): Long {
-        return db.prepare(sql).use { st ->
-            check(st.step())
-            st.getLong(0)
+        return db.withExclusiveAccess {
+            db.prepare(sql).use { st ->
+                check(st.step())
+                st.getLong(0)
+            }
         }
     }
 
@@ -634,12 +643,14 @@ internal class SyncRuntimeInitializer(
     ) {
         for (table in validated.tables) {
             db.execSQL("DELETE FROM ${quoteIdent(table.tableName)}")
-            db.prepare(
-                "DELETE FROM _sync_row_state WHERE schema_name = ? AND table_name = ?"
-            ).use { st ->
-                st.bindText(1, validated.schema)
-                st.bindText(2, table.tableName)
-                st.step()
+            db.withExclusiveAccess {
+                db.prepare(
+                    "DELETE FROM _sync_row_state WHERE schema_name = ? AND table_name = ?"
+                ).use { st ->
+                    st.bindText(1, validated.schema)
+                    st.bindText(2, table.tableName)
+                    st.step()
+                }
             }
         }
         db.execSQL("DELETE FROM _sync_dirty_rows")
@@ -715,24 +726,26 @@ internal class SyncRuntimeInitializer(
         db: SafeSQLiteConnection,
         tableName: String,
     ): Map<String, String> {
-        val sqlByName = linkedMapOf<String, String>()
-        db.prepare(
-            """
-            SELECT name, sql
-            FROM sqlite_master
-            WHERE type = 'trigger' AND tbl_name = ?
-            ORDER BY name
-            """.trimIndent()
-        ).use { st ->
-            st.bindText(1, tableName)
-            while (st.step()) {
-                if (st.isNull(1)) {
-                    continue
+        return db.withExclusiveAccess {
+            val sqlByName = linkedMapOf<String, String>()
+            db.prepare(
+                """
+                SELECT name, sql
+                FROM sqlite_master
+                WHERE type = 'trigger' AND tbl_name = ?
+                ORDER BY name
+                """.trimIndent()
+            ).use { st ->
+                st.bindText(1, tableName)
+                while (st.step()) {
+                    if (st.isNull(1)) {
+                        continue
+                    }
+                    sqlByName[st.getText(0)] = st.getText(1)
                 }
-                sqlByName[st.getText(0)] = st.getText(1)
             }
+            sqlByName
         }
-        return sqlByName
     }
 }
 

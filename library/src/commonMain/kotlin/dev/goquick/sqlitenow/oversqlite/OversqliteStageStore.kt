@@ -130,33 +130,35 @@ internal class OversqliteStageStore(
         state: RuntimeState,
         snapshotId: String,
     ): List<StagedSnapshotRow> {
-        val rows = mutableListOf<StagedSnapshotRow>()
-        db.prepare(
-            """
-            SELECT schema_name, table_name, key_json, row_version, payload
-            FROM _sync_snapshot_stage
-            WHERE snapshot_id = ?
-            ORDER BY row_ordinal
-            """.trimIndent()
-        ).use { st ->
-            st.bindText(1, snapshotId)
-            while (st.step()) {
-                val schemaName = st.getText(0)
-                val tableName = st.getText(1)
-                val keyJson = st.getText(2)
-                val (localPk, wireKey) = localStore.decodeDirtyKeyForPush(state, tableName, keyJson)
-                rows += StagedSnapshotRow(
-                    schemaName = schemaName,
-                    tableName = tableName,
-                    keyJson = keyJson,
-                    localPk = localPk,
-                    wireKey = wireKey,
-                    rowVersion = st.getLong(3),
-                    payload = st.getText(4),
-                )
+        return db.withExclusiveAccess {
+            val rows = mutableListOf<StagedSnapshotRow>()
+            db.prepare(
+                """
+                SELECT schema_name, table_name, key_json, row_version, payload
+                FROM _sync_snapshot_stage
+                WHERE snapshot_id = ?
+                ORDER BY row_ordinal
+                """.trimIndent()
+            ).use { st ->
+                st.bindText(1, snapshotId)
+                while (st.step()) {
+                    val schemaName = st.getText(0)
+                    val tableName = st.getText(1)
+                    val keyJson = st.getText(2)
+                    val (localPk, wireKey) = localStore.decodeDirtyKeyForPush(state, tableName, keyJson)
+                    rows += StagedSnapshotRow(
+                        schemaName = schemaName,
+                        tableName = tableName,
+                        keyJson = keyJson,
+                        localPk = localPk,
+                        wireKey = wireKey,
+                        rowVersion = st.getLong(3),
+                        payload = st.getText(4),
+                    )
+                }
             }
+            rows
         }
-        return rows
     }
 
     suspend fun deleteSnapshotStage(
@@ -184,39 +186,41 @@ internal class OversqliteStageStore(
     }
 
     private suspend fun loadDirtySnapshotRows(): List<DirtySnapshotRow> {
-        val rows = mutableListOf<DirtySnapshotRow>()
-        db.prepare(
-            """
-            SELECT
-              d.schema_name,
-              d.table_name,
-              d.key_json,
-              d.base_row_version,
-              d.payload,
-              d.dirty_ordinal,
-              CASE WHEN rs.key_json IS NULL THEN 0 ELSE 1 END AS state_exists,
-              COALESCE(rs.deleted, 0) AS state_deleted
-            FROM _sync_dirty_rows AS d
-            LEFT JOIN _sync_row_state AS rs
-              ON rs.schema_name = d.schema_name
-             AND rs.table_name = d.table_name
-             AND rs.key_json = d.key_json
-            ORDER BY d.dirty_ordinal, d.table_name, d.key_json
-            """.trimIndent()
-        ).use { st ->
-            while (st.step()) {
-                rows += DirtySnapshotRow(
-                    schemaName = st.getText(0),
-                    tableName = st.getText(1),
-                    keyJson = st.getText(2),
-                    baseRowVersion = st.getLong(3),
-                    payload = if (st.isNull(4)) null else st.getText(4),
-                    dirtyOrdinal = st.getLong(5),
-                    stateExists = st.getLong(6) == 1L,
-                    stateDeleted = st.getLong(7) == 1L,
-                )
+        return db.withExclusiveAccess {
+            val rows = mutableListOf<DirtySnapshotRow>()
+            db.prepare(
+                """
+                SELECT
+                  d.schema_name,
+                  d.table_name,
+                  d.key_json,
+                  d.base_row_version,
+                  d.payload,
+                  d.dirty_ordinal,
+                  CASE WHEN rs.key_json IS NULL THEN 0 ELSE 1 END AS state_exists,
+                  COALESCE(rs.deleted, 0) AS state_deleted
+                FROM _sync_dirty_rows AS d
+                LEFT JOIN _sync_row_state AS rs
+                  ON rs.schema_name = d.schema_name
+                 AND rs.table_name = d.table_name
+                 AND rs.key_json = d.key_json
+                ORDER BY d.dirty_ordinal, d.table_name, d.key_json
+                """.trimIndent()
+            ).use { st ->
+                while (st.step()) {
+                    rows += DirtySnapshotRow(
+                        schemaName = st.getText(0),
+                        tableName = st.getText(1),
+                        keyJson = st.getText(2),
+                        baseRowVersion = st.getLong(3),
+                        payload = if (st.isNull(4)) null else st.getText(4),
+                        dirtyOrdinal = st.getLong(5),
+                        stateExists = st.getLong(6) == 1L,
+                        stateDeleted = st.getLong(7) == 1L,
+                    )
+                }
             }
+            rows
         }
-        return rows
     }
 }

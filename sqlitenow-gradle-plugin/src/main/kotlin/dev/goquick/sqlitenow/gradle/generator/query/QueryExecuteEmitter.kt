@@ -137,7 +137,7 @@ internal class QueryExecuteEmitter(
     }
 
     private fun withContextHeader(): String =
-        if (debug) "return conn.withContextAndTrace {" else "return withContext(conn.dispatcher) {"
+        if (debug) "return conn.withContextAndTrace {" else "return conn.withExclusiveAccess {"
 
     private fun prepareAndMaybeBindParamsLines(
         namespace: String,

@@ -22,15 +22,17 @@ internal class OversqliteApplyStateStore(
     private val db: SafeSQLiteConnection,
 ) {
     suspend fun isApplyMode(): Boolean {
-        return db.prepare(
-            """
-            SELECT apply_mode
-            FROM _sync_apply_state
-            WHERE singleton_key = 1
-            """.trimIndent(),
-        ).use { st ->
-            check(st.step()) { "_sync_apply_state singleton row is missing" }
-            st.getLong(0) == 1L
+        return db.withExclusiveAccess {
+            db.prepare(
+                """
+                SELECT apply_mode
+                FROM _sync_apply_state
+                WHERE singleton_key = 1
+                """.trimIndent(),
+            ).use { st ->
+                check(st.step()) { "_sync_apply_state singleton row is missing" }
+                st.getLong(0) == 1L
+            }
         }
     }
 

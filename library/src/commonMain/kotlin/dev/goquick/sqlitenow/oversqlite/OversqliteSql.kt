@@ -21,26 +21,28 @@ import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
 internal suspend inline fun <T> SafeSQLiteConnection.withPreparedStatement(
     sql: String,
     statementCache: StatementCache? = null,
-    block: suspend (SqliteStatement) -> T,
+    crossinline block: suspend (SqliteStatement) -> T,
 ): T {
-    val cached = statementCache?.get(sql)
-    if (cached != null) {
-        return block(cached)
-    }
+    return withExclusiveAccess {
+        val cached = statementCache?.get(sql)
+        if (cached != null) {
+            return@withExclusiveAccess block(cached)
+        }
 
-    val statement = prepare(sql)
-    var failure: Throwable? = null
-    try {
-        return block(statement)
-    } catch (t: Throwable) {
-        failure = t
-        throw t
-    } finally {
+        val statement = prepare(sql)
+        var failure: Throwable? = null
         try {
-            statement.close()
-        } catch (closeError: Throwable) {
-            if (failure == null) {
-                throw closeError
+            block(statement)
+        } catch (t: Throwable) {
+            failure = t
+            throw t
+        } finally {
+            try {
+                statement.close()
+            } catch (closeError: Throwable) {
+                if (failure == null) {
+                    throw closeError
+                }
             }
         }
     }

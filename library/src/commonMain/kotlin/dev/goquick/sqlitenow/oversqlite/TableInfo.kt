@@ -91,55 +91,58 @@ class TableInfoCache {
         val key = table.lowercase()
         cache[key]?.let { return it }
 
-        val cols = mutableListOf<ColumnInfo>()
-        db.prepare("PRAGMA table_info(${quoteIdent(key)})").use { st ->
-            // Resolve column indexes by name to avoid magic numbers
-            val idxByName: Map<String, Int> = run {
-                val names = st.getColumnNames().map { it.lowercase() }
-                names.mapIndexed { idx, n -> n to idx }.toMap()
-            }
-            val iName = idxByName["name"] ?: 1
-            val iType = idxByName["type"] ?: 2
-            val iNotNull = idxByName["notnull"] ?: 3
-            val iDflt = idxByName["dflt_value"] ?: 4
-            val iPk = idxByName["pk"] ?: 5
+        val (cols, foreignKeys, foreignKeyColumns) = db.withExclusiveAccess {
+            val cols = mutableListOf<ColumnInfo>()
+            db.prepare("PRAGMA table_info(${quoteIdent(key)})").use { st ->
+                // Resolve column indexes by name to avoid magic numbers
+                val idxByName: Map<String, Int> = run {
+                    val names = st.getColumnNames().map { it.lowercase() }
+                    names.mapIndexed { idx, n -> n to idx }.toMap()
+                }
+                val iName = idxByName["name"] ?: 1
+                val iType = idxByName["type"] ?: 2
+                val iNotNull = idxByName["notnull"] ?: 3
+                val iDflt = idxByName["dflt_value"] ?: 4
+                val iPk = idxByName["pk"] ?: 5
 
-            while (st.step()) {
-                val name = st.getText(iName)
-                val type = st.getText(iType)
-                val notNull = st.getLong(iNotNull) == 1L
-                val defaultVal = if (st.isNull(iDflt)) null else st.getText(iDflt)
-                val isPk = st.getLong(iPk) == 1L
-                cols += ColumnInfo(
-                    name = name,
-                    declaredType = type,
-                    isPrimaryKey = isPk,
-                    notNull = notNull,
-                    defaultValue = defaultVal,
-                )
+                while (st.step()) {
+                    val name = st.getText(iName)
+                    val type = st.getText(iType)
+                    val notNull = st.getLong(iNotNull) == 1L
+                    val defaultVal = if (st.isNull(iDflt)) null else st.getText(iDflt)
+                    val isPk = st.getLong(iPk) == 1L
+                    cols += ColumnInfo(
+                        name = name,
+                        declaredType = type,
+                        isPrimaryKey = isPk,
+                        notNull = notNull,
+                        defaultValue = defaultVal,
+                    )
+                }
             }
-        }
-        val foreignKeys = mutableListOf<ForeignKeyInfo>()
-        val foreignKeyColumns = mutableSetOf<String>()
-        db.prepare("PRAGMA foreign_key_list(${quoteIdent(key)})").use { st ->
-            val idxByName: Map<String, Int> = run {
-                val names = st.getColumnNames().map { it.lowercase() }
-                names.mapIndexed { idx, n -> n to idx }.toMap()
+            val foreignKeys = mutableListOf<ForeignKeyInfo>()
+            val foreignKeyColumns = mutableSetOf<String>()
+            db.prepare("PRAGMA foreign_key_list(${quoteIdent(key)})").use { st ->
+                val idxByName: Map<String, Int> = run {
+                    val names = st.getColumnNames().map { it.lowercase() }
+                    names.mapIndexed { idx, n -> n to idx }.toMap()
+                }
+                val iSeq = idxByName["seq"] ?: 1
+                val iTable = idxByName["table"] ?: 2
+                val iFrom = idxByName["from"] ?: 3
+                val iTo = idxByName["to"] ?: 4
+                while (st.step()) {
+                    val fromCol = st.getText(iFrom)
+                    foreignKeys += ForeignKeyInfo(
+                        seq = st.getLong(iSeq).toInt(),
+                        refTable = st.getText(iTable).trim().lowercase(),
+                        fromCol = fromCol,
+                        toCol = st.getText(iTo),
+                    )
+                    foreignKeyColumns += fromCol.lowercase()
+                }
             }
-            val iSeq = idxByName["seq"] ?: 1
-            val iTable = idxByName["table"] ?: 2
-            val iFrom = idxByName["from"] ?: 3
-            val iTo = idxByName["to"] ?: 4
-            while (st.step()) {
-                val fromCol = st.getText(iFrom)
-                foreignKeys += ForeignKeyInfo(
-                    seq = st.getLong(iSeq).toInt(),
-                    refTable = st.getText(iTable).trim().lowercase(),
-                    fromCol = fromCol,
-                    toCol = st.getText(iTo),
-                )
-                foreignKeyColumns += fromCol.lowercase()
-            }
+            Triple(cols, foreignKeys, foreignKeyColumns)
         }
 
         val normalizedColumns = cols.map { column ->

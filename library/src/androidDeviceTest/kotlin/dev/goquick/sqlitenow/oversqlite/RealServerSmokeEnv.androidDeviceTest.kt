@@ -1,3 +1,6 @@
 package dev.goquick.sqlitenow.oversqlite
 
-internal actual fun realServerSmokeEnv(name: String): String? = System.getenv(name)
+import androidx.test.platform.app.InstrumentationRegistry
+
+internal actual fun realServerSmokeEnv(name: String): String? =
+    InstrumentationRegistry.getArguments().getString(name) ?: System.getenv(name)

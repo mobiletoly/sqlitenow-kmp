@@ -168,12 +168,14 @@ open class SqliteNowDatabase private constructor(
      */
     internal suspend fun getUserVersion(): Int {
         val connection = conn
-        val statement = connection.prepare("PRAGMA user_version;")
-        return try {
-            statement.step()
-            statement.getLong(0).toInt()
-        } finally {
-            statement.close()
+        return connection.withExclusiveAccess {
+            val statement = connection.prepare("PRAGMA user_version;")
+            try {
+                statement.step()
+                statement.getLong(0).toInt()
+            } finally {
+                statement.close()
+            }
         }
     }
 

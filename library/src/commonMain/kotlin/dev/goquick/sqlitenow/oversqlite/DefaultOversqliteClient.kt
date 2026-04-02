@@ -664,30 +664,34 @@ class DefaultOversqliteClient(
     }
 
     private suspend fun sqliteTableExists(tableName: String): Boolean {
-        return db.prepare(
-            """
-            SELECT COUNT(*)
-            FROM sqlite_master
-            WHERE type = 'table' AND name = ?
-            """.trimIndent(),
-        ).use { st ->
-            st.bindText(1, tableName)
-            check(st.step())
-            st.getLong(0) > 0L
+        return db.withExclusiveAccess {
+            db.prepare(
+                """
+                SELECT COUNT(*)
+                FROM sqlite_master
+                WHERE type = 'table' AND name = ?
+                """.trimIndent(),
+            ).use { st ->
+                st.bindText(1, tableName)
+                check(st.step())
+                st.getLong(0) > 0L
+            }
         }
     }
 
     private suspend fun countSnapshotStageRows(snapshotId: String): Long {
-        return db.prepare(
-            """
-            SELECT COUNT(*)
-            FROM _sync_snapshot_stage
-            WHERE snapshot_id = ?
-            """.trimIndent(),
-        ).use { st ->
-            st.bindText(1, snapshotId)
-            check(st.step())
-            st.getLong(0)
+        return db.withExclusiveAccess {
+            db.prepare(
+                """
+                SELECT COUNT(*)
+                FROM _sync_snapshot_stage
+                WHERE snapshot_id = ?
+                """.trimIndent(),
+            ).use { st ->
+                st.bindText(1, snapshotId)
+                check(st.step())
+                st.getLong(0)
+            }
         }
     }
 
