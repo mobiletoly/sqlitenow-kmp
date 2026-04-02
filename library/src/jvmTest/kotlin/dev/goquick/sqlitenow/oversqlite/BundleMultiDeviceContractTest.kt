@@ -20,8 +20,6 @@ class BundleMultiDeviceContractTest : BundleClientContractTestSupport() {
         server.start()
         val httpA = newHttpClient(server)
         val httpB = newHttpClient(server)
-        val sourceIdA = "device-a-source"
-        val sourceIdB = "device-b-source"
         try {
             val clientA = newClient(dbA, httpA, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
             val clientB = newClient(dbB, httpB, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
@@ -29,6 +27,11 @@ class BundleMultiDeviceContractTest : BundleClientContractTestSupport() {
             clientA.openAndConnect("user-1").getOrThrow()
             clientB.openAndConnect("user-1").getOrThrow()
 
+            val sourceIdA = scalarText(dbA, "SELECT current_source_id FROM _sync_attachment_state")
+            val sourceIdB = scalarText(dbB, "SELECT current_source_id FROM _sync_attachment_state")
+
+            assertTrue(sourceIdA.isNotBlank())
+            assertTrue(sourceIdB.isNotBlank())
             assertEquals(sourceIdA, scalarText(dbA, "SELECT current_source_id FROM _sync_attachment_state"))
             assertEquals(sourceIdB, scalarText(dbB, "SELECT current_source_id FROM _sync_attachment_state"))
 

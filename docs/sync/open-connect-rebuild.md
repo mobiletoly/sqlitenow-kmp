@@ -54,6 +54,7 @@ Important points:
 - call it whenever an authenticated session exists
 - `open()` success is not a substitute for `attach(userId)`
 - `RetryLater` is a normal lifecycle response, not an auth error
+- successful destructive logout later rotates to a fresh internal source before the next attach
 
 ## `rebuild()`
 
@@ -76,6 +77,9 @@ If the current source has become stale or out-of-order, rebuild preserves frozen
 rebuilds from snapshot, rotates to a fresh internal source, and restores the frozen intent under
 that fresh source stream.
 
+Successful destructive `detach()` is the other internal source-rotation point. Unlike rebuild, it
+retires the current local sync incarnation because managed local account data was wiped.
+
 ## Typical App Flow
 
 ```kotlin
@@ -97,3 +101,6 @@ if (!result.isSuccess()) {
     // Ask the UI to stop producing new writes or keep the user attached.
 }
 ```
+
+If `syncThenDetach()` succeeds, the next signed-in session attaches through a fresh oversqlite
+source stream.

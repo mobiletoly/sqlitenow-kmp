@@ -2489,7 +2489,7 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
-    fun pushPending_sameSourceReusedAfterDetach_preservesSourceSequence() = runBlocking {
+    fun pushPending_successfulDetachRotatesSourceAndStartsFreshSequence() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
         val server = newServer()
@@ -2513,9 +2513,15 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
 
             assertEquals(DetachOutcome.DETACHED, client.detach().getOrThrow())
             client.open().getOrThrow()
+            val rotatedSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
+            assertNotEquals(sourceId, rotatedSourceId)
+            assertEquals(
+                rotatedSourceId,
+                scalarText(db, "SELECT replaced_by_source_id FROM _sync_source_state WHERE source_id = '$sourceId'"),
+            )
             client.attach("user-1").getOrThrow()
             assertEquals(
-                2L,
+                1L,
                 scalarLong(
                     db,
                     "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = (SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1)",
@@ -2527,9 +2533,10 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             val report = client.pushPending().getOrThrow()
 
             assertEquals(PushOutcome.COMMITTED, report.outcome)
-            assertEquals(listOf(1L, 2L), pushServer.createRequests.map { it.sourceBundleId })
+            assertEquals(listOf(sourceId, rotatedSourceId), pushServer.createRequests.map { it.sourceId })
+            assertEquals(listOf(1L, 1L), pushServer.createRequests.map { it.sourceBundleId })
             assertEquals(2, pushServer.bundles.size)
-            assertEquals(2L, pushServer.bundles.last().sourceBundleId)
+            assertEquals(1L, pushServer.bundles.last().sourceBundleId)
             assertEquals(emptyList<String>(), dirtyKeysAndOps(db))
         } finally {
             http.close()
@@ -2561,6 +2568,13 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertEquals(0L, result.remainingPendingRowCount)
             assertEquals(PushOutcome.COMMITTED, result.lastSync.pushOutcome)
             client.open().getOrThrow()
+            val rotatedSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
+            assertNotEquals(sourceId, rotatedSourceId)
+            assertEquals(
+                rotatedSourceId,
+                scalarText(db, "SELECT replaced_by_source_id FROM _sync_source_state WHERE source_id = '$sourceId'"),
+            )
+            assertEquals(1L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$rotatedSourceId'"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
@@ -2604,6 +2618,13 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertEquals(0L, result.remainingPendingRowCount)
             assertEquals(listOf(1L, 2L), pushServer.createRequests.map { it.sourceBundleId })
             client.open().getOrThrow()
+            val rotatedSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
+            assertNotEquals(sourceId, rotatedSourceId)
+            assertEquals(
+                rotatedSourceId,
+                scalarText(db, "SELECT replaced_by_source_id FROM _sync_source_state WHERE source_id = '$sourceId'"),
+            )
+            assertEquals(1L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$rotatedSourceId'"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
         } finally {
@@ -2647,6 +2668,7 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertEquals(1L, result.remainingPendingRowCount)
             assertEquals(listOf(1L, 2L), pushServer.createRequests.map { it.sourceBundleId })
             client.open().getOrThrow()
+            assertEquals(sourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             assertEquals("attached", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
             assertEquals("user-1", scalarText(db, "SELECT attached_user_id FROM _sync_attachment_state"))

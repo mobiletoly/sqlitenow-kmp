@@ -20,4 +20,4 @@ import kotlin.JsFun
 )
 private external fun readWasmSmokeEnv(name: String): String?
 
-internal actual fun realServerSmokeEnv(name: String): String? = readWasmSmokeEnv(name)
+internal actual fun realServerEnv(name: String): String? = readWasmSmokeEnv(name)

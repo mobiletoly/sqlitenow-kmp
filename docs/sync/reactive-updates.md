@@ -28,15 +28,18 @@ rows in the normal path.
 If `detach()` returns `BLOCKED_UNSYNCED_DATA`, no destructive cleanup runs, so reactive tables are
 not cleared.
 
+Successful destructive detach also rotates oversqlite's internal source metadata, but the visible
+reactive invalidation still comes from the managed-table wipe rather than from source bookkeeping.
+
 ## Rebuild And Recovery
 
 `rebuild()` can replace large portions of managed local state. Reactive consumers should treat it
 the same way they treat any other authoritative remote refresh: the data may change substantially in
 one operation.
 
-The internally managed source rotation that can happen during rebuild recovery changes sync control
-state, but the user-visible invalidation still comes from the authoritative data apply, not from
-source identity bookkeeping by itself.
+The internally managed source rotation that can happen during rebuild recovery or successful
+destructive detach changes sync control state, but the user-visible invalidation still comes from
+data changes rather than from source identity bookkeeping by itself.
 
 ## External Writers
 

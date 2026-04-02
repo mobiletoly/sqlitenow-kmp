@@ -838,12 +838,14 @@ class DefaultOversqliteClient(
         val state = loadDurableLifecycleView()
         if (state.operation.kind == operationKindRemoteReplace) {
             cancelPendingRemoteReplace(state)
+            currentSourceId = state.sourceId.ifBlank { requireCurrentSourceId() }
             currentUserId = null
             pendingInitializationId = ""
             sessionConnected = false
             return DetachExecution(
                 outcome = DetachOutcome.DETACHED,
                 updatedTables = emptySet(),
+                currentSourceId = currentSourceId,
             )
         }
 
@@ -857,12 +859,24 @@ class DefaultOversqliteClient(
 
         val validated = requireValidatedConfig()
         val managedTables = managedTableNames(validated)
+        val previousSourceId = state.sourceId.ifBlank { requireCurrentSourceId() }
+        val rotatedSourceId = generateFreshReplacementSourceId(previousSourceId)
         db.transaction(TransactionMode.IMMEDIATE) {
             val statementCache = StatementCache(db)
             try {
                 clearFullLocalSyncState(validated)
+                sourceStateStore.ensureSource(
+                    sourceId = rotatedSourceId,
+                    initialNextSourceBundleId = 1L,
+                    statementCache = statementCache,
+                )
+                sourceStateStore.markRotated(
+                    previousSourceId = previousSourceId,
+                    replacementSourceId = rotatedSourceId,
+                    statementCache = statementCache,
+                )
                 attachmentStateStore.persistAnonymousState(
-                    sourceId = requireCurrentSourceId(),
+                    sourceId = rotatedSourceId,
                     statementCache = statementCache,
                 )
                 operationStateStore.persistState(OversqliteOperationState(), statementCache)
@@ -871,12 +885,14 @@ class DefaultOversqliteClient(
             }
         }
 
+        currentSourceId = rotatedSourceId
         currentUserId = null
         pendingInitializationId = ""
         sessionConnected = false
         return DetachExecution(
             outcome = DetachOutcome.DETACHED,
             updatedTables = managedTables,
+            currentSourceId = rotatedSourceId,
         )
     }
 
@@ -1048,6 +1064,14 @@ class DefaultOversqliteClient(
         return Uuid.random().toString()
     }
 
+    private fun generateFreshReplacementSourceId(currentSourceId: String): String {
+        var candidate = generateFreshSourceId()
+        while (candidate == currentSourceId) {
+            candidate = generateFreshSourceId()
+        }
+        return candidate
+    }
+
     private suspend fun maybeRetryTransportFailure(
         attempt: Int,
     ) {
@@ -1180,4 +1204,5 @@ private data class RemoteExecution(
 private data class DetachExecution(
     val outcome: DetachOutcome,
     val updatedTables: Set<String>,
+    val currentSourceId: String? = null,
 )

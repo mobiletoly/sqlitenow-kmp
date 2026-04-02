@@ -52,19 +52,22 @@ internal class OversqliteSourceStateStore(
         }
     }
 
-    suspend fun ensureSource(sourceId: String, initialNextSourceBundleId: Long = 1L) {
-        db.withExclusiveAccess {
-            db.prepare(
-                """
+    suspend fun ensureSource(
+        sourceId: String,
+        initialNextSourceBundleId: Long = 1L,
+        statementCache: StatementCache? = null,
+    ) {
+        db.withPreparedStatement(
+            sql = """
                 INSERT INTO _sync_source_state(source_id, next_source_bundle_id, replaced_by_source_id)
                 VALUES(?, ?, '')
                 ON CONFLICT(source_id) DO NOTHING
-                """.trimIndent(),
-            ).use { st ->
-                st.bindText(1, sourceId)
-                st.bindLong(2, initialNextSourceBundleId)
-                st.step()
-            }
+            """.trimIndent(),
+            statementCache = statementCache,
+        ) { st ->
+            st.bindText(1, sourceId)
+            st.bindLong(2, initialNextSourceBundleId)
+            st.step()
         }
     }
 
@@ -92,19 +95,19 @@ internal class OversqliteSourceStateStore(
     suspend fun markRotated(
         previousSourceId: String,
         replacementSourceId: String,
+        statementCache: StatementCache? = null,
     ) {
-        db.withExclusiveAccess {
-            db.prepare(
-                """
+        db.withPreparedStatement(
+            sql = """
                 UPDATE _sync_source_state
                 SET replaced_by_source_id = ?
                 WHERE source_id = ?
-                """.trimIndent(),
-            ).use { st ->
-                st.bindText(1, replacementSourceId)
-                st.bindText(2, previousSourceId)
-                st.step()
-            }
+            """.trimIndent(),
+            statementCache = statementCache,
+        ) { st ->
+            st.bindText(1, replacementSourceId)
+            st.bindText(2, previousSourceId)
+            st.step()
         }
     }
 

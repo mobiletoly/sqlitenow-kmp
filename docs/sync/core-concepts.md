@@ -22,6 +22,7 @@ Important properties:
 - it is opaque and debug-only from app code
 - it lives in oversqlite metadata inside the local database
 - it may rotate during explicit recovery on the same install
+- it also rotates after successful destructive `detach()` / `syncThenDetach()`
 
 If your app/backend also has a `deviceId`, treat that as a separate concept. A product-level
 `deviceId` may remain stable while oversqlite rotates the current sync writer identity.
@@ -77,13 +78,19 @@ Call it whenever an authenticated session exists, not only on the first sign-in 
 It is fail-closed: if attached pending sync data still exists, it returns
 `DetachOutcome.BLOCKED_UNSYNCED_DATA` and makes no destructive local changes.
 
-`detach()` does not change the internally managed source identity.
+If destructive cleanup succeeds, `detach()` clears managed local state and immediately rebinds the
+anonymous database to a fresh internally generated `sourceId`.
+
+If detach is blocked, rolls back, or only cancels a pending `remote_replace`, the existing source
+id is preserved.
 
 ### `syncThenDetach()`
 
 `syncThenDetach()` is bounded convenience sugar. It runs `sync()` and then attempts `detach()`. If
 new local writes arrive during the previous round, it may retry a small number of times. It never
 loops forever, and it returns the final blocked outcome explicitly if detach still cannot proceed.
+When the final detach succeeds destructively, it rotates to a fresh internal source exactly like
+plain `detach()`.
 
 ## Authority States
 

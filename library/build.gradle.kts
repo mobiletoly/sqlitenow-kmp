@@ -2,6 +2,7 @@
 
 import org.gradle.api.file.DuplicatesStrategy
 import org.gradle.api.tasks.Copy
+import org.gradle.api.tasks.testing.Test
 import org.gradle.language.jvm.tasks.ProcessResources
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
@@ -182,6 +183,84 @@ tasks.named<ProcessResources>("wasmJsProcessResources") {
     dependsOn(copySqlJsWasmForWasm)
     from(wasmSqlJsResourceDir)
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+val jvmTest by tasks.existing(Test::class)
+
+tasks.register<Test>("oversqliteComprehensiveJvm") {
+    group = "verification"
+    description = "Runs the host-side oversqlite comprehensive suite on the JVM target."
+
+    dependsOn(tasks.named("jvmTestClasses"))
+
+    testClassesDirs = jvmTest.get().testClassesDirs
+    classpath = jvmTest.get().classpath
+    useJUnit()
+
+    filter {
+        includeTestsMatching("dev.goquick.sqlitenow.oversqlite.*")
+        excludeTestsMatching("dev.goquick.sqlitenow.oversqlite.RealServer*")
+    }
+
+    outputs.upToDateWhen { false }
+    shouldRunAfter(jvmTest)
+}
+
+tasks.register<Test>("oversqliteRealserverJvm") {
+    group = "verification"
+    description = "Runs the shared JVM realserver oversqlite suite."
+
+    dependsOn(tasks.named("jvmTestClasses"))
+
+    testClassesDirs = jvmTest.get().testClassesDirs
+    classpath = jvmTest.get().classpath
+    useJUnit()
+
+    filter {
+        includeTestsMatching("dev.goquick.sqlitenow.oversqlite.RealServerComprehensiveTest")
+    }
+
+    environment("OVERSQLITE_REALSERVER_TESTS", "true")
+    val baseUrlOverride = System.getenv("OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL")
+    if (!baseUrlOverride.isNullOrBlank()) {
+        environment("OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL", baseUrlOverride)
+    }
+
+    inputs.property("oversqliteRealServerSmokeBaseUrl", baseUrlOverride ?: "")
+    outputs.upToDateWhen { false }
+    shouldRunAfter(jvmTest)
+}
+
+tasks.register<Test>("jvmRealServerSharedConnectionStress") {
+    group = "verification"
+    description = "Runs the local-only shared realserver stress test on the JVM target."
+
+    dependsOn(tasks.named("jvmTestClasses"))
+
+    testClassesDirs = jvmTest.get().testClassesDirs
+    classpath = jvmTest.get().classpath
+    useJUnit()
+
+    filter {
+        includeTestsMatching("dev.goquick.sqlitenow.oversqlite.RealServerSharedConnectionStressTest")
+    }
+
+    environment("OVERSQLITE_REALSERVER_TESTS", "true")
+    environment("OVERSQLITE_REALSERVER_HEAVY", "true")
+    val baseUrlOverride = System.getenv("OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL")
+    if (!baseUrlOverride.isNullOrBlank()) {
+        environment("OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL", baseUrlOverride)
+    }
+
+    inputs.property("oversqliteRealServerSmokeBaseUrl", baseUrlOverride ?: "")
+    outputs.upToDateWhen { false }
+    shouldRunAfter(jvmTest)
+}
+
+tasks.register("jvmRealServerSharedStress") {
+    group = "verification"
+    description = "Compatibility alias for jvmRealServerSharedConnectionStress."
+    dependsOn(tasks.named("jvmRealServerSharedConnectionStress"))
 }
 
 mavenPublishing {

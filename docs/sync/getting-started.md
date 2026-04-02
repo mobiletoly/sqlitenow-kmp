@@ -174,7 +174,9 @@ Direct detach:
 
 ```kotlin
 when (client.detach().getOrThrow()) {
-    DetachOutcome.DETACHED -> Unit
+    DetachOutcome.DETACHED -> {
+        // Managed local sync state was cleared and oversqlite rebound to a fresh source id.
+    }
     DetachOutcome.BLOCKED_UNSYNCED_DATA -> {
         // Keep the user attached or sync first.
     }
@@ -190,6 +192,9 @@ if (!result.isSuccess()) {
     // result.remainingPendingRowCount tells you what was left.
 }
 ```
+
+On successful destructive detach, the next attach starts from a fresh oversqlite source stream even
+on the same install.
 
 ## Step 9: Rebuild Explicitly When Recovery Requires It
 

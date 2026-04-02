@@ -41,6 +41,15 @@ internal open class CrossTargetSyncTestSupport {
         return BundledSqliteConnectionProvider.openConnection(":memory:", debug = true)
     }
 
+    protected suspend fun newFileBackedDb(path: String): SafeSQLiteConnection {
+        initializePlatformTestContext()
+        return BundledSqliteConnectionProvider.openConnection(
+            dbName = path,
+            debug = true,
+            config = createSqliteNowTestConnectionConfig(path),
+        )
+    }
+
     protected fun newClient(
         db: SafeSQLiteConnection,
         http: HttpClient,

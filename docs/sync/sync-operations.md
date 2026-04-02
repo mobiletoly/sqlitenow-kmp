@@ -39,11 +39,18 @@ Returns:
 - `DetachOutcome.DETACHED`
 - `DetachOutcome.BLOCKED_UNSYNCED_DATA`
 
-If blocked, local attached state is preserved.
+If blocked, local attached state and source identity are preserved.
+
+If successful through the destructive cleanup path, managed local state is cleared and anonymous
+state is rebound to a fresh internal source identity.
 
 ### `syncThenDetach()`
 
 Runs bounded best-effort `sync()` rounds and then attempts `detach()`.
+
+If the final detach succeeds destructively, `syncThenDetach()` rotates to the same fresh-source
+anonymous state as plain `detach()`. If it returns `BLOCKED_UNSYNCED_DATA`, the existing source is
+preserved.
 
 ## Connected Sync Operations
 

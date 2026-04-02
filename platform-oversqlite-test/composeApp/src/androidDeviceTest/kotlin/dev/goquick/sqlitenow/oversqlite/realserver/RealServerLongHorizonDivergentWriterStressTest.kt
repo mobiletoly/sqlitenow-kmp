@@ -1,0 +1,154 @@
+package dev.goquick.sqlitenow.oversqlite.realserver
+
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.goquick.sqlitenow.oversqlite.PushConflictRetryExhaustedException
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+
+@RunWith(AndroidJUnit4::class)
+class RealServerLongHorizonDivergentWriterStressTest {
+    @Test
+    fun longHorizon_divergentWriterServerWinsRecoversAndContinuesSyncing() = runBlocking {
+        val config = requireRealServerConfig()
+        resetRealServerState(config.baseUrl)
+
+        val userId = randomUserId()
+        val leaderDevice = randomSourceId("divergent-leader")
+        val writerDevice = randomSourceId("divergent-writer")
+        val observerDevice = randomSourceId("divergent-observer")
+
+        val leaderToken = issueDummySigninToken(config.baseUrl, userId, leaderDevice)
+        val writerToken = issueDummySigninToken(config.baseUrl, userId, writerDevice)
+        val observerToken = issueDummySigninToken(config.baseUrl, userId, observerDevice)
+        val leaderHttp = newAuthenticatedHttpClient(config.baseUrl, leaderToken)
+        var writerHttp = newAuthenticatedHttpClient(config.baseUrl, writerToken)
+        val observerHttp = newAuthenticatedHttpClient(config.baseUrl, observerToken)
+        val leaderDb = newFileBackedDb()
+        val writerDb = newFileBackedDb()
+        val observerDb = newFileBackedDb()
+        try {
+            createBusinessRichSchemaTables(leaderDb)
+            createBusinessRichSchemaTables(writerDb)
+            createBusinessRichSchemaTables(observerDb)
+
+            val leader = newRealServerClient(
+                db = leaderDb,
+                config = config,
+                http = leaderHttp,
+                syncTables = richSchemaSyncTables,
+                uploadLimit = 8,
+                downloadLimit = 2,
+            )
+            val writer = newRealServerClient(
+                db = writerDb,
+                config = config,
+                http = writerHttp,
+                syncTables = richSchemaSyncTables,
+                uploadLimit = 8,
+                downloadLimit = 2,
+            )
+            val observer = newRealServerClient(
+                db = observerDb,
+                config = config,
+                http = observerHttp,
+                syncTables = richSchemaSyncTables,
+                uploadLimit = 8,
+                downloadLimit = 2,
+            )
+
+            leader.openAndAttach(userId).getOrThrow()
+            writer.openAndAttach(userId).getOrThrow()
+            observer.openAndAttach(userId).getOrThrow()
+            leader.rebuild().getOrThrow()
+            writer.rebuild().getOrThrow()
+            observer.rebuild().getOrThrow()
+
+            val hotGraph = insertHotGraph(leaderDb)
+            leader.pushPending().getOrThrow()
+            writer.pullToStable().getOrThrow()
+            observer.pullToStable().getOrThrow()
+
+            val rounds = 6
+            val writerConflictRounds = setOf(2, 4, 6)
+            for (round in 1..rounds) {
+                mutateHotGraph(leaderDb, hotGraph, round)
+                insertRichSchemaBatch(leaderDb, "divergent-leader-$round")
+                leader.pushPending().getOrThrow()
+
+                if (round in writerConflictRounds) {
+                    mutateHotGraph(writerDb, hotGraph, 100 + round)
+                }
+            }
+
+            val remainingDirtyByAttempt = mutableListOf<Long>()
+            var pushCompleted = false
+            repeat(4) {
+                if (pushCompleted) return@repeat
+                val result = writer.pushPending()
+                val error = result.exceptionOrNull()
+                if (error == null) {
+                    pushCompleted = true
+                    return@repeat
+                }
+                assertTrue(error is PushConflictRetryExhaustedException)
+                error as PushConflictRetryExhaustedException
+                remainingDirtyByAttempt += error.remainingDirtyCount.toLong()
+                assertEquals(0L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            }
+
+            assertTrue(pushCompleted)
+            assertEquals(listOf(6L, 3L), remainingDirtyByAttempt)
+            assertEquals(0L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+            assertEquals(0L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+
+            writer.pullToStable().getOrThrow()
+            observer.pullToStable().getOrThrow()
+            assertEquals(7L, observer.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertHotGraphDrivenCounts(observerDb, rounds)
+            assertHotGraphState(observerDb, hotGraph, rounds)
+            assertRoundPresence(observerDb, "divergent-leader-6")
+            assertForeignKeyIntegrity(observerDb)
+            assertEquals(0L, scalarLong(observerDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+            assertEquals(7L, writer.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(0L, scalarLong(writerDb, "SELECT rebuild_required FROM _sync_attachment_state"))
+            assertHotGraphDrivenCounts(writerDb, rounds)
+            assertHotGraphState(writerDb, hotGraph, rounds)
+            assertForeignKeyIntegrity(writerDb)
+
+            insertRichSchemaBatch(writerDb, "divergent-writer-recovered")
+            writer.pushPending().getOrThrow()
+            leader.pullToStable().getOrThrow()
+            observer.pullToStable().getOrThrow()
+
+            assertEquals(8L, leader.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(8L, writer.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(8L, observer.syncStatus().getOrThrow().lastBundleSeqSeen)
+
+            assertHotGraphDrivenCounts(leaderDb, rounds, extraRichBatches = 1)
+            assertHotGraphDrivenCounts(writerDb, rounds, extraRichBatches = 1)
+            assertHotGraphDrivenCounts(observerDb, rounds, extraRichBatches = 1)
+            assertHotGraphState(leaderDb, hotGraph, rounds)
+            assertHotGraphState(writerDb, hotGraph, rounds)
+            assertHotGraphState(observerDb, hotGraph, rounds)
+            assertRoundPresence(leaderDb, "divergent-writer-recovered")
+            assertRoundPresence(writerDb, "divergent-writer-recovered")
+            assertRoundPresence(observerDb, "divergent-writer-recovered")
+            assertForeignKeyIntegrity(leaderDb)
+            assertForeignKeyIntegrity(writerDb)
+            assertForeignKeyIntegrity(observerDb)
+            assertEquals(0L, scalarLong(leaderDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+            assertEquals(0L, scalarLong(writerDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+            assertEquals(0L, scalarLong(observerDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+        } finally {
+            leaderHttp.close()
+            writerHttp.close()
+            observerHttp.close()
+            leaderDb.close()
+            writerDb.close()
+            observerDb.close()
+        }
+    }
+}

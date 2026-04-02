@@ -102,9 +102,11 @@ interface OversqliteClient {
      *
      * If unsynced attached sync data exists, returns [DetachOutcome.BLOCKED_UNSYNCED_DATA] and
      * makes no destructive local changes. On success, detach clears sync-managed local state and
-     * returns the database to anonymous lifecycle state.
+     * returns the database to anonymous lifecycle state bound to a fresh internal source identity.
      *
-     * [detach] does not change the internally managed source identity.
+     * Non-destructive exits preserve the existing source identity. This includes
+     * [DetachOutcome.BLOCKED_UNSYNCED_DATA] and metadata-only cancellation of a pending
+     * `remote_replace`.
      */
     suspend fun detach(): Result<DetachOutcome>
 
@@ -135,7 +137,9 @@ interface OversqliteClient {
      *
      * This is convenience sugar over [sync] plus [detach]. It may run multiple sync rounds when
      * fresh local writes arrive during the previous round. It never loops indefinitely; if detach
-     * remains blocked, the final blocked outcome is returned explicitly.
+     * remains blocked, the final blocked outcome is returned explicitly. When the final detach
+     * succeeds through the destructive cleanup path, the local anonymous state is rebound to a
+     * fresh internal source identity.
      *
      * Requires successful [open] and [attach].
      */

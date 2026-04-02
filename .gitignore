@@ -31,5 +31,6 @@ AGENTS.md
 /package-lock.json
 
 .credentials
+.codex
 
 /plans

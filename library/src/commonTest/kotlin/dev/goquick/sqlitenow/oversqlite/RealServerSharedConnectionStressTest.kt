@@ -17,30 +17,32 @@ import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-internal class RealServerSharedConnectionStressTest : RealServerSmokeSupport() {
+internal class RealServerSharedConnectionStressTest : RealServerSupport() {
     private companion object {
         const val LocalRowCount = 16
         const val RemoteRowCount = 16
         const val TotalRowCount = LocalRowCount + RemoteRowCount
-        const val RemoteUpdateRounds = 160
-        const val LocalUpdateIterations = 1_600
-        const val ReaderCoroutines = 6
-        const val ReaderIterationsPerCoroutine = 3_000
-        const val LocalTransactionPauseMillis = 2L
-        const val TransactionReadEvery = 4
-        const val HttpPauseMillis = 4L
-        const val TimeoutMillis = 120_000L
     }
 
     @Test
     fun sharedConnectionSurvivesConcurrentAliasStarQueriesWhileSyncingAgainstRealServer() = runTest {
-        val config = requireRealServerSharedStressConfig() ?: return@runTest
+        val config = requireRealServerConfig() ?: return@runTest
+        val remoteUpdateRounds = if (realServerHeavyModeEnabled(config)) 160 else 40
+        val localUpdateIterations = if (realServerHeavyModeEnabled(config)) 1_600 else 320
+        val readerCoroutines = if (realServerHeavyModeEnabled(config)) 6 else 2
+        val readerIterationsPerCoroutine = if (realServerHeavyModeEnabled(config)) 3_000 else 600
+        val localTransactionPauseMillis = if (realServerHeavyModeEnabled(config)) 2L else 1L
+        val transactionReadEvery = if (realServerHeavyModeEnabled(config)) 4 else 8
+        val httpPauseMillis = if (realServerHeavyModeEnabled(config)) 4L else 1L
+        val timeoutMillis = if (realServerHeavyModeEnabled(config)) 120_000L else 45_000L
         withContext(Dispatchers.Default.limitedParallelism(1)) {
             resetRealServerState(config.baseUrl)
 
-            val userId = randomSmokeId("shared-connection")
-            val seedDb = newDb()
-            val activeDb = newDb()
+            val userId = randomRealServerId("shared-connection")
+            val seedDbPath = createTempSqliteNowTestDbPath("sqlitenow-shared-stress-seed")
+            val activeDbPath = createTempSqliteNowTestDbPath("sqlitenow-shared-stress-active")
+            val seedDb = newFileBackedDb(seedDbPath)
+            val activeDb = newFileBackedDb(activeDbPath)
             var seedHttp: HttpClient? = null
             var activeHttp: HttpClient? = null
             try {
@@ -59,7 +61,7 @@ internal class RealServerSharedConnectionStressTest : RealServerSmokeSupport() {
                     token = activeToken,
                     afterResponse = { path ->
                         if (path.startsWith("/sync/")) {
-                            delay(HttpPauseMillis)
+                            delay(httpPauseMillis)
                         }
                     },
                 )
@@ -68,18 +70,19 @@ internal class RealServerSharedConnectionStressTest : RealServerSmokeSupport() {
                 val activeClient = newRealServerClient(activeDb, activeHttp, uploadLimit = 4, downloadLimit = 1)
 
                 seedClient.awaitConnected(userId)
+                seedClient.pullToStableUnlessDirty()
                 seedClient.pushPending().getOrThrow()
                 activeClient.awaitConnected(userId)
                 activeClient.pullToStable().getOrThrow()
                 assertEquals(TotalRowCount.toLong(), queryUsersWithAliasStar(activeDb))
 
-                withTimeout(TimeoutMillis) {
+                withTimeout(timeoutMillis) {
                     coroutineScope {
                         val remoteUpdatesFinished = CompletableDeferred<Unit>()
                         val localUpdatesFinished = CompletableDeferred<Unit>()
 
                         val remoteWriter = launch(Dispatchers.Default) {
-                            repeat(RemoteUpdateRounds) { round ->
+                            repeat(remoteUpdateRounds) { round ->
                                 incrementRemoteOwnedRow(seedDb, rowIndex = round % RemoteRowCount, round = round)
                                 seedClient.pushPending().getOrThrow()
                             }
@@ -87,13 +90,13 @@ internal class RealServerSharedConnectionStressTest : RealServerSmokeSupport() {
                         }
 
                         val localWriter = launch(Dispatchers.Default) {
-                            repeat(LocalUpdateIterations) { iteration ->
+                            repeat(localUpdateIterations) { iteration ->
                                 incrementLocalOwnedRow(
                                     db = activeDb,
                                     rowIndex = iteration % LocalRowCount,
                                     iteration = iteration,
-                                    transactionPauseMillis = LocalTransactionPauseMillis,
-                                    transactionReadEvery = TransactionReadEvery,
+                                    transactionPauseMillis = localTransactionPauseMillis,
+                                    transactionReadEvery = transactionReadEvery,
                                     expectedRowCount = TotalRowCount.toLong(),
                                 )
                             }
@@ -104,16 +107,16 @@ internal class RealServerSharedConnectionStressTest : RealServerSmokeSupport() {
                             while (!remoteUpdatesFinished.isCompleted || !localUpdatesFinished.isCompleted) {
                                 activeClient.pushPending().getOrThrow()
                                 if (localUpdatesFinished.isCompleted && pendingLocalChangeCount(activeDb) == 0L) {
-                                    activeClient.pullToStable().getOrThrow()
+                                    activeClient.pullToStableUnlessDirty()
                                 }
                             }
                             drainPendingLocalChanges(activeClient, activeDb)
                             activeClient.pullToStable().getOrThrow()
                         }
 
-                        val readers = List(ReaderCoroutines) { readerIndex ->
+                        val readers = List(readerCoroutines) { readerIndex ->
                             launch(Dispatchers.Default) {
-                                repeat(ReaderIterationsPerCoroutine) { iteration ->
+                                repeat(readerIterationsPerCoroutine) { iteration ->
                                     assertEquals(
                                         TotalRowCount.toLong(),
                                         queryUsersWithAliasStar(activeDb),
@@ -138,8 +141,8 @@ internal class RealServerSharedConnectionStressTest : RealServerSmokeSupport() {
 
                 assertEquals(TotalRowCount.toLong(), queryUsersWithAliasStar(activeDb))
                 assertEquals(TotalRowCount.toLong(), queryUsersWithAliasStar(seedDb))
-                assertExpectedUserStates(activeDb)
-                assertExpectedUserStates(seedDb)
+                assertExpectedUserStates(activeDb, localUpdateIterations, remoteUpdateRounds)
+                assertExpectedUserStates(seedDb, localUpdateIterations, remoteUpdateRounds)
                 assertEquals(0L, scalarLong(activeDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
                 assertEquals(0L, scalarLong(seedDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
                 assertEquals(0L, scalarLong(activeDb, "SELECT COUNT(*) FROM _sync_outbox_rows"))
@@ -149,6 +152,8 @@ internal class RealServerSharedConnectionStressTest : RealServerSmokeSupport() {
                 activeHttp?.close()
                 seedDb.close()
                 activeDb.close()
+                deleteTempSqliteNowTestDbArtifacts(seedDbPath)
+                deleteTempSqliteNowTestDbArtifacts(activeDbPath)
             }
         }
     }
@@ -289,9 +294,11 @@ internal class RealServerSharedConnectionStressTest : RealServerSmokeSupport() {
 
     private suspend fun assertExpectedUserStates(
         db: SafeSQLiteConnection,
+        localUpdateIterations: Int,
+        remoteUpdateRounds: Int,
     ) {
         repeat(LocalRowCount) { index ->
-            val finalIteration = localFinalIteration(index)
+            val finalIteration = localFinalIteration(index, localUpdateIterations)
             if (finalIteration == null) {
                 assertEquals(
                     "Local Seed $index",
@@ -313,7 +320,7 @@ internal class RealServerSharedConnectionStressTest : RealServerSmokeSupport() {
             }
         }
         repeat(RemoteRowCount) { index ->
-            val finalRound = remoteFinalRound(index)
+            val finalRound = remoteFinalRound(index, remoteUpdateRounds)
             if (finalRound == null) {
                 assertEquals(
                     "Remote Seed $index",
@@ -368,6 +375,14 @@ internal class RealServerSharedConnectionStressTest : RealServerSmokeSupport() {
         error("attach(userId) never reached Connected")
     }
 
+    private suspend fun OversqliteClient.pullToStableUnlessDirty(): Boolean {
+        val failure = pullToStable().exceptionOrNull() ?: return true
+        if (failure is DirtyStateRejectedException) {
+            return false
+        }
+        throw failure
+    }
+
     private fun localRowId(index: Int): String =
         formatDeterministicUuid(0x1000_0000_0000L + index.toLong())
 
@@ -377,16 +392,22 @@ internal class RealServerSharedConnectionStressTest : RealServerSmokeSupport() {
     private fun formatDeterministicUuid(tail: Long): String =
         "00000000-0000-4000-8000-${tail.toString(16).padStart(12, '0')}"
 
-    private fun localFinalIteration(index: Int): Int? =
+    private fun localFinalIteration(
+        index: Int,
+        localUpdateIterations: Int,
+    ): Int? =
         lastUpdateForIndex(
-            totalUpdates = LocalUpdateIterations,
+            totalUpdates = localUpdateIterations,
             rowCount = LocalRowCount,
             index = index,
         )
 
-    private fun remoteFinalRound(index: Int): Int? =
+    private fun remoteFinalRound(
+        index: Int,
+        remoteUpdateRounds: Int,
+    ): Int? =
         lastUpdateForIndex(
-            totalUpdates = RemoteUpdateRounds,
+            totalUpdates = remoteUpdateRounds,
             rowCount = RemoteRowCount,
             index = index,
         )

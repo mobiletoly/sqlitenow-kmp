@@ -1326,9 +1326,50 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
                 actual = restartedClient.attach("user-1").getOrThrow(),
             )
             assertEquals(DetachOutcome.DETACHED, restartedClient.detach().getOrThrow())
+            val rotatedSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
             restartedClient.open().getOrThrow()
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
-            assertEquals(sourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
+            assertNotEquals(sourceId, rotatedSourceId)
+            assertEquals(rotatedSourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
+            assertEquals(
+                rotatedSourceId,
+                scalarText(db, "SELECT replaced_by_source_id FROM _sync_source_state WHERE source_id = '$sourceId'"),
+            )
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun detach_successfulCleanupRotatesSourceDurablyAcrossRestart() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer()
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.openAndConnect("user-1").getOrThrow()
+            val sourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
+
+            assertEquals(DetachOutcome.DETACHED, client.detach().getOrThrow())
+            val rotatedSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
+
+            assertNotEquals(sourceId, rotatedSourceId)
+            assertEquals(
+                rotatedSourceId,
+                scalarText(db, "SELECT replaced_by_source_id FROM _sync_source_state WHERE source_id = '$sourceId'"),
+            )
+            assertEquals(1L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$rotatedSourceId'"))
+
+            client.close()
+
+            val restartedClient = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            restartedClient.open().getOrThrow()
+            assertEquals(rotatedSourceId, restartedClient.sourceInfo().getOrThrow().currentSourceId)
+            assertEquals(rotatedSourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
         } finally {
             http.close()
             server.stop(0)
@@ -1374,6 +1415,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
 
             assertEquals(DetachOutcome.DETACHED, client.detach().getOrThrow())
             assertEquals("anonymous", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
+            assertEquals("device-a", scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
             assertEquals("none", scalarText(db, "SELECT kind FROM _sync_operation_state"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
         } finally {
