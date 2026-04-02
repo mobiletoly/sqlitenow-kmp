@@ -51,7 +51,6 @@ data class PushRequestRow(
 
 @Serializable
 data class PushSessionCreateRequest(
-    @SerialName("source_id") val sourceId: String,
     @SerialName("source_bundle_id") val sourceBundleId: Long,
     @SerialName("planned_row_count") val plannedRowCount: Long,
     @SerialName("initialization_id") val initializationId: String? = null,
@@ -72,7 +71,6 @@ data class PushSessionCreateResponse(
 
 @Serializable
 data class ConnectRequest(
-    @SerialName("source_id") val sourceId: String,
     @SerialName("has_local_pending_rows") val hasLocalPendingRows: Boolean,
 )
 

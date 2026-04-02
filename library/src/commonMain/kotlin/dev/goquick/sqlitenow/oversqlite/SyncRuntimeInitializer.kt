@@ -162,14 +162,19 @@ internal class SyncRuntimeInitializer(
             """
             CREATE TABLE IF NOT EXISTS _sync_operation_state (
               singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),
-              kind TEXT NOT NULL DEFAULT 'none' CHECK (kind IN ('none', 'remote_replace')),
+              kind TEXT NOT NULL DEFAULT 'none' CHECK (kind IN ('none', 'remote_replace', 'source_recovery')),
               target_user_id TEXT NOT NULL DEFAULT '',
               staged_snapshot_id TEXT NOT NULL DEFAULT '',
               snapshot_bundle_seq INTEGER NOT NULL DEFAULT 0,
-              snapshot_row_count INTEGER NOT NULL DEFAULT 0
+              snapshot_row_count INTEGER NOT NULL DEFAULT 0,
+              source_recovery_reason TEXT NOT NULL DEFAULT '',
+              source_recovery_source_id TEXT NOT NULL DEFAULT '',
+              source_recovery_source_bundle_id INTEGER NOT NULL DEFAULT 0,
+              source_recovery_intent_state TEXT NOT NULL DEFAULT ''
             )
             """.trimIndent()
         )
+        ensureOperationStateSchema(db)
         db.execSQL(
             """
             INSERT INTO _sync_operation_state(
@@ -178,9 +183,13 @@ internal class SyncRuntimeInitializer(
               target_user_id,
               staged_snapshot_id,
               snapshot_bundle_seq,
-              snapshot_row_count
+              snapshot_row_count,
+              source_recovery_reason,
+              source_recovery_source_id,
+              source_recovery_source_bundle_id,
+              source_recovery_intent_state
             )
-            VALUES(1, 'none', '', '', 0, 0)
+            VALUES(1, 'none', '', '', 0, 0, '', '', 0, '')
             ON CONFLICT(singleton_key) DO NOTHING
             """.trimIndent()
         )
@@ -236,6 +245,106 @@ internal class SyncRuntimeInitializer(
         db.execSQL("UPDATE _sync_apply_state SET apply_mode = 0 WHERE singleton_key = 1")
     }
 
+    private suspend fun ensureOperationStateSchema(db: SafeSQLiteConnection) {
+        val createSql = db.prepare(
+            """
+            SELECT sql
+            FROM sqlite_master
+            WHERE type = 'table' AND name = '_sync_operation_state'
+            """.trimIndent(),
+        ).use { st ->
+            if (!st.step() || st.isNull(0)) {
+                ""
+            } else {
+                st.getText(0)
+            }
+        }
+        val columnNames = db.prepare("PRAGMA table_info(_sync_operation_state)").use { st ->
+            buildSet {
+                while (st.step()) {
+                    add(st.getText(1).lowercase())
+                }
+            }
+        }
+        val hasCurrentSchema =
+            "source_recovery" in createSql &&
+                "source_recovery_reason" in columnNames &&
+                "source_recovery_source_id" in columnNames &&
+                "source_recovery_source_bundle_id" in columnNames &&
+                "source_recovery_intent_state" in columnNames
+        if (hasCurrentSchema) {
+            return
+        }
+
+        val existingRow = db.prepare(
+            """
+            SELECT kind, target_user_id, staged_snapshot_id, snapshot_bundle_seq, snapshot_row_count
+            FROM _sync_operation_state
+            WHERE singleton_key = 1
+            """.trimIndent(),
+        ).use { st ->
+            if (!st.step()) {
+                null
+            } else {
+                OversqliteOperationState(
+                    kind = st.getText(0),
+                    targetUserId = st.getText(1),
+                    stagedSnapshotId = st.getText(2),
+                    snapshotBundleSeq = st.getLong(3),
+                    snapshotRowCount = st.getLong(4),
+                )
+            }
+        }
+
+        db.execSQL("DROP TABLE _sync_operation_state")
+        db.execSQL(
+            """
+            CREATE TABLE _sync_operation_state (
+              singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),
+              kind TEXT NOT NULL DEFAULT 'none' CHECK (kind IN ('none', 'remote_replace', 'source_recovery')),
+              target_user_id TEXT NOT NULL DEFAULT '',
+              staged_snapshot_id TEXT NOT NULL DEFAULT '',
+              snapshot_bundle_seq INTEGER NOT NULL DEFAULT 0,
+              snapshot_row_count INTEGER NOT NULL DEFAULT 0,
+              source_recovery_reason TEXT NOT NULL DEFAULT '',
+              source_recovery_source_id TEXT NOT NULL DEFAULT '',
+              source_recovery_source_bundle_id INTEGER NOT NULL DEFAULT 0,
+              source_recovery_intent_state TEXT NOT NULL DEFAULT ''
+            )
+            """.trimIndent(),
+        )
+        existingRow?.let { state ->
+            db.execSQL(
+                """
+                INSERT INTO _sync_operation_state(
+                  singleton_key,
+                  kind,
+                  target_user_id,
+                  staged_snapshot_id,
+                  snapshot_bundle_seq,
+                  snapshot_row_count,
+                  source_recovery_reason,
+                  source_recovery_source_id,
+                  source_recovery_source_bundle_id,
+                  source_recovery_intent_state
+                )
+                VALUES(
+                  1,
+                  ${sqlStringLiteral(state.kind)},
+                  ${sqlStringLiteral(state.targetUserId)},
+                  ${sqlStringLiteral(state.stagedSnapshotId)},
+                  ${state.snapshotBundleSeq},
+                  ${state.snapshotRowCount},
+                  '',
+                  '',
+                  0,
+                  ''
+                )
+                """.trimIndent(),
+            )
+        }
+    }
+
     private suspend fun validateConfig(db: SafeSQLiteConnection): ValidatedConfig {
         val schema = config.schema.trim()
         val pkByTable = linkedMapOf<String, String>()
@@ -279,6 +388,10 @@ internal class SyncRuntimeInitializer(
             tableOrder = tableOrder,
             tableInfoByName = tableInfoByName,
         )
+    }
+
+    private fun sqlStringLiteral(value: String): String {
+        return "'" + value.replace("'", "''") + "'"
     }
 
     private fun normalizedSyncKeyColumns(syncTable: SyncTable): List<String> {

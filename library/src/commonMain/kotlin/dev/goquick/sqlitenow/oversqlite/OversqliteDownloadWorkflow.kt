@@ -25,6 +25,12 @@ internal data class DownloadWorkflowResult(
     val rotatedSourceId: String? = null,
 )
 
+internal enum class SnapshotRebuildOutboxMode {
+    CLEAR_ALL,
+    PRESERVE_COMMITTED_REMOTE,
+    PRESERVE_SOURCE_RECOVERY,
+}
+
 internal class OversqliteDownloadWorkflow(
     private val db: SafeSQLiteConnection,
     private val config: OversqliteConfig,
@@ -45,9 +51,7 @@ internal class OversqliteDownloadWorkflow(
         state: RuntimeState,
         onPhaseChanged: suspend (OversqlitePhase) -> Unit = {},
     ): DownloadWorkflowResult {
-        if (attachmentStateStore.loadState().rebuildRequired) {
-            throw RebuildRequiredException()
-        }
+        requireOrdinarySyncAllowed()
         val initialDirtyCount = syncStateStore.countDirtyRows()
         val initialOutboundCount = outboxStateStore.countRows()
         log {
@@ -64,7 +68,12 @@ internal class OversqliteDownloadWorkflow(
             log { "oversqlite pullToStable finished successfully" }
             result
         } catch (e: HistoryPrunedException) {
-            val result = rebuildFromSnapshot(state, rotatedSourceId = null, onPhaseChanged = onPhaseChanged)
+            val result = rebuildFromSnapshot(
+                state = state,
+                rotatedSourceId = null,
+                outboxMode = SnapshotRebuildOutboxMode.CLEAR_ALL,
+                onPhaseChanged = onPhaseChanged,
+            )
             log { "oversqlite pullToStable recovered via snapshot rebuild updatedTables=${result.updatedTables}" }
             result
         }
@@ -73,18 +82,20 @@ internal class OversqliteDownloadWorkflow(
     suspend fun rebuildFromSnapshot(
         state: RuntimeState,
         rotatedSourceId: String?,
+        outboxMode: SnapshotRebuildOutboxMode = SnapshotRebuildOutboxMode.CLEAR_ALL,
         onPhaseChanged: suspend (OversqlitePhase) -> Unit = {},
     ): DownloadWorkflowResult {
-        requireSnapshotRebuildState()
+        requireSnapshotRebuildState(outboxMode)
 
         onPhaseChanged(OversqlitePhase.STAGING_REMOTE_STATE)
         stageStore.clearAllSnapshotStages()
-        val session = remoteApi.createSnapshotSession()
+        val session = remoteApi.createSnapshotSession(state.sourceId)
         try {
             var afterRowOrdinal = 0L
             while (true) {
                 val chunk = remoteApi.fetchSnapshotChunk(
                     snapshotId = session.snapshotId,
+                    sourceId = state.sourceId,
                     snapshotBundleSeq = session.snapshotBundleSeq,
                     afterRowOrdinal = afterRowOrdinal,
                     maxRows = snapshotChunkRows(),
@@ -97,9 +108,9 @@ internal class OversqliteDownloadWorkflow(
             }
 
             onPhaseChanged(OversqlitePhase.APPLYING_REMOTE_STATE)
-            return applyStagedSnapshot(state, session, rotatedSourceId)
+            return applyStagedSnapshot(state, session, rotatedSourceId, outboxMode)
         } finally {
-            remoteApi.deleteSnapshotSessionBestEffort(session.snapshotId)
+            remoteApi.deleteSnapshotSessionBestEffort(session.snapshotId, state.sourceId)
         }
     }
 
@@ -113,7 +124,7 @@ internal class OversqliteDownloadWorkflow(
         val updatedTables = linkedSetOf<String>()
 
         while (true) {
-            val response = remoteApi.sendPullRequest(afterBundleSeq, maxBundles, targetBundleSeq)
+            val response = remoteApi.sendPullRequest(afterBundleSeq, maxBundles, targetBundleSeq, state.sourceId)
             validatePullResponse(response, afterBundleSeq)
 
             if (targetBundleSeq == 0L) {
@@ -172,9 +183,14 @@ internal class OversqliteDownloadWorkflow(
         state: RuntimeState,
         session: SnapshotSession,
         rotatedSourceId: String?,
+        outboxMode: SnapshotRebuildOutboxMode,
     ): DownloadWorkflowResult {
         return applyExecutor.inApplyModeTransaction(state) { statementCache ->
-            clearManagedTables(state, statementCache)
+            clearManagedTables(
+                state = state,
+                statementCache = statementCache,
+                clearOutbox = outboxMode == SnapshotRebuildOutboxMode.CLEAR_ALL,
+            )
 
             var stagedRowCount = 0L
             for (row in stageStore.loadStagedSnapshotRows(state, session.snapshotId)) {
@@ -194,13 +210,42 @@ internal class OversqliteDownloadWorkflow(
                 "staged snapshot row count $stagedRowCount does not match expected row_count ${session.rowCount}"
             }
 
+            val preservedOutbox = outboxStateStore.loadBundleState()
             if (rotatedSourceId != null) {
-                sourceStateStore.ensureSource(rotatedSourceId)
+                val initialNextSourceBundleId = when (outboxMode) {
+                    SnapshotRebuildOutboxMode.PRESERVE_SOURCE_RECOVERY ->
+                        if (preservedOutbox.state != outboxStateNone && preservedOutbox.rowCount > 0L) 2L else 1L
+                    else -> 1L
+                }
+                sourceStateStore.ensureSource(rotatedSourceId, initialNextSourceBundleId)
                 if (state.sourceId != rotatedSourceId) {
                     sourceStateStore.markRotated(state.sourceId, rotatedSourceId)
                 }
             }
             val currentSourceId = rotatedSourceId ?: state.sourceId
+            when (outboxMode) {
+                SnapshotRebuildOutboxMode.CLEAR_ALL -> Unit
+
+                SnapshotRebuildOutboxMode.PRESERVE_COMMITTED_REMOTE -> {
+                    if (preservedOutbox.state == outboxStateCommittedRemote && preservedOutbox.rowCount > 0L) {
+                        sourceStateStore.advanceAfterCommittedPush(
+                            sourceId = state.sourceId,
+                            sourceBundleId = preservedOutbox.sourceBundleId,
+                        )
+                        outboxStateStore.clearBundleAndRows(statementCache)
+                    }
+                }
+
+                SnapshotRebuildOutboxMode.PRESERVE_SOURCE_RECOVERY -> {
+                    if (preservedOutbox.state != outboxStateNone && preservedOutbox.rowCount > 0L) {
+                        outboxStateStore.rebindBundleSource(
+                            sourceId = currentSourceId,
+                            sourceBundleId = 1L,
+                            statementCache = statementCache,
+                        )
+                    }
+                }
+            }
             attachmentStateStore.persistAttachedState(
                 sourceId = currentSourceId,
                 userId = state.userId,
@@ -228,31 +273,59 @@ internal class OversqliteDownloadWorkflow(
     private suspend fun clearManagedTables(
         state: RuntimeState,
         statementCache: StatementCache? = null,
+        clearOutbox: Boolean = true,
     ) {
         for (table in state.validated.tables) {
             db.execSQL("DELETE FROM ${quoteIdent(table.tableName)}")
             syncStateStore.clearStructuredRowState(state.validated.schema, table.tableName, statementCache)
         }
         syncStateStore.clearDirtyRows()
-        outboxStateStore.clearBundleAndRows(statementCache)
-    }
-
-    private suspend fun requireIncrementalPullState(state: RuntimeState) {
-        requireSnapshotRebuildState()
-        if (attachmentStateStore.loadState().rebuildRequired) {
-            throw RebuildRequiredException()
+        if (clearOutbox) {
+            outboxStateStore.clearBundleAndRows(statementCache)
         }
     }
 
-    private suspend fun requireSnapshotRebuildState() {
+    private suspend fun requireIncrementalPullState(state: RuntimeState) {
+        requireSnapshotRebuildState(SnapshotRebuildOutboxMode.CLEAR_ALL)
+        requireOrdinarySyncAllowed()
+    }
+
+    private suspend fun requireSnapshotRebuildState(outboxMode: SnapshotRebuildOutboxMode) {
+        val outboxState = outboxStateStore.loadBundleState()
         val pendingOutboundCount = outboxStateStore.countRows()
-        if (pendingOutboundCount > 0) {
-            throw PendingPushReplayException(pendingOutboundCount)
+        when (outboxMode) {
+            SnapshotRebuildOutboxMode.CLEAR_ALL -> {
+                if (pendingOutboundCount > 0) {
+                    throw PendingPushReplayException(pendingOutboundCount)
+                }
+            }
+
+            SnapshotRebuildOutboxMode.PRESERVE_COMMITTED_REMOTE -> {
+                if (pendingOutboundCount > 0 && outboxState.state != outboxStateCommittedRemote) {
+                    throw PendingPushReplayException(pendingOutboundCount)
+                }
+            }
+
+            SnapshotRebuildOutboxMode.PRESERVE_SOURCE_RECOVERY -> {
+                if (pendingOutboundCount > 0 && outboxState.state == outboxStateNone) {
+                    throw PendingPushReplayException(pendingOutboundCount)
+                }
+            }
         }
 
         val pendingCount = syncStateStore.countDirtyRows()
         if (pendingCount > 0) {
             throw DirtyStateRejectedException(pendingCount)
+        }
+    }
+
+    private suspend fun requireOrdinarySyncAllowed() {
+        val operation = operationStateStore.loadState()
+        if (operation.kind == operationKindSourceRecovery) {
+            throw SourceRecoveryRequiredException(operation.requireSourceRecoveryReason())
+        }
+        if (attachmentStateStore.loadState().rebuildRequired) {
+            throw RebuildRequiredException()
         }
     }
 

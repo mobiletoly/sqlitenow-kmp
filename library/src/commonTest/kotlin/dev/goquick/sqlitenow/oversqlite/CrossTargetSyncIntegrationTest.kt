@@ -53,9 +53,9 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             clientB.openAndConnect(userId = "user-1").getOrThrow()
             clientC.openAndConnect(userId = "user-1").getOrThrow()
 
-            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            clientC.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientA.rebuild().getOrThrow()
+            clientB.rebuild().getOrThrow()
+            clientC.rebuild().getOrThrow()
 
             insertUser(dbA, "u1", "Ada")
             insertPost(dbA, "p1", "u1", "Ada Post")
@@ -68,7 +68,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             assertTrue(server.uploadedChunkCount >= 3)
 
             clientB.pullToStable().getOrThrow()
-            clientC.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientC.rebuild().getOrThrow()
 
             assertEquals(1L, clientA.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals(1L, clientB.syncStatus().getOrThrow().lastBundleSeqSeen)
@@ -108,8 +108,8 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
 
             leader.openAndConnect(userId = "user-1").getOrThrow()
             follower.openAndConnect(userId = "user-1").getOrThrow()
-            leader.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            follower.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            leader.rebuild().getOrThrow()
+            follower.rebuild().getOrThrow()
 
             insertUser(leaderDb, "u1", "Ada")
             leader.pushPending().getOrThrow()
@@ -139,8 +139,8 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
 
             clientA.openAndConnect(userId = "user-1").getOrThrow()
             clientB.openAndConnect(userId = "user-1").getOrThrow()
-            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientA.rebuild().getOrThrow()
+            clientB.rebuild().getOrThrow()
 
             insertUser(dbA, "u1", "From A")
             clientA.pushPending().getOrThrow()
@@ -181,9 +181,9 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             clientA.openAndConnect(userId = "user-1").getOrThrow()
             clientB.openAndConnect(userId = "user-1").getOrThrow()
             clientC.openAndConnect(userId = "user-1").getOrThrow()
-            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            clientC.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientA.rebuild().getOrThrow()
+            clientB.rebuild().getOrThrow()
+            clientC.rebuild().getOrThrow()
 
             insertUser(dbA, "u1", "From A")
             clientA.pushPending().getOrThrow()
@@ -240,10 +240,10 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             val clientA = newClient(dbA, httpA)
             val clientB = newClient(dbB, httpB)
 
-            clientA.openAndConnect(userId = "user-1", sourceId = sourceIdA).getOrThrow()
-            clientB.openAndConnect(userId = "user-1", sourceId = sourceIdB).getOrThrow()
-            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientA.openAndConnect(userId = "user-1").getOrThrow()
+            clientB.openAndConnect(userId = "user-1").getOrThrow()
+            clientA.rebuild().getOrThrow()
+            clientB.rebuild().getOrThrow()
 
             insertUser(dbA, "u1", "From A")
             clientA.pushPending().getOrThrow()
@@ -252,7 +252,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             clientB.pushPending().getOrThrow()
 
             val restartedClientB = newClient(dbB, restartedHttpB)
-            restartedClientB.openAndConnect(userId = "user-1", sourceId = sourceIdB).getOrThrow()
+            restartedClientB.openAndConnect(userId = "user-1").getOrThrow()
             restartedClientB.pullToStable().getOrThrow()
 
             assertEquals(2L, restartedClientB.syncStatus().getOrThrow().lastBundleSeqSeen)
@@ -290,9 +290,9 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             clientA.openAndConnect(userId = "user-1").getOrThrow()
             clientB.openAndConnect(userId = "user-1").getOrThrow()
             clientC.openAndConnect(userId = "user-1").getOrThrow()
-            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            clientC.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientA.rebuild().getOrThrow()
+            clientB.rebuild().getOrThrow()
+            clientC.rebuild().getOrThrow()
 
             insertUser(dbA, "u1", "Original")
             clientA.pushPending().getOrThrow()
@@ -353,9 +353,9 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             clientA.openAndConnect(userId = "user-1").getOrThrow()
             clientB.openAndConnect(userId = "user-1").getOrThrow()
             observer.openAndConnect(userId = "user-1").getOrThrow()
-            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            observer.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientA.rebuild().getOrThrow()
+            clientB.rebuild().getOrThrow()
+            observer.rebuild().getOrThrow()
 
             insertUser(dbA, "u1", "Original")
             clientA.pushPending().getOrThrow()
@@ -406,9 +406,9 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             clientA.openAndConnect(userId = "user-1").getOrThrow()
             clientB.openAndConnect(userId = "user-1").getOrThrow()
             observer.openAndConnect(userId = "user-1").getOrThrow()
-            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            observer.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientA.rebuild().getOrThrow()
+            clientB.rebuild().getOrThrow()
+            observer.rebuild().getOrThrow()
 
             dbA.execSQL(
                 """
@@ -463,9 +463,9 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             clientA.openAndConnect(userId = "user-1").getOrThrow()
             clientB.openAndConnect(userId = "user-1").getOrThrow()
             observer.openAndConnect(userId = "user-1").getOrThrow()
-            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            observer.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientA.rebuild().getOrThrow()
+            clientB.rebuild().getOrThrow()
+            observer.rebuild().getOrThrow()
 
             dbA.execSQL(
                 """
@@ -520,9 +520,9 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             clientA.openAndConnect(userId = "user-1").getOrThrow()
             clientB.openAndConnect(userId = "user-1").getOrThrow()
             observer.openAndConnect(userId = "user-1").getOrThrow()
-            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            observer.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientA.rebuild().getOrThrow()
+            clientB.rebuild().getOrThrow()
+            observer.rebuild().getOrThrow()
 
             insertUser(dbA, "u1", "Original")
             clientA.pushPending().getOrThrow()
@@ -581,9 +581,9 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             clientA.openAndConnect(userId = "user-1").getOrThrow()
             clientB.openAndConnect(userId = "user-1").getOrThrow()
             observer.openAndConnect(userId = "user-1").getOrThrow()
-            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            observer.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientA.rebuild().getOrThrow()
+            clientB.rebuild().getOrThrow()
+            observer.rebuild().getOrThrow()
 
             insertUser(dbA, "u1", "Original")
             clientA.pushPending().getOrThrow()
@@ -630,9 +630,9 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             clientA.openAndConnect(userId = "user-1").getOrThrow()
             clientB.openAndConnect(userId = "user-1").getOrThrow()
             observer.openAndConnect(userId = "user-1").getOrThrow()
-            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            observer.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientA.rebuild().getOrThrow()
+            clientB.rebuild().getOrThrow()
+            observer.rebuild().getOrThrow()
 
             insertUser(dbA, "u1", "Original")
             clientA.pushPending().getOrThrow()
@@ -699,8 +699,8 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
 
             clientA.openAndConnect(userId = "user-1").getOrThrow()
             clientB.openAndConnect(userId = "user-1").getOrThrow()
-            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientA.rebuild().getOrThrow()
+            clientB.rebuild().getOrThrow()
 
             insertUser(dbA, "u1", "Original")
             clientA.pushPending().getOrThrow()
@@ -750,8 +750,8 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
 
             leader.openAndConnect(userId = "user-1").getOrThrow()
             follower.openAndConnect(userId = "user-1").getOrThrow()
-            leader.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            follower.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            leader.rebuild().getOrThrow()
+            follower.rebuild().getOrThrow()
 
             insertUser(leaderDb, "u1", "Seed")
             leader.pushPending().getOrThrow()
@@ -814,10 +814,8 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
                 recoverDb,
                 "SELECT current_source_id FROM _sync_attachment_state",
             )
-            recoverClient.rebuild(
-                mode = RebuildMode.ROTATE_SOURCE,
-                newSourceId = "recover-client-rotated-source",
-            ).getOrThrow()
+            markSourceRecoveryRequired(recoverDb)
+            recoverClient.rebuild().getOrThrow()
 
             val sourceAfter = scalarText(
                 recoverDb,

@@ -77,7 +77,7 @@ class AndroidMockWebServerParityTest {
             database.open()
             database.enableTableChangeNotifications()
             val client = database.newOversqliteClient(schema = "main", httpClient = http)
-            client.openAndConnect("user-1", "device-a").getOrThrow()
+            client.openAndAttach("user-1").getOrThrow()
 
             val emissions = mutableListOf<List<UserSelectAllResult>>()
             val firstEmission = CompletableDeferred<Unit>()
@@ -137,6 +137,16 @@ class AndroidMockWebServerParityTest {
         try {
             db.execSQL("CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)")
             val committedBundleHash = "334a3338e0a497a647a6eb263d78db3b5df06702597ce166111603e9395956ba"
+            val client = DefaultOversqliteClient(
+                db = db,
+                config = OversqliteConfig(
+                    schema = "main",
+                    syncTables = listOf(SyncTable("users", syncKeyColumnName = "id"))
+                ),
+                http = http,
+            )
+            client.open().getOrThrow()
+            val sourceId = client.sourceInfo().getOrThrow().currentSourceId
             enqueueCapabilities(server)
             enqueueInitializeEmptyConnect(server)
             server.enqueue(
@@ -147,7 +157,7 @@ class AndroidMockWebServerParityTest {
                           "status": "staging",
                           "planned_row_count": 1,
                           "next_expected_row_ordinal": 0,
-                          "source_id": "device-a",
+                          "source_id": "$sourceId",
                           "source_bundle_id": 1
                         }
                     """.trimIndent()
@@ -168,7 +178,7 @@ class AndroidMockWebServerParityTest {
                     """
                         {
                           "bundle_seq": 1,
-                          "source_id": "device-a",
+                          "source_id": "$sourceId",
                           "source_bundle_id": 1,
                           "row_count": 1,
                           "bundle_hash": "$committedBundleHash"
@@ -181,7 +191,7 @@ class AndroidMockWebServerParityTest {
                     """
                         {
                           "bundle_seq": 1,
-                          "source_id": "device-a",
+                          "source_id": "$sourceId",
                           "source_bundle_id": 1,
                           "row_count": 1,
                           "bundle_hash": "$committedBundleHash",
@@ -264,16 +274,7 @@ class AndroidMockWebServerParityTest {
             )
             server.enqueue(MockResponse.Builder().code(204).build())
 
-            val client = DefaultOversqliteClient(
-                db = db,
-                config = OversqliteConfig(
-                    schema = "main",
-                    syncTables = listOf(SyncTable("users", syncKeyColumnName = "id"))
-                ),
-                http = http,
-            )
-
-            client.openAndConnect("user-1", "device-a").getOrThrow()
+            client.attach("user-1").getOrThrow()
             db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada Local')")
 
             client.pushPending().getOrThrow()
@@ -285,7 +286,7 @@ class AndroidMockWebServerParityTest {
             assertEquals("Grace Hopper", scalarText(db, "SELECT name FROM users WHERE id = 'user-2'"))
             assertEquals(2L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
 
-            client.hydrate().getOrThrow()
+            client.rebuild().getOrThrow()
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM users"))
             assertEquals("Katherine Johnson", scalarText(db, "SELECT name FROM users WHERE id = 'user-3'"))
             assertEquals(9L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
@@ -412,7 +413,7 @@ class AndroidMockWebServerParityTest {
                 http = http,
             )
 
-            client.openAndConnect("user-1", "device-a").getOrThrow()
+            client.openAndAttach("user-1").getOrThrow()
             client.pullToStable().getOrThrow()
 
             assertEquals("Ada", scalarText(db, "SELECT name FROM users WHERE id = 'user-1'"))
@@ -570,11 +571,11 @@ class AndroidMockWebServerParityTest {
                 http = hydrateHttp,
             )
 
-            pullClient.openAndConnect("user-1", "device-pull").getOrThrow()
-            hydrateClient.openAndConnect("user-1", "device-hydrate").getOrThrow()
+            pullClient.openAndAttach("user-1").getOrThrow()
+            hydrateClient.openAndAttach("user-1").getOrThrow()
 
             pullClient.pullToStable().getOrThrow()
-            hydrateClient.hydrate().getOrThrow()
+            hydrateClient.rebuild().getOrThrow()
 
             assertEquals(16L, scalarLong(pullDb, "SELECT length(data) FROM files WHERE id = 'file-1'"))
             assertEquals("000102030405060708090A0B0C0D0E0F", scalarText(pullDb, "SELECT hex(data) FROM files WHERE id = 'file-1'"))
@@ -607,6 +608,16 @@ class AndroidMockWebServerParityTest {
             )
 
             val bundleHash = "dcde4c0ea8f55eea93a935cf27d9982ff4e130543ae48cb4c355928c998d7fbd"
+            val client = DefaultOversqliteClient(
+                db = db,
+                config = OversqliteConfig(
+                    schema = "main",
+                    syncTables = listOf(SyncTable("files", syncKeyColumnName = "id"))
+                ),
+                http = http,
+            )
+            client.open().getOrThrow()
+            val sourceId = client.sourceInfo().getOrThrow().currentSourceId
 
             enqueueCapabilities(server)
             enqueueInitializeEmptyConnect(server)
@@ -618,7 +629,7 @@ class AndroidMockWebServerParityTest {
                           "status": "staging",
                           "planned_row_count": 1,
                           "next_expected_row_ordinal": 0,
-                          "source_id": "device-a",
+                          "source_id": "$sourceId",
                           "source_bundle_id": 1
                         }
                     """.trimIndent()
@@ -639,7 +650,7 @@ class AndroidMockWebServerParityTest {
                     """
                         {
                           "bundle_seq": 1,
-                          "source_id": "device-a",
+                          "source_id": "$sourceId",
                           "source_bundle_id": 1,
                           "row_count": 1,
                           "bundle_hash": "$bundleHash"
@@ -652,7 +663,7 @@ class AndroidMockWebServerParityTest {
                     """
                         {
                           "bundle_seq": 1,
-                          "source_id": "device-a",
+                          "source_id": "$sourceId",
                           "source_bundle_id": 1,
                           "row_count": 1,
                           "bundle_hash": "$bundleHash",
@@ -677,16 +688,7 @@ class AndroidMockWebServerParityTest {
                 )
             )
 
-            val client = DefaultOversqliteClient(
-                db = db,
-                config = OversqliteConfig(
-                    schema = "main",
-                    syncTables = listOf(SyncTable("files", syncKeyColumnName = "id"))
-                ),
-                http = http,
-            )
-
-            client.openAndConnect("user-1", "device-a").getOrThrow()
+            client.attach("user-1").getOrThrow()
             db.execSQL(
                 """
                 INSERT INTO files(id, name, data)

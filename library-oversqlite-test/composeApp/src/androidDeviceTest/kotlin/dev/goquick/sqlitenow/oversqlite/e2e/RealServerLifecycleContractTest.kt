@@ -5,8 +5,6 @@ import dev.goquick.sqlitenow.oversqlite.AttachOutcome
 import dev.goquick.sqlitenow.oversqlite.AttachResult
 import dev.goquick.sqlitenow.oversqlite.AuthorityStatus
 import dev.goquick.sqlitenow.oversqlite.DetachOutcome
-import dev.goquick.sqlitenow.oversqlite.OpenState
-import dev.goquick.sqlitenow.oversqlite.SourceBindingMismatchException
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -24,8 +22,12 @@ class RealServerLifecycleContractTest {
         resetRealServerState(config.baseUrl)
 
         val userId = randomUserId("same-install-user")
-        val sourceId = randomSourceId("same-install-source")
-        val verifySourceId = randomSourceId("same-install-verify")
+        val db = newInMemoryDb()
+        val verifyDb = newInMemoryDb()
+        createBusinessSubsetTables(db)
+        createBusinessSubsetTables(verifyDb)
+        val sourceId = bootstrapManagedSourceId(db, config)
+        val verifySourceId = bootstrapManagedSourceId(verifyDb, config)
         val firstUserId = randomRowId()
         val firstPostId = randomRowId()
         val secondUserId = randomRowId()
@@ -35,35 +37,32 @@ class RealServerLifecycleContractTest {
         val verifyToken = issueDummySigninToken(config.baseUrl, userId, verifySourceId)
         val http = newAuthenticatedHttpClient(config.baseUrl, token)
         val verifyHttp = newAuthenticatedHttpClient(config.baseUrl, verifyToken)
-        val db = newInMemoryDb()
-        val verifyDb = newInMemoryDb()
         try {
-            createBusinessSubsetTables(db)
-            createBusinessSubsetTables(verifyDb)
-
             val client = newRealServerClient(db, config, http)
             val verifyClient = newRealServerClient(verifyDb, config, verifyHttp)
             try {
-                client.openAndAttach(userId, sourceId).getOrThrow()
+                client.openAndAttach(userId).getOrThrow()
+                val currentSourceId = client.sourceInfo().getOrThrow().currentSourceId
                 insertBusinessUserAndPost(db, firstUserId, firstPostId, "same-install-first")
                 client.pushPending().getOrThrow()
                 assertEquals(
                     2L,
                     scalarLong(
                         db,
-                        "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$sourceId'",
+                        "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$currentSourceId'",
                     ),
                 )
 
                 assertEquals(DetachOutcome.DETACHED, client.detach().getOrThrow())
-                assertEquals(OpenState.ReadyAnonymous, client.open(sourceId).getOrThrow())
+                client.open().getOrThrow()
 
                 client.attach(userId).getOrThrow()
+                assertEquals(currentSourceId, client.sourceInfo().getOrThrow().currentSourceId)
                 assertEquals(
                     2L,
                     scalarLong(
                         db,
-                        "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$sourceId'",
+                        "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$currentSourceId'",
                     ),
                 )
                 assertEquals(
@@ -77,11 +76,11 @@ class RealServerLifecycleContractTest {
                     3L,
                     scalarLong(
                         db,
-                        "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$sourceId'",
+                        "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$currentSourceId'",
                     ),
                 )
 
-                verifyClient.openAndAttach(userId, verifySourceId).getOrThrow()
+                verifyClient.openAndAttach(userId).getOrThrow()
                 assertEquals(2L, scalarLong(verifyDb, "SELECT COUNT(*) FROM users"))
                 assertEquals(2L, scalarLong(verifyDb, "SELECT COUNT(*) FROM posts"))
                 assertEquals(
@@ -130,13 +129,13 @@ class RealServerLifecycleContractTest {
             val clientB = newRealServerClient(dbB, config, httpB)
             val otherClient = newRealServerClient(dbB, config, httpOther)
             try {
-                assertEquals(OpenState.ReadyAnonymous, clientA.open(sourceIdA).getOrThrow())
+                clientA.open().getOrThrow()
                 assertAttachedOutcome(
                     expectedOutcome = AttachOutcome.STARTED_EMPTY,
                     actual = clientA.attach(userId).getOrThrow(),
                     expectedAuthority = AuthorityStatus.AUTHORITATIVE_EMPTY,
                 )
-                assertEquals(OpenState.ReadyAnonymous, clientB.open(sourceIdB).getOrThrow())
+                clientB.open().getOrThrow()
                 assertAttachedOutcome(
                     expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
                     actual = clientB.attach(userId).getOrThrow(),
@@ -165,9 +164,9 @@ class RealServerLifecycleContractTest {
                 assertEquals("android payload", scalarText(dbB, "SELECT content FROM posts WHERE id = '$postId'"))
 
                 assertEquals(DetachOutcome.DETACHED, clientB.detach().getOrThrow())
-                assertEquals(OpenState.ReadyAnonymous, clientB.open(sourceIdB).getOrThrow())
+                clientB.open().getOrThrow()
 
-                assertEquals(OpenState.ReadyAnonymous, otherClient.open(sourceIdB).getOrThrow())
+                otherClient.open().getOrThrow()
                 assertAttachedOutcome(
                     expectedOutcome = AttachOutcome.STARTED_EMPTY,
                     actual = otherClient.attach(otherUserId).getOrThrow(),
@@ -188,7 +187,7 @@ class RealServerLifecycleContractTest {
     }
 
     @Test
-    fun attachRetryLater_sourceBindingMismatchAndAppOwnedReset_workAgainstRealServer() = runBlocking {
+    fun attachRetryLater_andFreshInstallRecovery_workAgainstRealServer() = runBlocking {
         val config = requireRealServerConfig()
         resetRealServerState(config.baseUrl)
 
@@ -227,7 +226,7 @@ class RealServerLifecycleContractTest {
             val clientA = newRealServerClient(dbA, config, httpA)
             val clientB = newRealServerClient(dbB, config, httpB)
             try {
-                assertEquals(OpenState.ReadyAnonymous, clientA.open(sourceIdA).getOrThrow())
+                clientA.open().getOrThrow()
                 assertAttachedOutcome(
                     expectedOutcome = AttachOutcome.SEEDED_FROM_LOCAL,
                     actual = clientA.attach(userId).getOrThrow(),
@@ -239,7 +238,7 @@ class RealServerLifecycleContractTest {
                 assertTrue(pending.blocksDetach)
                 assertEquals(DetachOutcome.BLOCKED_UNSYNCED_DATA, clientA.detach().getOrThrow())
 
-                assertEquals(OpenState.ReadyAnonymous, clientB.open(sourceIdB).getOrThrow())
+                clientB.open().getOrThrow()
                 val retry = clientB.attach(userId).getOrThrow()
                 assertTrue(retry is AttachResult.RetryLater && retry.retryAfterSeconds > 0)
 
@@ -251,22 +250,14 @@ class RealServerLifecycleContractTest {
                 )
                 assertEquals("Recovery Seed", scalarText(dbB, "SELECT name FROM users WHERE id = '$seededUserId'"))
 
-                val mismatch = clientA.open(rotatedSourceId).exceptionOrNull()
-                if (mismatch !is SourceBindingMismatchException) {
-                    fail("Expected SourceBindingMismatchException, got $mismatch")
-                }
-                val mismatchError = mismatch as SourceBindingMismatchException
-                assertEquals(sourceIdA, mismatchError.persistedSourceId)
-                assertEquals(rotatedSourceId, mismatchError.requestedSourceId)
-
                 createBusinessSubsetTables(resetDb)
                 resetHttp = newAuthenticatedHttpClient(
                     config.baseUrl,
                     issueDummySigninToken(config.baseUrl, userId, rotatedSourceId),
                 )
-                val resetClient = newRealServerClient(resetDb, config, resetHttp!!)
+                val resetClient = newRealServerClient(resetDb, config, checkNotNull(resetHttp))
                 try {
-                    assertEquals(OpenState.ReadyAnonymous, resetClient.open(rotatedSourceId).getOrThrow())
+                    resetClient.open().getOrThrow()
                     assertAttachedOutcome(
                         expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
                         actual = resetClient.attach(userId).getOrThrow(),

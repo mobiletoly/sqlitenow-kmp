@@ -37,7 +37,11 @@ private const val expectedSampleSyncServerAppName = "samplesync-server"
 private data class SigninRequest(val user: String, val password: String, val device: String)
 
 @Serializable
-private data class SigninResponse(val token: String, val expires_in: Long, val user: String, val device: String)
+private data class SigninResponse(
+    val token: String,
+    @SerialName("expires_in") val expiresIn: Long,
+    val user: String,
+)
 
 @Serializable
 private data class ServerStatusResponse(

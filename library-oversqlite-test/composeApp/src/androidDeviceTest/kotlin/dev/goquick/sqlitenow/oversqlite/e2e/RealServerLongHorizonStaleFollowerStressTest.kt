@@ -1,7 +1,6 @@
 package dev.goquick.sqlitenow.oversqlite.e2e
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.goquick.sqlitenow.oversqlite.RebuildMode
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -47,10 +46,10 @@ class RealServerLongHorizonStaleFollowerStressTest {
                 downloadLimit = 2,
             )
 
-            leader.openAndAttach(userId, leaderDevice).getOrThrow()
-            follower.openAndAttach(userId, followerDevice).getOrThrow()
-            leader.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            follower.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            leader.openAndAttach(userId).getOrThrow()
+            follower.openAndAttach(userId).getOrThrow()
+            leader.rebuild().getOrThrow()
+            follower.rebuild().getOrThrow()
 
             val hotGraph = insertHotGraph(leaderDb)
             leader.pushPending().getOrThrow()

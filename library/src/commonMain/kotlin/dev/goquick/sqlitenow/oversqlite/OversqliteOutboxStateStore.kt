@@ -171,6 +171,36 @@ internal class OversqliteOutboxStateStore(
         )
     }
 
+    suspend fun rebindBundleSource(
+        sourceId: String,
+        sourceBundleId: Long,
+        statementCache: StatementCache? = null,
+    ) {
+        db.withPreparedStatement(
+            sql = """
+                UPDATE _sync_outbox_bundle
+                SET source_id = ?,
+                    source_bundle_id = ?
+                WHERE singleton_key = 1
+            """.trimIndent(),
+            statementCache = statementCache,
+        ) { st ->
+            st.bindText(1, sourceId)
+            st.bindLong(2, sourceBundleId)
+            st.step()
+        }
+        db.withPreparedStatement(
+            sql = """
+                UPDATE _sync_outbox_rows
+                SET source_bundle_id = ?
+            """.trimIndent(),
+            statementCache = statementCache,
+        ) { st ->
+            st.bindLong(1, sourceBundleId)
+            st.step()
+        }
+    }
+
     suspend fun appendRows(
         rows: List<OversqliteOutboxRow>,
         statementCache: StatementCache? = null,

@@ -406,9 +406,9 @@ private suspend fun withConflictHarness(
         )
         val observerClient = newRealServerClient(observerDb, config, httpObserver)
 
-        clientA.openAndAttach(userId, deviceA).getOrThrow()
-        clientB.openAndAttach(userId, deviceB).getOrThrow()
-        observerClient.openAndAttach(userId, observerDevice).getOrThrow()
+        clientA.openAndAttach(userId).getOrThrow()
+        clientB.openAndAttach(userId).getOrThrow()
+        observerClient.openAndAttach(userId).getOrThrow()
 
         ConflictHarness(
             userId = userId,

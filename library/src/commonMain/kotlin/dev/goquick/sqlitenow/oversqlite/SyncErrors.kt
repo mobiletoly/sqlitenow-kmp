@@ -15,30 +15,6 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
-/**
- * Thrown when [OversqliteClient.open] receives a `sourceId` that does not match the durable local
- * source binding already stored in the database.
- *
- * This is a fail-closed local identity error, not a transient transport failure. Typical app
- * handling is to stop sync and run an explicit app-owned reset path that recreates the local
- * Oversqlite database or local sync state. Only apps that persist and trust the original install
- * `sourceId` outside Oversqlite should retry with a different value, and only if that value is the
- * original one.
- */
-class SourceBindingMismatchException(
-    val persistedSourceId: String,
-    val requestedSourceId: String,
-) : RuntimeException(
-    "persisted source_id \"$persistedSourceId\" does not match requested source_id " +
-        "\"$requestedSourceId\""
-)
-
-@Deprecated(
-    message = "Use SourceBindingMismatchException",
-    replaceWith = ReplaceWith("SourceBindingMismatchException"),
-)
-typealias SourceMismatchException = SourceBindingMismatchException
-
 /** Thrown when the server does not advertise the required connect-lifecycle capability. */
 class ConnectLifecycleUnsupportedException(
     val reason: String? = null,
@@ -83,7 +59,7 @@ class DestructiveTransitionInProgressException(
 /** Thrown when a lifecycle-aware sync operation is called before [OversqliteClient.open]. */
 class OpenRequiredException(
     val operation: String,
-) : RuntimeException("open(sourceId) must be called before $operation")
+) : RuntimeException("open() must be called before $operation")
 
 /** Thrown when a lifecycle-aware sync operation is called before [OversqliteClient.attach]. */
 class ConnectRequiredException(
@@ -92,7 +68,14 @@ class ConnectRequiredException(
 
 /** Thrown when the client must rebuild from snapshot before it can continue syncing. */
 class RebuildRequiredException : RuntimeException(
-    "client rebuild is required; run rebuild(...) before syncing"
+    "client rebuild is required; run rebuild() before syncing"
+)
+
+/** Thrown when the current source stream is blocked and recovery requires internal source rotation. */
+class SourceRecoveryRequiredException(
+    val reason: SourceRecoveryReason,
+) : RuntimeException(
+    "source recovery is required ($reason); run rebuild() before syncing",
 )
 
 /** Thrown when the same client instance is already running another sync operation. */
@@ -142,11 +125,6 @@ class SourceSequenceMismatchException(
     message: String,
 ) : RuntimeException(message)
 
-/** Thrown when source rotation is requested while a non-rotatable lifecycle operation is active. */
-class SourceRotationBlockedException(
-    reason: String,
-) : RuntimeException("source rotation is currently blocked: $reason")
-
 /** Returns `true` when [error] represents normal local sync-operation contention. */
 fun isExpectedSyncContention(error: Throwable?): Boolean {
     if (error == null) return false
@@ -169,7 +147,7 @@ fun isLifecyclePreconditionError(error: Throwable?): Boolean {
             current is OpenRequiredException ||
             current is ConnectRequiredException ||
             current is DestructiveTransitionInProgressException ||
-            current is SourceBindingMismatchException
+            current is SourceRecoveryRequiredException
         ) {
             return true
         }

@@ -1,13 +1,10 @@
-# SQLiteNow KMP Library – Bundle-Era Oversqlite Flow
+# SQLiteNow KMP Library – Oversqlite Runtime Flow
 
-This document describes the bundle-era oversqlite client architecture used by the SQLiteNow KMP
-runtime. It is intended as the long-lived engineering reference for how the client currently
-bootstraps, tracks local state, talks to the real server, and rebuilds from authoritative history.
+This document is the engineering reference for the current oversqlite client architecture in the
+SQLiteNow KMP runtime.
 
-The detailed next-step conflict-resolution evolution is specified in
-[`specs/oversqlite_conflict_resolution_results.md`](/Users/pochkin/Projects/my/sqlitenow-kmp/specs/oversqlite_conflict_resolution_results.md).
-This document assumes that direction when describing conflict handling, but focuses primarily on the
-core runtime flow and persistent local state.
+It focuses on the managed-source client model, persistent local state, and the current push/pull
+and rebuild flows.
 
 ## 1. Core Model
 
@@ -15,113 +12,77 @@ Oversqlite is a single-schema, bundle-based sync client.
 
 Key ideas:
 
-- The server is authoritative for committed history.
-- Local writes are captured into `_sync_dirty_rows` by triggers.
-- Upload does not stream dirty rows directly. It first freezes them into `_sync_push_outbound`.
-- Accepted uploads are replayed locally from the committed bundle returned by the server.
-- Pull applies committed bundles forward from `last_bundle_seq_seen`.
-- Hydrate/recover rebuild local state from a full server snapshot when needed.
-
-The runtime assumes:
-
-- one logical schema per local database (`OversqliteConfig.schema`)
-- exactly one sync key column per managed table in the current client runtime
-- managed tables are FK-closed and validated during bootstrap
+- the server is authoritative for committed history
+- local writes are captured into `_sync_dirty_rows` by triggers
+- upload does not stream dirty rows directly; it first freezes them into `_sync_outbox_*`
+- accepted uploads are replayed locally from the committed bundle returned by the server
+- pull applies committed bundles forward from `last_bundle_seq_seen`
+- rebuild recovers local state from a full server snapshot when authoritative history can no longer
+  be applied incrementally
+- the current `sourceId` is internally managed and persisted in local sync metadata
 
 ## 2. Local Metadata Tables
 
 The current runtime uses these private tables.
 
-### 2.1 `_sync_client_state`
+### 2.1 `_sync_attachment_state`
 
-Tracks client identity and high-level sync cursor state per user.
-
-```sql
-CREATE TABLE IF NOT EXISTS _sync_client_state (
-  user_id TEXT NOT NULL PRIMARY KEY,
-  source_id TEXT NOT NULL,
-  schema_name TEXT NOT NULL DEFAULT '',
-  next_source_bundle_id INTEGER NOT NULL DEFAULT 1,
-  last_bundle_seq_seen INTEGER NOT NULL DEFAULT 0,
-  apply_mode INTEGER NOT NULL DEFAULT 0,
-  rebuild_required INTEGER NOT NULL DEFAULT 0
-)
-```
+Tracks the current local lifecycle binding.
 
 Important fields:
 
-- `source_id`: device/app-install identity
-- `next_source_bundle_id`: next local outbound bundle ordinal
+- `current_source_id`: current internally managed sync writer identity
+- `binding_state`: anonymous vs attached
+- `attached_user_id`: current attached account scope
 - `last_bundle_seq_seen`: highest authoritative remote bundle durably applied
-- `apply_mode`: disables triggers while authoritative rows are being applied
-- `rebuild_required`: set when local identity is rotated or local state must be rebuilt
+- `rebuild_required`: generic keep-source rebuild gate
+- `pending_initialization_id`: active initialization lease when first local seed is in progress
 
-### 2.2 `_sync_row_state`
+### 2.2 `_sync_operation_state`
+
+Tracks durable multi-step lifecycle or recovery operations.
+
+Current kinds:
+
+- `none`
+- `remote_replace`
+- `source_recovery`
+
+For `source_recovery`, the table also preserves:
+
+- the recovery reason
+- the rejected source id
+- the rejected source bundle id
+- whether frozen unsynced intent still lives in `_sync_outbox_*`
+
+### 2.3 `_sync_source_state`
+
+Tracks per-source sequencing and lineage.
+
+Important fields:
+
+- `source_id`
+- `next_source_bundle_id`
+- `replaced_by_source_id`
+
+### 2.4 `_sync_row_state`
 
 Tracks authoritative row metadata for managed rows already known locally.
 
-```sql
-CREATE TABLE IF NOT EXISTS _sync_row_state (
-  schema_name TEXT NOT NULL,
-  table_name TEXT NOT NULL,
-  key_json TEXT NOT NULL,
-  row_version INTEGER NOT NULL DEFAULT 0,
-  deleted INTEGER NOT NULL DEFAULT 0,
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  PRIMARY KEY (schema_name, table_name, key_json)
-)
-```
-
-This is the current local view of server row version / tombstone state, not a queue.
-
-### 2.3 `_sync_dirty_rows`
+### 2.5 `_sync_dirty_rows`
 
 Captures local user-originated intent via triggers.
 
-```sql
-CREATE TABLE IF NOT EXISTS _sync_dirty_rows (
-  schema_name TEXT NOT NULL,
-  table_name TEXT NOT NULL,
-  key_json TEXT NOT NULL,
-  op TEXT NOT NULL CHECK (op IN ('INSERT','UPDATE','DELETE')),
-  base_row_version INTEGER NOT NULL DEFAULT 0,
-  payload TEXT,
-  dirty_ordinal INTEGER NOT NULL DEFAULT 0,
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  PRIMARY KEY (schema_name, table_name, key_json)
-)
-```
-
-This replaces the older `_sync_pending` model described in previous docs.
-
-### 2.4 `_sync_push_outbound`
+### 2.6 `_sync_outbox_bundle` and `_sync_outbox_rows`
 
 Frozen outbound snapshot for one logical local source bundle.
 
-```sql
-CREATE TABLE IF NOT EXISTS _sync_push_outbound (
-  source_bundle_id INTEGER NOT NULL,
-  row_ordinal INTEGER NOT NULL,
-  schema_name TEXT NOT NULL,
-  table_name TEXT NOT NULL,
-  key_json TEXT NOT NULL,
-  op TEXT NOT NULL CHECK (op IN ('INSERT','UPDATE','DELETE')),
-  base_row_version INTEGER NOT NULL DEFAULT 0,
-  payload TEXT,
-  PRIMARY KEY (source_bundle_id, row_ordinal)
-)
-```
+These tables are also the durable preservation form for unsynced local intent during
+source-recovery-required rebuild-plus-rotate flows.
 
-If upload conflicts after freezing, this table is the source of truth for replay / conflict
-resolution.
+### 2.7 `_sync_snapshot_stage`
 
-### 2.5 `_sync_push_stage`
-
-Temporary storage for authoritative committed bundle rows fetched back from the server after upload.
-
-### 2.6 `_sync_snapshot_stage`
-
-Temporary storage for full snapshot rows during hydrate/recover.
+Temporary storage for full snapshot rows during rebuild.
 
 ## 3. Trigger Capture Model
 
@@ -140,33 +101,22 @@ Trigger rules:
 - maintain `dirty_ordinal` so upload order is stable
 - represent row identity as canonical `key_json`
 
-Important consequences:
+## 4. Startup And Identity Model
 
-- there is no separate “assign IDs later” queue anymore
-- local writes are stored as row intent, not transport records
-- PK-changing updates are modeled as delete-old-key plus insert/update-new-key
+`open()` performs:
 
-## 4. Bootstrap and Identity Binding
-
-`open(sourceId)` performs:
-
-1. create metadata tables if needed
+1. create or repair metadata tables
 2. validate sync table configuration against the live schema
 3. validate FK closure and compute table ordering
-4. bind or validate the app-owned install `sourceId` in `_sync_attachment_state`
+4. restore or create the current internal `sourceId`
 5. install triggers for managed tables
 
-Identity behavior matters:
+Important identity rules:
 
-- same durable source id: continue normally
-- different durable source id on the same local database: fail closed with
-  `SourceBindingMismatchException`
-- different user on the same database: local attachment may change through `detach()` and later
-  `attach(userId)`, but the install `sourceId` stays the same unless the app explicitly resets or
-  rotates it
-
-The runtime does not silently generate a replacement source id and does not silently rebind an
-existing local database to another source identity.
+- app code does not provide `sourceId`
+- the current `sourceId` is opaque and persisted internally
+- the current `sourceId` may rotate during explicit recovery on the same install
+- the current `sourceId` is not the same concept as a product/backend `deviceId`
 
 ## 5. High-Level Client Operations
 
@@ -179,36 +129,22 @@ Purpose:
 - fetch the committed authoritative bundle back from the server
 - replay that authoritative bundle locally
 
-Flow:
+Key rule:
 
-1. reject if `rebuild_required = 1`
-2. if `_sync_push_outbound` already exists, reuse it
-3. otherwise collect `_sync_dirty_rows`, freeze them into `_sync_push_outbound`, and delete the
-   corresponding dirty rows
-4. create push session
-5. upload rows in chunks
-6. commit push session
-7. fetch committed bundle rows from `/sync/committed-bundles/{bundleSeq}/rows`
-8. stage them in `_sync_push_stage`
-9. apply staged authoritative rows locally
-10. advance `last_bundle_seq_seen`
-11. delete `_sync_push_outbound` and `_sync_push_stage`
+- if durable rebuild or source-recovery state is active, ordinary push fails closed
 
 ### 5.2 `pullToStable()`
 
 Purpose:
 
-- pull authoritative committed bundles until the current server stable bundle sequence is fully
-  applied locally
+- pull authoritative committed bundles until the current stable bundle sequence is fully applied
+  locally
 
-Flow:
+Key rules:
 
-1. reject if `_sync_push_outbound` is non-empty
-2. reject if `_sync_dirty_rows` is non-empty
-3. request `/sync/pull?after_bundle_seq=...&max_bundles=...`
-4. apply returned bundles in order
-5. stop only when `last_bundle_seq_seen >= stable_bundle_seq`
-6. if server history is pruned, fall back to snapshot rebuild
+- if frozen outbox or dirty rows block incremental pull, fail closed
+- if pull-side retained history is pruned, fall back to keep-source rebuild
+- if source-recovery-required state is active, ordinary pull fails closed
 
 ### 5.3 `sync()`
 
@@ -217,33 +153,21 @@ The interactive happy path:
 1. `pushPending()`
 2. `pullToStable()`
 
-### 5.4 `rebuild(RebuildMode.KEEP_SOURCE, newSourceId = null)`
+### 5.4 `rebuild()`
 
-Purpose:
+`rebuild()` is the explicit recovery entry point.
 
-- rebuild local managed tables from a full server snapshot without rotating source identity
+Oversqlite chooses the internal mode:
 
-Used when:
-
-- provisioning a new follower
-- local state is empty and a full rebuild is desired
-
-### 5.5 `rebuild(RebuildMode.ROTATE_SOURCE, newSourceId)` / `rotateSource(newSourceId)`
-
-Purpose:
-
-- rebuild local managed tables from a full server snapshot and rotate local source identity, or
-  rotate source identity without discarding pending local edits
-
-Used when:
-
-- the current local source identity must no longer continue replaying previous outbound state
-- the app intentionally abandons the current local source identity
-- local state was invalidated and the caller has chosen an explicit fresh source id
+- generic rebuild-required and pull-side pruning use keep-source rebuild
+- committed-remote replay pruning below retained floor uses keep-source rebuild plus local source
+  floor advance
+- create-time stale/out-of-order source failures and commit-time source-sequence changes use
+  rebuild-plus-rotate recovery
 
 ## 6. Server Protocol
 
-The bundle-era client talks to these endpoints:
+The current client talks to these endpoints:
 
 ### Push
 
@@ -266,11 +190,12 @@ The bundle-era client talks to these endpoints:
 - `GET /sync/snapshot-sessions/{snapshotId}`
 - `DELETE /sync/snapshot-sessions/{snapshotId}`
 
-The client no longer uses the older `/sync/upload` and `/sync/download` transport model.
+The current source identity is sent as `Oversync-Source-ID` on authenticated sync requests. It is
+managed internal sync transport metadata rather than request-body identity input.
 
 ## 7. Authoritative Apply Rules
 
-Authoritative rows from pull / committed bundle replay / snapshot rebuild are applied with
+Authoritative rows from pull, committed bundle replay, or snapshot rebuild are applied with
 `apply_mode = 1`.
 
 Row application rules:
@@ -279,71 +204,43 @@ Row application rules:
 - `DELETE`: delete the business row by PK, then update `_sync_row_state` as deleted
 - stale incoming rows are skipped when local `_sync_row_state.row_version >= incoming.row_version`
 
-When authoritative rows are applied:
+## 8. Recovery And Intent Preservation
 
-- matching dirty rows may be deleted
-- table update listeners are fired after the operation completes
+The most important recovery invariant is:
 
-## 8. Conflict Handling
+- frozen `_sync_outbox_*` is durable unsynced intent
 
-Current runtime:
+For source-recovery-required cases:
 
-- push commit `409 push_conflict` is decoded into a typed conflict
-- `ServerWinsResolver` is auto-applied
-- valid `KeepLocal` / `KeepMerged(...)` results are auto-applied and retried in the same
-  `pushPending()` invocation
-- invalid `KeepLocal` / `KeepMerged(...)` results fail closed with typed runtime errors after
-  restoring replayable dirty state
-- automatic conflict retries are bounded; retry exhaustion clears `_sync_push_outbound` and leaves
-  `_sync_dirty_rows` replayable
+1. oversqlite freezes local intent into `_sync_outbox_*`
+2. ordinary sync fails closed
+3. explicit `rebuild()` stages and applies the authoritative snapshot
+4. oversqlite rotates to a fresh internal `sourceId`
+5. oversqlite rebinds `_sync_outbox_*` to that fresh source with `source_bundle_id = 1`
+6. later `pushPending()` resumes upload under the new source stream
 
-Canonical design direction:
+For committed-remote replay pruning below the retained floor:
 
-- use the detailed contract in
-  [`specs/oversqlite_conflict_resolution_results.md`](/Users/pochkin/Projects/my/sqlitenow-kmp/specs/oversqlite_conflict_resolution_results.md)
+- keep the current source
+- rebuild from snapshot
+- advance local sequencing past the already-committed tuple
+- clear committed-remote outbox state only after recovery succeeds
 
-Important current invariant:
-
-- conflicts are bundle-scoped failures
-- the client must preserve non-conflicting sibling rows from the rejected outbound bundle
-- the client must remain in a replayable state after conflict resolution or retry exhaustion
-
-## 9. Snapshot Rebuild Rules
-
-Snapshot rebuild is authoritative and clears managed local state before replay.
-
-Behavior:
-
-- `rebuild(RebuildMode.KEEP_SOURCE, null)` keeps current `source_id`
-- `rebuild(RebuildMode.ROTATE_SOURCE, newSourceId)` rotates `source_id` and resets
-  `next_source_bundle_id = 1`
-- both clear `_sync_dirty_rows`, `_sync_push_outbound`, `_sync_push_stage`, and managed business
-  rows before authoritative snapshot application
-
-## 10. Ordering and FK Closure
-
-Managed table order is derived from FK dependencies.
-
-Why it matters:
-
-- insert/update replay uses parent-before-child order
-- delete replay uses child-before-parent order
-- the client validates FK closure during bootstrap so pull/push replay can stay deterministic
-
-Composite foreign keys are currently rejected by validation.
-
-## 11. Current Engineering Invariants
+## 9. Engineering Invariants
 
 - one oversqlite client instance should own a local database at a time
 - sync serialization is enforced per client instance
 - `pushPending()` freezes transport state before upload
 - `pullToStable()` must not run while outbound replay is pending
-- `rebuild(...)` is a full rebuild operation, not an incremental pull
+- `rebuild()` is the only explicit recovery entry point
 - business-table triggers should never fire while authoritative rows are being applied
 - `last_bundle_seq_seen` advances only after authoritative replay succeeds locally
+- source-recovery-required state survives restart until explicit rebuild succeeds
 
-## 12. Related Documents
+## 10. Related Documents
 
-- Conflict evolution and next-step resolver model:
+- conflict evolution and resolver model:
   [`specs/oversqlite_conflict_resolution_results.md`](/Users/pochkin/Projects/my/sqlitenow-kmp/specs/oversqlite_conflict_resolution_results.md)
-- Public user-facing sync docs live under [`docs/sync/`](/Users/pochkin/Projects/my/sqlitenow-kmp/docs/sync)
+- source pruning and recovery contract:
+  [`specs/oversqlite-v1-pruning-and-source-recovery.md`](/Users/pochkin/Projects/my/sqlitenow-kmp/specs/oversqlite-v1-pruning-and-source-recovery.md)
+- public user-facing sync docs live under [`docs/sync/`](/Users/pochkin/Projects/my/sqlitenow-kmp/docs/sync)

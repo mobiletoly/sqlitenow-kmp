@@ -136,11 +136,19 @@ internal open class RealServerSmokeSupport : CrossTargetSyncTestSupport() {
         )
     }
 
-    protected suspend fun bootstrapInternalSourceId(
+    protected suspend fun bootstrapManagedSourceId(
         db: SafeSQLiteConnection,
+        baseUrl: String,
     ): String {
-        db.hashCode() // keep the callsite shape while source identity is now app-owned.
-        return randomSmokeUuid()
+        val http = newRealServerHttpClient(baseUrl)
+        val client = newRealServerClient(db, http)
+        return try {
+            client.open().getOrThrow()
+            client.sourceInfo().getOrThrow().currentSourceId
+        } finally {
+            client.close()
+            http.close()
+        }
     }
 
     protected suspend fun insertBusinessUserAndPost(

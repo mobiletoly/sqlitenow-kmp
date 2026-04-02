@@ -48,8 +48,8 @@ class RealServerGeneratedConfigTest {
                 ),
             )
 
-            clientA.openAndAttach(userId, deviceA).getOrThrow()
-            clientB.openAndAttach(userId, deviceB).getOrThrow()
+            clientA.openAndAttach(userId).getOrThrow()
+            clientB.openAndAttach(userId).getOrThrow()
 
             val authorId = randomRowId()
             val postId = randomRowId()
@@ -97,7 +97,7 @@ class RealServerGeneratedConfigTest {
             )
 
             val error = runCatching {
-                client.openAndAttach(randomUserId(), randomSourceId("invalid-key")).getOrThrow()
+                client.openAndAttach(randomUserId()).getOrThrow()
             }.exceptionOrNull()
             assertTrue(error?.message?.contains("TEXT PRIMARY KEY or BLOB PRIMARY KEY") == true)
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))

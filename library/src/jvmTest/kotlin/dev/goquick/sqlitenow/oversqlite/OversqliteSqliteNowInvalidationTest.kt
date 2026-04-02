@@ -39,8 +39,8 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
 
                 leader.openAndConnect("user-1").getOrThrow()
                 follower.openAndConnect("user-1").getOrThrow()
-                leader.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-                follower.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+                leader.rebuild().getOrThrow()
+                follower.rebuild().getOrThrow()
 
                 val (emissions, collector) = collectFlow(followerDb.userNamesFlow())
                 try {
@@ -78,7 +78,7 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
                 createUsersAndPostsTables(leaderDb)
 
                 leader.openAndConnect("user-1").getOrThrow()
-                leader.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+                leader.rebuild().getOrThrow()
                 insertUser(leaderDb, "u1", "Ada")
                 leader.pushPending().getOrThrow()
 
@@ -119,8 +119,8 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
 
                 leader.openAndConnect("user-1").getOrThrow()
                 follower.openAndConnect("user-1").getOrThrow()
-                leader.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-                follower.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+                leader.rebuild().getOrThrow()
+                follower.rebuild().getOrThrow()
 
                 val (emissions, collector) = collectFlow(followerDb.userNamesFlow())
                 try {
@@ -128,7 +128,7 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
 
                     insertUser(leaderDb, "u1", "Ada")
                     leader.pushPending().getOrThrow()
-                    follower.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+                    follower.rebuild().getOrThrow()
 
                     assertEquals(listOf("Ada"), receiveNext(emissions))
                 } finally {
@@ -153,7 +153,7 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
             val client = newDatabaseClient(database, leaderHttp)
             try {
                 client.openAndConnect("user-1").getOrThrow()
-                client.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+                client.rebuild().getOrThrow()
 
                 val (emissions, collector) = collectFlow(database.userNamesFlow())
                 try {
@@ -188,8 +188,8 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
 
                 leader.openAndConnect("user-1").getOrThrow()
                 follower.openAndConnect("user-1").getOrThrow()
-                leader.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-                follower.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+                leader.rebuild().getOrThrow()
+                follower.rebuild().getOrThrow()
 
                 insertUser(leaderDb, "u1", "Original")
                 leader.pushPending().getOrThrow()
@@ -252,8 +252,8 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
 
                 leader.openAndConnect("user-1").getOrThrow()
                 follower.openAndConnect("user-1").getOrThrow()
-                leader.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-                follower.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+                leader.rebuild().getOrThrow()
+                follower.rebuild().getOrThrow()
 
                 database.connection().execSQL("INSERT INTO users(id, name) VALUES('local-user', 'Local User')")
                 database.connection().execSQL("INSERT INTO posts(id, user_id, title) VALUES('p1', 'local-user', 'Local Post')")
@@ -303,8 +303,8 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
 
                 leader.openAndConnect("user-1").getOrThrow()
                 follower.openAndConnect("user-1").getOrThrow()
-                leader.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-                follower.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+                leader.rebuild().getOrThrow()
+                follower.rebuild().getOrThrow()
 
                 val (emissions, collector) = collectFlow(database.userNamesFlow())
                 try {
@@ -312,12 +312,13 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
 
                     insertUser(leaderDb, "u1", "Ada")
                     leader.pushPending().getOrThrow()
-                    val report = follower.rebuild(
-                        mode = RebuildMode.ROTATE_SOURCE,
-                        newSourceId = "follower-rebuild-source",
-                    ).getOrThrow()
+                    val sourceBefore = follower.sourceInfo().getOrThrow().currentSourceId
+                    markSourceRecoveryRequired(database.connection())
+                    follower.rebuild().getOrThrow()
+                    val sourceAfter = follower.sourceInfo().getOrThrow().currentSourceId
 
-                    assertTrue(report.rotatedSourceId != null && report.rotatedSourceId!!.isNotBlank())
+                    assertTrue(sourceAfter.isNotBlank())
+                    assertTrue(sourceAfter != sourceBefore)
                     assertEquals(listOf("Ada"), receiveNext(emissions))
                 } finally {
                     collector.cancel()
@@ -347,8 +348,8 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
 
                 leader.openAndConnect("user-1").getOrThrow()
                 follower.openAndConnect("user-1").getOrThrow()
-                leader.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-                follower.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+                leader.rebuild().getOrThrow()
+                follower.rebuild().getOrThrow()
                 insertUser(leaderDb, "u1", "Ada")
                 leader.pushPending().getOrThrow()
                 follower.pullToStable().getOrThrow()
@@ -382,7 +383,7 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
             val client = newDatabaseClient(database, http)
             try {
                 client.openAndConnect("user-1").getOrThrow()
-                client.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+                client.rebuild().getOrThrow()
 
                 val (emissions, collector) = collectFlow(database.userNamesFlow())
                 try {

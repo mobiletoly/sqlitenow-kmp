@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -370,7 +371,7 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
                     PushSessionCreateRequest.serializer(),
                     exchange.requestBody.readBytes().decodeToString(),
                 )
-                createdSourceId = request.sourceId
+                createdSourceId = exchange.requestHeaders.getFirst("Oversync-Source-ID").orEmpty()
                 createStarted.countDown()
                 check(releaseCreate.await(5, TimeUnit.SECONDS))
                 respondJson(
@@ -480,7 +481,7 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
                     PushSessionCreateRequest.serializer(),
                     exchange.requestBody.readBytes().decodeToString(),
                 )
-                createdSourceId = request.sourceId
+                createdSourceId = exchange.requestHeaders.getFirst("Oversync-Source-ID").orEmpty()
                 respondJson(
                     exchange,
                     200,
@@ -1718,7 +1719,7 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             val uploadedChunkCount = pushServer.uploadedChunks.size
 
             val restartedClient = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            assertEquals(OpenState.ReadyAttached("user-1"), restartedClient.open(sourceId).getOrThrow())
+            restartedClient.open().getOrThrow()
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.RESUMED_ATTACHED_STATE,
                 actual = restartedClient.attach("user-1").getOrThrow(),
@@ -1736,6 +1737,308 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
                     "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = (SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1)",
                 ),
             )
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun pushPending_sourceRecoveryPreservesFrozenOutboxAcrossRebuildRestartAndFollowupPush() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer()
+        var sourceRecoveryResponsesRemaining = 1
+        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson).apply {
+            createError = { request ->
+                if (sourceRecoveryResponsesRemaining > 0) {
+                    sourceRecoveryResponsesRemaining--
+                    409 to """{"error":"source_sequence_out_of_order","message":"source bundle id is stale"}"""
+                } else {
+                    null
+                }
+            }
+        }
+        pushServer.install(server)
+        server.createContext("/sync/snapshot-sessions") { exchange ->
+            respondJson(
+                exchange,
+                200,
+                """
+                {
+                  "snapshot_id": "snapshot-recover",
+                  "snapshot_bundle_seq": 0,
+                  "row_count": 0,
+                  "byte_count": 0,
+                  "expires_at": "2026-03-22T00:00:00Z"
+                }
+                """.trimIndent(),
+            )
+        }
+        server.createContext("/sync/snapshot-sessions/snapshot-recover") { exchange ->
+            when (exchange.requestMethod) {
+                "GET" -> respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-recover",
+                      "snapshot_bundle_seq": 0,
+                      "next_row_ordinal": 0,
+                      "has_more": false,
+                      "rows": []
+                    }
+                    """.trimIndent(),
+                )
+
+                "DELETE" -> {
+                    exchange.sendResponseHeaders(204, -1)
+                    exchange.close()
+                }
+
+                else -> {
+                    exchange.sendResponseHeaders(405, -1)
+                    exchange.close()
+                }
+            }
+        }
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.openAndConnect("user-1").getOrThrow()
+            val originalSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
+            db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
+
+            val firstError = client.pushPending().exceptionOrNull()
+
+            assertNotNull(firstError)
+            assertTrue(firstError is SourceRecoveryRequiredException)
+            assertEquals(SourceRecoveryReason.SOURCE_SEQUENCE_OUT_OF_ORDER, firstError.reason)
+            assertEquals("source_recovery", scalarText(db, "SELECT kind FROM _sync_operation_state WHERE singleton_key = 1"))
+            assertEquals(
+                "source_sequence_out_of_order",
+                scalarText(db, "SELECT source_recovery_reason FROM _sync_operation_state WHERE singleton_key = 1"),
+            )
+            assertEquals(originalSourceId, scalarText(db, "SELECT source_recovery_source_id FROM _sync_operation_state WHERE singleton_key = 1"))
+            assertEquals(1L, scalarLong(db, "SELECT source_recovery_source_bundle_id FROM _sync_operation_state WHERE singleton_key = 1"))
+            assertEquals("outbox", scalarText(db, "SELECT source_recovery_intent_state FROM _sync_operation_state WHERE singleton_key = 1"))
+            assertEquals("prepared", scalarText(db, "SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1"))
+            assertEquals(1L, scalarLong(db, "SELECT source_bundle_id FROM _sync_outbox_bundle WHERE singleton_key = 1"))
+            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+
+            client.rebuild().getOrThrow()
+
+            val rotatedSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1")
+            assertNotEquals(originalSourceId, rotatedSourceId)
+            assertEquals("none", scalarText(db, "SELECT kind FROM _sync_operation_state WHERE singleton_key = 1"))
+            assertEquals("prepared", scalarText(db, "SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1"))
+            assertEquals(rotatedSourceId, scalarText(db, "SELECT source_id FROM _sync_outbox_bundle WHERE singleton_key = 1"))
+            assertEquals(1L, scalarLong(db, "SELECT source_bundle_id FROM _sync_outbox_bundle WHERE singleton_key = 1"))
+            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            assertEquals(
+                2L,
+                scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$rotatedSourceId'"),
+            )
+
+            client.close()
+            val resumedClient = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            resumedClient.open().getOrThrow()
+            assertTrue(resumedClient.attach("user-1").getOrThrow() is AttachResult.Connected)
+
+            val pushReport = resumedClient.pushPending().getOrThrow()
+
+            assertEquals(PushOutcome.COMMITTED, pushReport.outcome)
+            assertEquals(listOf(1L, 1L), pushServer.createRequests.map { it.sourceBundleId })
+            assertEquals(listOf(originalSourceId, rotatedSourceId), pushServer.createRequests.map { it.sourceId })
+            assertEquals(rotatedSourceId, pushServer.bundles.last().sourceId)
+            assertEquals(1L, pushServer.bundles.last().sourceBundleId)
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            assertEquals("none", scalarText(db, "SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1"))
+            assertEquals(
+                2L,
+                scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$rotatedSourceId'"),
+            )
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun pushPending_createTimeHistoryPruned_setsDurableSourceRecoveryState() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer()
+        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson).apply {
+            createError = {
+                409 to """{"error":"history_pruned","message":"stale source history was pruned"}"""
+            }
+        }
+        pushServer.install(server)
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.openAndConnect("user-1").getOrThrow()
+            val sourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1")
+            db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
+
+            val error = client.pushPending().exceptionOrNull()
+
+            assertNotNull(error)
+            assertTrue(error is SourceRecoveryRequiredException)
+            assertEquals(SourceRecoveryReason.HISTORY_PRUNED, error.reason)
+            assertEquals("source_recovery", scalarText(db, "SELECT kind FROM _sync_operation_state WHERE singleton_key = 1"))
+            assertEquals("history_pruned", scalarText(db, "SELECT source_recovery_reason FROM _sync_operation_state WHERE singleton_key = 1"))
+            assertEquals(sourceId, scalarText(db, "SELECT source_recovery_source_id FROM _sync_operation_state WHERE singleton_key = 1"))
+            assertEquals(1L, scalarLong(db, "SELECT source_recovery_source_bundle_id FROM _sync_operation_state WHERE singleton_key = 1"))
+            assertEquals("prepared", scalarText(db, "SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1"))
+            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+
+            client.close()
+            val restartedClient = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            restartedClient.open().getOrThrow()
+            val info = restartedClient.sourceInfo().getOrThrow()
+            assertTrue(info.rebuildRequired)
+            assertTrue(info.sourceRecoveryRequired)
+            assertEquals(SourceRecoveryReason.HISTORY_PRUNED, info.sourceRecoveryReason)
+            assertEquals("prepared", scalarText(db, "SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1"))
+            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun pushPending_commitTimeSourceSequenceChanged_setsDurableSourceRecoveryState() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer()
+        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson).apply {
+            commitError = { _, _ ->
+                409 to """{"error":"source_sequence_changed","message":"server source sequence changed"}"""
+            }
+        }
+        pushServer.install(server)
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.openAndConnect("user-1").getOrThrow()
+            val sourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1")
+            db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
+
+            val error = client.pushPending().exceptionOrNull()
+
+            assertNotNull(error)
+            assertTrue(error is SourceRecoveryRequiredException)
+            assertEquals(SourceRecoveryReason.SOURCE_SEQUENCE_CHANGED, error.reason)
+            assertEquals("source_recovery", scalarText(db, "SELECT kind FROM _sync_operation_state WHERE singleton_key = 1"))
+            assertEquals(
+                "source_sequence_changed",
+                scalarText(db, "SELECT source_recovery_reason FROM _sync_operation_state WHERE singleton_key = 1"),
+            )
+            assertEquals(sourceId, scalarText(db, "SELECT source_recovery_source_id FROM _sync_operation_state WHERE singleton_key = 1"))
+            assertEquals(1L, scalarLong(db, "SELECT source_recovery_source_bundle_id FROM _sync_operation_state WHERE singleton_key = 1"))
+            assertEquals("prepared", scalarText(db, "SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1"))
+            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            assertEquals(1, pushServer.uploadedChunks.size)
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun pushPending_committedReplayPruned_requiresKeepSourceRebuild_andAdvancesSourceFloor() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer()
+        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson).apply {
+            committedBundleChunkError = { _, _ ->
+                409 to """{"error":"history_pruned","message":"committed replay is below retained floor"}"""
+            }
+        }
+        pushServer.install(server)
+        server.createContext("/sync/snapshot-sessions") { exchange ->
+            respondJson(
+                exchange,
+                200,
+                """
+                {
+                  "snapshot_id": "snapshot-committed-pruned",
+                  "snapshot_bundle_seq": 1,
+                  "row_count": 1,
+                  "byte_count": 32,
+                  "expires_at": "2026-03-22T00:00:00Z"
+                }
+                """.trimIndent(),
+            )
+        }
+        server.createContext("/sync/snapshot-sessions/snapshot-committed-pruned") { exchange ->
+            when (exchange.requestMethod) {
+                "GET" -> respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-committed-pruned",
+                      "snapshot_bundle_seq": 1,
+                      "next_row_ordinal": 1,
+                      "has_more": false,
+                      "rows": [
+                        {
+                          "schema": "main",
+                          "table": "users",
+                          "key": {"id":"user-1"},
+                          "row_version": 1,
+                          "payload": {"id":"user-1","name":"Ada"}
+                        }
+                      ]
+                    }
+                    """.trimIndent(),
+                )
+
+                "DELETE" -> {
+                    exchange.sendResponseHeaders(204, -1)
+                    exchange.close()
+                }
+
+                else -> {
+                    exchange.sendResponseHeaders(405, -1)
+                    exchange.close()
+                }
+            }
+        }
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.openAndConnect("user-1").getOrThrow()
+            val sourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1")
+            db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
+
+            val firstError = client.pushPending().exceptionOrNull()
+
+            assertTrue(firstError is RebuildRequiredException)
+            assertEquals(1L, scalarLong(db, "SELECT rebuild_required FROM _sync_attachment_state WHERE singleton_key = 1"))
+            assertEquals("committed_remote", scalarText(db, "SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1"))
+            assertEquals(1L, scalarLong(db, "SELECT source_bundle_id FROM _sync_outbox_bundle WHERE singleton_key = 1"))
+
+            client.rebuild().getOrThrow()
+
+            assertEquals(sourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1"))
+            assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_attachment_state WHERE singleton_key = 1"))
+            assertEquals("none", scalarText(db, "SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            assertEquals(2L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$sourceId'"))
+            assertEquals("Ada", scalarText(db, "SELECT name FROM users WHERE id = 'user-1'"))
         } finally {
             http.close()
             server.stop(0)
@@ -1768,7 +2071,7 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
                     PushSessionCreateRequest.serializer(),
                     exchange.requestBody.readBytes().decodeToString(),
                 )
-                createdSourceId = request.sourceId
+                createdSourceId = exchange.requestHeaders.getFirst("Oversync-Source-ID").orEmpty()
                 respondJson(
                     exchange,
                     200,
@@ -1885,7 +2188,7 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
                 syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
                 transientRetryPolicy = OversqliteTransientRetryPolicy(maxAttempts = 1),
             )
-            secondClient.openAndConnect("user-1", sourceId).getOrThrow()
+            secondClient.openAndConnect("user-1").getOrThrow()
             secondClient.pushPending().getOrThrow()
 
             assertEquals(listOf(1L, 1L), pushServer.createRequests.map { it.sourceBundleId })
@@ -2088,7 +2391,7 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
                     PushSessionCreateRequest.serializer(),
                     exchange.requestBody.readBytes().decodeToString(),
                 )
-                createdSourceId = request.sourceId
+                createdSourceId = exchange.requestHeaders.getFirst("Oversync-Source-ID").orEmpty()
                 respondJson(
                     exchange,
                     200,
@@ -2209,7 +2512,7 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             )
 
             assertEquals(DetachOutcome.DETACHED, client.detach().getOrThrow())
-            assertEquals(OpenState.ReadyAnonymous, client.open(sourceId).getOrThrow())
+            client.open().getOrThrow()
             client.attach("user-1").getOrThrow()
             assertEquals(
                 2L,
@@ -2257,7 +2560,7 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertEquals(1, result.syncRounds)
             assertEquals(0L, result.remainingPendingRowCount)
             assertEquals(PushOutcome.COMMITTED, result.lastSync.pushOutcome)
-            assertEquals(OpenState.ReadyAnonymous, client.open(sourceId).getOrThrow())
+            client.open().getOrThrow()
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
@@ -2300,7 +2603,7 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertEquals(2, result.syncRounds)
             assertEquals(0L, result.remainingPendingRowCount)
             assertEquals(listOf(1L, 2L), pushServer.createRequests.map { it.sourceBundleId })
-            assertEquals(OpenState.ReadyAnonymous, client.open(sourceId).getOrThrow())
+            client.open().getOrThrow()
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
         } finally {
@@ -2343,7 +2646,7 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertEquals(2, result.syncRounds)
             assertEquals(1L, result.remainingPendingRowCount)
             assertEquals(listOf(1L, 2L), pushServer.createRequests.map { it.sourceBundleId })
-            assertEquals(OpenState.ReadyAttached("user-1"), client.open(sourceId).getOrThrow())
+            client.open().getOrThrow()
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             assertEquals("attached", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
             assertEquals("user-1", scalarText(db, "SELECT attached_user_id FROM _sync_attachment_state"))
@@ -2387,7 +2690,7 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
                     PushSessionCreateRequest.serializer(),
                     exchange.requestBody.readBytes().decodeToString(),
                 )
-                sourceId = request.sourceId
+                sourceId = exchange.requestHeaders.getFirst("Oversync-Source-ID").orEmpty()
                 respondJson(
                     exchange,
                     200,
@@ -2476,7 +2779,7 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             val error = client.syncThenDetach().exceptionOrNull()
 
             assertNotNull(error)
-            assertEquals(OpenState.ReadyAttached("user-1"), client.open(persistedSourceId).getOrThrow())
+            client.open().getOrThrow()
             assertEquals("attached", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
             assertEquals("user-1", scalarText(db, "SELECT attached_user_id FROM _sync_attachment_state"))
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM users"))
@@ -2594,7 +2897,7 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
                     PushSessionCreateRequest.serializer(),
                     exchange.requestBody.readBytes().decodeToString(),
                 )
-                createdSourceId = request.sourceId
+                createdSourceId = exchange.requestHeaders.getFirst("Oversync-Source-ID").orEmpty()
                 respondJson(
                     exchange,
                     200,
@@ -2731,7 +3034,7 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
                     PushSessionCreateRequest.serializer(),
                     exchange.requestBody.readBytes().decodeToString(),
                 )
-                createdSourceId = request.sourceId
+                createdSourceId = exchange.requestHeaders.getFirst("Oversync-Source-ID").orEmpty()
                 respondJson(
                     exchange,
                     200,
@@ -2847,7 +3150,7 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
                     PushSessionCreateRequest.serializer(),
                     exchange.requestBody.readBytes().decodeToString(),
                 )
-                createdSourceId = request.sourceId
+                createdSourceId = exchange.requestHeaders.getFirst("Oversync-Source-ID").orEmpty()
                 respondJson(
                     exchange,
                     200,

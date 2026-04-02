@@ -158,8 +158,8 @@ internal fun newAuthenticatedHttpClient(
     }
 }
 
-internal suspend fun issueDummySigninToken(baseUrl: String, userId: String, sourceId: String): String {
-    val http = HttpClient(OkHttp) {
+internal fun newBaseHttpClient(baseUrl: String): HttpClient {
+    return HttpClient(OkHttp) {
         install(ContentNegotiation) {
             json(e2eJson)
         }
@@ -167,12 +167,31 @@ internal suspend fun issueDummySigninToken(baseUrl: String, userId: String, sour
             url(baseUrl)
         }
     }
+}
+
+internal suspend fun issueDummySigninToken(baseUrl: String, userId: String, sourceId: String): String {
+    val http = newBaseHttpClient(baseUrl)
     return try {
         http.post("/dummy-signin") {
             header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
             setBody(DummySigninRequest(user = userId, password = "anything", device = sourceId))
         }.body<DummySigninResponse>().token
     } finally {
+        http.close()
+    }
+}
+
+internal suspend fun bootstrapManagedSourceId(
+    db: SafeSQLiteConnection,
+    config: RealServerConfig,
+): String {
+    val http = newBaseHttpClient(config.baseUrl)
+    val client = newRealServerClient(db, config, http)
+    return try {
+        client.open().getOrThrow()
+        client.sourceInfo().getOrThrow().currentSourceId
+    } finally {
+        client.close()
         http.close()
     }
 }
@@ -1009,7 +1028,6 @@ private data class DummySigninResponse(
     val token: String,
     @SerialName("expires_in") val expiresIn: Long,
     val user: String,
-    val device: String,
 )
 
 @Serializable

@@ -63,7 +63,8 @@ import dev.goquick.sqlitenow.core.util.toSqliteDate
 import dev.goquick.sqlitenow.core.util.toRfc3339String
 import dev.goquick.sqlitenow.oversqlite.AttachResult
 import dev.goquick.sqlitenow.oversqlite.MergeResult
-import dev.goquick.sqlitenow.oversqlite.OpenState
+import dev.goquick.sqlitenow.oversqlite.ConnectBindingConflictException
+import dev.goquick.sqlitenow.oversqlite.ConnectLocalStateConflictException
 import dev.goquick.sqlitenow.oversqlite.OversqliteClient
 import dev.goquick.sqlitenow.oversqlite.Resolver
 import dev.goquick.sqlitenow.oversqlite.SyncReport
@@ -401,27 +402,22 @@ private suspend fun setupSyncClient(
         val sessionHttpClient = checkNotNull(httpClient)
         val sessionClient = checkNotNull(client)
 
-        when (val openState = sessionClient.open(sourceId).getOrThrow()) {
-            OpenState.ReadyAnonymous -> Unit
-            is OpenState.ReadyAttached -> {
-                if (openState.scope != user) {
-                    throw IllegalStateException(
-                        "Local sync state is still attached to ${openState.scope}. " +
-                            "Sign back into that user or clear the sample database before switching accounts."
-                    )
-                }
-            }
-            is OpenState.AttachRecoveryRequired -> {
-                if (openState.targetScope != user) {
-                    throw IllegalStateException(
-                        "Local sync recovery is pending for ${openState.targetScope}. " +
-                            "Sign back into that user or clear the sample database before switching accounts."
-                    )
-                }
-            }
+        sessionClient.open().getOrThrow()
+        val attach = try {
+            attachUntilConnected(sessionClient, user)
+        } catch (e: ConnectBindingConflictException) {
+            throw IllegalStateException(
+                "Local sync state is still attached to ${e.attachedUserId}. " +
+                    "Sign back into that user or clear the sample database before switching accounts.",
+                e,
+            )
+        } catch (e: ConnectLocalStateConflictException) {
+            throw IllegalStateException(
+                "Local sync recovery is pending for a different durable scope. " +
+                    "Sign back into that user or clear the sample database before switching accounts.",
+                e,
+            )
         }
-
-        val attach = attachUntilConnected(sessionClient, user)
         appLog.i { "Attach complete for user=$user outcome=${attach.outcome}" }
         logLocalSyncState("after attach")
 
@@ -519,7 +515,7 @@ fun App() {
             }
     }
 
-    // Load persisted auth and install-scoped source id, then restore signed-in session if token exists.
+    // Restore persisted auth, then resume signed-in session if token exists.
     LaunchedEffect(isDatabaseOpen) {
         if (!isDatabaseOpen) {
             return@LaunchedEffect

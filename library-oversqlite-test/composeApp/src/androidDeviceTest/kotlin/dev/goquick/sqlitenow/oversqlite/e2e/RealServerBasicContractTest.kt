@@ -1,7 +1,6 @@
 package dev.goquick.sqlitenow.oversqlite.e2e
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.goquick.sqlitenow.oversqlite.RebuildMode
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -31,8 +30,8 @@ class RealServerBasicContractTest {
             val clientA = newRealServerClient(dbA, config, httpA)
             val clientB = newRealServerClient(dbB, config, httpB)
 
-            clientA.openAndAttach(userId, deviceA).getOrThrow()
-            clientB.openAndAttach(userId, deviceB).getOrThrow()
+            clientA.openAndAttach(userId).getOrThrow()
+            clientB.openAndAttach(userId).getOrThrow()
 
             val authorId = randomRowId()
             val postId = randomRowId()
@@ -87,8 +86,8 @@ class RealServerBasicContractTest {
             val clientA = newRealServerClient(dbA, config, httpA)
             val clientB = newRealServerClient(dbB, config, httpB)
 
-            clientA.openAndAttach(userId, deviceA).getOrThrow()
-            clientB.openAndAttach(userId, deviceB).getOrThrow()
+            clientA.openAndAttach(userId).getOrThrow()
+            clientB.openAndAttach(userId).getOrThrow()
 
             val firstAuthorId = randomRowId()
             dbA.execSQL(
@@ -150,9 +149,9 @@ class RealServerBasicContractTest {
             val clientB = newRealServerClient(dbB, config, httpB)
             val clientC = newRealServerClient(dbC, config, httpC)
 
-            clientA.openAndAttach(userId, deviceA).getOrThrow()
-            clientB.openAndAttach(userId, deviceB).getOrThrow()
-            clientC.openAndAttach(userId, deviceC).getOrThrow()
+            clientA.openAndAttach(userId).getOrThrow()
+            clientB.openAndAttach(userId).getOrThrow()
+            clientC.openAndAttach(userId).getOrThrow()
 
             val userA = randomRowId()
             dbA.execSQL(
@@ -229,8 +228,8 @@ class RealServerBasicContractTest {
             val clientA = newRealServerClient(dbA, config, httpA)
             val clientB = newRealServerClient(dbB, config, httpB)
 
-            clientA.openAndAttach(userId, deviceA).getOrThrow()
-            clientB.openAndAttach(userId, deviceB).getOrThrow()
+            clientA.openAndAttach(userId).getOrThrow()
+            clientB.openAndAttach(userId).getOrThrow()
 
             val firstAuthorId = randomRowId()
             dbA.execSQL(
@@ -251,7 +250,7 @@ class RealServerBasicContractTest {
             clientB.pushPending().getOrThrow()
 
             val restartedClientB = newRealServerClient(dbB, config, httpB)
-            restartedClientB.openAndAttach(userId, deviceB).getOrThrow()
+            restartedClientB.openAndAttach(userId).getOrThrow()
             restartedClientB.pullToStable().getOrThrow()
 
             assertEquals(2L, restartedClientB.syncStatus().getOrThrow().lastBundleSeqSeen)
@@ -289,8 +288,8 @@ class RealServerBasicContractTest {
             val seedClient = newRealServerClient(seedDb, config, seedHttp)
             val restoreClient = newRealServerClient(restoreDb, config, restoreHttp)
 
-            seedClient.openAndAttach(userId, seedDevice).getOrThrow()
-            restoreClient.openAndAttach(userId, restoreDevice).getOrThrow()
+            seedClient.openAndAttach(userId).getOrThrow()
+            restoreClient.openAndAttach(userId).getOrThrow()
 
             repeat(8) { index ->
                 val authorId = randomRowId()
@@ -310,7 +309,7 @@ class RealServerBasicContractTest {
             }
 
             seedClient.pushPending().getOrThrow()
-            restoreClient.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            restoreClient.rebuild().getOrThrow()
 
             assertEquals(8L, scalarLong(restoreDb, "SELECT COUNT(*) FROM users"))
             assertEquals(8L, scalarLong(restoreDb, "SELECT COUNT(*) FROM posts"))

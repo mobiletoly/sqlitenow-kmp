@@ -26,7 +26,7 @@ class AndroidLifecycleSmokeTest {
                 http = http,
             )
 
-            client.open("device-a").getOrThrow()
+            client.open().getOrThrow()
             db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
 
             val dirtyCount = db.prepare("SELECT COUNT(*) FROM _sync_dirty_rows").use { st ->

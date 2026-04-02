@@ -27,9 +27,9 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             createBusinessSubsetTables(dbB)
             createBusinessSubsetTables(dbC)
 
-            val sourceIdA = bootstrapInternalSourceId(dbA)
-            val sourceIdB = bootstrapInternalSourceId(dbB)
-            val sourceIdC = bootstrapInternalSourceId(dbC)
+            val sourceIdA = bootstrapManagedSourceId(dbA, config.baseUrl)
+            val sourceIdB = bootstrapManagedSourceId(dbB, config.baseUrl)
+            val sourceIdC = bootstrapManagedSourceId(dbC, config.baseUrl)
             val tokenA = issueDummySigninToken(config.baseUrl, userId, sourceIdA)
             val tokenB = issueDummySigninToken(config.baseUrl, userId, sourceIdB)
             val tokenC = issueDummySigninToken(config.baseUrl, userId, sourceIdC)
@@ -40,13 +40,13 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             val clientB = newRealServerClient(dbB, httpB)
             val clientC = newRealServerClient(dbC, httpC)
 
-            assertEquals(OpenState.ReadyAnonymous, clientA.open(sourceIdA).getOrThrow())
+            clientA.open().getOrThrow()
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.STARTED_EMPTY,
                 actual = clientA.attach(userId).getOrThrow(),
                 expectedAuthority = AuthorityStatus.AUTHORITATIVE_EMPTY,
             )
-            assertEquals(OpenState.ReadyAnonymous, clientB.open(sourceIdB).getOrThrow())
+            clientB.open().getOrThrow()
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
                 actual = clientB.attach(userId).getOrThrow(),
@@ -59,7 +59,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             clientA.pushPending().getOrThrow()
             clientB.pullToStable().getOrThrow()
 
-            assertEquals(OpenState.ReadyAnonymous, clientC.open(sourceIdC).getOrThrow())
+            clientC.open().getOrThrow()
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
                 actual = clientC.attach(userId).getOrThrow(),
@@ -99,8 +99,8 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             createBusinessSubsetTables(dbA)
             createBusinessSubsetTables(dbB)
 
-            val sourceIdA = bootstrapInternalSourceId(dbA)
-            val sourceIdB = bootstrapInternalSourceId(dbB)
+            val sourceIdA = bootstrapManagedSourceId(dbA, config.baseUrl)
+            val sourceIdB = bootstrapManagedSourceId(dbB, config.baseUrl)
             val tokenA = issueDummySigninToken(config.baseUrl, userId, sourceIdA)
             val tokenB = issueDummySigninToken(config.baseUrl, userId, sourceIdB)
             httpA = newRealServerHttpClient(config.baseUrl, tokenA)
@@ -112,7 +112,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             val clientA = newRealServerClient(dbA, httpA)
             val clientB = newRealServerClient(dbB, httpB)
 
-            assertEquals(OpenState.ReadyAnonymous, clientA.open(sourceIdA).getOrThrow())
+            clientA.open().getOrThrow()
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.SEEDED_FROM_LOCAL,
                 actual = clientA.attach(userId).getOrThrow(),
@@ -125,7 +125,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             assertTrue(dirtyStatus.blocksDetach)
             assertEquals(DetachOutcome.BLOCKED_UNSYNCED_DATA, clientA.detach().getOrThrow())
 
-            assertEquals(OpenState.ReadyAnonymous, clientB.open(sourceIdB).getOrThrow())
+            clientB.open().getOrThrow()
             val retry = clientB.attach(userId).getOrThrow()
             assertIs<AttachResult.RetryLater>(retry)
             assertTrue(retry.retryAfterSeconds > 0)
@@ -143,7 +143,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             assertEquals("Title lease-real-server", scalarText(dbB, "SELECT title FROM posts WHERE id = '$rowPostId'"))
 
             assertEquals(DetachOutcome.DETACHED, clientA.detach().getOrThrow())
-            assertEquals(OpenState.ReadyAnonymous, clientA.open(sourceIdA).getOrThrow())
+            clientA.open().getOrThrow()
         } finally {
             httpA?.close()
             httpB?.close()
@@ -168,8 +168,8 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             createBusinessSubsetTables(db)
             createBusinessSubsetTables(verifyDb)
 
-            val sourceId = bootstrapInternalSourceId(db)
-            val verifySourceId = bootstrapInternalSourceId(verifyDb)
+            val sourceId = bootstrapManagedSourceId(db, config.baseUrl)
+            val verifySourceId = bootstrapManagedSourceId(verifyDb, config.baseUrl)
             val token = issueDummySigninToken(config.baseUrl, userId, sourceId)
             val verifyToken = issueDummySigninToken(config.baseUrl, userId, verifySourceId)
             http = newRealServerHttpClient(config.baseUrl, token)
@@ -177,7 +177,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             val client = newRealServerClient(db, http)
             val verifyClient = newRealServerClient(verifyDb, verifyHttp)
 
-            assertEquals(OpenState.ReadyAnonymous, client.open(sourceId).getOrThrow())
+            client.open().getOrThrow()
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.STARTED_EMPTY,
                 actual = client.attach(userId).getOrThrow(),
@@ -191,11 +191,11 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             assertEquals(DetachOutcome.DETACHED, result.detach)
             assertEquals(1, result.syncRounds)
             assertEquals(0L, result.remainingPendingRowCount)
-            assertEquals(OpenState.ReadyAnonymous, client.open(sourceId).getOrThrow())
+            client.open().getOrThrow()
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM posts"))
 
-            assertEquals(OpenState.ReadyAnonymous, verifyClient.open(verifySourceId).getOrThrow())
+            verifyClient.open().getOrThrow()
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
                 actual = verifyClient.attach(userId).getOrThrow(),
@@ -223,7 +223,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
         try {
             createBusinessSubsetTables(db)
 
-            val sourceId = bootstrapInternalSourceId(db)
+            val sourceId = bootstrapManagedSourceId(db, config.baseUrl)
             val token = issueDummySigninToken(config.baseUrl, userId, sourceId)
             var pullResponses = 0
             http = newRealServerHttpClient(config.baseUrl, token) { path ->
@@ -239,7 +239,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             }
             val client = newRealServerClient(db, http)
 
-            assertEquals(OpenState.ReadyAnonymous, client.open(sourceId).getOrThrow())
+            client.open().getOrThrow()
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.STARTED_EMPTY,
                 actual = client.attach(userId).getOrThrow(),
@@ -256,7 +256,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             assertTrue(client.syncStatus().getOrThrow().pending.blocksDetach)
             assertEquals("attached", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
             assertEquals(userId, scalarText(db, "SELECT attached_user_id FROM _sync_attachment_state"))
-            assertEquals(OpenState.ReadyAttached(userId), client.open(sourceId).getOrThrow())
+            client.open().getOrThrow()
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.RESUMED_ATTACHED_STATE,
                 actual = client.attach(userId).getOrThrow(),
@@ -281,22 +281,22 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
         try {
             createBusinessSubsetTables(offlineDb)
             createBusinessSubsetTables(attachedDb)
-            val offlineSourceId = bootstrapInternalSourceId(offlineDb)
-            val attachedSourceId = bootstrapInternalSourceId(attachedDb)
+            val offlineSourceId = bootstrapManagedSourceId(offlineDb, config.baseUrl)
+            val attachedSourceId = bootstrapManagedSourceId(attachedDb, config.baseUrl)
 
             val offlineFreshClient = newRealServerClient(
                 db = offlineDb,
                 http = offlineHttp,
                 transientRetryPolicy = OversqliteTransientRetryPolicy(maxAttempts = 1),
             )
-            assertEquals(OpenState.ReadyAnonymous, offlineFreshClient.open(offlineSourceId).getOrThrow())
+            offlineFreshClient.open().getOrThrow()
             assertNotNull(offlineFreshClient.attach(userId).exceptionOrNull())
 
             val token = issueDummySigninToken(config.baseUrl, userId, attachedSourceId)
             val onlineHttp = newRealServerHttpClient(config.baseUrl, token)
             val onlineClient = newRealServerClient(attachedDb, onlineHttp)
             try {
-                assertEquals(OpenState.ReadyAnonymous, onlineClient.open(attachedSourceId).getOrThrow())
+                onlineClient.open().getOrThrow()
                 assertConnectedOutcome(
                     expectedOutcome = AttachOutcome.STARTED_EMPTY,
                     actual = onlineClient.attach(userId).getOrThrow(),
@@ -314,7 +314,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
                 transientRetryPolicy = OversqliteTransientRetryPolicy(maxAttempts = 1),
             )
             try {
-                assertEquals(OpenState.ReadyAttached(userId), offlineResumeClient.open(attachedSourceId).getOrThrow())
+                offlineResumeClient.open().getOrThrow()
                 assertConnectedOutcome(
                     expectedOutcome = AttachOutcome.RESUMED_ATTACHED_STATE,
                     actual = offlineResumeClient.attach(userId).getOrThrow(),
@@ -345,13 +345,13 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
         try {
             createBusinessSubsetTables(db)
 
-            val sourceId = bootstrapInternalSourceId(db)
+            val sourceId = bootstrapManagedSourceId(db, config.baseUrl)
 
             val tokenA = issueDummySigninToken(config.baseUrl, userId, sourceId)
             val httpA = newRealServerHttpClient(config.baseUrl, tokenA)
             val clientA = newRealServerClient(db, httpA)
             try {
-                assertEquals(OpenState.ReadyAnonymous, clientA.open(sourceId).getOrThrow())
+                clientA.open().getOrThrow()
                 assertConnectedOutcome(
                     expectedOutcome = AttachOutcome.STARTED_EMPTY,
                     actual = clientA.attach(userId).getOrThrow(),
@@ -369,7 +369,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             val httpB = newRealServerHttpClient(config.baseUrl, tokenB)
             val clientB = newRealServerClient(db, httpB)
             try {
-                assertEquals(OpenState.ReadyAnonymous, clientB.open(sourceId).getOrThrow())
+                clientB.open().getOrThrow()
                 assertConnectedOutcome(
                     expectedOutcome = AttachOutcome.STARTED_EMPTY,
                     actual = clientB.attach(otherUserId).getOrThrow(),
@@ -387,7 +387,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             val verifyHttpA = newRealServerHttpClient(config.baseUrl, issueDummySigninToken(config.baseUrl, userId, sourceId))
             val verifyClientA = newRealServerClient(db, verifyHttpA)
             try {
-                assertEquals(OpenState.ReadyAnonymous, verifyClientA.open(sourceId).getOrThrow())
+                verifyClientA.open().getOrThrow()
                 assertConnectedOutcome(
                     expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
                     actual = verifyClientA.attach(userId).getOrThrow(),
@@ -403,7 +403,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             val verifyHttpB = newRealServerHttpClient(config.baseUrl, issueDummySigninToken(config.baseUrl, otherUserId, sourceId))
             val verifyClientB = newRealServerClient(db, verifyHttpB)
             try {
-                assertEquals(OpenState.ReadyAnonymous, verifyClientB.open(sourceId).getOrThrow())
+                verifyClientB.open().getOrThrow()
                 assertConnectedOutcome(
                     expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
                     actual = verifyClientB.attach(otherUserId).getOrThrow(),
@@ -434,9 +434,9 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             createBusinessSubsetTables(verifyDbA)
             createBusinessSubsetTables(verifyDbB)
 
-            val sourceId = bootstrapInternalSourceId(db)
-            val verifySourceIdA = bootstrapInternalSourceId(verifyDbA)
-            val verifySourceIdB = bootstrapInternalSourceId(verifyDbB)
+            val sourceId = bootstrapManagedSourceId(db, config.baseUrl)
+            val verifySourceIdA = bootstrapManagedSourceId(verifyDbA, config.baseUrl)
+            val verifySourceIdB = bootstrapManagedSourceId(verifyDbB, config.baseUrl)
             val userARowIds = List(3) { randomSmokeUuid() }
             val userAPostIds = List(3) { randomSmokeUuid() }
             val userBRowIds = List(3) { randomSmokeUuid() }
@@ -445,7 +445,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             val httpA = newRealServerHttpClient(config.baseUrl, issueDummySigninToken(config.baseUrl, userId, sourceId))
             val clientA = newRealServerClient(db, httpA, uploadLimit = 1, downloadLimit = 1, snapshotChunkRows = 2)
             try {
-                assertEquals(OpenState.ReadyAnonymous, clientA.open(sourceId).getOrThrow())
+                clientA.open().getOrThrow()
                 assertConnectedOutcome(
                     expectedOutcome = AttachOutcome.STARTED_EMPTY,
                     actual = clientA.attach(userId).getOrThrow(),
@@ -470,7 +470,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             val httpB = newRealServerHttpClient(config.baseUrl, issueDummySigninToken(config.baseUrl, otherUserId, sourceId))
             val clientB = newRealServerClient(db, httpB, uploadLimit = 1, downloadLimit = 1, snapshotChunkRows = 2)
             try {
-                assertEquals(OpenState.ReadyAnonymous, clientB.open(sourceId).getOrThrow())
+                clientB.open().getOrThrow()
                 assertConnectedOutcome(
                     expectedOutcome = AttachOutcome.STARTED_EMPTY,
                     actual = clientB.attach(otherUserId).getOrThrow(),
@@ -495,7 +495,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             val verifyHttpA = newRealServerHttpClient(config.baseUrl, issueDummySigninToken(config.baseUrl, userId, verifySourceIdA))
             val verifyClientA = newRealServerClient(verifyDbA, verifyHttpA, uploadLimit = 1, downloadLimit = 1, snapshotChunkRows = 2)
             try {
-                assertEquals(OpenState.ReadyAnonymous, verifyClientA.open(verifySourceIdA).getOrThrow())
+                verifyClientA.open().getOrThrow()
                 assertConnectedOutcome(
                     expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
                     actual = verifyClientA.attach(userId).getOrThrow(),
@@ -518,7 +518,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             val verifyHttpB = newRealServerHttpClient(config.baseUrl, issueDummySigninToken(config.baseUrl, otherUserId, verifySourceIdB))
             val verifyClientB = newRealServerClient(verifyDbB, verifyHttpB, uploadLimit = 1, downloadLimit = 1, snapshotChunkRows = 2)
             try {
-                assertEquals(OpenState.ReadyAnonymous, verifyClientB.open(verifySourceIdB).getOrThrow())
+                verifyClientB.open().getOrThrow()
                 assertConnectedOutcome(
                     expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
                     actual = verifyClientB.attach(otherUserId).getOrThrow(),
@@ -569,9 +569,9 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             createBusinessSubsetTables(remoteSeedDb)
             createBusinessSubsetTables(verifyDb)
 
-            val installSourceId = bootstrapInternalSourceId(installDb)
-            val remoteSeedSourceId = bootstrapInternalSourceId(remoteSeedDb)
-            val verifySourceId = bootstrapInternalSourceId(verifyDb)
+            val installSourceId = bootstrapManagedSourceId(installDb, config.baseUrl)
+            val remoteSeedSourceId = bootstrapManagedSourceId(remoteSeedDb, config.baseUrl)
+            val verifySourceId = bootstrapManagedSourceId(verifyDb, config.baseUrl)
 
             installHttpSeed = newRealServerHttpClient(
                 config.baseUrl,
@@ -580,7 +580,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             val installSeedClient = newRealServerClient(installDb, installHttpSeed)
             try {
                 insertBusinessUserAndPost(installDb, installSeedUserRowId, installSeedPostRowId, "install-local-seed")
-                assertEquals(OpenState.ReadyAnonymous, installSeedClient.open(installSourceId).getOrThrow())
+                installSeedClient.open().getOrThrow()
                 assertConnectedOutcome(
                     expectedOutcome = AttachOutcome.SEEDED_FROM_LOCAL,
                     actual = installSeedClient.attach(seedUserId).getOrThrow(),
@@ -600,7 +600,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             )
             val remoteSeedClient = newRealServerClient(remoteSeedDb, remoteSeedHttp)
             try {
-                assertEquals(OpenState.ReadyAnonymous, remoteSeedClient.open(remoteSeedSourceId).getOrThrow())
+                remoteSeedClient.open().getOrThrow()
                 assertConnectedOutcome(
                     expectedOutcome = AttachOutcome.STARTED_EMPTY,
                     actual = remoteSeedClient.attach(restoredUserId).getOrThrow(),
@@ -620,7 +620,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             )
             val installRestoreClient = newRealServerClient(installDb, installHttpRestore)
             try {
-                assertEquals(OpenState.ReadyAnonymous, installRestoreClient.open(installSourceId).getOrThrow())
+                installRestoreClient.open().getOrThrow()
                 assertConnectedOutcome(
                     expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
                     actual = installRestoreClient.attach(restoredUserId).getOrThrow(),
@@ -644,7 +644,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             )
             val verifyClient = newRealServerClient(verifyDb, verifyHttp)
             try {
-                assertEquals(OpenState.ReadyAnonymous, verifyClient.open(verifySourceId).getOrThrow())
+                verifyClient.open().getOrThrow()
                 assertConnectedOutcome(
                     expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
                     actual = verifyClient.attach(restoredUserId).getOrThrow(),
@@ -681,8 +681,8 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             createBusinessSubsetTables(db)
             createBusinessSubsetTables(verifyDb)
 
-            val sourceId = bootstrapInternalSourceId(db)
-            val verifySourceId = bootstrapInternalSourceId(verifyDb)
+            val sourceId = bootstrapManagedSourceId(db, config.baseUrl)
+            val verifySourceId = bootstrapManagedSourceId(verifyDb, config.baseUrl)
             val token = issueDummySigninToken(config.baseUrl, userId, sourceId)
             val verifyToken = issueDummySigninToken(config.baseUrl, userId, verifySourceId)
             http = newRealServerHttpClient(config.baseUrl, token)
@@ -690,7 +690,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             val client = newRealServerClient(db, http)
             val verifyClient = newRealServerClient(verifyDb, verifyHttp)
 
-            assertEquals(OpenState.ReadyAnonymous, client.open(sourceId).getOrThrow())
+            client.open().getOrThrow()
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.STARTED_EMPTY,
                 actual = client.attach(userId).getOrThrow(),
@@ -702,7 +702,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             assertEquals(2L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$sourceId'"))
 
             assertEquals(DetachOutcome.DETACHED, client.detach().getOrThrow())
-            assertEquals(OpenState.ReadyAnonymous, client.open(sourceId).getOrThrow())
+            client.open().getOrThrow()
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
                 actual = client.attach(userId).getOrThrow(),
@@ -713,7 +713,7 @@ internal class RealServerSmokeTest : RealServerSmokeSupport() {
             client.pushPending().getOrThrow()
             assertEquals(3L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$sourceId'"))
 
-            assertEquals(OpenState.ReadyAnonymous, verifyClient.open(verifySourceId).getOrThrow())
+            verifyClient.open().getOrThrow()
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
                 actual = verifyClient.attach(userId).getOrThrow(),

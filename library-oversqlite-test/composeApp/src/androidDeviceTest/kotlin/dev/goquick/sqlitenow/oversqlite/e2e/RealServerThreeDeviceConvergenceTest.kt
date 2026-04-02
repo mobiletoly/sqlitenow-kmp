@@ -1,7 +1,6 @@
 package dev.goquick.sqlitenow.oversqlite.e2e
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.goquick.sqlitenow.oversqlite.RebuildMode
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -58,12 +57,12 @@ class RealServerThreeDeviceConvergenceTest {
                 downloadLimit = 2,
             )
 
-            clientA.openAndAttach(userId, deviceA).getOrThrow()
-            clientB.openAndAttach(userId, deviceB).getOrThrow()
-            clientC.openAndAttach(userId, deviceC).getOrThrow()
-            clientA.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            clientB.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            clientC.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            clientA.openAndAttach(userId).getOrThrow()
+            clientB.openAndAttach(userId).getOrThrow()
+            clientC.openAndAttach(userId).getOrThrow()
+            clientA.rebuild().getOrThrow()
+            clientB.rebuild().getOrThrow()
+            clientC.rebuild().getOrThrow()
 
             val hotGraph = insertHotGraph(dbA)
             insertRichSchemaBatch(dbA, "three-a-0")

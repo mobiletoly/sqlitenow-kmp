@@ -19,6 +19,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
@@ -33,7 +34,11 @@ internal class OversqliteRemoteApi(
     private val json: Json,
     private val log: ((() -> String)) -> Unit,
 ) {
-    suspend fun fetchCapabilities(): CapabilitiesResponse {
+    private companion object {
+        const val sourceIdHeaderName = "Oversync-Source-ID"
+    }
+
+    suspend fun fetchCapabilities(sourceId: String): CapabilitiesResponse {
         return requireOkJson(
             operation = "capabilities request",
             method = "GET",
@@ -43,7 +48,9 @@ internal class OversqliteRemoteApi(
                 method = "GET",
                 path = "/sync/capabilities",
             ) {
-                http.get("sync/capabilities")
+                http.get("sync/capabilities") {
+                    header(sourceIdHeaderName, sourceId)
+                }
             },
         )
     }
@@ -65,10 +72,10 @@ internal class OversqliteRemoteApi(
                 path = "/sync/connect",
             ) {
                 http.post("sync/connect") {
+                    header(sourceIdHeaderName, sourceId)
                     contentType(ContentType.Application.Json)
                     setBody(
                         ConnectRequest(
-                            sourceId = sourceId,
                             hasLocalPendingRows = hasLocalPendingRows,
                         ),
                     )
@@ -97,10 +104,10 @@ internal class OversqliteRemoteApi(
                 path = "/sync/push-sessions",
             ) {
                 http.post("sync/push-sessions") {
+                    header(sourceIdHeaderName, sourceId)
                     contentType(ContentType.Application.Json)
                     setBody(
                         PushSessionCreateRequest(
-                            sourceId = sourceId,
                             sourceBundleId = sourceBundleId,
                             plannedRowCount = plannedRowCount,
                             initializationId = initializationId?.takeIf { it.isNotBlank() },
@@ -109,7 +116,8 @@ internal class OversqliteRemoteApi(
                 }
             },
         ) { status, raw ->
-            decodeInitializationLeaseExceptionOrNull(status, raw)
+            decodeSourceRecoveryRequiredExceptionOrNull(status, raw)
+                ?: decodeInitializationLeaseExceptionOrNull(status, raw)
         }
         validatePushSessionCreateResponse(response, sourceBundleId, plannedRowCount, sourceId)
         log {
@@ -121,6 +129,7 @@ internal class OversqliteRemoteApi(
 
     suspend fun uploadPushChunk(
         pushId: String,
+        sourceId: String,
         request: PushSessionChunkRequest,
     ): PushSessionChunkResponse {
         log {
@@ -137,6 +146,7 @@ internal class OversqliteRemoteApi(
                 path = "/sync/push-sessions/$pushId/chunks",
             ) {
                 http.post("sync/push-sessions/$pushId/chunks") {
+                    header(sourceIdHeaderName, sourceId)
                     contentType(ContentType.Application.Json)
                     setBody(request)
                 }
@@ -150,7 +160,10 @@ internal class OversqliteRemoteApi(
         return response
     }
 
-    suspend fun commitPushSession(pushId: String): PushSessionCommitResponse {
+    suspend fun commitPushSession(
+        pushId: String,
+        sourceId: String,
+    ): PushSessionCommitResponse {
         log { "oversqlite commitPushSession pushId=$pushId" }
         val response = requireOkJson<PushSessionCommitResponse>(
             operation = "push commit request",
@@ -161,10 +174,13 @@ internal class OversqliteRemoteApi(
                 method = "POST",
                 path = "/sync/push-sessions/$pushId/commit",
             ) {
-                http.post("sync/push-sessions/$pushId/commit")
+                http.post("sync/push-sessions/$pushId/commit") {
+                    header(sourceIdHeaderName, sourceId)
+                }
             },
         ) { status, raw ->
             decodePushConflictExceptionOrNull(status, raw)
+                ?: decodeSourceRecoveryRequiredExceptionOrNull(status, raw)
                 ?: decodeInitializationLeaseExceptionOrNull(status, raw)
         }
         log {
@@ -176,6 +192,7 @@ internal class OversqliteRemoteApi(
 
     suspend fun fetchCommittedBundleChunk(
         bundleSeq: Long,
+        sourceId: String,
         afterRowOrdinal: Long?,
         maxRows: Int,
     ): CommittedBundleRowsResponse {
@@ -197,6 +214,7 @@ internal class OversqliteRemoteApi(
                 path = path,
             ) {
                 http.get("sync/committed-bundles/$bundleSeq/rows") {
+                    header(sourceIdHeaderName, sourceId)
                     url {
                         if (afterRowOrdinal != null) {
                             parameters.append("after_row_ordinal", afterRowOrdinal.toString())
@@ -207,10 +225,11 @@ internal class OversqliteRemoteApi(
             },
         ) { status, raw ->
             decodeCommittedBundleNotFoundExceptionOrNull(status, raw)
+                ?: decodeCommittedReplayPrunedExceptionOrNull(status, raw)
         }
     }
 
-    suspend fun deletePushSessionBestEffort(pushId: String) {
+    suspend fun deletePushSessionBestEffort(pushId: String, sourceId: String) {
         if (pushId.isBlank()) return
         runCatching {
             executeLoggedCall(
@@ -218,7 +237,9 @@ internal class OversqliteRemoteApi(
                 method = "DELETE",
                 path = "/sync/push-sessions/$pushId",
             ) {
-                http.delete("sync/push-sessions/$pushId")
+                http.delete("sync/push-sessions/$pushId") {
+                    header(sourceIdHeaderName, sourceId)
+                }
             }
         }.onFailure { error ->
             log {
@@ -228,7 +249,7 @@ internal class OversqliteRemoteApi(
         }
     }
 
-    suspend fun createSnapshotSession(): SnapshotSession {
+    suspend fun createSnapshotSession(sourceId: String): SnapshotSession {
         val session = requireOkJson<SnapshotSession>(
             operation = "snapshot session request",
             method = "POST",
@@ -238,7 +259,9 @@ internal class OversqliteRemoteApi(
                 method = "POST",
                 path = "/sync/snapshot-sessions",
             ) {
-                http.post("sync/snapshot-sessions")
+                http.post("sync/snapshot-sessions") {
+                    header(sourceIdHeaderName, sourceId)
+                }
             },
         )
         validateSnapshotSession(session)
@@ -247,6 +270,7 @@ internal class OversqliteRemoteApi(
 
     suspend fun fetchSnapshotChunk(
         snapshotId: String,
+        sourceId: String,
         snapshotBundleSeq: Long,
         afterRowOrdinal: Long,
         maxRows: Int,
@@ -269,6 +293,7 @@ internal class OversqliteRemoteApi(
                 path = path,
             ) {
                 http.get("sync/snapshot-sessions/$snapshotId") {
+                    header(sourceIdHeaderName, sourceId)
                     url {
                         parameters.append("after_row_ordinal", afterRowOrdinal.toString())
                         parameters.append("max_rows", maxRows.toString())
@@ -280,7 +305,7 @@ internal class OversqliteRemoteApi(
         return chunk
     }
 
-    suspend fun deleteSnapshotSessionBestEffort(snapshotId: String) {
+    suspend fun deleteSnapshotSessionBestEffort(snapshotId: String, sourceId: String) {
         if (snapshotId.isBlank()) return
         runCatching {
             executeLoggedCall(
@@ -288,7 +313,9 @@ internal class OversqliteRemoteApi(
                 method = "DELETE",
                 path = "/sync/snapshot-sessions/$snapshotId",
             ) {
-                http.delete("sync/snapshot-sessions/$snapshotId")
+                http.delete("sync/snapshot-sessions/$snapshotId") {
+                    header(sourceIdHeaderName, sourceId)
+                }
             }
         }.onFailure { error ->
             log {
@@ -302,6 +329,7 @@ internal class OversqliteRemoteApi(
         afterBundleSeq: Long,
         maxBundles: Int,
         targetBundleSeq: Long,
+        sourceId: String,
     ): PullResponse {
         val path = buildString {
             append("/sync/pull?after_bundle_seq=")
@@ -323,6 +351,7 @@ internal class OversqliteRemoteApi(
                 path = path,
             ) {
                 http.get("sync/pull") {
+                    header(sourceIdHeaderName, sourceId)
                     url {
                         parameters.append("after_bundle_seq", afterBundleSeq.toString())
                         parameters.append("max_bundles", maxBundles.toString())

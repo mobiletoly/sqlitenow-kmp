@@ -205,6 +205,7 @@ internal class OversqlitePushWorkflow(
                         val end = minOf(start + chunkSize, snapshot.canonicalRows.size)
                         val chunkResponse = remoteApi.uploadPushChunk(
                             pushId = pushId,
+                            sourceId = state.sourceId,
                             request = PushSessionChunkRequest(
                                 startRowOrdinal = start.toLong(),
                                 rows = buildPushRequestRows(snapshot.canonicalRows.subList(start, end)),
@@ -219,14 +220,14 @@ internal class OversqlitePushWorkflow(
                         start = end
                     }
                     val committed = committedPushBundleFromCommitResponse(
-                        remoteApi.commitPushSession(pushId),
+                        remoteApi.commitPushSession(pushId, state.sourceId),
                         state.sourceId,
                         snapshot.sourceBundleId,
                     )
                     persistRemoteCommitAcknowledgement(state, snapshot, committed)
                     committed
                 } catch (t: Throwable) {
-                    remoteApi.deletePushSessionBestEffort(pushId)
+                    remoteApi.deletePushSessionBestEffort(pushId, state.sourceId)
                     throw t
                 }
             }
@@ -287,6 +288,7 @@ internal class OversqlitePushWorkflow(
             try {
                 return remoteApi.fetchCommittedBundleChunk(
                     bundleSeq = committed.bundleSeq,
+                    sourceId = committed.sourceId,
                     afterRowOrdinal = afterRowOrdinal,
                     maxRows = committedBundleChunkRows(),
                 )

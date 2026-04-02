@@ -143,11 +143,7 @@ class BundlePullContractTest : BundleClientContractTestSupport() {
                 client.pushPending().exceptionOrNull(),
                 client.pullToStable().exceptionOrNull(),
                 client.sync().exceptionOrNull(),
-                client.rebuild(RebuildMode.KEEP_SOURCE).exceptionOrNull(),
-                client.rebuild(
-                    mode = RebuildMode.ROTATE_SOURCE,
-                    newSourceId = randomTestSourceId("pull-overlap-rotate"),
-                ).exceptionOrNull(),
+                client.rebuild().exceptionOrNull(),
             )
             overlappingErrors.forEach { error ->
                 assertTrue(error is SyncOperationInProgressException)
@@ -221,13 +217,7 @@ class BundlePullContractTest : BundleClientContractTestSupport() {
             )
 
             assertTrue(client.pullToStable().exceptionOrNull() is PendingPushReplayException)
-            assertTrue(client.rebuild(RebuildMode.KEEP_SOURCE).exceptionOrNull() is PendingPushReplayException)
-            assertTrue(
-                client.rebuild(
-                    mode = RebuildMode.ROTATE_SOURCE,
-                    newSourceId = randomTestSourceId("pull-pending-rotate"),
-                ).exceptionOrNull() is PendingPushReplayException
-            )
+            assertTrue(client.rebuild().exceptionOrNull() is PendingPushReplayException)
         } finally {
             http.close()
             server.stop(0)
@@ -816,7 +806,7 @@ class BundlePullContractTest : BundleClientContractTestSupport() {
             val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
             client.openAndConnect("user-1").getOrThrow()
 
-            val error = client.rebuild(RebuildMode.KEEP_SOURCE).exceptionOrNull()
+            val error = client.rebuild().exceptionOrNull()
             assertTrue(error != null)
             assertTrue(error.message?.contains("_sync_scope_id") == true)
         } finally {

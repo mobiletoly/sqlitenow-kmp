@@ -42,7 +42,7 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
             )
             client.openAndConnect("user-1").getOrThrow()
 
-            val error = client.rebuild(RebuildMode.KEEP_SOURCE).exceptionOrNull()
+            val error = client.rebuild().exceptionOrNull()
             assertTrue(error != null)
             assertTrue(error.message?.contains("oversqlite timestamp must be RFC3339/ISO-8601 instant") == true)
         } finally {
@@ -106,7 +106,7 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
                 client.progress.collect { observedProgress += it }
             }
 
-            val report = client.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            val report = client.rebuild().getOrThrow()
 
             collectJob.cancel()
             assertEquals(RemoteSyncOutcome.APPLIED_SNAPSHOT, report.outcome)
@@ -183,7 +183,7 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
                 """.trimIndent()
             )
 
-            val error = client.rebuild(RebuildMode.KEEP_SOURCE).exceptionOrNull()
+            val error = client.rebuild().exceptionOrNull()
             assertTrue(error != null)
             assertTrue(error.message?.contains("payload for users must contain every table column") == true)
             assertEquals(0L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
@@ -280,7 +280,7 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
             )
             client.openAndConnect("user-1").getOrThrow()
 
-            val error = client.rebuild(RebuildMode.KEEP_SOURCE).exceptionOrNull()
+            val error = client.rebuild().exceptionOrNull()
             assertTrue(error != null)
             assertTrue(error.message?.contains("payload for users must contain every table column") == true)
             assertEquals(listOf("0", "1"), requestedOrdinals)
@@ -348,7 +348,7 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
             val client = newClient(db, http, syncTables = listOf(SyncTable("blob_docs", syncKeyColumnName = "id")))
             client.openAndConnect("user-1").getOrThrow()
 
-            client.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            client.rebuild().getOrThrow()
 
             assertEquals(7L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM blob_docs"))
@@ -472,12 +472,12 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
             )
             client.openAndConnect("user-1").getOrThrow()
 
-            val firstError = client.rebuild(RebuildMode.KEEP_SOURCE).exceptionOrNull()
+            val firstError = client.rebuild().exceptionOrNull()
             assertTrue(firstError != null)
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
 
-            client.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            client.rebuild().getOrThrow()
 
             assertEquals(listOf("a:0", "a:1", "b:0"), requestedOrdinals)
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
@@ -564,7 +564,7 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
             val client = newClient(db, http, syncTables = listOf(SyncTable("employees", syncKeyColumnName = "id")))
             client.openAndConnect("user-1").getOrThrow()
 
-            client.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            client.rebuild().getOrThrow()
 
             assertEquals(5L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals(2L, scalarLong(db, "SELECT COUNT(*) FROM employees"))
@@ -658,7 +658,7 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
             )
             client.openAndConnect("user-1").getOrThrow()
 
-            client.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            client.rebuild().getOrThrow()
 
             assertEquals(6L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals("profile-1", scalarText(db, "SELECT profile_id FROM authors WHERE id = 'author-1'"))
@@ -722,10 +722,8 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
             client.openAndConnect("user-1").getOrThrow()
             val originalSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
 
-            val error = client.rebuild(
-                mode = RebuildMode.ROTATE_SOURCE,
-                newSourceId = "recover-fail-source",
-            ).exceptionOrNull()
+            markSourceRecoveryRequired(db)
+            val error = client.rebuild().exceptionOrNull()
             assertTrue(error != null)
             assertTrue(error.message?.contains("payload for users must contain every table column") == true)
             assertEquals(originalSourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
@@ -790,10 +788,8 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
             db.execSQL("UPDATE _sync_source_state SET next_source_bundle_id = 5 WHERE source_id = '$sourceBefore'")
             db.execSQL("UPDATE _sync_attachment_state SET last_bundle_seq_seen = 4 WHERE singleton_key = 1")
 
-            client.rebuild(
-                mode = RebuildMode.ROTATE_SOURCE,
-                newSourceId = "recover-rotated-source",
-            ).getOrThrow()
+            markSourceRecoveryRequired(db)
+            client.rebuild().getOrThrow()
 
             val newSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
             assertNotEquals(sourceBefore, newSourceId)
@@ -884,10 +880,8 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
                 """.trimIndent()
             )
 
-            client.rebuild(
-                mode = RebuildMode.ROTATE_SOURCE,
-                newSourceId = "recover-reset-source",
-            ).getOrThrow()
+            markSourceRecoveryRequired(db)
+            client.rebuild().getOrThrow()
 
             val newSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
             assertNotEquals(sourceBefore, newSourceId)
@@ -976,17 +970,16 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
             db.execSQL("UPDATE _sync_attachment_state SET rebuild_required = 1 WHERE singleton_key = 1")
             assertTrue(client.sync().exceptionOrNull() is RebuildRequiredException)
 
-            client.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            client.rebuild().getOrThrow()
             assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_attachment_state WHERE singleton_key = 1"))
             client.sync().getOrThrow()
 
             db.execSQL("UPDATE _sync_attachment_state SET rebuild_required = 1 WHERE singleton_key = 1")
             assertTrue(client.sync().exceptionOrNull() is RebuildRequiredException)
 
-            client.rebuild(
-                mode = RebuildMode.ROTATE_SOURCE,
-                newSourceId = "recover-rebuild-source",
-            ).getOrThrow()
+            markSourceRecoveryRequired(db)
+            assertTrue(client.sync().exceptionOrNull() is SourceRecoveryRequiredException)
+            client.rebuild().getOrThrow()
             assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_attachment_state WHERE singleton_key = 1"))
             client.sync().getOrThrow()
         } finally {

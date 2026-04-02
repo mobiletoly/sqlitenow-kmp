@@ -42,8 +42,8 @@ class RealServerStressTest {
                 downloadLimit = 2,
             )
 
-            clientA.openAndAttach(userId, deviceA).getOrThrow()
-            clientB.openAndAttach(userId, deviceB).getOrThrow()
+            clientA.openAndAttach(userId).getOrThrow()
+            clientB.openAndAttach(userId).getOrThrow()
 
             repeat(6) { batch ->
                 insertUserAndPostBatch(

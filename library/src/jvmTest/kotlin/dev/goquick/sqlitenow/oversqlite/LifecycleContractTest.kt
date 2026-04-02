@@ -13,6 +13,8 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
+import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
 
 class LifecycleContractTest : BundleClientContractTestSupport() {
     @Test
@@ -27,9 +29,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM sqlite_master WHERE name = '_sync_lifecycle_state'"))
             assertTrue(client.pushPending().exceptionOrNull() is OpenRequiredException)
 
-            val openState = client.open().getOrThrow()
-
-            assertEquals(OpenState.ReadyAnonymous, openState)
+            client.open().getOrThrow()
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM sqlite_master WHERE name = '_sync_lifecycle_state'"))
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM sqlite_master WHERE name = '_sync_attachment_state'"))
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM sqlite_master WHERE name = '_sync_operation_state'"))
@@ -44,26 +44,108 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
-    fun open_persistsCallerOwnedSourceId_andRejectsMismatchedSourceIdOnRestart() = runBlocking {
+    fun open_generatesAndPersistsManagedSourceIdAcrossRestart() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
         val server = newServer()
         val http = newHttpClient(server)
         try {
-            val sourceId = "install-source-a"
             val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
 
-            assertEquals(OpenState.ReadyAnonymous, client.open(sourceId).getOrThrow())
-            assertEquals(sourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1"))
+            client.open().getOrThrow()
+            val persistedSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1")
+            assertTrue(persistedSourceId.isNotBlank())
+            assertEquals(persistedSourceId, client.sourceInfo().getOrThrow().currentSourceId)
 
             client.close()
             val restartedClient = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            assertEquals(OpenState.ReadyAnonymous, restartedClient.open(sourceId).getOrThrow())
+            restartedClient.open().getOrThrow()
+            assertEquals(
+                persistedSourceId,
+                scalarText(db, "SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1"),
+            )
+            assertEquals(persistedSourceId, restartedClient.sourceInfo().getOrThrow().currentSourceId)
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
 
-            val mismatch = restartedClient.open("install-source-b").exceptionOrNull()
-            assertIs<SourceBindingMismatchException>(mismatch)
-            assertEquals(sourceId, mismatch.persistedSourceId)
-            assertEquals("install-source-b", mismatch.requestedSourceId)
+    @OptIn(ExperimentalUuidApi::class)
+    @Test
+    fun managedSourceIds_useUuidFormat_andRotatedRecoveryDoesNotReusePreviousId() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer().apply {
+            createContext("/sync/snapshot-sessions") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-uuid",
+                      "snapshot_bundle_seq": 0,
+                      "row_count": 0,
+                      "byte_count": 0,
+                      "expires_at": "2099-01-01T00:00:00Z"
+                    }
+                    """.trimIndent(),
+                )
+            }
+            createContext("/sync/snapshot-sessions/snapshot-uuid") { exchange ->
+                when (exchange.requestMethod) {
+                    "GET" -> respondJson(
+                        exchange,
+                        200,
+                        """
+                        {
+                          "snapshot_id": "snapshot-uuid",
+                          "snapshot_bundle_seq": 0,
+                          "next_row_ordinal": 0,
+                          "has_more": false,
+                          "rows": []
+                        }
+                        """.trimIndent(),
+                    )
+
+                    "DELETE" -> {
+                        exchange.sendResponseHeaders(204, -1)
+                        exchange.close()
+                    }
+
+                    else -> {
+                        exchange.sendResponseHeaders(405, -1)
+                        exchange.close()
+                    }
+                }
+            }
+        }
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.open().getOrThrow()
+            client.attach("user-1").getOrThrow()
+            val initialSourceId = client.sourceInfo().getOrThrow().currentSourceId
+            Uuid.parse(initialSourceId)
+
+            db.execSQL(
+                """
+                UPDATE _sync_operation_state
+                SET kind = 'source_recovery',
+                    source_recovery_reason = 'history_pruned',
+                    source_recovery_source_id = '$initialSourceId',
+                    source_recovery_source_bundle_id = 0,
+                    source_recovery_intent_state = ''
+                WHERE singleton_key = 1
+                """.trimIndent(),
+            )
+
+            client.rebuild().getOrThrow()
+            val rotatedSourceId = client.sourceInfo().getOrThrow().currentSourceId
+            Uuid.parse(rotatedSourceId)
+            assertNotEquals(initialSourceId, rotatedSourceId)
         } finally {
             http.close()
             server.stop(0)
@@ -206,25 +288,277 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
-    fun rotateSource_requiresExplicitFreshSourceId() = runBlocking {
+    fun sourceInfo_reportsOpaqueManagedSourceId() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
         val server = newServer()
         val http = newHttpClient(server)
         try {
             val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            assertEquals(OpenState.ReadyAnonymous, client.open("install-source-a").getOrThrow())
+            client.open().getOrThrow()
 
-            val firstRotation = client.rotateSource("install-source-b").getOrThrow()
-            assertEquals("install-source-b", firstRotation.sourceId)
-            assertEquals("install-source-b", scalarText(db, "SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1"))
+            val info = client.sourceInfo().getOrThrow()
 
-            val sameSourceError = client.rotateSource("install-source-b").exceptionOrNull()
-            assertIs<IllegalArgumentException>(sameSourceError)
+            assertTrue(info.currentSourceId.isNotBlank())
+            assertEquals(
+                scalarText(db, "SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1"),
+                info.currentSourceId,
+            )
+            assertFalse(info.rebuildRequired)
+            assertFalse(info.sourceRecoveryRequired)
+            assertEquals(null, info.sourceRecoveryReason)
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
 
-            val reusedSourceError = client.rotateSource("install-source-a").exceptionOrNull()
-            assertIs<SourceSequenceMismatchException>(reusedSourceError)
-            Unit
+    @Test
+    fun sourceInfo_reportsDurableSourceRecoveryGate_andOrdinarySyncFailsClosed() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer()
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.openAndConnect("user-1").getOrThrow()
+            val currentSourceId = client.sourceInfo().getOrThrow().currentSourceId
+
+            db.execSQL(
+                """
+                UPDATE _sync_operation_state
+                SET kind = 'source_recovery',
+                    source_recovery_reason = 'source_sequence_changed',
+                    source_recovery_source_id = '$currentSourceId',
+                    source_recovery_source_bundle_id = 7,
+                    source_recovery_intent_state = 'outbox'
+                WHERE singleton_key = 1
+                """.trimIndent(),
+            )
+
+            val info = client.sourceInfo().getOrThrow()
+            assertTrue(info.rebuildRequired)
+            assertTrue(info.sourceRecoveryRequired)
+            assertEquals(SourceRecoveryReason.SOURCE_SEQUENCE_CHANGED, info.sourceRecoveryReason)
+            assertEquals(currentSourceId, info.currentSourceId)
+
+            val pushError = client.pushPending().exceptionOrNull()
+            assertIs<SourceRecoveryRequiredException>(pushError)
+            assertEquals(SourceRecoveryReason.SOURCE_SEQUENCE_CHANGED, pushError.reason)
+
+            val pullError = client.pullToStable().exceptionOrNull()
+            assertIs<SourceRecoveryRequiredException>(pullError)
+            assertEquals(SourceRecoveryReason.SOURCE_SEQUENCE_CHANGED, pullError.reason)
+
+            val syncError = client.sync().exceptionOrNull()
+            assertIs<SourceRecoveryRequiredException>(syncError)
+            assertEquals(SourceRecoveryReason.SOURCE_SEQUENCE_CHANGED, syncError.reason)
+
+            client.close()
+            val restartedClient = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            restartedClient.open().getOrThrow()
+            val restartedInfo = restartedClient.sourceInfo().getOrThrow()
+            assertTrue(restartedInfo.rebuildRequired)
+            assertTrue(restartedInfo.sourceRecoveryRequired)
+            assertEquals(SourceRecoveryReason.SOURCE_SEQUENCE_CHANGED, restartedInfo.sourceRecoveryReason)
+            assertTrue(restartedClient.rebuild().exceptionOrNull() is ConnectRequiredException)
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun rebuild_routesDurableSourceRecoveryThroughInternalRotation() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer().apply {
+            createContext("/sync/snapshot-sessions") { exchange ->
+                check(exchange.requestMethod == "POST")
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-recover",
+                      "snapshot_bundle_seq": 9,
+                      "row_count": 1,
+                      "byte_count": 32,
+                      "expires_at": "2099-01-01T00:00:00Z"
+                    }
+                    """.trimIndent(),
+                )
+            }
+            createContext("/sync/snapshot-sessions/") { exchange ->
+                val snapshotId = exchange.requestURI.path.removePrefix("/sync/snapshot-sessions/")
+                when {
+                    exchange.requestMethod == "DELETE" -> {
+                        exchange.sendResponseHeaders(204, -1)
+                        exchange.close()
+                    }
+
+                    exchange.requestMethod == "GET" && snapshotId == "snapshot-recover" -> {
+                        respondJson(
+                            exchange,
+                            200,
+                            """
+                            {
+                              "snapshot_id": "snapshot-recover",
+                              "snapshot_bundle_seq": 9,
+                              "next_row_ordinal": 1,
+                              "has_more": false,
+                              "rows": [
+                                {
+                                  "schema": "main",
+                                  "table": "users",
+                                  "key": {"id":"user-1"},
+                                  "row_version": 2,
+                                  "payload": {"id":"user-1","name":"Recovered Ada"}
+                                }
+                              ]
+                            }
+                            """.trimIndent(),
+                        )
+                    }
+
+                    else -> {
+                        exchange.sendResponseHeaders(404, -1)
+                        exchange.close()
+                    }
+                }
+            }
+        }
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.openAndConnect("user-1").getOrThrow()
+            val previousSourceId = client.sourceInfo().getOrThrow().currentSourceId
+
+            db.execSQL(
+                """
+                UPDATE _sync_operation_state
+                SET kind = 'source_recovery',
+                    source_recovery_reason = 'history_pruned',
+                    source_recovery_source_id = '$previousSourceId',
+                    source_recovery_source_bundle_id = 3,
+                    source_recovery_intent_state = ''
+                WHERE singleton_key = 1
+                """.trimIndent(),
+            )
+
+            val report = client.rebuild().getOrThrow()
+            val currentSourceId = client.sourceInfo().getOrThrow().currentSourceId
+
+            assertEquals(RemoteSyncOutcome.APPLIED_SNAPSHOT, report.outcome)
+            assertNotEquals(previousSourceId, currentSourceId)
+            assertEquals("none", scalarText(db, "SELECT kind FROM _sync_operation_state WHERE singleton_key = 1"))
+            assertEquals(currentSourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1"))
+            assertEquals(
+                currentSourceId,
+                scalarText(
+                    db,
+                    "SELECT replaced_by_source_id FROM _sync_source_state WHERE source_id = '$previousSourceId'",
+                ),
+            )
+            assertEquals(1L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$currentSourceId'"))
+            assertEquals("Recovered Ada", scalarText(db, "SELECT name FROM users WHERE id = 'user-1'"))
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun rebuildRequired_survivesRestart_andResolvesViaExplicitKeepSourceRebuild() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer().apply {
+            createContext("/sync/snapshot-sessions") { exchange ->
+                respondJson(
+                    exchange,
+                    200,
+                    """
+                    {
+                      "snapshot_id": "snapshot-generic-rebuild",
+                      "snapshot_bundle_seq": 7,
+                      "row_count": 1,
+                      "byte_count": 32,
+                      "expires_at": "2099-01-01T00:00:00Z"
+                    }
+                    """.trimIndent(),
+                )
+            }
+            createContext("/sync/snapshot-sessions/snapshot-generic-rebuild") { exchange ->
+                when (exchange.requestMethod) {
+                    "GET" -> respondJson(
+                        exchange,
+                        200,
+                        """
+                        {
+                          "snapshot_id": "snapshot-generic-rebuild",
+                          "snapshot_bundle_seq": 7,
+                          "next_row_ordinal": 1,
+                          "has_more": false,
+                          "rows": [
+                            {
+                              "schema": "main",
+                              "table": "users",
+                              "key": {"id":"user-1"},
+                              "row_version": 3,
+                              "payload": {"id":"user-1","name":"Generic Rebuild"}
+                            }
+                          ]
+                        }
+                        """.trimIndent(),
+                    )
+
+                    "DELETE" -> {
+                        exchange.sendResponseHeaders(204, -1)
+                        exchange.close()
+                    }
+
+                    else -> {
+                        exchange.sendResponseHeaders(405, -1)
+                        exchange.close()
+                    }
+                }
+            }
+        }
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.openAndConnect("user-1").getOrThrow()
+            val sourceId = client.sourceInfo().getOrThrow().currentSourceId
+            db.execSQL("UPDATE _sync_attachment_state SET rebuild_required = 1 WHERE singleton_key = 1")
+
+            client.close()
+            val restartedClient = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            restartedClient.open().getOrThrow()
+            val info = restartedClient.sourceInfo().getOrThrow()
+            assertEquals(sourceId, info.currentSourceId)
+            assertTrue(info.rebuildRequired)
+            assertFalse(info.sourceRecoveryRequired)
+            assertTrue(restartedClient.sync().exceptionOrNull() is ConnectRequiredException)
+
+            assertConnectedOutcome(
+                expectedOutcome = AttachOutcome.RESUMED_ATTACHED_STATE,
+                actual = restartedClient.attach("user-1").getOrThrow(),
+            )
+            assertTrue(restartedClient.sync().exceptionOrNull() is RebuildRequiredException)
+
+            val report = restartedClient.rebuild().getOrThrow()
+
+            assertEquals(RemoteSyncOutcome.APPLIED_SNAPSHOT, report.outcome)
+            assertEquals(sourceId, restartedClient.sourceInfo().getOrThrow().currentSourceId)
+            assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_attachment_state WHERE singleton_key = 1"))
+            assertEquals("none", scalarText(db, "SELECT kind FROM _sync_operation_state WHERE singleton_key = 1"))
+            assertEquals("Generic Rebuild", scalarText(db, "SELECT name FROM users WHERE id = 'user-1'"))
         } finally {
             http.close()
             server.stop(0)
@@ -483,9 +817,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
             val persistedSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
             db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
 
-            val reopened = client.open().getOrThrow()
-
-            assertEquals(OpenState.ReadyAnonymous, reopened)
+            client.open().getOrThrow()
             assertEquals(persistedSourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM users"))
         } finally {
@@ -503,10 +835,11 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
         val http = newHttpClient(server)
         try {
             val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.open("device-a").getOrThrow()
+            client.open().getOrThrow()
+            val sourceId = client.sourceInfo().getOrThrow().currentSourceId
             OversqliteAttachmentStateStore(db).persistState(
                 OversqliteAttachmentState(
-                    currentSourceId = "device-a",
+                    currentSourceId = sourceId,
                     bindingState = attachmentBindingAttached,
                     attachedUserId = "user-1",
                     schemaName = "main",
@@ -515,7 +848,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
                     pendingInitializationId = "",
                 ),
             )
-            assertEquals(OpenState.ReadyAttached("user-1"), client.open("device-a").getOrThrow())
+            client.open().getOrThrow()
             assertEquals("attached", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
             assertEquals("user-1", scalarText(db, "SELECT attached_user_id FROM _sync_attachment_state"))
         } finally {
@@ -554,7 +887,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
         try {
             val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
 
-            assertEquals(OpenState.ReadyAnonymous, client.open().getOrThrow())
+            client.open().getOrThrow()
             val firstConnect = client.attach("user-1").getOrThrow()
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.STARTED_EMPTY,
@@ -571,7 +904,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
             val offlineHttp = newHttpClient(offlineServer)
             val resumedClient = newClient(db, offlineHttp, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
             try {
-                assertEquals(OpenState.ReadyAttached("user-1"), resumedClient.open().getOrThrow())
+                resumedClient.open().getOrThrow()
                 assertConnectedOutcome(
                     expectedOutcome = AttachOutcome.RESUMED_ATTACHED_STATE,
                     actual = resumedClient.attach("user-1").getOrThrow(),
@@ -742,17 +1075,18 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
-    fun open_surfacesPendingRemoteReplace_and_matchingConnectRequiredToFinishRecovery() = runBlocking {
+    fun open_restoresPendingRemoteReplace_andMatchingAttachRequiredToFinishRecovery() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
         val server = newServer()
         val http = newHttpClient(server)
         try {
             val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.open("device-a").getOrThrow()
+            client.open().getOrThrow()
+            val sourceId = client.sourceInfo().getOrThrow().currentSourceId
             OversqliteAttachmentStateStore(db).persistState(
                 OversqliteAttachmentState(
-                    currentSourceId = "device-a",
+                    currentSourceId = sourceId,
                     bindingState = attachmentBindingAnonymous,
                     attachedUserId = "",
                     schemaName = "",
@@ -770,10 +1104,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
                     snapshotRowCount = 0,
                 ),
             )
-            assertEquals(
-                OpenState.AttachRecoveryRequired("user-1"),
-                client.open("device-a").getOrThrow(),
-            )
+            client.open().getOrThrow()
             assertEquals("remote_replace", scalarText(db, "SELECT kind FROM _sync_operation_state"))
             assertIs<ConnectLocalStateConflictException>(client.attach("user-2").exceptionOrNull())
             Unit
@@ -894,18 +1225,18 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
         val http = newHttpClient(server)
         try {
             val firstClient = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            assertEquals(OpenState.ReadyAnonymous, firstClient.open().getOrThrow())
+            firstClient.open().getOrThrow()
 
             val firstError = firstClient.attach("user-1").exceptionOrNull()
 
             assertTrue(firstError != null)
-            assertEquals(OpenState.AttachRecoveryRequired("user-1"), firstClient.open().getOrThrow())
+            firstClient.open().getOrThrow()
             assertEquals("remote_replace", scalarText(db, "SELECT kind FROM _sync_operation_state"))
             assertEquals("snapshot-a", scalarText(db, "SELECT staged_snapshot_id FROM _sync_operation_state"))
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
 
             val restartedClient = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            assertEquals(OpenState.AttachRecoveryRequired("user-1"), restartedClient.open().getOrThrow())
+            restartedClient.open().getOrThrow()
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
                 actual = restartedClient.attach("user-1").getOrThrow(),
@@ -989,13 +1320,13 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
             db.execSQL("DROP TRIGGER fail_detach_attachment_update")
 
             val restartedClient = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            assertEquals(OpenState.ReadyAttached("user-1"), restartedClient.open(sourceId).getOrThrow())
+            restartedClient.open().getOrThrow()
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.RESUMED_ATTACHED_STATE,
                 actual = restartedClient.attach("user-1").getOrThrow(),
             )
             assertEquals(DetachOutcome.DETACHED, restartedClient.detach().getOrThrow())
-            assertEquals(OpenState.ReadyAnonymous, restartedClient.open(sourceId).getOrThrow())
+            restartedClient.open().getOrThrow()
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
             assertEquals(sourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
         } finally {
@@ -1064,7 +1395,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
         try {
             val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
 
-            assertEquals(OpenState.ReadyAnonymous, client.open().getOrThrow())
+            client.open().getOrThrow()
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.STARTED_EMPTY,
                 actual = client.attach("user-1").getOrThrow(),
@@ -1087,7 +1418,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
             assertEquals(RemoteSyncOutcome.ALREADY_AT_TARGET, report.remoteOutcome)
             assertEquals(AuthorityStatus.AUTHORITATIVE_MATERIALIZED, report.status.authority)
             assertEquals(DetachOutcome.DETACHED, client.detach().getOrThrow())
-            assertEquals(OpenState.ReadyAnonymous, client.open().getOrThrow())
+            client.open().getOrThrow()
         } finally {
             http.close()
             server.stop(0)
@@ -1115,7 +1446,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
                 ),
             )
 
-            assertEquals(OpenState.ReadyAnonymous, client.open().getOrThrow())
+            client.open().getOrThrow()
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.STARTED_EMPTY,
                 actual = client.attach("user-1").getOrThrow(),
@@ -1144,160 +1475,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM daily_log"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM program_item"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM activity"))
-            assertEquals(OpenState.ReadyAnonymous, client.open().getOrThrow())
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
-        }
-    }
-
-    @Test
-    fun rotateSource_rotatesCurrentSource_andPreservesPendingLocalEdits() = runBlocking {
-        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
-        createUsersTable(db)
-        val server = newServer()
-        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
-        pushServer.install(server)
-        server.start()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
             client.open().getOrThrow()
-            client.attach("user-1").getOrThrow()
-            db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
-
-            val sourceIdBefore = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
-            val rotation = client.rotateSource().getOrThrow()
-
-            assertNotEquals(sourceIdBefore, rotation.sourceId)
-            assertEquals(rotation.sourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
-            assertEquals(rotation.sourceId, scalarText(db, "SELECT replaced_by_source_id FROM _sync_source_state WHERE source_id = '$sourceIdBefore'"))
-            assertEquals(1L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '${rotation.sourceId}'"))
-            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM users"))
-            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-
-            val push = client.pushPending().getOrThrow()
-
-            assertEquals(PushOutcome.COMMITTED, push.outcome)
-            assertEquals(rotation.sourceId, pushServer.createRequests.last().sourceId)
-            assertEquals(1L, pushServer.createRequests.last().sourceBundleId)
-            assertEquals("attached", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
-        }
-    }
-
-    @Test
-    fun rotateSource_restartAfterFailedTransaction_keepsPreviousSourceActive() = runBlocking {
-        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
-        createUsersTable(db)
-        val server = newServer()
-        server.start()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.openAndConnect("user-1").getOrThrow()
-            db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
-            val sourceIdBefore = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
-
-            db.execSQL(
-                """
-                CREATE TRIGGER fail_rotate_attachment_update
-                BEFORE UPDATE ON _sync_attachment_state
-                BEGIN
-                  SELECT RAISE(ABORT, 'simulated rotate crash');
-                END
-                """.trimIndent(),
-            )
-
-            val error = client.rotateSource("rotate-source-failed").exceptionOrNull()
-
-            assertTrue(error != null)
-            assertTrue(error.message?.contains("simulated rotate crash") == true)
-            assertEquals(sourceIdBefore, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
-            assertEquals("", scalarText(db, "SELECT replaced_by_source_id FROM _sync_source_state WHERE source_id = '$sourceIdBefore'"))
-            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM users"))
-
-            db.execSQL("DROP TRIGGER fail_rotate_attachment_update")
-
-            val restartedClient = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            assertEquals(OpenState.ReadyAttached("user-1"), restartedClient.open(sourceIdBefore).getOrThrow())
-            assertConnectedOutcome(
-                expectedOutcome = AttachOutcome.RESUMED_ATTACHED_STATE,
-                actual = restartedClient.attach("user-1").getOrThrow(),
-            )
-            assertEquals(sourceIdBefore, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
-        }
-    }
-
-    @Test
-    fun rotateSource_restartAfterCommit_usesRotatedSourceOnNextLaunch() = runBlocking {
-        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
-        createUsersTable(db)
-        val server = newServer()
-        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
-        pushServer.install(server)
-        server.start()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.openAndConnect("user-1").getOrThrow()
-            val sourceIdBefore = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
-            val rotation = client.rotateSource("rotate-source-committed").getOrThrow()
-
-            val restartedClient = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            assertEquals(OpenState.ReadyAttached("user-1"), restartedClient.open(rotation.sourceId).getOrThrow())
-            assertConnectedOutcome(
-                expectedOutcome = AttachOutcome.RESUMED_ATTACHED_STATE,
-                actual = restartedClient.attach("user-1").getOrThrow(),
-            )
-
-            db.execSQL("INSERT INTO users(id, name) VALUES('user-2', 'Grace')")
-            restartedClient.pushPending().getOrThrow()
-
-            assertNotEquals(sourceIdBefore, rotation.sourceId)
-            assertEquals(rotation.sourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
-            assertEquals(rotation.sourceId, pushServer.createRequests.last().sourceId)
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
-        }
-    }
-
-    @Test
-    fun rotateSource_isBlocked_whilePendingInitializationLeaseIsActive() = runBlocking {
-        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
-        createUsersTable(db)
-        val server = newServer()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.open().getOrThrow()
-            val sourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
-            OversqliteAttachmentStateStore(db).persistState(
-                OversqliteAttachmentState(
-                    currentSourceId = sourceId,
-                    bindingState = attachmentBindingAttached,
-                    attachedUserId = "user-1",
-                    schemaName = "main",
-                    lastBundleSeqSeen = 0,
-                    rebuildRequired = false,
-                    pendingInitializationId = "init-1",
-                ),
-            )
-            val error = client.rotateSource().exceptionOrNull()
-
-            assertIs<SourceRotationBlockedException>(error)
-            assertEquals(sourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
-            assertEquals("init-1", scalarText(db, "SELECT pending_initialization_id FROM _sync_attachment_state"))
         } finally {
             http.close()
             server.stop(0)

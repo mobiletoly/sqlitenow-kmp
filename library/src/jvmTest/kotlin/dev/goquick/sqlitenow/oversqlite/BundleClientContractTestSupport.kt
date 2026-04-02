@@ -461,11 +461,15 @@ open class BundleClientContractTestSupport {
             """
             CREATE TABLE IF NOT EXISTS _sync_operation_state (
               singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),
-              kind TEXT NOT NULL DEFAULT 'none' CHECK (kind IN ('none', 'remote_replace')),
+              kind TEXT NOT NULL DEFAULT 'none' CHECK (kind IN ('none', 'remote_replace', 'source_recovery')),
               target_user_id TEXT NOT NULL DEFAULT '',
               staged_snapshot_id TEXT NOT NULL DEFAULT '',
               snapshot_bundle_seq INTEGER NOT NULL DEFAULT 0,
-              snapshot_row_count INTEGER NOT NULL DEFAULT 0
+              snapshot_row_count INTEGER NOT NULL DEFAULT 0,
+              source_recovery_reason TEXT NOT NULL DEFAULT '',
+              source_recovery_source_id TEXT NOT NULL DEFAULT '',
+              source_recovery_source_bundle_id INTEGER NOT NULL DEFAULT 0,
+              source_recovery_intent_state TEXT NOT NULL DEFAULT ''
             )
             """.trimIndent()
         )
@@ -477,9 +481,13 @@ open class BundleClientContractTestSupport {
               target_user_id,
               staged_snapshot_id,
               snapshot_bundle_seq,
-              snapshot_row_count
+              snapshot_row_count,
+              source_recovery_reason,
+              source_recovery_source_id,
+              source_recovery_source_bundle_id,
+              source_recovery_intent_state
             )
-            VALUES (1, 'none', '', '', 0, 0)
+            VALUES (1, 'none', '', '', 0, 0, '', '', 0, '')
             ON CONFLICT(singleton_key) DO NOTHING
             """.trimIndent()
         )
@@ -642,6 +650,13 @@ open class BundleClientContractTestSupport {
         private val queryParam: (HttpExchange, String) -> String,
         private val respondJson: (HttpExchange, Int, String) -> Unit,
     ) {
+        data class RecordedCreateRequest(
+            val sourceId: String,
+            val sourceBundleId: Long,
+            val plannedRowCount: Long,
+            val initializationId: String? = null,
+        )
+
         data class RecordedChunk(
             val pushId: String,
             val startRowOrdinal: Long,
@@ -665,11 +680,12 @@ open class BundleClientContractTestSupport {
             var committedBundleSeq: Long? = null,
         )
 
-        val createRequests = mutableListOf<PushSessionCreateRequest>()
+        val createRequests = mutableListOf<RecordedCreateRequest>()
         val uploadedChunks = mutableListOf<RecordedChunk>()
         val bundles = mutableListOf<StoredBundle>()
 
         var nextBundleSeq = 1L
+        var createError: ((RecordedCreateRequest) -> Pair<Int, String>?)? = null
         var commitError: ((Long, Int) -> Pair<Int, String>?)? = null
         var committedBundleChunkError: ((Long, Long?) -> Pair<Int, String>?)? = null
         var bundleChunkOverride: ((StoredBundle, Long?, Int) -> CommittedBundleRowsResponse)? = null
@@ -689,8 +705,19 @@ open class BundleClientContractTestSupport {
                     return@createContext
                 }
                 val request = json.decodeFromString(PushSessionCreateRequest.serializer(), exchange.requestBody.readBytes().decodeToString())
-                createRequests += request
-                val applied = appliedBySourceBundleId[request.sourceId to request.sourceBundleId]
+                val sourceId = exchange.requestHeaders.getFirst("Oversync-Source-ID").orEmpty()
+                val recordedRequest = RecordedCreateRequest(
+                    sourceId = sourceId,
+                    sourceBundleId = request.sourceBundleId,
+                    plannedRowCount = request.plannedRowCount,
+                    initializationId = request.initializationId,
+                )
+                createRequests += recordedRequest
+                createError?.invoke(recordedRequest)?.let { (status, body) ->
+                    respondJson(exchange, status, body)
+                    return@createContext
+                }
+                val applied = appliedBySourceBundleId[sourceId to request.sourceBundleId]
                 if (applied != null) {
                     respondJson(
                         exchange,
@@ -713,7 +740,7 @@ open class BundleClientContractTestSupport {
                 val pushId = UUID.randomUUID().toString()
                 sessionsById[pushId] = SessionState(
                     pushId = pushId,
-                    sourceId = request.sourceId,
+                    sourceId = sourceId,
                     sourceBundleId = request.sourceBundleId,
                     plannedRowCount = request.plannedRowCount,
                 )

@@ -1,7 +1,6 @@
 package dev.goquick.sqlitenow.oversqlite.e2e
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.goquick.sqlitenow.oversqlite.RebuildMode
 import dev.goquick.sqlitenow.oversqlite.SyncTable
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -39,9 +38,9 @@ class RealServerTypedRowsTest {
             val activeClient = newRealServerClient(activeDb, config, activeHttp, syncTables = syncTables)
             val hydrateClient = newRealServerClient(hydrateDb, config, hydrateHttp, syncTables = syncTables)
 
-            seedClient.openAndAttach(userId, seedDevice).getOrThrow()
-            activeClient.openAndAttach(userId, activeDevice).getOrThrow()
-            hydrateClient.openAndAttach(userId, hydrateDevice).getOrThrow()
+            seedClient.openAndAttach(userId).getOrThrow()
+            activeClient.openAndAttach(userId).getOrThrow()
+            hydrateClient.openAndAttach(userId).getOrThrow()
 
             val seedRow = TypedRowFixture(
                 id = randomRowId(),
@@ -72,7 +71,7 @@ class RealServerTypedRowsTest {
 
             activeClient.pushPending().getOrThrow()
             activeClient.pullToStable().getOrThrow()
-            hydrateClient.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            hydrateClient.rebuild().getOrThrow()
 
             assertEquals(2L, scalarLong(activeDb, "SELECT COUNT(*) FROM typed_rows"))
             assertEquals(2L, scalarLong(hydrateDb, "SELECT COUNT(*) FROM typed_rows"))

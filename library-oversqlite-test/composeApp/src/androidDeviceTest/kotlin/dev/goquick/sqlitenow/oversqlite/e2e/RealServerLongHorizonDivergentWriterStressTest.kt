@@ -2,7 +2,6 @@ package dev.goquick.sqlitenow.oversqlite.e2e
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.oversqlite.PushConflictRetryExhaustedException
-import dev.goquick.sqlitenow.oversqlite.RebuildMode
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -60,12 +59,12 @@ class RealServerLongHorizonDivergentWriterStressTest {
                 downloadLimit = 2,
             )
 
-            leader.openAndAttach(userId, leaderDevice).getOrThrow()
-            writer.openAndAttach(userId, writerDevice).getOrThrow()
-            observer.openAndAttach(userId, observerDevice).getOrThrow()
-            leader.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            writer.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
-            observer.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            leader.openAndAttach(userId).getOrThrow()
+            writer.openAndAttach(userId).getOrThrow()
+            observer.openAndAttach(userId).getOrThrow()
+            leader.rebuild().getOrThrow()
+            writer.rebuild().getOrThrow()
+            observer.rebuild().getOrThrow()
 
             val hotGraph = insertHotGraph(leaderDb)
             leader.pushPending().getOrThrow()

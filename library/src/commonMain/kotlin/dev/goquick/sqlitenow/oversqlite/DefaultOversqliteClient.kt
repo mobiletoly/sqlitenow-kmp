@@ -28,6 +28,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.json.Json
 import kotlin.concurrent.Volatile
 import kotlin.random.Random
+import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
 
 class DefaultOversqliteClient(
     private val db: SafeSQLiteConnection,
@@ -137,28 +139,34 @@ class DefaultOversqliteClient(
         downloadsPaused = false
     }
 
-    override suspend fun open(sourceId: String): Result<OpenState> = runExclusiveOperation {
-        openInternal(sourceId)
+    override suspend fun open(): Result<Unit> = runExclusiveOperation {
+        openInternal()
+        restoreInMemoryLifecycleState()
+    }
+
+    private suspend fun restoreInMemoryLifecycleState() {
         val state = loadDurableLifecycleView()
-        when {
-            state.operation.kind == operationKindRemoteReplace -> {
-                OpenState.AttachRecoveryRequired(state.operation.targetUserId)
-            }
-
-            state.isAttached -> {
-                currentUserId = state.attachedUserId
-                pendingInitializationId = state.pendingInitializationId
-                sessionConnected = false
-                OpenState.ReadyAttached(state.attachedUserId)
-            }
-
-            else -> {
-                currentUserId = null
-                pendingInitializationId = ""
-                sessionConnected = false
-                OpenState.ReadyAnonymous
-            }
+        if (state.isAttached) {
+            currentUserId = state.attachedUserId
+            pendingInitializationId = state.pendingInitializationId
+            sessionConnected = false
+            return
         }
+        currentUserId = null
+        pendingInitializationId = ""
+        sessionConnected = false
+    }
+
+    override suspend fun sourceInfo(): Result<SourceInfo> = runExclusiveOperation {
+        ensureOpened("sourceInfo()")
+        val attachment = attachmentStateStore.loadState()
+        val operation = operationStateStore.loadState()
+        SourceInfo(
+            currentSourceId = attachment.currentSourceId.ifBlank { requireCurrentSourceId() },
+            rebuildRequired = attachment.rebuildRequired || operation.isSourceRecoveryRequired(),
+            sourceRecoveryRequired = operation.isSourceRecoveryRequired(),
+            sourceRecoveryReason = operation.sourceRecoveryReasonOrNull(),
+        )
     }
 
     override suspend fun attach(userId: String): Result<AttachResult> = runExclusiveOperation {
@@ -370,98 +378,30 @@ class DefaultOversqliteClient(
         }
     }
 
-    override suspend fun rebuild(
-        mode: RebuildMode,
-        newSourceId: String?,
-    ): Result<RemoteSyncReport> = runSyncOperation("rebuild($mode)") {
-        val operation = if (mode == RebuildMode.KEEP_SOURCE) {
-            OversqliteOperation.REBUILD_KEEP_SOURCE
-        } else {
-            OversqliteOperation.REBUILD_ROTATE_SOURCE
-        }
-        val rotatedSourceId = when (mode) {
-            RebuildMode.KEEP_SOURCE -> {
-                require(newSourceId == null) {
-                    "rebuild(RebuildMode.KEEP_SOURCE) does not accept newSourceId"
-                }
-                null
-            }
-
-            RebuildMode.ROTATE_SOURCE -> {
-                val currentSource = requireCurrentSourceId()
-                requireFreshSourceId(
-                    currentSourceId = currentSource,
-                    requestedSourceId = newSourceId,
-                    operation = "rebuild(RebuildMode.ROTATE_SOURCE, newSourceId)",
-                )
-            }
-        }
-        withOperationProgress(operation) {
+    override suspend fun rebuild(): Result<RemoteSyncReport> = runSyncOperation("rebuild()") {
+        val plan = selectRebuildPlan()
+        withOperationProgress(plan.operation) {
             val execution = executeSnapshotRebuild(
-                operationName = "rebuild($mode)",
-                operation = operation,
-                rotatedSourceId = rotatedSourceId,
+                operationName = "rebuild()",
+                operation = plan.operation,
+                rotatedSourceId = plan.rotatedSourceId,
+                outboxMode = plan.outboxMode,
             )
             notifyUpdatedTables(execution.updatedTables)
             execution.report
         }
     }
 
-    override suspend fun rotateSource(newSourceId: String): Result<SourceRotationResult> = runExclusiveOperation {
-        ensureOpened("rotateSource(newSourceId)")
-        val operation = operationStateStore.loadState()
-        if (operation.kind != operationKindNone) {
-            throw SourceRotationBlockedException("durable operation \"${operation.kind}\" is active")
-        }
-        val attachment = attachmentStateStore.loadState()
-        if (attachment.pendingInitializationId.isNotBlank()) {
-            throw SourceRotationBlockedException("pending initialization lease is active")
-        }
-        if (outboxStateStore.countRows() > 0) {
-            throw SourceRotationBlockedException("staged outbound push replay is pending")
-        }
-
-        val previousSourceId = attachment.currentSourceId.ifBlank { requireCurrentSourceId() }
-        val rotatedSourceId = requireFreshSourceId(
-            currentSourceId = previousSourceId,
-            requestedSourceId = newSourceId,
-            operation = "rotateSource(newSourceId)",
-        )
-        db.transaction(TransactionMode.IMMEDIATE) {
-            val statementCache = StatementCache(db)
-            try {
-                sourceStateStore.ensureSource(rotatedSourceId)
-                sourceStateStore.markRotated(previousSourceId, rotatedSourceId)
-                attachmentStateStore.persistState(
-                    attachment.copy(
-                        currentSourceId = rotatedSourceId,
-                    ),
-                    statementCache = statementCache,
-                )
-                operationStateStore.persistState(OversqliteOperationState(), statementCache)
-            } finally {
-                statementCache.close()
-            }
-        }
-        currentSourceId = rotatedSourceId
-        return@runExclusiveOperation SourceRotationResult(rotatedSourceId)
-    }
-
     override fun close() {
     }
 
-    private suspend fun openInternal(sourceId: String): ValidatedConfig {
-        val requestedSourceId = requireProvidedSourceId(
-            sourceId = sourceId,
-            operation = "open(sourceId)",
-            parameterName = "sourceId",
-        )
+    private suspend fun openInternal(): ValidatedConfig {
         val validated = runtimeInitializer.prepareLocalRuntime(db, managedTableStore)
         var attachmentState: OversqliteAttachmentState? = null
         db.transaction(TransactionMode.IMMEDIATE) {
             val operation = operationStateStore.loadState()
             val currentAttachment = attachmentStateStore.loadState()
-            val boundSourceId = bindOrValidateSourceId(requestedSourceId, currentAttachment.currentSourceId)
+            val boundSourceId = currentAttachment.currentSourceId.ifBlank { generateFreshSourceId() }
             sourceStateStore.ensureSource(boundSourceId)
             if (currentAttachment.currentSourceId.isBlank()) {
                 runtimeInitializer.capturePreexistingAnonymousRows(db, validated)
@@ -519,7 +459,7 @@ class DefaultOversqliteClient(
 
     private suspend fun verifyConnectLifecycleSupported() {
         val capabilities = withTransientRetry("attach() capability gate") {
-            remoteApi.fetchCapabilities()
+            remoteApi.fetchCapabilities(requireCurrentSourceId())
         }
         if (!capabilities.features.getOrElse("connect_lifecycle") { false }) {
             throw ConnectLifecycleUnsupportedException("connect_lifecycle capability is absent")
@@ -570,6 +510,7 @@ class DefaultOversqliteClient(
             state = runtimeState,
             session = session,
             rotatedSourceId = null,
+            outboxMode = SnapshotRebuildOutboxMode.CLEAR_ALL,
         )
         applyDownloadResult(result)
         return result
@@ -596,7 +537,7 @@ class DefaultOversqliteClient(
 
         setProgress(operation, OversqlitePhase.STAGING_REMOTE_STATE)
         val session = withTransientRetry("remote_replace snapshot create") {
-            remoteApi.createSnapshotSession()
+            remoteApi.createSnapshotSession(state.sourceId.ifBlank { requireCurrentSourceId() })
         }
         try {
             stageStore.clearAllSnapshotStages()
@@ -612,6 +553,7 @@ class DefaultOversqliteClient(
                 val chunk = withTransientRetry("remote_replace snapshot fetch") {
                     remoteApi.fetchSnapshotChunk(
                         snapshotId = session.snapshotId,
+                        sourceId = state.sourceId.ifBlank { requireCurrentSourceId() },
                         snapshotBundleSeq = session.snapshotBundleSeq,
                         afterRowOrdinal = afterRowOrdinal,
                         maxRows = config.snapshotChunkRows.takeIf { it > 0 } ?: 1000,
@@ -630,7 +572,10 @@ class DefaultOversqliteClient(
             }
             return state.copy(operation = nextOperation)
         } finally {
-            remoteApi.deleteSnapshotSessionBestEffort(session.snapshotId)
+            remoteApi.deleteSnapshotSessionBestEffort(
+                snapshotId = session.snapshotId,
+                sourceId = state.sourceId.ifBlank { requireCurrentSourceId() },
+            )
         }
     }
 
@@ -798,6 +743,10 @@ class DefaultOversqliteClient(
         operation: OversqliteOperation,
     ): PushExecution {
         val state = requireConnectedRuntimeState(operationName)
+        val durableOperation = operationStateStore.loadState()
+        if (durableOperation.isSourceRecoveryRequired()) {
+            throw SourceRecoveryRequiredException(durableOperation.requireSourceRecoveryReason())
+        }
         setProgress(
             operation = operation,
             phase = if (state.pendingInitializationId.isNotBlank()) {
@@ -808,6 +757,12 @@ class DefaultOversqliteClient(
         )
         val workflowResult = try {
             pushWorkflow.pushPending(state)
+        } catch (e: SourceRecoveryRequiredHttpException) {
+            persistSourceRecoveryRequiredState(state, e.reason)
+            throw SourceRecoveryRequiredException(e.reason)
+        } catch (e: CommittedReplayPrunedException) {
+            attachmentStateStore.setRebuildRequired(true)
+            throw RebuildRequiredException()
         } catch (e: InitializationLeaseInvalidException) {
             clearStaleInitializationState()
             throw e
@@ -869,7 +824,6 @@ class DefaultOversqliteClient(
                 outcome = result.outcome,
                 status = status,
                 restore = result.restore,
-                rotatedSourceId = result.rotatedSourceId,
             ),
             updatedTables = result.updatedTables,
         )
@@ -926,12 +880,14 @@ class DefaultOversqliteClient(
         operationName: String,
         operation: OversqliteOperation,
         rotatedSourceId: String?,
+        outboxMode: SnapshotRebuildOutboxMode,
     ): RemoteExecution {
         ensureNoDestructiveTransition()
         val state = requireConnectedRuntimeState(operationName)
         val result = downloadWorkflow.rebuildFromSnapshot(
             state = state,
             rotatedSourceId = rotatedSourceId,
+            outboxMode = outboxMode,
         ) { phase ->
             setProgress(operation, phase)
         }
@@ -942,7 +898,6 @@ class DefaultOversqliteClient(
                 outcome = result.outcome,
                 status = status,
                 restore = result.restore,
-                rotatedSourceId = result.rotatedSourceId,
             ),
             updatedTables = result.updatedTables,
         )
@@ -964,7 +919,11 @@ class DefaultOversqliteClient(
 
     private suspend fun ensureNoDestructiveTransition() {
         val operation = operationStateStore.loadState()
-        if (operation.kind != operationKindNone && operation.kind != operationKindRemoteReplace) {
+        if (
+            operation.kind != operationKindNone &&
+            operation.kind != operationKindRemoteReplace &&
+            operation.kind != operationKindSourceRecovery
+        ) {
             throw DestructiveTransitionInProgressException(operation.kind)
         }
     }
@@ -1028,55 +987,6 @@ class DefaultOversqliteClient(
         return currentSourceId ?: throw OpenRequiredException("oversqlite runtime access")
     }
 
-    private fun requireProvidedSourceId(
-        sourceId: String?,
-        operation: String,
-        parameterName: String,
-    ): String {
-        val provided = sourceId ?: throw IllegalArgumentException("$operation requires $parameterName")
-        require(provided.isNotEmpty()) {
-            "$operation requires non-empty $parameterName"
-        }
-        return provided
-    }
-
-    private fun bindOrValidateSourceId(
-        requestedSourceId: String,
-        persistedSourceId: String,
-    ): String {
-        if (persistedSourceId.isBlank()) {
-            return requestedSourceId
-        }
-        if (persistedSourceId != requestedSourceId) {
-            throw SourceBindingMismatchException(
-                persistedSourceId = persistedSourceId,
-                requestedSourceId = requestedSourceId,
-            )
-        }
-        return persistedSourceId
-    }
-
-    private suspend fun requireFreshSourceId(
-        currentSourceId: String,
-        requestedSourceId: String?,
-        operation: String,
-    ): String {
-        val provided = requireProvidedSourceId(
-            sourceId = requestedSourceId,
-            operation = operation,
-            parameterName = "newSourceId",
-        )
-        require(provided != currentSourceId) {
-            "$operation requires newSourceId different from the current sourceId"
-        }
-        if (sourceStateStore.loadState(provided) != null) {
-            throw SourceSequenceMismatchException(
-                "source \"$provided\" is already present in local source history; $operation requires a fresh sourceId"
-            )
-        }
-        return provided
-    }
-
     private fun ensureOpened(operation: String) {
         if (currentSourceId == null || validatedConfig == null) {
             throw OpenRequiredException(operation)
@@ -1085,6 +995,53 @@ class DefaultOversqliteClient(
 
     private fun applyDownloadResult(result: DownloadWorkflowResult) {
         result.rotatedSourceId?.let { currentSourceId = it }
+    }
+
+    private suspend fun selectRebuildPlan(): RebuildPlan {
+        val operation = operationStateStore.loadState()
+        if (operation.isSourceRecoveryRequired()) {
+            return RebuildPlan(
+                operation = OversqliteOperation.REBUILD_ROTATE_SOURCE,
+                rotatedSourceId = generateFreshSourceId(),
+                outboxMode = SnapshotRebuildOutboxMode.PRESERVE_SOURCE_RECOVERY,
+            )
+        }
+        val outboxState = outboxStateStore.loadBundleState()
+        return RebuildPlan(
+            operation = OversqliteOperation.REBUILD_KEEP_SOURCE,
+            rotatedSourceId = null,
+            outboxMode = if (outboxState.state == outboxStateCommittedRemote) {
+                SnapshotRebuildOutboxMode.PRESERVE_COMMITTED_REMOTE
+            } else {
+                SnapshotRebuildOutboxMode.CLEAR_ALL
+            },
+        )
+    }
+
+    private suspend fun persistSourceRecoveryRequiredState(
+        state: RuntimeState,
+        reason: SourceRecoveryReason,
+    ) {
+        val outboxState = outboxStateStore.loadBundleState()
+        val intentState = if (outboxState.state != outboxStateNone && outboxState.rowCount > 0L) {
+            sourceRecoveryIntentStateOutbox
+        } else {
+            sourceRecoveryIntentStateNone
+        }
+        operationStateStore.persistState(
+            OversqliteOperationState(
+                kind = operationKindSourceRecovery,
+                sourceRecoveryReason = reason.toPersistedOperationReason(),
+                sourceRecoverySourceId = state.sourceId,
+                sourceRecoverySourceBundleId = outboxState.sourceBundleId,
+                sourceRecoveryIntentState = intentState,
+            ),
+        )
+    }
+
+    @OptIn(ExperimentalUuidApi::class)
+    private fun generateFreshSourceId(): String {
+        return Uuid.random().toString()
     }
 
     private suspend fun maybeRetryTransportFailure(
@@ -1160,9 +1117,7 @@ class DefaultOversqliteClient(
         if (
             error is InitializationLeaseInvalidException ||
             error is ConnectLifecycleUnsupportedException ||
-            error is SourceBindingMismatchException ||
             error is SourceSequenceMismatchException ||
-            error is SourceRotationBlockedException ||
             error is OpenRequiredException ||
             error is ConnectRequiredException ||
             error is DestructiveTransitionInProgressException ||
@@ -1170,6 +1125,7 @@ class DefaultOversqliteClient(
             error is PushConflictRetryExhaustedException ||
             error is InvalidConflictResolutionException ||
             error is RebuildRequiredException ||
+            error is SourceRecoveryRequiredException ||
             error is PendingPushReplayException ||
             error is DirtyStateRejectedException
         ) {
@@ -1205,6 +1161,12 @@ private data class DurableLifecycleView(
     val isAttached: Boolean
         get() = bindingState == attachmentBindingAttached && attachedUserId.isNotBlank()
 }
+
+private data class RebuildPlan(
+    val operation: OversqliteOperation,
+    val rotatedSourceId: String?,
+    val outboxMode: SnapshotRebuildOutboxMode,
+)
 
 private data class RemoteExecution(
     val report: RemoteSyncReport,

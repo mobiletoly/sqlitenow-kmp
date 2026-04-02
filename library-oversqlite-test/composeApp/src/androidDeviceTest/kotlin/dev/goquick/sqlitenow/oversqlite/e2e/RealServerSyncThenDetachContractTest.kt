@@ -2,7 +2,6 @@ package dev.goquick.sqlitenow.oversqlite.e2e
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.oversqlite.DetachOutcome
-import dev.goquick.sqlitenow.oversqlite.OpenState
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -37,7 +36,7 @@ class RealServerSyncThenDetachContractTest {
             val client = newRealServerClient(db, config, http)
             val verifyClient = newRealServerClient(verifyDb, config, verifyHttp)
             try {
-                client.openAndAttach(userId, sourceId).getOrThrow()
+                client.openAndAttach(userId).getOrThrow()
                 insertBusinessUserAndPost(db, rowUserId, rowPostId, "sync-detach-clean")
 
                 val result = client.syncThenDetach().getOrThrow()
@@ -46,13 +45,13 @@ class RealServerSyncThenDetachContractTest {
                 assertEquals(DetachOutcome.DETACHED, result.detach)
                 assertEquals(1, result.syncRounds)
                 assertEquals(0L, result.remainingPendingRowCount)
-                assertEquals(OpenState.ReadyAnonymous, client.open(sourceId).getOrThrow())
+                client.open().getOrThrow()
                 assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
                 assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM posts"))
                 assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
                 assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
 
-                verifyClient.openAndAttach(userId, verifySourceId).getOrThrow()
+                verifyClient.openAndAttach(userId).getOrThrow()
                 assertEquals("User sync-detach-clean", scalarText(verifyDb, "SELECT name FROM users WHERE id = '$rowUserId'"))
                 assertEquals("Title sync-detach-clean", scalarText(verifyDb, "SELECT title FROM posts WHERE id = '$rowPostId'"))
             } finally {
@@ -104,7 +103,7 @@ class RealServerSyncThenDetachContractTest {
             val client = newRealServerClient(db, config, http)
             val verifyClient = newRealServerClient(verifyDb, config, verifyHttp)
             try {
-                client.openAndAttach(userId, sourceId).getOrThrow()
+                client.openAndAttach(userId).getOrThrow()
                 insertBusinessUserAndPost(db, firstUserId, firstPostId, "sync-detach-initial")
                 armFollowupWrites = true
 
@@ -115,11 +114,11 @@ class RealServerSyncThenDetachContractTest {
                 assertEquals(2, result.syncRounds)
                 assertEquals(0L, result.remainingPendingRowCount)
                 assertTrue(insertedFollowup)
-                assertEquals(OpenState.ReadyAnonymous, client.open(sourceId).getOrThrow())
+                client.open().getOrThrow()
                 assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
                 assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
 
-                verifyClient.openAndAttach(userId, verifySourceId).getOrThrow()
+                verifyClient.openAndAttach(userId).getOrThrow()
                 assertEquals(2L, scalarLong(verifyDb, "SELECT COUNT(*) FROM users"))
                 assertEquals(2L, scalarLong(verifyDb, "SELECT COUNT(*) FROM posts"))
                 assertEquals("User sync-detach-initial", scalarText(verifyDb, "SELECT name FROM users WHERE id = '$firstUserId'"))
@@ -170,7 +169,7 @@ class RealServerSyncThenDetachContractTest {
 
             val client = newRealServerClient(db, config, http)
             try {
-                client.openAndAttach(userId, sourceId).getOrThrow()
+                client.openAndAttach(userId).getOrThrow()
                 insertBusinessUserAndPost(db, initialUserId, initialPostId, "sync-detach-blocked-initial")
                 armFollowupWrites = true
 
@@ -183,7 +182,7 @@ class RealServerSyncThenDetachContractTest {
                 assertTrue(client.syncStatus().getOrThrow().pending.blocksDetach)
                 assertEquals("attached", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
                 assertEquals(userId, scalarText(db, "SELECT attached_user_id FROM _sync_attachment_state"))
-                assertEquals(OpenState.ReadyAttached(userId), client.open(sourceId).getOrThrow())
+                client.open().getOrThrow()
                 client.attach(userId).getOrThrow()
                 assertTrue(client.syncStatus().getOrThrow().pending.blocksDetach)
             } finally {
@@ -233,14 +232,14 @@ class RealServerSyncThenDetachContractTest {
             val client = newRealServerClient(db, config, http)
             val verifyClient = newRealServerClient(verifyDb, config, verifyHttp)
             try {
-                client.openAndAttach(userId, sourceId).getOrThrow()
+                client.openAndAttach(userId).getOrThrow()
                 insertBusinessUserAndPost(db, rowUserId, rowPostId, "sync-detach-failure")
                 failPull = true
 
                 val error = client.syncThenDetach().exceptionOrNull()
 
                 assertNotNull(error)
-                assertEquals(OpenState.ReadyAttached(userId), client.open(sourceId).getOrThrow())
+                client.open().getOrThrow()
                 assertEquals("attached", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
                 assertEquals(userId, scalarText(db, "SELECT attached_user_id FROM _sync_attachment_state"))
                 assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM users"))
@@ -248,7 +247,7 @@ class RealServerSyncThenDetachContractTest {
                 assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
                 assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
 
-                verifyClient.openAndAttach(userId, verifySourceId).getOrThrow()
+                verifyClient.openAndAttach(userId).getOrThrow()
                 assertEquals("User sync-detach-failure", scalarText(verifyDb, "SELECT name FROM users WHERE id = '$rowUserId'"))
                 assertEquals("Title sync-detach-failure", scalarText(verifyDb, "SELECT title FROM posts WHERE id = '$rowPostId'"))
             } finally {

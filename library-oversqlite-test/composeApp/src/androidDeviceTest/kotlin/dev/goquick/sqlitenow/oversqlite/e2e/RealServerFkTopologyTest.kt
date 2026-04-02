@@ -1,7 +1,6 @@
 package dev.goquick.sqlitenow.oversqlite.e2e
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.goquick.sqlitenow.oversqlite.RebuildMode
 import dev.goquick.sqlitenow.oversqlite.SyncTable
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -43,16 +42,16 @@ class RealServerFkTopologyTest {
             val pullClient = newRealServerClient(pullDb, config, pullHttp, syncTables = syncTables)
             val hydrateClient = newRealServerClient(hydrateDb, config, hydrateHttp, syncTables = syncTables)
 
-            seedClient.openAndAttach(userId, seedDevice).getOrThrow()
-            pullClient.openAndAttach(userId, pullDevice).getOrThrow()
-            hydrateClient.openAndAttach(userId, hydrateDevice).getOrThrow()
+            seedClient.openAndAttach(userId).getOrThrow()
+            pullClient.openAndAttach(userId).getOrThrow()
+            hydrateClient.openAndAttach(userId).getOrThrow()
 
             insertCategoryGraph(seedDb, "fk-topology")
             insertTeamGraph(seedDb, "fk-topology")
 
             seedClient.pushPending().getOrThrow()
             pullClient.pullToStable().getOrThrow()
-            hydrateClient.rebuild(RebuildMode.KEEP_SOURCE).getOrThrow()
+            hydrateClient.rebuild().getOrThrow()
 
             assertTopologyState(pullDb, "pull")
             assertTopologyState(hydrateDb, "hydrate")

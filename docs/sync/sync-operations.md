@@ -7,24 +7,28 @@ parent: Sync
 
 # Sync Operations Reference
 
-This page describes the current Oversqlite operations.
+This page describes the current oversqlite operations.
 
 ## Lifecycle Operations
 
-### `open(sourceId)`
+### `open()`
 
-Prepares the local runtime and binds or validates the app-owned install `sourceId`. Local-only.
+Prepares the local runtime and restores or creates the current internal source identity. Local-only.
 Call on every launch.
 
 ### `attach(userId)`
 
 Attaches or resumes the authenticated account scope. Required before connected sync operations.
 
+### `sourceInfo()`
+
+Returns read-only diagnostic information about the current internal source state.
+
 ### `syncStatus()`
 
 Returns the current authority and pending-sync status for the attached scope.
 
-Requires successful `open(sourceId)` and `attach(userId)`.
+Requires successful `open()` and `attach(userId)`.
 
 ### `detach()`
 
@@ -41,21 +45,9 @@ If blocked, local attached state is preserved.
 
 Runs bounded best-effort `sync()` rounds and then attempts `detach()`.
 
-```kotlin
-val result = client.syncThenDetach().getOrThrow()
-if (result.isSuccess()) {
-    // Detached successfully.
-} else {
-    // result.detach == BLOCKED_UNSYNCED_DATA
-    // result.syncRounds and result.remainingPendingRowCount explain what happened.
-}
-```
-
-This is convenience sugar over `sync()` plus `detach()`. It is not a separate lifecycle model.
-
 ## Connected Sync Operations
 
-These operations require successful `open(sourceId)` and `attach(userId)`.
+These operations require successful `open()` and `attach(userId)`.
 
 ### `pushPending()`
 
@@ -82,31 +74,18 @@ Runs the standard interactive flow:
 
 Returns `SyncReport`.
 
-## Recovery Operations
+## Recovery Operation
 
-### `rebuild(RebuildMode.KEEP_SOURCE)`
+### `rebuild()`
 
-Replaces local managed state from the authoritative snapshot while preserving the current internal
-source identity.
+Replaces local managed state from the authoritative snapshot.
 
-### `rebuild(RebuildMode.ROTATE_SOURCE, newSourceId)`
+Oversqlite chooses the internal recovery mode:
 
-Replaces local managed state from the authoritative snapshot and rotates to a fresh caller-provided
-source identity.
-
-### `rotateSource(newSourceId)`
-
-Rotates the current source identity without discarding pending local edits.
-
-Use this only for advanced recovery.
+- ordinary rebuild-required and pull-side pruning use keep-source rebuild
+- source-recovery-required cases use rebuild-plus-rotate internally
 
 ## Result Types
-
-### `OpenState`
-
-- `ReadyAnonymous`
-- `ReadyAttached(scope)`
-- `AttachRecoveryRequired(targetScope)`
 
 ### `AttachResult`
 
@@ -125,25 +104,21 @@ Use this only for advanced recovery.
 - `DETACHED`
 - `BLOCKED_UNSYNCED_DATA`
 
-### `RebuildMode`
+### `SourceInfo`
 
-- `KEEP_SOURCE`
-- `ROTATE_SOURCE`
+- `currentSourceId`
+- `rebuildRequired`
+- `sourceRecoveryRequired`
+- `sourceRecoveryReason`
 
 ## Exceptions You Should Recognize
 
-### `SourceSequenceMismatchException`
+### `RebuildRequiredException`
 
-The current source stream no longer matches what the server has already committed for that stream.
-Treat this as an explicit recovery condition, not as a transient transport failure.
+The client is in a durable rebuild-required state. Ordinary sync is blocked until explicit
+`rebuild()` succeeds.
 
-### `SourceBindingMismatchException`
+### `SourceRecoveryRequiredException`
 
-`open(sourceId)` was called with a different value than the one already durably bound to the local
-database. Default handling is explicit app-owned reset/recovery of the local Oversqlite database or
-local sync state, not retry-with-random-id behavior.
-
-### `SourceRotationBlockedException`
-
-Source rotation was requested while another non-rotatable durable lifecycle operation was still
-active.
+The current source stream is stale or out-of-order. Ordinary sync is blocked until explicit
+`rebuild()` succeeds and oversqlite performs managed rotated recovery internally.

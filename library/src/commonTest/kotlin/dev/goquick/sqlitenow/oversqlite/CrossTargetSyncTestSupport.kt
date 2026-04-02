@@ -30,6 +30,10 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 
 internal open class CrossTargetSyncTestSupport {
+    private companion object {
+        const val sourceIdHeaderName = "Oversync-Source-ID"
+    }
+
     protected val json = Json { ignoreUnknownKeys = true }
 
     protected suspend fun newDb(): SafeSQLiteConnection {
@@ -220,6 +224,7 @@ internal open class CrossTargetSyncTestSupport {
         private suspend fun MockRequestHandleScope.handleConnect(request: HttpRequestData) =
             try {
                 val connect = json.decodeFromString(ConnectRequest.serializer(), request.bodyText())
+                val sourceId = request.headers[sourceIdHeaderName].orEmpty()
                 when {
                     scopeInitialized || bundles.isNotEmpty() -> {
                         scopeInitialized = true
@@ -232,7 +237,7 @@ internal open class CrossTargetSyncTestSupport {
                     }
 
                     initializingSourceId != null -> {
-                        if (initializingSourceId == connect.sourceId) {
+                        if (initializingSourceId == sourceId) {
                             if (connect.hasLocalPendingRows) {
                                 jsonResponse(
                                     json.encodeToString(
@@ -271,7 +276,7 @@ internal open class CrossTargetSyncTestSupport {
 
                     connect.hasLocalPendingRows -> {
                         val nextId = "init-${nextInitializationId++}"
-                        initializingSourceId = connect.sourceId
+                        initializingSourceId = sourceId
                         initializationId = nextId
                         jsonResponse(
                             json.encodeToString(
@@ -305,6 +310,7 @@ internal open class CrossTargetSyncTestSupport {
             return try {
                 val body = request.bodyText()
                 val create = json.decodeFromString(PushSessionCreateRequest.serializer(), body)
+                val sourceId = request.headers[sourceIdHeaderName].orEmpty()
                 val expectedInitializationId = initializationId
                 if (expectedInitializationId != null) {
                     if (create.initializationId.isNullOrBlank()) {
@@ -316,7 +322,7 @@ internal open class CrossTargetSyncTestSupport {
                 } else if (!create.initializationId.isNullOrBlank()) {
                     return errorResponse("initialization_stale", "scope is no longer initializing", HttpStatusCode.Conflict)
                 }
-                val existing = committedBySourceBundle["${create.sourceId}\u0000${create.sourceBundleId}"]
+                val existing = committedBySourceBundle["$sourceId\u0000${create.sourceBundleId}"]
                 if (existing != null) {
                     jsonResponse(
                         json.encodeToString(
@@ -335,7 +341,7 @@ internal open class CrossTargetSyncTestSupport {
                     val pushId = "push-${nextPushId++}"
                     pushSessions[pushId] = PushSession(
                         pushId = pushId,
-                        sourceId = create.sourceId,
+                        sourceId = sourceId,
                         sourceBundleId = create.sourceBundleId,
                         plannedRowCount = create.plannedRowCount,
                     )

@@ -36,6 +36,16 @@ class HistoryPrunedException(
     message: String,
 ) : RuntimeException(message)
 
+class CommittedReplayPrunedException(
+    rawBody: String,
+) : DownloadHttpException(HttpStatusCode.Conflict, rawBody)
+
+class SourceRecoveryRequiredHttpException(
+    status: HttpStatusCode,
+    rawBody: String,
+    val reason: SourceRecoveryReason,
+) : UploadHttpException(status, rawBody)
+
 class CommittedBundleNotFoundException(
     rawBody: String,
 ) : DownloadHttpException(HttpStatusCode.NotFound, rawBody)
@@ -80,4 +90,37 @@ internal fun decodeCommittedBundleNotFoundExceptionOrNull(
     }.getOrNull() ?: return null
     if (error.error != "committed_bundle_not_found") return null
     return CommittedBundleNotFoundException(rawBody = rawBody)
+}
+
+internal fun decodeCommittedReplayPrunedExceptionOrNull(
+    status: HttpStatusCode,
+    rawBody: String,
+): CommittedReplayPrunedException? {
+    if (status != HttpStatusCode.Conflict) return null
+    val error = runCatching {
+        httpErrorJson.decodeFromString<ErrorResponse>(rawBody)
+    }.getOrNull() ?: return null
+    if (error.error != "history_pruned") return null
+    return CommittedReplayPrunedException(rawBody = rawBody)
+}
+
+internal fun decodeSourceRecoveryRequiredExceptionOrNull(
+    status: HttpStatusCode,
+    rawBody: String,
+): SourceRecoveryRequiredHttpException? {
+    if (status != HttpStatusCode.Conflict) return null
+    val error = runCatching {
+        httpErrorJson.decodeFromString<ErrorResponse>(rawBody)
+    }.getOrNull() ?: return null
+    val reason = when (error.error) {
+        "history_pruned" -> SourceRecoveryReason.HISTORY_PRUNED
+        "source_sequence_out_of_order" -> SourceRecoveryReason.SOURCE_SEQUENCE_OUT_OF_ORDER
+        "source_sequence_changed" -> SourceRecoveryReason.SOURCE_SEQUENCE_CHANGED
+        else -> return null
+    }
+    return SourceRecoveryRequiredHttpException(
+        status = status,
+        rawBody = rawBody,
+        reason = reason,
+    )
 }

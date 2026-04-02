@@ -7,90 +7,87 @@ parent: Sync
 
 # Sync Core Concepts
 
-Oversqlite requires one app-owned install `sourceId`. App code passes that value into
-`open(sourceId)` and reuses the same exact string for auth whenever the server binds auth to source
-identity.
+Oversqlite manages sync source identity internally. App code owns authentication and account
+attachment, but it does not generate, persist, or rotate `sourceId`.
 
 ## Three Different Identities
 
-### Install Source Identity
+### Sync Writer Identity
 
-This is the stable install-scoped `sourceId` that the app owns.
+Oversqlite maintains one current `sourceId` for the local runtime.
 
-Oversqlite treats it as an opaque string and compares it exactly as provided. It does not trim,
-normalize, case-fold, or reinterpret the value.
+Important properties:
 
-Rules:
+- it is the sync writer identity used on the wire
+- it is opaque and debug-only from app code
+- it lives in oversqlite metadata inside the local database
+- it may rotate during explicit recovery on the same install
 
-- reuse the same `sourceId` for the lifetime of one local install / local data set
-- reuse it across app launches, sign-out/sign-in, and account switching on the same install
-- use different `sourceId` values for different installs/devices, even for the same account
-- if local app data is wiped and the local database is recreated, generating a new `sourceId` is
-  correct
+If your app/backend also has a `deviceId`, treat that as a separate concept. A product-level
+`deviceId` may remain stable while oversqlite rotates the current sync writer identity.
 
 ### Attached Account Identity
 
-This is the authenticated `userId` you pass to `attach(userId)`.
+This is the authenticated `userId` passed to `attach(userId)`.
 
-Account attachment decides which remote sync scope is currently active for the local database.
+Account attachment decides which remote account scope is currently active for the local database.
 
 ### Auth Identity
 
 This is whatever your backend uses in tokens or sessions.
 
-If your server binds auth to source identity, the same exact app-owned `sourceId` must be used both
-for auth and for `open(sourceId)`.
+Oversqlite does not own auth. The server authenticates the request separately, and oversqlite sends
+the current sync writer identity as sync transport metadata.
 
 ## Lifecycle Model
 
-Oversqlite lifecycle is:
+The oversqlite lifecycle is:
 
-1. `open(sourceId)`
-2. `attach(userId)` when an authenticated session exists
+1. `open()`
+2. `attach(userId)` whenever an authenticated session exists
 3. normal sync operations
 4. `detach()` or `syncThenDetach()` when leaving the attached account
 
-### `open(sourceId)`
+### `open()`
 
-`open(sourceId)` is local-only.
+`open()` is local-only.
 
-It validates sync metadata, creates control tables, binds or validates the durable local
-`sourceId`, and repairs interrupted local lifecycle state. It never talks to the server and never
-attaches an account.
+It validates managed-table configuration, creates or repairs lifecycle metadata, installs local
+triggers, restores or creates the current internal `sourceId`, and captures pre-existing managed
+rows once when bootstrap policy allows it.
 
-Call it on every launch before any lifecycle-aware sync operation, using the same app-owned install
-`sourceId`.
+It never talks to the server and never attaches an account.
 
 ### `attach(userId)`
 
-`attach(userId)` is the account-binding step. It may:
+`attach(userId)` is the authenticated lifecycle step. It may:
 
 - resume the same attached account
 - use authoritative remote state
-- authorize a first local seed
+- authorize a first local seed upload
 - start an authoritative empty scope
 - return `RetryLater`
 
-Call it whenever an authenticated session exists, not only on the first login gesture.
+Call it whenever an authenticated session exists, not only on the first sign-in gesture.
 
 ### `detach()`
 
-`detach()` safely removes the current attached scope from the local database.
+`detach()` safely removes the current attached account scope from the local database.
 
 It is fail-closed: if attached pending sync data still exists, it returns
 `DetachOutcome.BLOCKED_UNSYNCED_DATA` and makes no destructive local changes.
 
-`detach()` does not change the install `sourceId`.
+`detach()` does not change the internally managed source identity.
 
 ### `syncThenDetach()`
 
-`syncThenDetach()` is bounded convenience sugar. It runs `sync()` and then tries `detach()`. If new
-local writes arrive during the previous round, it may retry a small number of times. It never loops
-forever, and it returns the final blocked outcome explicitly if detach still cannot proceed.
+`syncThenDetach()` is bounded convenience sugar. It runs `sync()` and then attempts `detach()`. If
+new local writes arrive during the previous round, it may retry a small number of times. It never
+loops forever, and it returns the final blocked outcome explicitly if detach still cannot proceed.
 
 ## Authority States
 
-For the currently attached account, Oversqlite reports:
+For the currently attached account, oversqlite reports:
 
 - `PENDING_LOCAL_SEED`
 - `AUTHORITATIVE_EMPTY`
@@ -100,71 +97,42 @@ These are scope/materialization states, not authentication states.
 
 ## Rebuild And Recovery
 
-### `rebuild(RebuildMode.KEEP_SOURCE)`
+`rebuild()` is the explicit recovery entry point.
 
-Replaces local managed tables from the current authoritative remote snapshot while preserving the
-same `sourceId`.
+Important rules:
 
-Use this when local managed state must be rebuilt, but the current source identity is still valid.
+- it remains an attached/authenticated operation
+- it rebuilds local managed tables from the authoritative remote snapshot
+- oversqlite chooses the internal mode
+- app code does not supply a replacement `sourceId`
 
-### `rebuild(RebuildMode.ROTATE_SOURCE, newSourceId)`
+In ordinary rebuild-required cases, `rebuild()` keeps the current source.
 
-Rebuilds local managed tables from the remote snapshot and rotates to a fresh caller-provided
-`newSourceId`.
+In source-recovery-required cases, `rebuild()` preserves frozen unsynced intent, rebuilds from the
+snapshot, rotates to a fresh internally generated source, and restores the frozen intent under that
+fresh source stream.
 
-Use this when recovery must abandon the current local source identity.
+## Diagnostics
 
-### `rotateSource(newSourceId)`
+`sourceInfo()` exposes read-only source diagnostics.
 
-`rotateSource(newSourceId)` is the advanced API. It rotates the current source identity without
-discarding pending local edits.
+Use it for logging, support tooling, or debug UI only.
 
-This is not normal login/logout lifecycle. Reach for it only when the current source identity must
-be replaced as part of explicit recovery.
+Important rules:
 
-## `SourceBindingMismatchException`
+- `SourceInfo.currentSourceId` is opaque
+- callers must not persist it externally
+- callers must not infer lifecycle meaning from its format
+- callers must not treat it as a control surface
 
-This means the app called `open(sourceId)` with a different value than the one already durably
-bound to the local database.
+## What `open()` Does Not Mean
 
-Default app behavior:
-
-- stop sync
-- treat the condition as a local identity/storage bug or wrong DB reuse
-- use an explicit app-owned reset path that recreates the local Oversqlite database or local sync
-  state
-
-Only advanced apps that already persist and trust the original install `sourceId` outside the
-Oversqlite database should attempt recovery by reopening with that exact original value.
-
-Do not:
-
-- silently generate a fresh `sourceId` and retry
-- silently rebind an existing local database to another `sourceId`
-- treat this as a transient network error
-
-## What `open(sourceId)` Does Not Mean
-
-`open(sourceId)` does not mean:
+`open()` does not mean:
 
 - the account is attached
 - the server session is connected
 - the local DB was synchronized
 - remote state was rebuilt
 
-`OpenState.ReadyAttached(userId)` means durable local attachment metadata exists. You should still
-call `attach(userId)` when an authenticated session is present so the client can resume connected
-sync operations.
-
-## Reliable Source Continuity
-
-Because source identity is install-scoped, the local install can:
-
-- detach from user A
-- attach user B
-- detach again
-- reattach user A later
-
-while keeping the same source identity across those transitions.
-
-The same user on two different devices must still use two different `sourceId` values.
+Even when durable local attachment metadata already exists, you should still call `attach(userId)`
+when an authenticated session is present so the client can resume connected sync operations.

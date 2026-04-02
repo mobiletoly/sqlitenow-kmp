@@ -23,8 +23,8 @@ import kotlinx.coroutines.flow.StateFlow
  * Public oversqlite lifecycle and sync API.
  *
  * Construction is side-effect free. A client is not usable for account-backed sync until
- * [open] has initialized the local runtime for the app-owned install `sourceId` and [attach] has
- * attached or resumed an authenticated account scope.
+ * [open] has initialized the local runtime and [attach] has attached or resumed an authenticated
+ * account scope.
  *
  * Create at most one client instance per local database at a time. Sync serialization is enforced
  * per client instance, not across multiple client objects that point at the same database.
@@ -46,25 +46,20 @@ interface OversqliteClient {
     suspend fun resumeDownloads()
 
     /**
-     * Performs the local-only startup phase for this database bound to the caller-provided
-     * [sourceId].
+     * Performs the local-only startup phase for this database.
      *
      * This validates sync-managed table configuration, creates or repairs lifecycle metadata,
-     * installs write-guard and change-capture triggers, durably binds or validates the current
-     * source identity, and captures pre-existing managed rows exactly once as anonymous pending sync
-     * data.
+     * installs write-guard and change-capture triggers, durably restores or creates the current
+     * source identity, and captures pre-existing managed rows exactly once as anonymous pending
+     * sync data.
      *
      * [open] never contacts the server and never attaches an authenticated user. Call it on every
      * app launch before any other lifecycle-aware sync operation.
      *
-     * [sourceId] is an opaque app-owned string. Oversqlite treats it as exact-match data: it does
-     * not normalize, trim, case-fold, or reinterpret the provided value.
-     *
-     * The same install-scoped [sourceId] should be reused across app launches, sign-out/sign-in,
-     * and account switching on one local installation. Different installs/devices must use
-     * different source ids, even for the same account.
+     * Oversqlite manages the current sync writer identity internally and persists it in local sync
+     * metadata. Callers do not generate, persist, or rotate that identity directly.
      */
-    suspend fun open(sourceId: String): Result<OpenState>
+    suspend fun open(): Result<Unit>
 
     /**
      * Resolves or resumes account attachment for the authenticated [userId].
@@ -80,11 +75,20 @@ interface OversqliteClient {
      * Call [attach] whenever an authenticated user session exists, not only on the initial
      * sign-in gesture.
      *
-     * [attach] is account-scoped. It must not be used to change install/source identity. The
-     * current install-scoped `sourceId` remains the same across sign-out/sign-in and account
-     * switching on one local installation.
+     * [attach] is account-scoped. It must not be used to change source identity.
      */
     suspend fun attach(userId: String): Result<AttachResult>
+
+    /**
+     * Returns read-only source diagnostics.
+     *
+     * This surface exists for debug/support tooling only. [SourceInfo.currentSourceId] is opaque:
+     * callers must not persist it externally, infer lifecycle meaning from its format, or treat it
+     * as a control surface.
+     *
+     * Requires successful [open]. A fresh attached/authenticated session is not required.
+     */
+    suspend fun sourceInfo(): Result<SourceInfo>
 
     /**
      * Returns the canonical sync status for the currently connected scope.
@@ -100,9 +104,7 @@ interface OversqliteClient {
      * makes no destructive local changes. On success, detach clears sync-managed local state and
      * returns the database to anonymous lifecycle state.
      *
-     * [detach] does not change the install-scoped `sourceId`. Reattaching the same or a different
-     * account on the same local installation reuses the same source identity unless the app
-     * explicitly resets or rotates local identity.
+     * [detach] does not change the internally managed source identity.
      */
     suspend fun detach(): Result<DetachOutcome>
 
@@ -140,51 +142,18 @@ interface OversqliteClient {
     suspend fun syncThenDetach(): Result<SyncThenDetachResult>
 
     /**
-     * Rebuilds local managed tables from a full staged server snapshot using the requested [mode].
+     * Rebuilds local managed tables from a full staged server snapshot.
      *
-     * Requires successful [open] and [attach].
+     * Requires successful [open] and [attach]. Rebuild remains an attached/authenticated
+     * operation because snapshot recovery still depends on remote authority.
      *
-     * When [mode] is [RebuildMode.ROTATE_SOURCE], callers must provide a fresh app-owned
-     * [newSourceId]. When [mode] is [RebuildMode.KEEP_SOURCE], [newSourceId] must be `null`.
+     * Oversqlite chooses the internal recovery mode. Callers trigger rebuild explicitly but do not
+     * provide or rotate source ids directly.
      */
-    suspend fun rebuild(
-        mode: RebuildMode = RebuildMode.KEEP_SOURCE,
-        newSourceId: String? = null,
-    ): Result<RemoteSyncReport>
-
-    /**
-     * Rotates the current source stream to the caller-provided [newSourceId] without discarding
-     * pending local edits.
-     *
-     * This is an advanced recovery API and may be blocked while another non-rotatable durable
-     * lifecycle operation is active.
-     *
-     * [newSourceId] is install-scoped, not account-scoped. It must be a fresh app-owned source id
-     * that is different from the currently bound source.
-     */
-    suspend fun rotateSource(newSourceId: String): Result<SourceRotationResult>
+    suspend fun rebuild(): Result<RemoteSyncReport>
 
     /** Releases client-owned resources. */
     fun close()
-}
-
-/** Local readiness returned by [OversqliteClient.open]. */
-sealed interface OpenState {
-    /** The local runtime is ready, but no account is currently attached. */
-    data object ReadyAnonymous : OpenState
-
-    /** The local runtime is ready and already attached to [scope]. */
-    data class ReadyAttached(
-        val scope: String,
-    ) : OpenState
-
-    /**
-     * A remote-authoritative replacement was interrupted and must be completed by a matching later
-     * [OversqliteClient.attach] call for [targetScope].
-     */
-    data class AttachRecoveryRequired(
-        val targetScope: String,
-    ) : OpenState
 }
 
 /** Result of [OversqliteClient.attach]. */
@@ -230,15 +199,6 @@ sealed interface DetachOutcome {
     data object BLOCKED_UNSYNCED_DATA : DetachOutcome
 }
 
-enum class RebuildMode {
-    KEEP_SOURCE,
-    ROTATE_SOURCE,
-}
-
-data class SourceRotationResult(
-    val sourceId: String,
-)
-
 /** Canonical sync status for the currently connected scope. */
 data class SyncStatus(
     val authority: AuthorityStatus,
@@ -275,7 +235,6 @@ data class RemoteSyncReport(
     val outcome: RemoteSyncOutcome,
     val status: SyncStatus,
     val restore: RestoreSummary? = null,
-    val rotatedSourceId: String? = null,
 )
 
 enum class RemoteSyncOutcome {
@@ -313,6 +272,25 @@ data class PendingSyncStatus(
     /** `true` when plain [OversqliteClient.detach] would currently refuse to proceed. */
     val blocksDetach: Boolean,
 )
+
+/**
+ * Read-only source diagnostics.
+ *
+ * [currentSourceId] is provided for diagnostics only. Callers must treat it as opaque and must not
+ * derive lifecycle meaning from its format.
+ */
+data class SourceInfo(
+    val currentSourceId: String,
+    val rebuildRequired: Boolean,
+    val sourceRecoveryRequired: Boolean,
+    val sourceRecoveryReason: SourceRecoveryReason? = null,
+)
+
+enum class SourceRecoveryReason {
+    HISTORY_PRUNED,
+    SOURCE_SEQUENCE_OUT_OF_ORDER,
+    SOURCE_SEQUENCE_CHANGED,
+}
 
 /** Coarse UI-oriented progress state for lifecycle-aware operations. */
 sealed interface OversqliteProgress {
