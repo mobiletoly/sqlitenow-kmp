@@ -71,6 +71,7 @@ internal class OversqliteDownloadWorkflow(
             val result = rebuildFromSnapshot(
                 state = state,
                 rotatedSourceId = null,
+                sourceReplacementReason = null,
                 outboxMode = SnapshotRebuildOutboxMode.CLEAR_ALL,
                 onPhaseChanged = onPhaseChanged,
             )
@@ -82,6 +83,7 @@ internal class OversqliteDownloadWorkflow(
     suspend fun rebuildFromSnapshot(
         state: RuntimeState,
         rotatedSourceId: String?,
+        sourceReplacementReason: String?,
         outboxMode: SnapshotRebuildOutboxMode = SnapshotRebuildOutboxMode.CLEAR_ALL,
         onPhaseChanged: suspend (OversqlitePhase) -> Unit = {},
     ): DownloadWorkflowResult {
@@ -89,7 +91,20 @@ internal class OversqliteDownloadWorkflow(
 
         onPhaseChanged(OversqlitePhase.STAGING_REMOTE_STATE)
         stageStore.clearAllSnapshotStages()
-        val session = remoteApi.createSnapshotSession(state.sourceId)
+        val sessionRequest = rotatedSourceId?.let { replacementSourceId ->
+            val reason = sourceReplacementReason?.trim()
+            check(!reason.isNullOrBlank()) {
+                "rotated rebuild requires a non-blank source replacement reason"
+            }
+            SnapshotSessionCreateRequest(
+                sourceReplacement = SnapshotSourceReplacement(
+                    previousSourceId = state.sourceId,
+                    newSourceId = replacementSourceId,
+                    reason = reason,
+                ),
+            )
+        }
+        val session = remoteApi.createSnapshotSession(state.sourceId, sessionRequest)
         try {
             var afterRowOrdinal = 0L
             while (true) {
@@ -185,6 +200,9 @@ internal class OversqliteDownloadWorkflow(
         rotatedSourceId: String?,
         outboxMode: SnapshotRebuildOutboxMode,
     ): DownloadWorkflowResult {
+        if (rotatedSourceId != null) {
+            requireFreshRotatedSourceState(rotatedSourceId)
+        }
         return applyExecutor.inApplyModeTransaction(state) { statementCache ->
             clearManagedTables(
                 state = state,
@@ -212,12 +230,6 @@ internal class OversqliteDownloadWorkflow(
 
             val preservedOutbox = outboxStateStore.loadBundleState()
             if (rotatedSourceId != null) {
-                val initialNextSourceBundleId = when (outboxMode) {
-                    SnapshotRebuildOutboxMode.PRESERVE_SOURCE_RECOVERY ->
-                        if (preservedOutbox.state != outboxStateNone && preservedOutbox.rowCount > 0L) 2L else 1L
-                    else -> 1L
-                }
-                sourceStateStore.ensureSource(rotatedSourceId, initialNextSourceBundleId)
                 if (state.sourceId != rotatedSourceId) {
                     sourceStateStore.markRotated(state.sourceId, rotatedSourceId)
                 }
@@ -238,6 +250,7 @@ internal class OversqliteDownloadWorkflow(
 
                 SnapshotRebuildOutboxMode.PRESERVE_SOURCE_RECOVERY -> {
                     if (preservedOutbox.state != outboxStateNone && preservedOutbox.rowCount > 0L) {
+                        sourceStateStore.upsertNextSourceBundleIdFloor(currentSourceId, 2L)
                         outboxStateStore.rebindBundleSource(
                             sourceId = currentSourceId,
                             sourceBundleId = 1L,
@@ -330,6 +343,14 @@ internal class OversqliteDownloadWorkflow(
     }
 
     private fun snapshotChunkRows(): Int = config.snapshotChunkRows.takeIf { it > 0 } ?: 1000
+
+    private suspend fun requireFreshRotatedSourceState(rotatedSourceId: String) {
+        val sourceState = sourceStateStore.loadState(rotatedSourceId)
+            ?: error("_sync_source_state missing for rotated source $rotatedSourceId")
+        require(sourceState.nextSourceBundleId == 1L && sourceState.replacedBySourceId.isBlank()) {
+            "rotated rebuild requires a fresh replacement source; $rotatedSourceId is already in use"
+        }
+    }
 }
 
 internal data class IncrementalPullResult(

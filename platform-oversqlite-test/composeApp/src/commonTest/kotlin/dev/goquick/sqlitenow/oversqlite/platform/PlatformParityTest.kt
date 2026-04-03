@@ -11,6 +11,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -847,6 +848,62 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             assertEquals("Recover Followup", scalarText(verifyDb, "SELECT title FROM posts WHERE id = 'p2'"))
             assertEquals(0L, scalarLong(activeDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             assertEquals(0L, scalarLong(verifyDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+        } finally {
+            activeHttp.close()
+            verifyHttp.close()
+            activeDb.close()
+            verifyDb.close()
+        }
+    }
+
+    @Test
+    fun sourceRetired_pushCreateRotatesSourceAndPreservesReservedReplacementAcrossRebuild() = runTest {
+        if (!platformSuiteEnabled()) return@runTest
+        val server = MockSyncServer()
+        val activeDb = newDb()
+        val verifyDb = newDb()
+        val activeHttp = server.newHttpClient()
+        val verifyHttp = server.newHttpClient()
+        try {
+            createUsersAndPostsTables(activeDb)
+            createUsersAndPostsTables(verifyDb)
+
+            val activeClient = newClient(activeDb, activeHttp)
+            val verifyClient = newClient(verifyDb, verifyHttp)
+
+            activeClient.openAndConnect(userId = "user-1").getOrThrow()
+            verifyClient.openAndConnect(userId = "user-1").getOrThrow()
+            activeClient.rebuild().getOrThrow()
+            verifyClient.rebuild().getOrThrow()
+
+            val sourceBefore = scalarText(activeDb, "SELECT current_source_id FROM _sync_attachment_state")
+            insertUser(activeDb, "u1", "Platform Rotated")
+            server.sourceRetiredOnPushCreate = SourceRetiredResponse(
+                error = "source_retired",
+                message = "source retired on create",
+                sourceId = sourceBefore,
+                replacedBySourceId = "platform-rotated-device",
+            )
+
+            val error = assertFailsWith<SourceRecoveryRequiredException> {
+                activeClient.pushPending().getOrThrow()
+            }
+            assertEquals(SourceRecoveryReason.SOURCE_RETIRED, error.reason)
+            assertEquals("platform-rotated-device", scalarText(activeDb, "SELECT replacement_source_id FROM _sync_operation_state"))
+            assertEquals(sourceBefore, scalarText(activeDb, "SELECT current_source_id FROM _sync_attachment_state"))
+
+            server.sourceRetiredOnPushCreate = null
+            activeClient.rebuild().getOrThrow()
+
+            assertEquals(
+                listOf("platform-rotated-device"),
+                server.requestedSnapshotSourceReplacements.map { it.newSourceId },
+            )
+            assertEquals("platform-rotated-device", scalarText(activeDb, "SELECT current_source_id FROM _sync_attachment_state"))
+
+            activeClient.pushPending().getOrThrow()
+            verifyClient.pullToStable().getOrThrow()
+            assertEquals("Platform Rotated", scalarText(verifyDb, "SELECT name FROM users WHERE id = 'u1'"))
         } finally {
             activeHttp.close()
             verifyHttp.close()

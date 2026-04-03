@@ -78,6 +78,20 @@ class SourceRecoveryRequiredException(
     "source recovery is required ($reason); run rebuild() before syncing",
 )
 
+/** Thrown when local and server replacement-source state disagree. */
+class SourceReplacementDivergedException(
+    val localReplacementSourceId: String,
+    val remoteReplacementSourceId: String,
+) : RuntimeException(
+    "replacement source diverged between local and server recovery state: " +
+        "local=\"$localReplacementSourceId\" remote=\"$remoteReplacementSourceId\"",
+)
+
+/** Thrown when the server rejects a rotated replacement request as invalid. */
+class SourceReplacementInvalidException(
+    message: String,
+) : RuntimeException(message)
+
 /** Thrown when the same client instance is already running another sync operation. */
 class SyncOperationInProgressException : RuntimeException(
     "another sync operation is already in progress for this client"

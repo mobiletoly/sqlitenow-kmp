@@ -167,6 +167,18 @@ data class SnapshotSession(
 )
 
 @Serializable
+data class SnapshotSessionCreateRequest(
+    @SerialName("source_replacement") val sourceReplacement: SnapshotSourceReplacement? = null,
+)
+
+@Serializable
+data class SnapshotSourceReplacement(
+    @SerialName("previous_source_id") val previousSourceId: String,
+    @SerialName("new_source_id") val newSourceId: String,
+    val reason: String,
+)
+
+@Serializable
 data class SnapshotChunkResponse(
     @SerialName("snapshot_id") val snapshotId: String,
     @SerialName("snapshot_bundle_seq") val snapshotBundleSeq: Long,
@@ -179,6 +191,14 @@ data class SnapshotChunkResponse(
 data class ErrorResponse(
     val error: String,
     val message: String,
+)
+
+@Serializable
+data class SourceRetiredResponse(
+    val error: String,
+    val message: String,
+    @SerialName("source_id") val sourceId: String,
+    @SerialName("replaced_by_source_id") val replacedBySourceId: String? = null,
 )
 
 @Serializable

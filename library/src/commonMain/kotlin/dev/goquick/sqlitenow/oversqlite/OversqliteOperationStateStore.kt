@@ -21,8 +21,6 @@ import dev.goquick.sqlitenow.core.sqlite.use
 internal const val operationKindNone = "none"
 internal const val operationKindRemoteReplace = "remote_replace"
 internal const val operationKindSourceRecovery = "source_recovery"
-internal const val sourceRecoveryIntentStateNone = ""
-internal const val sourceRecoveryIntentStateOutbox = "outbox"
 
 internal data class OversqliteOperationState(
     val kind: String = operationKindNone,
@@ -30,10 +28,8 @@ internal data class OversqliteOperationState(
     val stagedSnapshotId: String = "",
     val snapshotBundleSeq: Long = 0,
     val snapshotRowCount: Long = 0,
-    val sourceRecoveryReason: String = "",
-    val sourceRecoverySourceId: String = "",
-    val sourceRecoverySourceBundleId: Long = 0,
-    val sourceRecoveryIntentState: String = sourceRecoveryIntentStateNone,
+    val reason: String = "",
+    val replacementSourceId: String = "",
 )
 
 internal fun OversqliteOperationState.isSourceRecoveryRequired(): Boolean {
@@ -41,10 +37,11 @@ internal fun OversqliteOperationState.isSourceRecoveryRequired(): Boolean {
 }
 
 internal fun OversqliteOperationState.sourceRecoveryReasonOrNull(): SourceRecoveryReason? {
-    return when (sourceRecoveryReason) {
+    return when (reason) {
         "history_pruned" -> SourceRecoveryReason.HISTORY_PRUNED
         "source_sequence_out_of_order" -> SourceRecoveryReason.SOURCE_SEQUENCE_OUT_OF_ORDER
         "source_sequence_changed" -> SourceRecoveryReason.SOURCE_SEQUENCE_CHANGED
+        "source_retired" -> SourceRecoveryReason.SOURCE_RETIRED
         else -> null
     }
 }
@@ -59,6 +56,7 @@ internal fun SourceRecoveryReason.toPersistedOperationReason(): String {
         SourceRecoveryReason.HISTORY_PRUNED -> "history_pruned"
         SourceRecoveryReason.SOURCE_SEQUENCE_OUT_OF_ORDER -> "source_sequence_out_of_order"
         SourceRecoveryReason.SOURCE_SEQUENCE_CHANGED -> "source_sequence_changed"
+        SourceRecoveryReason.SOURCE_RETIRED -> "source_retired"
     }
 }
 
@@ -70,8 +68,7 @@ internal class OversqliteOperationStateStore(
             db.prepare(
                 """
                 SELECT kind, target_user_id, staged_snapshot_id, snapshot_bundle_seq, snapshot_row_count,
-                       source_recovery_reason, source_recovery_source_id, source_recovery_source_bundle_id,
-                       source_recovery_intent_state
+                       reason, replacement_source_id
                 FROM _sync_operation_state
                 WHERE singleton_key = 1
                 """.trimIndent(),
@@ -83,10 +80,8 @@ internal class OversqliteOperationStateStore(
                     stagedSnapshotId = st.getText(2),
                     snapshotBundleSeq = st.getLong(3),
                     snapshotRowCount = st.getLong(4),
-                    sourceRecoveryReason = st.getText(5),
-                    sourceRecoverySourceId = st.getText(6),
-                    sourceRecoverySourceBundleId = st.getLong(7),
-                    sourceRecoveryIntentState = st.getText(8),
+                    reason = st.getText(5),
+                    replacementSourceId = st.getText(6),
                 )
             }
         }
@@ -104,10 +99,8 @@ internal class OversqliteOperationStateStore(
                     staged_snapshot_id = ?,
                     snapshot_bundle_seq = ?,
                     snapshot_row_count = ?,
-                    source_recovery_reason = ?,
-                    source_recovery_source_id = ?,
-                    source_recovery_source_bundle_id = ?,
-                    source_recovery_intent_state = ?
+                    reason = ?,
+                    replacement_source_id = ?
                 WHERE singleton_key = 1
             """.trimIndent(),
             statementCache = statementCache,
@@ -117,10 +110,8 @@ internal class OversqliteOperationStateStore(
             st.bindText(3, state.stagedSnapshotId)
             st.bindLong(4, state.snapshotBundleSeq)
             st.bindLong(5, state.snapshotRowCount)
-            st.bindText(6, state.sourceRecoveryReason)
-            st.bindText(7, state.sourceRecoverySourceId)
-            st.bindLong(8, state.sourceRecoverySourceBundleId)
-            st.bindText(9, state.sourceRecoveryIntentState)
+            st.bindText(6, state.reason)
+            st.bindText(7, state.replacementSourceId)
             st.step()
         }
     }

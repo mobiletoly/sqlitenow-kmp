@@ -294,6 +294,7 @@ enum class SourceRecoveryReason {
     HISTORY_PRUNED,
     SOURCE_SEQUENCE_OUT_OF_ORDER,
     SOURCE_SEQUENCE_CHANGED,
+    SOURCE_RETIRED,
 }
 
 /** Coarse UI-oriented progress state for lifecycle-aware operations. */

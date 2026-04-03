@@ -167,10 +167,8 @@ internal class SyncRuntimeInitializer(
               staged_snapshot_id TEXT NOT NULL DEFAULT '',
               snapshot_bundle_seq INTEGER NOT NULL DEFAULT 0,
               snapshot_row_count INTEGER NOT NULL DEFAULT 0,
-              source_recovery_reason TEXT NOT NULL DEFAULT '',
-              source_recovery_source_id TEXT NOT NULL DEFAULT '',
-              source_recovery_source_bundle_id INTEGER NOT NULL DEFAULT 0,
-              source_recovery_intent_state TEXT NOT NULL DEFAULT ''
+              reason TEXT NOT NULL DEFAULT '',
+              replacement_source_id TEXT NOT NULL DEFAULT ''
             )
             """.trimIndent()
         )
@@ -184,12 +182,10 @@ internal class SyncRuntimeInitializer(
               staged_snapshot_id,
               snapshot_bundle_seq,
               snapshot_row_count,
-              source_recovery_reason,
-              source_recovery_source_id,
-              source_recovery_source_bundle_id,
-              source_recovery_intent_state
+              reason,
+              replacement_source_id
             )
-            VALUES(1, 'none', '', '', 0, 0, '', '', 0, '')
+            VALUES(1, 'none', '', '', 0, 0, '', '')
             ON CONFLICT(singleton_key) DO NOTHING
             """.trimIndent()
         )
@@ -270,11 +266,12 @@ internal class SyncRuntimeInitializer(
             createSql to columnNames
         }
         val hasCurrentSchema =
-            "source_recovery" in createSql &&
-                "source_recovery_reason" in columnNames &&
-                "source_recovery_source_id" in columnNames &&
-                "source_recovery_source_bundle_id" in columnNames &&
-                "source_recovery_intent_state" in columnNames
+            "reason" in columnNames &&
+                "replacement_source_id" in columnNames &&
+                "source_recovery_reason" !in columnNames &&
+                "source_recovery_source_id" !in columnNames &&
+                "source_recovery_source_bundle_id" !in columnNames &&
+                "source_recovery_intent_state" !in columnNames
         if (hasCurrentSchema) {
             return
         }
@@ -311,10 +308,8 @@ internal class SyncRuntimeInitializer(
               staged_snapshot_id TEXT NOT NULL DEFAULT '',
               snapshot_bundle_seq INTEGER NOT NULL DEFAULT 0,
               snapshot_row_count INTEGER NOT NULL DEFAULT 0,
-              source_recovery_reason TEXT NOT NULL DEFAULT '',
-              source_recovery_source_id TEXT NOT NULL DEFAULT '',
-              source_recovery_source_bundle_id INTEGER NOT NULL DEFAULT 0,
-              source_recovery_intent_state TEXT NOT NULL DEFAULT ''
+              reason TEXT NOT NULL DEFAULT '',
+              replacement_source_id TEXT NOT NULL DEFAULT ''
             )
             """.trimIndent(),
         )
@@ -328,10 +323,8 @@ internal class SyncRuntimeInitializer(
                   staged_snapshot_id,
                   snapshot_bundle_seq,
                   snapshot_row_count,
-                  source_recovery_reason,
-                  source_recovery_source_id,
-                  source_recovery_source_bundle_id,
-                  source_recovery_intent_state
+                  reason,
+                  replacement_source_id
                 )
                 VALUES(
                   1,
@@ -341,8 +334,6 @@ internal class SyncRuntimeInitializer(
                   ${state.snapshotBundleSeq},
                   ${state.snapshotRowCount},
                   '',
-                  '',
-                  0,
                   ''
                 )
                 """.trimIndent(),

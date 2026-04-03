@@ -208,7 +208,7 @@ class DefaultOversqliteClient(
 
             if (state.isAttached &&
                 state.attachedUserId == requestedUserId &&
-                state.operation.kind == operationKindNone
+                state.operation.kind != operationKindRemoteReplace
             ) {
                 currentUserId = requestedUserId
                 pendingInitializationId = state.pendingInitializationId
@@ -386,6 +386,7 @@ class DefaultOversqliteClient(
                 operation = plan.operation,
                 rotatedSourceId = plan.rotatedSourceId,
                 outboxMode = plan.outboxMode,
+                sourceReplacementReason = plan.sourceReplacementReason,
             )
             notifyUpdatedTables(execution.updatedTables)
             execution.report
@@ -762,7 +763,7 @@ class DefaultOversqliteClient(
         val workflowResult = try {
             pushWorkflow.pushPending(state)
         } catch (e: SourceRecoveryRequiredHttpException) {
-            persistSourceRecoveryRequiredState(state, e.reason)
+            persistSourceRecoveryRequiredState(state, e.reason, e.replacementSourceId)
             throw SourceRecoveryRequiredException(e.reason)
         } catch (e: CommittedReplayPrunedException) {
             attachmentStateStore.setRebuildRequired(true)
@@ -818,8 +819,15 @@ class DefaultOversqliteClient(
     ): RemoteExecution {
         ensureNoDestructiveTransition()
         val state = requireConnectedRuntimeState(operationName)
-        val result = downloadWorkflow.pullToStable(state) { phase ->
-            setProgress(operation, phase)
+        val result = try {
+            downloadWorkflow.pullToStable(state) { phase ->
+                setProgress(operation, phase)
+            }
+        } catch (e: SourceRecoveryRequiredHttpException) {
+            persistSourceRecoveryRequiredState(state, e.reason, e.replacementSourceId)
+            throw SourceRecoveryRequiredException(e.reason)
+        } catch (e: SourceReplacementInvalidHttpException) {
+            throw SourceReplacementInvalidException(e.errorMessage)
         }
         applyDownloadResult(result)
         val status = syncStatusInternal(requireConnectedRuntimeState(operationName))
@@ -901,15 +909,24 @@ class DefaultOversqliteClient(
         operation: OversqliteOperation,
         rotatedSourceId: String?,
         outboxMode: SnapshotRebuildOutboxMode,
+        sourceReplacementReason: String?,
     ): RemoteExecution {
         ensureNoDestructiveTransition()
         val state = requireConnectedRuntimeState(operationName)
-        val result = downloadWorkflow.rebuildFromSnapshot(
-            state = state,
-            rotatedSourceId = rotatedSourceId,
-            outboxMode = outboxMode,
-        ) { phase ->
-            setProgress(operation, phase)
+        val result = try {
+            downloadWorkflow.rebuildFromSnapshot(
+                state = state,
+                rotatedSourceId = rotatedSourceId,
+                sourceReplacementReason = sourceReplacementReason,
+                outboxMode = outboxMode,
+            ) { phase ->
+                setProgress(operation, phase)
+            }
+        } catch (e: SourceRecoveryRequiredHttpException) {
+            persistSourceRecoveryRequiredState(state, e.reason, e.replacementSourceId)
+            throw SourceRecoveryRequiredException(e.reason)
+        } catch (e: SourceReplacementInvalidHttpException) {
+            throw SourceReplacementInvalidException(e.errorMessage)
         }
         applyDownloadResult(result)
         val status = syncStatusInternal(requireConnectedRuntimeState(operationName))
@@ -1020,9 +1037,18 @@ class DefaultOversqliteClient(
     private suspend fun selectRebuildPlan(): RebuildPlan {
         val operation = operationStateStore.loadState()
         if (operation.isSourceRecoveryRequired()) {
+            val replacementSourceId = operation.replacementSourceId.trim()
+            val sourceReplacementReason = operation.reason.trim()
+            check(replacementSourceId.isNotBlank()) {
+                "source recovery operation state is missing replacement_source_id"
+            }
+            check(sourceReplacementReason.isNotBlank()) {
+                "source recovery operation state is missing reason"
+            }
             return RebuildPlan(
                 operation = OversqliteOperation.REBUILD_ROTATE_SOURCE,
-                rotatedSourceId = generateFreshSourceId(),
+                rotatedSourceId = replacementSourceId,
+                sourceReplacementReason = sourceReplacementReason,
                 outboxMode = SnapshotRebuildOutboxMode.PRESERVE_SOURCE_RECOVERY,
             )
         }
@@ -1030,6 +1056,7 @@ class DefaultOversqliteClient(
         return RebuildPlan(
             operation = OversqliteOperation.REBUILD_KEEP_SOURCE,
             rotatedSourceId = null,
+            sourceReplacementReason = null,
             outboxMode = if (outboxState.state == outboxStateCommittedRemote) {
                 SnapshotRebuildOutboxMode.PRESERVE_COMMITTED_REMOTE
             } else {
@@ -1041,22 +1068,22 @@ class DefaultOversqliteClient(
     private suspend fun persistSourceRecoveryRequiredState(
         state: RuntimeState,
         reason: SourceRecoveryReason,
+        replacementSourceId: String? = null,
     ) {
-        val outboxState = outboxStateStore.loadBundleState()
-        val intentState = if (outboxState.state != outboxStateNone && outboxState.rowCount > 0L) {
-            sourceRecoveryIntentStateOutbox
-        } else {
-            sourceRecoveryIntentStateNone
+        db.transaction(TransactionMode.IMMEDIATE) {
+            attachmentStateStore.setRebuildRequired(true)
+            val reservedReplacementSourceId = reserveReplacementSourceId(
+                currentSourceId = state.sourceId,
+                preferredReplacementSourceId = replacementSourceId,
+            )
+            operationStateStore.persistState(
+                OversqliteOperationState(
+                    kind = operationKindSourceRecovery,
+                    reason = reason.toPersistedOperationReason(),
+                    replacementSourceId = reservedReplacementSourceId,
+                ),
+            )
         }
-        operationStateStore.persistState(
-            OversqliteOperationState(
-                kind = operationKindSourceRecovery,
-                sourceRecoveryReason = reason.toPersistedOperationReason(),
-                sourceRecoverySourceId = state.sourceId,
-                sourceRecoverySourceBundleId = outboxState.sourceBundleId,
-                sourceRecoveryIntentState = intentState,
-            ),
-        )
     }
 
     @OptIn(ExperimentalUuidApi::class)
@@ -1070,6 +1097,45 @@ class DefaultOversqliteClient(
             candidate = generateFreshSourceId()
         }
         return candidate
+    }
+
+    private suspend fun reserveReplacementSourceId(
+        currentSourceId: String,
+        preferredReplacementSourceId: String? = null,
+    ): String {
+        val durableOperation = operationStateStore.loadState()
+        val existingReplacementSourceId = durableOperation.replacementSourceId.trim()
+        val preferred = preferredReplacementSourceId?.trim().orEmpty()
+        val reserved = when {
+            existingReplacementSourceId.isNotBlank() && preferred.isNotBlank() &&
+                existingReplacementSourceId != preferred ->
+                throw SourceReplacementDivergedException(
+                    localReplacementSourceId = existingReplacementSourceId,
+                    remoteReplacementSourceId = preferred,
+                )
+
+            existingReplacementSourceId.isNotBlank() -> existingReplacementSourceId
+            preferred.isNotBlank() -> preferred
+            else -> generateFreshReplacementSourceId(currentSourceId)
+        }
+        ensureFreshReplacementSourceState(currentSourceId, reserved)
+        return reserved
+    }
+
+    private suspend fun ensureFreshReplacementSourceState(
+        currentSourceId: String,
+        replacementSourceId: String,
+    ) {
+        check(replacementSourceId.isNotBlank()) { "replacement source id must not be blank" }
+        check(replacementSourceId != currentSourceId) {
+            "replacement source id must differ from current source id"
+        }
+        sourceStateStore.ensureSource(replacementSourceId)
+        val state = sourceStateStore.loadState(replacementSourceId)
+            ?: error("_sync_source_state missing for replacement source $replacementSourceId")
+        check(state.nextSourceBundleId == 1L && state.replacedBySourceId.isBlank()) {
+            "replacement source $replacementSourceId is not fresh for source recovery"
+        }
     }
 
     private suspend fun maybeRetryTransportFailure(
@@ -1193,6 +1259,7 @@ private data class DurableLifecycleView(
 private data class RebuildPlan(
     val operation: OversqliteOperation,
     val rotatedSourceId: String?,
+    val sourceReplacementReason: String?,
     val outboxMode: SnapshotRebuildOutboxMode,
 )
 

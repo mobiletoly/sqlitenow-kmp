@@ -130,16 +130,10 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
             val initialSourceId = client.sourceInfo().getOrThrow().currentSourceId
             Uuid.parse(initialSourceId)
 
-            db.execSQL(
-                """
-                UPDATE _sync_operation_state
-                SET kind = 'source_recovery',
-                    source_recovery_reason = 'history_pruned',
-                    source_recovery_source_id = '$initialSourceId',
-                    source_recovery_source_bundle_id = 0,
-                    source_recovery_intent_state = ''
-                WHERE singleton_key = 1
-                """.trimIndent(),
+            markSourceRecoveryRequired(
+                db = db,
+                reason = SourceRecoveryReason.HISTORY_PRUNED,
+                replacementSourceId = randomTestSourceId("reserved-rotated"),
             )
 
             client.rebuild().getOrThrow()
@@ -326,16 +320,10 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
             client.openAndConnect("user-1").getOrThrow()
             val currentSourceId = client.sourceInfo().getOrThrow().currentSourceId
 
-            db.execSQL(
-                """
-                UPDATE _sync_operation_state
-                SET kind = 'source_recovery',
-                    source_recovery_reason = 'source_sequence_changed',
-                    source_recovery_source_id = '$currentSourceId',
-                    source_recovery_source_bundle_id = 7,
-                    source_recovery_intent_state = 'outbox'
-                WHERE singleton_key = 1
-                """.trimIndent(),
+            markSourceRecoveryRequired(
+                db = db,
+                reason = SourceRecoveryReason.SOURCE_SEQUENCE_CHANGED,
+                replacementSourceId = randomTestSourceId("reserved-rotated"),
             )
 
             val info = client.sourceInfo().getOrThrow()
@@ -438,16 +426,10 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
             client.openAndConnect("user-1").getOrThrow()
             val previousSourceId = client.sourceInfo().getOrThrow().currentSourceId
 
-            db.execSQL(
-                """
-                UPDATE _sync_operation_state
-                SET kind = 'source_recovery',
-                    source_recovery_reason = 'history_pruned',
-                    source_recovery_source_id = '$previousSourceId',
-                    source_recovery_source_bundle_id = 3,
-                    source_recovery_intent_state = ''
-                WHERE singleton_key = 1
-                """.trimIndent(),
+            markSourceRecoveryRequired(
+                db = db,
+                reason = SourceRecoveryReason.HISTORY_PRUNED,
+                replacementSourceId = randomTestSourceId("reserved-rotated"),
             )
 
             val report = client.rebuild().getOrThrow()

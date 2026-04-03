@@ -7,7 +7,9 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -850,6 +852,227 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             seedDb.close()
             recoverDb.close()
             verifyDb.close()
+        }
+    }
+
+    @Test
+    fun sourceRetiredOnPushCreate_persistsReplacementAcrossRestartAndRotatedRebuildReusesIt() = runTest {
+        val server = MockSyncServer()
+        val db = newDb()
+        val verifyDb = newDb()
+        var http = server.newHttpClient()
+        val verifyHttp = server.newHttpClient()
+        try {
+            createUsersAndPostsTables(db)
+            createUsersAndPostsTables(verifyDb)
+
+            val client = newClient(db, http)
+            val verifyClient = newClient(verifyDb, verifyHttp)
+
+            client.openAndConnect(userId = "user-1").getOrThrow()
+            verifyClient.openAndConnect(userId = "user-1").getOrThrow()
+            client.rebuild().getOrThrow()
+            verifyClient.rebuild().getOrThrow()
+
+            val sourceBefore = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
+            insertUser(db, "u1", "Rotated Writer")
+            server.sourceRetiredOnPushCreate = SourceRetiredResponse(
+                error = "source_retired",
+                message = "source retired on create",
+                sourceId = sourceBefore,
+                replacedBySourceId = "server-rotated-device",
+            )
+
+            val pushError = assertFailsWith<SourceRecoveryRequiredException> {
+                client.pushPending().getOrThrow()
+            }
+            assertEquals(SourceRecoveryReason.SOURCE_RETIRED, pushError.reason)
+            assertEquals("source_retired", scalarText(db, "SELECT reason FROM _sync_operation_state"))
+            assertEquals("server-rotated-device", scalarText(db, "SELECT replacement_source_id FROM _sync_operation_state"))
+            assertEquals(1L, scalarLong(db, "SELECT rebuild_required FROM _sync_attachment_state"))
+
+            client.close()
+            http.close()
+            server.sourceRetiredOnPushCreate = null
+            http = server.newHttpClient()
+            val restartedClient = newClient(db, http)
+            restartedClient.open().getOrThrow()
+            restartedClient.attach("user-1").getOrThrow()
+            restartedClient.rebuild().getOrThrow()
+
+            assertEquals(
+                listOf("server-rotated-device"),
+                server.requestedSnapshotSourceReplacements.map { it.newSourceId },
+            )
+            assertEquals(
+                listOf(sourceBefore),
+                server.requestedSnapshotSourceReplacements.map { it.previousSourceId },
+            )
+            assertEquals("server-rotated-device", scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
+            assertEquals("", scalarText(db, "SELECT replacement_source_id FROM _sync_operation_state"))
+
+            restartedClient.pushPending().getOrThrow()
+            verifyClient.pullToStable().getOrThrow()
+
+            assertEquals("Rotated Writer", scalarText(verifyDb, "SELECT name FROM users WHERE id = 'u1'"))
+        } finally {
+            http.close()
+            verifyHttp.close()
+            db.close()
+            verifyDb.close()
+        }
+    }
+
+    @Test
+    fun sourceRetiredOnPushCommit_entersDurableSourceRecovery() = runTest {
+        val server = MockSyncServer()
+        val db = newDb()
+        val http = server.newHttpClient()
+        try {
+            createUsersAndPostsTables(db)
+
+            val client = newClient(db, http)
+            client.openAndConnect(userId = "user-1").getOrThrow()
+            client.rebuild().getOrThrow()
+
+            val sourceBefore = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
+            insertUser(db, "u1", "Commit Rotation")
+            server.sourceRetiredOnPushCommit = SourceRetiredResponse(
+                error = "source_retired",
+                message = "source retired on commit",
+                sourceId = sourceBefore,
+                replacedBySourceId = "commit-rotated-device",
+            )
+
+            val pushError = assertFailsWith<SourceRecoveryRequiredException> {
+                client.pushPending().getOrThrow()
+            }
+            assertEquals(SourceRecoveryReason.SOURCE_RETIRED, pushError.reason)
+            assertEquals("source_retired", scalarText(db, "SELECT reason FROM _sync_operation_state"))
+            assertEquals("commit-rotated-device", scalarText(db, "SELECT replacement_source_id FROM _sync_operation_state"))
+            assertEquals(sourceBefore, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
+        } finally {
+            http.close()
+            db.close()
+        }
+    }
+
+    @Test
+    fun sourceRetiredOnSnapshotCreateFromPull_adoptsReplacementAndKeepsCurrentSourceUnchanged() = runTest {
+        val server = MockSyncServer()
+        val leaderDb = newDb()
+        val followerDb = newDb()
+        val leaderHttp = server.newHttpClient()
+        val followerHttp = server.newHttpClient()
+        try {
+            createUsersAndPostsTables(leaderDb)
+            createUsersAndPostsTables(followerDb)
+
+            val leader = newClient(leaderDb, leaderHttp)
+            val follower = newClient(followerDb, followerHttp)
+
+            leader.openAndConnect(userId = "user-1").getOrThrow()
+            follower.openAndConnect(userId = "user-1").getOrThrow()
+            leader.rebuild().getOrThrow()
+            follower.rebuild().getOrThrow()
+
+            insertUser(leaderDb, "u1", "Seed")
+            leader.pushPending().getOrThrow()
+            follower.pullToStable().getOrThrow()
+
+            val followerSourceBefore = scalarText(followerDb, "SELECT current_source_id FROM _sync_attachment_state")
+            insertUser(leaderDb, "u2", "Latest")
+            leader.pushPending().getOrThrow()
+
+            server.retainedBundleFloor = 2
+            server.sourceRetiredOnSnapshotCreate = SourceRetiredResponse(
+                error = "source_retired",
+                message = "source retired during snapshot create",
+                sourceId = followerSourceBefore,
+                replacedBySourceId = "adopted-rotated-device",
+            )
+
+            val rebuildError = assertFailsWith<SourceRecoveryRequiredException> {
+                follower.pullToStable().getOrThrow()
+            }
+            assertEquals(SourceRecoveryReason.SOURCE_RETIRED, rebuildError.reason)
+            assertEquals("source_retired", scalarText(followerDb, "SELECT reason FROM _sync_operation_state"))
+            assertEquals("adopted-rotated-device", scalarText(followerDb, "SELECT replacement_source_id FROM _sync_operation_state"))
+            assertEquals(followerSourceBefore, scalarText(followerDb, "SELECT current_source_id FROM _sync_attachment_state"))
+        } finally {
+            leaderHttp.close()
+            followerHttp.close()
+            leaderDb.close()
+            followerDb.close()
+        }
+    }
+
+    @Test
+    fun rotatedSnapshotSourceReplacementInvalid_failsClosedWithoutSwitchingCurrentSource() = runTest {
+        val server = MockSyncServer()
+        val db = newDb()
+        val http = server.newHttpClient()
+        try {
+            createUsersAndPostsTables(db)
+
+            val client = newClient(db, http)
+            client.openAndConnect(userId = "user-1").getOrThrow()
+            client.rebuild().getOrThrow()
+
+            val sourceBefore = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
+            markSourceRecoveryRequired(db, replacementSourceId = "local-rotated-device")
+            server.sourceReplacementInvalidOnSnapshotCreate = ErrorResponse(
+                error = "source_replacement_invalid",
+                message = "replacement source conflicts with server lineage",
+            )
+
+            val error = assertFailsWith<SourceReplacementInvalidException> {
+                client.rebuild().getOrThrow()
+            }
+            assertContains(error.message.orEmpty(), "replacement source conflicts")
+            assertEquals(
+                listOf("local-rotated-device"),
+                server.requestedSnapshotSourceReplacements.map { it.newSourceId },
+            )
+            assertEquals(sourceBefore, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
+            assertEquals("local-rotated-device", scalarText(db, "SELECT replacement_source_id FROM _sync_operation_state"))
+        } finally {
+            http.close()
+            db.close()
+        }
+    }
+
+    @Test
+    fun rotatedSnapshotSourceRetiredWithDifferentReplacement_failsClosedOnDivergence() = runTest {
+        val server = MockSyncServer()
+        val db = newDb()
+        val http = server.newHttpClient()
+        try {
+            createUsersAndPostsTables(db)
+
+            val client = newClient(db, http)
+            client.openAndConnect(userId = "user-1").getOrThrow()
+            client.rebuild().getOrThrow()
+
+            val sourceBefore = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
+            markSourceRecoveryRequired(db, replacementSourceId = "local-rotated-device")
+            server.sourceRetiredOnSnapshotCreate = SourceRetiredResponse(
+                error = "source_retired",
+                message = "source retired to another replacement",
+                sourceId = sourceBefore,
+                replacedBySourceId = "server-rotated-device",
+            )
+
+            val error = assertFailsWith<SourceReplacementDivergedException> {
+                client.rebuild().getOrThrow()
+            }
+            assertEquals("local-rotated-device", error.localReplacementSourceId)
+            assertEquals("server-rotated-device", error.remoteReplacementSourceId)
+            assertEquals(sourceBefore, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
+            assertEquals("local-rotated-device", scalarText(db, "SELECT replacement_source_id FROM _sync_operation_state"))
+        } finally {
+            http.close()
+            db.close()
         }
     }
 }

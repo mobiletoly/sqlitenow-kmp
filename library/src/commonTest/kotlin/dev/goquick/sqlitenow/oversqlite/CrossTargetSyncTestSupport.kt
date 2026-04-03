@@ -151,6 +151,11 @@ internal open class CrossTargetSyncTestSupport {
         var retainedBundleFloor: Long = 0
         var uploadedChunkCount: Int = 0
         var conflictOverride: ((PushRequestRow, Long, kotlinx.serialization.json.JsonElement?) -> PushConflictDetails?)? = null
+        var sourceRetiredOnPushCreate: SourceRetiredResponse? = null
+        var sourceRetiredOnPushCommit: SourceRetiredResponse? = null
+        var sourceRetiredOnSnapshotCreate: SourceRetiredResponse? = null
+        var sourceReplacementInvalidOnSnapshotCreate: ErrorResponse? = null
+        val requestedSnapshotSourceReplacements = mutableListOf<SnapshotSourceReplacement>()
 
         private var nextBundleSeq = 1L
         private var nextPushId = 1L
@@ -212,7 +217,7 @@ internal open class CrossTargetSyncTestSupport {
             }
 
             request.method.value == "POST" && request.url.encodedPath == "/sync/snapshot-sessions" ->
-                handleCreateSnapshotSession()
+                handleCreateSnapshotSession(request)
 
             request.method.value == "GET" &&
                 request.url.encodedPath.startsWith("/sync/snapshot-sessions/") ->
@@ -324,6 +329,9 @@ internal open class CrossTargetSyncTestSupport {
                 val body = request.bodyText()
                 val create = json.decodeFromString(PushSessionCreateRequest.serializer(), body)
                 val sourceId = request.headers[sourceIdHeaderName].orEmpty()
+                sourceRetiredOnPushCreate?.let { retired ->
+                    return sourceRetiredResponse(retired)
+                }
                 val expectedInitializationId = initializationId
                 if (expectedInitializationId != null) {
                     if (create.initializationId.isNullOrBlank()) {
@@ -406,6 +414,9 @@ internal open class CrossTargetSyncTestSupport {
                     .substringBefore("/commit")
                 val session = pushSessions[pushId]
                     ?: return errorResponse("push_session_not_found", "unknown push session", HttpStatusCode.NotFound)
+                sourceRetiredOnPushCommit?.let { retired ->
+                    return sourceRetiredResponse(retired)
+                }
 
                 val existing = committedBySourceBundle["${session.sourceId}\u0000${session.sourceBundleId}"]
                 if (existing != null) {
@@ -550,7 +561,24 @@ internal open class CrossTargetSyncTestSupport {
             }
         }
 
-        private suspend fun MockRequestHandleScope.handleCreateSnapshotSession() = try {
+        private suspend fun MockRequestHandleScope.handleCreateSnapshotSession(
+            request: HttpRequestData,
+        ) = try {
+            val rawBody = request.bodyText().trim()
+            val createRequest = rawBody.takeIf { it.isNotEmpty() }?.let {
+                json.decodeFromString(SnapshotSessionCreateRequest.serializer(), it)
+            }
+            createRequest?.sourceReplacement?.let { requestedSnapshotSourceReplacements += it }
+            sourceReplacementInvalidOnSnapshotCreate?.let { invalid ->
+                return errorResponse(
+                    error = invalid.error,
+                    message = invalid.message,
+                    status = HttpStatusCode.Conflict,
+                )
+            }
+            sourceRetiredOnSnapshotCreate?.let { retired ->
+                return sourceRetiredResponse(retired)
+            }
             val snapshotRows = currentSnapshotRows()
             val snapshotId = "snapshot-${nextSnapshotId++}"
             val stableBundleSeq = bundles.lastOrNull()?.bundleSeq ?: if (scopeInitialized) 0L else 0L
@@ -714,6 +742,13 @@ internal open class CrossTargetSyncTestSupport {
                     conflict = conflict,
                 ),
             ),
+            status = HttpStatusCode.Conflict,
+        )
+
+        private fun MockRequestHandleScope.sourceRetiredResponse(
+            retired: SourceRetiredResponse,
+        ) = jsonResponse(
+            body = json.encodeToString(SourceRetiredResponse.serializer(), retired),
             status = HttpStatusCode.Conflict,
         )
 

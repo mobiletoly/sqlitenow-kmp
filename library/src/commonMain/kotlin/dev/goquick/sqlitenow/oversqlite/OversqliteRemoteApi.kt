@@ -249,19 +249,31 @@ internal class OversqliteRemoteApi(
         }
     }
 
-    suspend fun createSnapshotSession(sourceId: String): SnapshotSession {
+    suspend fun createSnapshotSession(
+        sourceId: String,
+        request: SnapshotSessionCreateRequest? = null,
+    ): SnapshotSession {
+        val response = executeLoggedCall(
+            operation = "snapshot session request",
+            method = "POST",
+            path = "/sync/snapshot-sessions",
+        ) {
+            http.post("sync/snapshot-sessions") {
+                header(sourceIdHeaderName, sourceId)
+                if (request != null) {
+                    contentType(ContentType.Application.Json)
+                    setBody(request)
+                }
+            }
+        }
         val session = requireOkJson<SnapshotSession>(
             operation = "snapshot session request",
             method = "POST",
             path = "/sync/snapshot-sessions",
-            call = executeLoggedCall(
-                operation = "snapshot session request",
-                method = "POST",
-                path = "/sync/snapshot-sessions",
-            ) {
-                http.post("sync/snapshot-sessions") {
-                    header(sourceIdHeaderName, sourceId)
-                }
+            call = response,
+            customError = { status: HttpStatusCode, raw: String ->
+                decodeSourceRecoveryRequiredExceptionOrNull(status, raw)
+                    ?: decodeSourceReplacementInvalidExceptionOrNull(status, raw)
             },
         )
         validateSnapshotSession(session)

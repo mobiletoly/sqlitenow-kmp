@@ -3,8 +3,15 @@ package dev.goquick.sqlitenow.oversqlite.realserver
 import dev.goquick.sqlitenow.oversqlite.*
 import dev.goquick.sqlitenow.oversqlite.platformsupport.assertConnectedOutcome
 
+import io.ktor.client.call.body
 import kotlinx.coroutines.test.runTest
 import io.ktor.client.HttpClient
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentType
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -750,6 +757,129 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
             http?.close()
             verifyHttp?.close()
             db.close()
+            verifyDb.close()
+        }
+    }
+
+    @Test
+    fun rotatedRebuild_usesRequestedReplacementAndOldSourceReturnsStructuredSourceRetired_againstRealServer() = runTest {
+        val config = requireRealServerConfig() ?: return@runTest
+        resetRealServerState(config.baseUrl)
+
+        val userId = randomRealServerId("retired-user")
+        val seedDb = newDb()
+        val recoverDb = newDb()
+        val verifyDb = newDb()
+        var seedHttp: HttpClient? = null
+        var recoverHttp: HttpClient? = null
+        var verifyHttp: HttpClient? = null
+        var oldSourceHttp: HttpClient? = null
+        try {
+            createBusinessSubsetTables(seedDb)
+            createBusinessSubsetTables(recoverDb)
+            createBusinessSubsetTables(verifyDb)
+
+            val seedSourceId = bootstrapManagedSourceId(seedDb, config.baseUrl)
+            val recoverSourceId = bootstrapManagedSourceId(recoverDb, config.baseUrl)
+            val verifySourceId = bootstrapManagedSourceId(verifyDb, config.baseUrl)
+            val rotatedSourceId = randomRealServerId("rotated-source")
+
+            seedHttp = newRealServerHttpClient(config.baseUrl, issueDummySigninToken(config.baseUrl, userId, seedSourceId))
+            recoverHttp = newRealServerHttpClient(config.baseUrl, issueDummySigninToken(config.baseUrl, userId, recoverSourceId))
+            verifyHttp = newRealServerHttpClient(config.baseUrl, issueDummySigninToken(config.baseUrl, userId, verifySourceId))
+
+            val seedClient = newRealServerClient(seedDb, seedHttp)
+            val recoverClient = newRealServerClient(recoverDb, recoverHttp)
+            val verifyClient = newRealServerClient(verifyDb, verifyHttp)
+
+            seedClient.open().getOrThrow()
+            assertConnectedOutcome(
+                expectedOutcome = AttachOutcome.STARTED_EMPTY,
+                actual = seedClient.attach(userId).getOrThrow(),
+                expectedAuthority = AuthorityStatus.AUTHORITATIVE_EMPTY,
+            )
+
+            insertBusinessUserAndPost(
+                seedDb,
+                "91919191-9191-9191-9191-919191919191",
+                "92929292-9292-9292-9292-929292929292",
+                "rotated-seed",
+            )
+            seedClient.pushPending().getOrThrow()
+
+            recoverClient.open().getOrThrow()
+            assertConnectedOutcome(
+                expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
+                actual = recoverClient.attach(userId).getOrThrow(),
+            )
+
+            markSourceRecoveryRequired(recoverDb, replacementSourceId = rotatedSourceId)
+            recoverClient.rebuild().getOrThrow()
+
+            assertEquals(rotatedSourceId, scalarText(recoverDb, "SELECT current_source_id FROM _sync_attachment_state"))
+            assertEquals(
+                rotatedSourceId,
+                scalarText(recoverDb, "SELECT replaced_by_source_id FROM _sync_source_state WHERE source_id = '$recoverSourceId'"),
+            )
+
+            oldSourceHttp = newRealServerHttpClient(
+                config.baseUrl,
+                issueDummySigninToken(config.baseUrl, userId, recoverSourceId),
+            )
+            val oldSourceResponse = oldSourceHttp.post("sync/push-sessions") {
+                header("Oversync-Source-ID", recoverSourceId)
+                contentType(ContentType.Application.Json)
+                setBody(
+                    PushSessionCreateRequest(
+                        sourceBundleId = 1L,
+                        plannedRowCount = 1L,
+                    ),
+                )
+            }
+            assertEquals(HttpStatusCode.Conflict, oldSourceResponse.status)
+            val retired = oldSourceResponse.body<SourceRetiredResponse>()
+            assertEquals("source_retired", retired.error)
+            assertEquals(recoverSourceId, retired.sourceId)
+            assertEquals(rotatedSourceId, retired.replacedBySourceId)
+
+            recoverHttp?.close()
+            recoverClient.close()
+            recoverHttp = newRealServerHttpClient(
+                config.baseUrl,
+                issueDummySigninToken(config.baseUrl, userId, rotatedSourceId),
+            )
+            val restartedRecoverClient = newRealServerClient(recoverDb, recoverHttp)
+            restartedRecoverClient.open().getOrThrow()
+            assertConnectedOutcome(
+                expectedOutcome = AttachOutcome.RESUMED_ATTACHED_STATE,
+                actual = restartedRecoverClient.attach(userId).getOrThrow(),
+            )
+
+            insertBusinessUserAndPost(
+                recoverDb,
+                "93939393-9393-9393-9393-939393939393",
+                "94949494-9494-9494-9494-949494949494",
+                "rotated-followup",
+            )
+            restartedRecoverClient.pushPending().getOrThrow()
+
+            verifyClient.open().getOrThrow()
+            assertConnectedOutcome(
+                expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
+                actual = verifyClient.attach(userId).getOrThrow(),
+            )
+            verifyClient.pullToStable().getOrThrow()
+            assertEquals(
+                "User rotated-followup",
+                scalarText(verifyDb, "SELECT name FROM users WHERE id = '93939393-9393-9393-9393-939393939393'"),
+            )
+        } finally {
+            seedHttp?.close()
+            recoverHttp?.close()
+            verifyHttp?.close()
+            oldSourceHttp?.close()
+            seedDb.close()
+            recoverDb.close()
             verifyDb.close()
         }
     }

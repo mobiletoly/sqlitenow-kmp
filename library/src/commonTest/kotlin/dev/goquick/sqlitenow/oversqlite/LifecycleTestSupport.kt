@@ -2,7 +2,8 @@ package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.sqlite.use
-import kotlin.random.Random
+import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
 
 suspend fun OversqliteClient.openAndConnect(
     userId: String): Result<AttachResult> {
@@ -10,29 +11,23 @@ suspend fun OversqliteClient.openAndConnect(
     return attach(userId)
 }
 
+@OptIn(ExperimentalUuidApi::class)
 internal fun randomTestSourceId(prefix: String = "test-source"): String {
-    return "$prefix-${Random.nextInt().toString().removePrefix("-")}"
+    return Uuid.random().toString()
 }
 
 suspend fun markSourceRecoveryRequired(
     db: SafeSQLiteConnection,
     reason: SourceRecoveryReason = SourceRecoveryReason.SOURCE_SEQUENCE_CHANGED,
-    sourceBundleId: Long = 0,
-    intentState: String = sourceRecoveryIntentStateNone,
+    replacementSourceId: String = randomTestSourceId("reserved-rotated"),
 ) {
-    val sourceId = db.prepare(
-        "SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1",
-    ).use { st ->
-        check(st.step())
-        st.getText(0)
-    }
+    OversqliteSourceStateStore(db).ensureSource(replacementSourceId)
+    OversqliteAttachmentStateStore(db).setRebuildRequired(true)
     OversqliteOperationStateStore(db).persistState(
         OversqliteOperationState(
             kind = operationKindSourceRecovery,
-            sourceRecoveryReason = reason.toPersistedOperationReason(),
-            sourceRecoverySourceId = sourceId,
-            sourceRecoverySourceBundleId = sourceBundleId,
-            sourceRecoveryIntentState = intentState,
+            reason = reason.toPersistedOperationReason(),
+            replacementSourceId = replacementSourceId,
         ),
     )
 }

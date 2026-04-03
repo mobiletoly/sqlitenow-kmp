@@ -1817,13 +1817,13 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertTrue(firstError is SourceRecoveryRequiredException)
             assertEquals(SourceRecoveryReason.SOURCE_SEQUENCE_OUT_OF_ORDER, firstError.reason)
             assertEquals("source_recovery", scalarText(db, "SELECT kind FROM _sync_operation_state WHERE singleton_key = 1"))
-            assertEquals(
-                "source_sequence_out_of_order",
-                scalarText(db, "SELECT source_recovery_reason FROM _sync_operation_state WHERE singleton_key = 1"),
+            assertEquals("source_sequence_out_of_order", scalarText(db, "SELECT reason FROM _sync_operation_state WHERE singleton_key = 1"))
+            val reservedReplacementSourceId = scalarText(
+                db,
+                "SELECT replacement_source_id FROM _sync_operation_state WHERE singleton_key = 1",
             )
-            assertEquals(originalSourceId, scalarText(db, "SELECT source_recovery_source_id FROM _sync_operation_state WHERE singleton_key = 1"))
-            assertEquals(1L, scalarLong(db, "SELECT source_recovery_source_bundle_id FROM _sync_operation_state WHERE singleton_key = 1"))
-            assertEquals("outbox", scalarText(db, "SELECT source_recovery_intent_state FROM _sync_operation_state WHERE singleton_key = 1"))
+            assertTrue(reservedReplacementSourceId.isNotBlank())
+            assertNotEquals(originalSourceId, reservedReplacementSourceId)
             assertEquals("prepared", scalarText(db, "SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1"))
             assertEquals(1L, scalarLong(db, "SELECT source_bundle_id FROM _sync_outbox_bundle WHERE singleton_key = 1"))
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
@@ -1892,9 +1892,13 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertTrue(error is SourceRecoveryRequiredException)
             assertEquals(SourceRecoveryReason.HISTORY_PRUNED, error.reason)
             assertEquals("source_recovery", scalarText(db, "SELECT kind FROM _sync_operation_state WHERE singleton_key = 1"))
-            assertEquals("history_pruned", scalarText(db, "SELECT source_recovery_reason FROM _sync_operation_state WHERE singleton_key = 1"))
-            assertEquals(sourceId, scalarText(db, "SELECT source_recovery_source_id FROM _sync_operation_state WHERE singleton_key = 1"))
-            assertEquals(1L, scalarLong(db, "SELECT source_recovery_source_bundle_id FROM _sync_operation_state WHERE singleton_key = 1"))
+            assertEquals("history_pruned", scalarText(db, "SELECT reason FROM _sync_operation_state WHERE singleton_key = 1"))
+            val reservedReplacementSourceId = scalarText(
+                db,
+                "SELECT replacement_source_id FROM _sync_operation_state WHERE singleton_key = 1",
+            )
+            assertTrue(reservedReplacementSourceId.isNotBlank())
+            assertNotEquals(sourceId, reservedReplacementSourceId)
             assertEquals("prepared", scalarText(db, "SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1"))
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
 
@@ -1939,12 +1943,13 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertTrue(error is SourceRecoveryRequiredException)
             assertEquals(SourceRecoveryReason.SOURCE_SEQUENCE_CHANGED, error.reason)
             assertEquals("source_recovery", scalarText(db, "SELECT kind FROM _sync_operation_state WHERE singleton_key = 1"))
-            assertEquals(
-                "source_sequence_changed",
-                scalarText(db, "SELECT source_recovery_reason FROM _sync_operation_state WHERE singleton_key = 1"),
+            assertEquals("source_sequence_changed", scalarText(db, "SELECT reason FROM _sync_operation_state WHERE singleton_key = 1"))
+            val reservedReplacementSourceId = scalarText(
+                db,
+                "SELECT replacement_source_id FROM _sync_operation_state WHERE singleton_key = 1",
             )
-            assertEquals(sourceId, scalarText(db, "SELECT source_recovery_source_id FROM _sync_operation_state WHERE singleton_key = 1"))
-            assertEquals(1L, scalarLong(db, "SELECT source_recovery_source_bundle_id FROM _sync_operation_state WHERE singleton_key = 1"))
+            assertTrue(reservedReplacementSourceId.isNotBlank())
+            assertNotEquals(sourceId, reservedReplacementSourceId)
             assertEquals("prepared", scalarText(db, "SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1"))
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
             assertEquals(1, pushServer.uploadedChunks.size)

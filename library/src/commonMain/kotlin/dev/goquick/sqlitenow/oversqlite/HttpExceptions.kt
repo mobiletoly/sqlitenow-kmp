@@ -44,7 +44,14 @@ class SourceRecoveryRequiredHttpException(
     status: HttpStatusCode,
     rawBody: String,
     val reason: SourceRecoveryReason,
+    val replacementSourceId: String? = null,
 ) : UploadHttpException(status, rawBody)
+
+class SourceReplacementInvalidHttpException(
+    val status: HttpStatusCode,
+    val rawBody: String,
+    val errorMessage: String,
+) : RuntimeException("Snapshot session request failed: HTTP $status - $errorMessage")
 
 class CommittedBundleNotFoundException(
     rawBody: String,
@@ -109,6 +116,17 @@ internal fun decodeSourceRecoveryRequiredExceptionOrNull(
     rawBody: String,
 ): SourceRecoveryRequiredHttpException? {
     if (status != HttpStatusCode.Conflict) return null
+    val retired = runCatching {
+        httpErrorJson.decodeFromString<SourceRetiredResponse>(rawBody)
+    }.getOrNull()
+    if (retired?.error == "source_retired") {
+        return SourceRecoveryRequiredHttpException(
+            status = status,
+            rawBody = rawBody,
+            reason = SourceRecoveryReason.SOURCE_RETIRED,
+            replacementSourceId = retired.replacedBySourceId?.takeIf { it.isNotBlank() },
+        )
+    }
     val error = runCatching {
         httpErrorJson.decodeFromString<ErrorResponse>(rawBody)
     }.getOrNull() ?: return null
@@ -122,5 +140,21 @@ internal fun decodeSourceRecoveryRequiredExceptionOrNull(
         status = status,
         rawBody = rawBody,
         reason = reason,
+    )
+}
+
+internal fun decodeSourceReplacementInvalidExceptionOrNull(
+    status: HttpStatusCode,
+    rawBody: String,
+): SourceReplacementInvalidHttpException? {
+    if (status != HttpStatusCode.Conflict) return null
+    val error = runCatching {
+        httpErrorJson.decodeFromString<ErrorResponse>(rawBody)
+    }.getOrNull() ?: return null
+    if (error.error != "source_replacement_invalid") return null
+    return SourceReplacementInvalidHttpException(
+        status = status,
+        rawBody = rawBody,
+        errorMessage = error.message,
     )
 }
