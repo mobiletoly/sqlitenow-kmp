@@ -32,7 +32,7 @@ class SqliteNowPluginFunctionalTest {
             kotlinBody = """
                 sourceSets {
                     commonMain.dependencies {
-                        implementation("dev.goquick.sqlitenow:core:0.7.0-SNAPSHOT")
+                        implementation("dev.goquick.sqlitenow:core")
                     }
                 }
             """.trimIndent(),
@@ -371,7 +371,7 @@ class SqliteNowPluginFunctionalTest {
             kotlinBody = """
                 sourceSets {
                     commonMain.dependencies {
-                        implementation("dev.goquick.sqlitenow:core:0.7.0-SNAPSHOT")
+                        implementation("dev.goquick.sqlitenow:core")
                     }
                 }
             """.trimIndent(),
