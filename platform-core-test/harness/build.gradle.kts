@@ -122,6 +122,10 @@ sqliteNow {
             packageName = "dev.goquick.sqlitenow.core.test.db"
             debug = true
         }
+        create("MigrationFixtureDatabase") {
+            packageName = "dev.goquick.sqlitenow.core.test.migration.db"
+            debug = true
+        }
     }
 }
 

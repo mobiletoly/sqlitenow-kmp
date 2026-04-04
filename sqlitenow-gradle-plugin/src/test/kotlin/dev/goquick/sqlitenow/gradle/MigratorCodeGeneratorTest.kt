@@ -4,11 +4,11 @@ import dev.goquick.sqlitenow.gradle.database.MigratorCodeGenerator
 import dev.goquick.sqlitenow.gradle.database.MigrationInspector
 import dev.goquick.sqlitenow.gradle.sqlinspect.SQLBatchInspector
 import dev.goquick.sqlitenow.gradle.sqlinspect.SchemaInspector
+import org.gradle.testkit.runner.GradleRunner
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.nio.file.Path
-import java.sql.Connection
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.BeforeEach
 import kotlin.test.assertTrue
@@ -18,16 +18,12 @@ class MigratorCodeGeneratorTest {
     @TempDir
     lateinit var tempDir: Path
 
-    private lateinit var initFile: File
     private lateinit var outputDir: File
-    private lateinit var conn: Connection
 
     @BeforeEach
     fun setup() {
-        initFile = File(tempDir.toFile(), "init.sql")
         outputDir = File(tempDir.toFile(), "output")
         outputDir.mkdir()
-        conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
     }
 
     @Test
@@ -52,8 +48,6 @@ class MigratorCodeGeneratorTest {
                 FOREIGN KEY (test_table_id) REFERENCES test_table(id) ON DELETE CASCADE
             );
         """.trimIndent()
-
-        initFile.writeText(createTableSql)
 
         // Create separate directories for each inspector
         val schemaDir = File(tempDir.toFile(), "schema")
@@ -282,5 +276,113 @@ class MigratorCodeGeneratorTest {
             fileContent.contains("strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"),
             "Generated code should preserve strftime format strings with percent signs"
         )
+    }
+
+    @Test
+    @DisplayName("Generated migration helpers are suspend and compile with migration files present")
+    fun generatedMigrationHelpersAreSuspendAndCompile() {
+        val schemaDir = File(tempDir.toFile(), "schema").apply { mkdir() }
+        val batchDir = File(tempDir.toFile(), "batch").apply { mkdir() }
+        val migrationDir = File(tempDir.toFile(), "migrations").apply { mkdir() }
+
+        File(schemaDir, "schema.sql").writeText(
+            """
+                CREATE TABLE users (
+                    id INTEGER PRIMARY KEY NOT NULL,
+                    name TEXT NOT NULL
+                );
+            """.trimIndent()
+        )
+        File(migrationDir, "0001.sql").writeText("ALTER TABLE users ADD COLUMN email TEXT;")
+
+        val generator = MigratorCodeGenerator(
+            schemaInspector = SchemaInspector(schemaDirectory = schemaDir),
+            sqlBatchInspector = SQLBatchInspector(sqlDirectory = batchDir, mandatory = false),
+            migrationInspector = MigrationInspector(sqlDirectory = migrationDir),
+            packageName = "com.example.db",
+            outputDir = outputDir,
+        )
+
+        generator.generateCode()
+
+        val outputFile = File(outputDir, "com/example/db/VersionBasedDatabaseMigrations.kt")
+        assertTrue(outputFile.exists(), "Output file should be created")
+
+        val fileContent = outputFile.readText()
+        assertTrue(
+            fileContent.contains("private suspend fun migrateToVersion1"),
+            "Generated migration helper should be suspend"
+        )
+
+        compileGeneratedMigrator(outputFile)
+    }
+
+    private fun compileGeneratedMigrator(generatedFile: File) {
+        val projectDir = tempDir.resolve("compile-project").toFile().apply { mkdirs() }
+        File(projectDir, "settings.gradle.kts").writeText(
+            """
+                pluginManagement {
+                    repositories {
+                        mavenCentral()
+                        gradlePluginPortal()
+                    }
+                }
+                rootProject.name = "migration-compile-check"
+            """.trimIndent()
+        )
+        File(projectDir, "build.gradle.kts").writeText(
+            """
+                import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+                import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
+
+                plugins {
+                    kotlin("jvm") version "2.3.20"
+                }
+
+                repositories {
+                    mavenCentral()
+                }
+
+                kotlin {
+                    jvmToolchain(17)
+                    compilerOptions {
+                        jvmTarget.set(JvmTarget.JVM_17)
+                        languageVersion.set(KotlinVersion.KOTLIN_2_3)
+                    }
+                }
+            """.trimIndent()
+        )
+
+        val coreDir = File(projectDir, "src/main/kotlin/dev/goquick/sqlitenow/core").apply { mkdirs() }
+        File(coreDir, "DatabaseMigrations.kt").writeText(
+            """
+                package dev.goquick.sqlitenow.core
+
+                interface DatabaseMigrations {
+                    suspend fun applyMigration(conn: SafeSQLiteConnection, currentVersion: Int): Int
+                }
+            """.trimIndent()
+        )
+        File(coreDir, "SafeSQLiteConnection.kt").writeText(
+            """
+                package dev.goquick.sqlitenow.core
+
+                class SafeSQLiteConnection {
+                    suspend fun execSQL(sql: String) = Unit
+
+                    suspend fun <T> withExclusiveAccess(block: suspend () -> T): T = block()
+                }
+            """.trimIndent()
+        )
+
+        val destination = File(projectDir, "src/main/kotlin/com/example/db/VersionBasedDatabaseMigrations.kt")
+        destination.parentFile.mkdirs()
+        destination.writeText(generatedFile.readText())
+
+        GradleRunner.create()
+            .withProjectDir(projectDir)
+            .withArguments("compileKotlin", "--stacktrace")
+            .forwardOutput()
+            .build()
     }
 }

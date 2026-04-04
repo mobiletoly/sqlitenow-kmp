@@ -106,7 +106,7 @@ internal class MigratorCodeGenerator(
     private fun generateMigrateToVersionFunction(version: Int, statements: List<SqlSingleStatement>): FunSpec {
         // Create the function builder
         val functionBuilder = FunSpec.Companion.builder("migrateToVersion$version")
-            .addModifiers(KModifier.PRIVATE)
+            .addModifiers(KModifier.PRIVATE, KModifier.SUSPEND)
             .addParameter("conn", ClassName("dev.goquick.sqlitenow.core", "SafeSQLiteConnection"))
 
         // Add the function body
@@ -236,12 +236,6 @@ internal class MigratorCodeGenerator(
             )
             .addImport("dev.goquick.sqlitenow.core", "SafeSQLiteConnection")
             .addImport("dev.goquick.sqlitenow.core", "DatabaseMigrations")
-
-        if (debug) {
-            // No additional import needed for conn.withContextAndTrace
-        } else {
-            fileSpecBuilder.addImport("kotlinx.coroutines", "withContext")
-        }
 
         val fileSpec = fileSpecBuilder.build()
 

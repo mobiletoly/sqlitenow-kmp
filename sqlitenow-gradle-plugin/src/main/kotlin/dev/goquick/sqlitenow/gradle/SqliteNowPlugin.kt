@@ -49,6 +49,7 @@ class SqliteNowPlugin : Plugin<Project> {
                     GenerateDatabaseFilesTask::class.java
                 ) { task ->
                     task.dbName.set(db.name)
+                    task.outputDir.set(project.layout.buildDirectory.dir("generated/sqlitenow/code/${db.name}"))
                     task.packageName.set(db.packageName)
                     task.schemaDatabaseFile.set(db.schemaDatabaseFile)
                     task.debug.set(db.debug)
