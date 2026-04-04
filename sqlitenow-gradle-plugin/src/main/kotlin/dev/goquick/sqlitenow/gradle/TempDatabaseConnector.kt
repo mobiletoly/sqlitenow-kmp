@@ -65,12 +65,12 @@ internal class TempDatabaseConnector(
 
         // Create a connection to the database
         val conn: Connection = DriverManager.getConnection(jdbcUrl)
-        conn.autoCommit = false
 
-        // Enable foreign keys
+        // Enable foreign keys before disabling auto-commit so SQLite does not ignore the pragma.
         conn.createStatement().use { stmt ->
             stmt.execute("PRAGMA foreign_keys = ON;")
         }
+        conn.autoCommit = false
 
         return conn
     }

@@ -89,6 +89,17 @@ class SQLBatchInspectorTest {
     }
 
     @Test
+    @DisplayName("Test SQLBatchInspector allows missing optional directories")
+    fun testInspectWithMissingOptionalDirectory() {
+        val missingDir = File(tempDir.toFile(), "missing-sql")
+
+        val inspector = SQLBatchInspector(missingDir, mandatory = false)
+
+        assertTrue(inspector.sqlFiles.isEmpty())
+        assertTrue(inspector.sqlStatements.isEmpty())
+    }
+
+    @Test
     @DisplayName("Test SQLBatchInspector with mixed file types")
     fun testInspectWithMixedFileTypes() {
         // Create SQL and non-SQL files
@@ -171,5 +182,6 @@ class SQLBatchInspectorTest {
         assertEquals("CREATE TABLE test (id INTEGER);", statements[0], "First statement should be from a_first.sql")
         assertEquals("INSERT INTO test VALUES (1);", statements[1], "Second statement should be from b_second.sql")
         assertEquals("INSERT INTO test VALUES (3);", statements[2], "Third statement should be from c_third.sql")
+        assertEquals(listOf("a_first.sql", "b_second.sql", "c_third.sql"), inspector.sqlFiles.map { it.name })
     }
 }

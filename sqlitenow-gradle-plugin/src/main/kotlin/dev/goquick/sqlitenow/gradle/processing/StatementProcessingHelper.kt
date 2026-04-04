@@ -130,7 +130,7 @@ class StatementProcessingHelper(
             ?.associate { namespaceDir ->
                 val namespace = namespaceDir.name
                 val sqlFiles = namespaceDir.listFiles()
-                    ?.filter { it.isFile && it.extension == "sql" }
+                    ?.filter { it.isFile && it.extension.equals("sql", ignoreCase = true) }
                     // Likewise, stabilise file ordering inside each namespace
                     ?.sortedBy { it.name }
                     ?: emptyList()

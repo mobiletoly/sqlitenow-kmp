@@ -6,6 +6,7 @@ import net.sf.jsqlparser.statement.insert.Insert
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class NamedParametersProcessorOnConflictTest {
 
@@ -193,5 +194,87 @@ class NamedParametersProcessorOnConflictTest {
         val questionMarkCount = processor.processedSql.count { it == '?' }
         assertEquals(processor.parameters.size, questionMarkCount,
             "Number of ? placeholders should match number of parameters")
+    }
+
+    @Test
+    fun testNamedParametersProcessorPreservesConflictTargetAndWherePredicate() {
+        val sql = """
+            INSERT INTO Person(name, email, active)
+            VALUES (:name, :email, :active)
+            ON CONFLICT(email) WHERE active = 1
+            DO UPDATE SET name = :updatedName
+            WHERE Person.active = :onlyWhenActive
+        """.trimIndent()
+
+        val statement = CCJSqlParserUtil.parse(sql) as Insert
+        val processor = NamedParametersProcessor(statement)
+        val normalized = processor.processedSql.replace("\\s+".toRegex(), " ").trim()
+            .replace("( ", "(")
+            .replace(" )", ")")
+
+        assertTrue(normalized.contains("ON CONFLICT (email) WHERE active = 1"))
+        assertTrue(normalized.contains("DO UPDATE SET name = ? WHERE Person.active = ?"))
+        assertEquals(listOf("name", "email", "active", "updatedName", "onlyWhenActive"), processor.parameters)
+    }
+
+    @Test
+    fun testNamedParametersProcessorPreservesDoNothingConflictAction() {
+        val sql = """
+            INSERT INTO Person(name, email)
+            VALUES (:name, :email)
+            ON CONFLICT(email) DO NOTHING
+        """.trimIndent()
+
+        val statement = CCJSqlParserUtil.parse(sql) as Insert
+        val processor = NamedParametersProcessor(statement)
+        val normalized = processor.processedSql.replace("\\s+".toRegex(), " ").trim()
+            .replace("( ", "(")
+            .replace(" )", ")")
+
+        assertTrue(normalized.contains("ON CONFLICT (email) DO NOTHING"))
+        assertEquals(listOf("name", "email"), processor.parameters)
+        assertEquals(2, processor.processedSql.count { it == '?' })
+    }
+
+    @Test
+    fun testNamedParametersProcessorPreservesInsertSelectStructure() {
+        val sql = """
+            INSERT INTO PersonArchive(id, email)
+            SELECT p.id, :overrideEmail
+            FROM Person p
+            WHERE p.group_id = :groupId
+            ON CONFLICT(id) DO UPDATE SET email = :updatedEmail
+        """.trimIndent()
+
+        val statement = CCJSqlParserUtil.parse(sql) as Insert
+        val processor = NamedParametersProcessor(statement)
+        val normalized = processor.processedSql.replace("\\s+".toRegex(), " ").trim()
+            .replace("( ", "(")
+            .replace(" )", ")")
+
+        assertTrue(normalized.contains("INSERT INTO PersonArchive (id, email) SELECT p.id, ? FROM Person p WHERE p.group_id = ?"))
+        assertTrue(normalized.contains("ON CONFLICT (id) DO UPDATE SET email = ?"))
+        assertEquals(listOf("overrideEmail", "groupId", "updatedEmail"), processor.parameters)
+    }
+
+    @Test
+    fun testNamedParametersProcessorKeepsWithClauseParameterOrderForInsert() {
+        val sql = """
+            WITH selected AS (
+                SELECT id
+                FROM Person
+                WHERE group_id = :groupId
+            )
+            INSERT INTO PersonArchive(id, nickname)
+            SELECT id, :nickname
+            FROM selected
+            ON CONFLICT(id) DO UPDATE SET nickname = :updatedNickname
+        """.trimIndent()
+
+        val statement = CCJSqlParserUtil.parse(sql) as Insert
+        val processor = NamedParametersProcessor(statement)
+
+        assertEquals(listOf("groupId", "nickname", "updatedNickname"), processor.parameters)
+        assertTrue(processor.processedSql.contains("WITH selected AS"))
     }
 }

@@ -757,4 +757,67 @@ class AnnotationsTest {
         assertTrue(exception.message!!.contains("Unsupported annotation(s)"))
         assertTrue(exception.message!!.contains("CREATE TABLE statement"))
     }
+
+    @Test
+    fun `extract annotations keeps nested objects and lists intact`() {
+        val annotations = extractAnnotations(
+            listOf(
+                "-- @@{ cascadeNotify = { update = [person, address], delete = [comment] } }"
+            )
+        )
+
+        val cascadeNotify = annotations[AnnotationConstants.CASCADE_NOTIFY] as Map<*, *>
+        assertEquals(listOf("person", "address"), cascadeNotify["update"])
+        assertEquals(listOf("comment"), cascadeNotify["delete"])
+    }
+
+    @Test
+    fun `create table annotations parse cascadeNotify`() {
+        val overrides = StatementAnnotationOverrides.parse(
+            mapOf(
+                AnnotationConstants.CASCADE_NOTIFY to mapOf(
+                    "insert" to listOf("person"),
+                    "update" to listOf("address"),
+                    "delete" to listOf("comment"),
+                )
+            ),
+            context = StatementAnnotationContext.CREATE_TABLE
+        )
+
+        assertEquals(setOf("person"), overrides.cascadeNotify?.insert)
+        assertEquals(setOf("address"), overrides.cascadeNotify?.update)
+        assertEquals(setOf("comment"), overrides.cascadeNotify?.delete)
+    }
+
+    @Test
+    fun `cascadeNotify rejects unsupported keys`() {
+        val exception = assertThrows<IllegalArgumentException> {
+            StatementAnnotationOverrides.parse(
+                mapOf(
+                    AnnotationConstants.CASCADE_NOTIFY to mapOf(
+                        "refresh" to listOf("person")
+                    )
+                ),
+                context = StatementAnnotationContext.CREATE_TABLE
+            )
+        }
+
+        assertTrue(exception.message!!.contains("Unsupported key(s) refresh"))
+    }
+
+    @Test
+    fun `cascadeNotify rejects non list values`() {
+        val exception = assertThrows<IllegalArgumentException> {
+            StatementAnnotationOverrides.parse(
+                mapOf(
+                    AnnotationConstants.CASCADE_NOTIFY to mapOf(
+                        "update" to "person"
+                    )
+                ),
+                context = StatementAnnotationContext.CREATE_TABLE
+            )
+        }
+
+        assertTrue(exception.message!!.contains("must be a list of table names"))
+    }
 }

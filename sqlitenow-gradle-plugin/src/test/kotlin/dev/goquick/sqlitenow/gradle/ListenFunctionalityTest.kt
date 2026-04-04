@@ -1,86 +1,196 @@
 package dev.goquick.sqlitenow.gradle
 
 import dev.goquick.sqlitenow.gradle.database.DatabaseCodeGenerator
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.DisplayName
-import org.junit.jupiter.api.Assertions.*
+import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
+import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
+import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
+import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.processing.StatementProcessingHelper
+import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationResolver
+import dev.goquick.sqlitenow.gradle.sqlinspect.CreateTableStatement
 import java.io.File
+import java.nio.file.Path
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+import org.junit.jupiter.api.DisplayName
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 
-/**
- * Tests for the reactive flow functionality that generates Flow-based database listeners.
- * These tests focus on verifying that the code generation logic includes the necessary
- * flow methods and table change notifications.
- */
 class ListenFunctionalityTest {
 
+    @TempDir
+    lateinit var tempDir: Path
+
     @Test
-    @DisplayName("Test generateFlowMethod creates correct method name")
-    fun testFlowMethodNaming() {
-        // Test that flow methods use the correct naming convention
-        val methodName = "selectVeryWeird"
-        val expectedFlowMethodName = "${methodName}Flow"
-
-        assertEquals("selectVeryWeirdFlow", expectedFlowMethodName)
-
-        // Test that the naming follows the pattern: methodName + "Flow"
-        val testCases = listOf(
-            "selectAll" to "selectAllFlow",
-            "selectByAge" to "selectByAgeFlow",
-            "selectPersonsWithAddress" to "selectPersonsWithAddressFlow"
-        )
-
-        testCases.forEach { (input, expected) ->
-            val actual = "${input}Flow"
-            assertEquals(expected, actual, "Flow method naming should be consistent")
+    @DisplayName("DatabaseCodeGenerator emits reactive flow scaffolding against executeAsList")
+    fun databaseCodeGeneratorEmitsReactiveFlowScaffolding() {
+        val queriesDir = tempDir.resolve("queries").toFile().apply {
+            resolve("person").mkdirs()
         }
+        val outputDir = tempDir.resolve("output").toFile().apply { mkdirs() }
+
+        File(queriesDir, "person/selectByBirthDate.sql").writeText(
+            """
+            -- @@{name=SelectByBirthDate}
+            SELECT
+                id,
+                /* @@{ field=birth_date, adapter=custom } */
+                birth_date
+            FROM person
+            WHERE birth_date >= :birthDateStart;
+            """.trimIndent()
+        )
+
+        val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
+        conn.createStatement().execute(
+            """
+            CREATE TABLE person (
+                id INTEGER PRIMARY KEY,
+                birth_date TEXT
+            )
+            """.trimIndent()
+        )
+
+        val createTables = listOf(
+            annotatedPersonTableWithBirthDateAdapter()
+        )
+
+        val dataStructGenerator = createDataStructCodeGeneratorWithMockExecutors(
+            conn = conn,
+            queriesDir = queriesDir,
+            createTableStatements = createTables,
+            packageName = "fixture.db",
+            outputDir = outputDir,
+        )
+
+        DatabaseCodeGenerator(
+            nsWithStatements = dataStructGenerator.nsWithStatements,
+            createTableStatements = dataStructGenerator.createTableStatements,
+            createViewStatements = dataStructGenerator.createViewStatements,
+            packageName = "fixture.db",
+            outputDir = outputDir,
+            databaseClassName = "FixtureDatabase",
+        ).generateDatabaseClass()
+
+        val generated = File(outputDir, "fixture/db/FixtureDatabase.kt").readText()
+        assertTrue(generated.contains("override fun asFlow() = ref.createReactiveQueryFlow("))
+        assertTrue(generated.contains("affectedTables = PersonQuery.SelectByBirthDate.affectedTables"))
+        assertTrue(generated.contains("queryExecutor = {"))
+        assertTrue(generated.contains("PersonQuery.SelectByBirthDate.executeAsList("))
+        assertTrue(generated.contains("birthDateToSqlValue = ref.personAdapters.birthDateToSqlValue"))
+
+        conn.close()
     }
 
     @Test
-    @DisplayName("Test flow method generation logic exists in DatabaseCodeGenerator")
-    fun testDatabaseCodeGeneratorHasFlowLogic() {
-        // Test that the DatabaseCodeGenerator class exists and can be instantiated
-        val generatorClass = DatabaseCodeGenerator::class
+    @DisplayName("DatabaseCodeGenerator emits listener notifications after execute-returning blocks resolve")
+    fun databaseCodeGeneratorEmitsNotificationsForExecuteReturningBlocks() {
+        val queriesDir = tempDir.resolve("queries").toFile().apply {
+            resolve("person").mkdirs()
+        }
+        val outputDir = tempDir.resolve("output").toFile().apply { mkdirs() }
 
-        // We can't directly test private methods, but we can verify the class exists and compiles
-        assertNotNull(generatorClass, "DatabaseCodeGenerator class should exist")
-
-        // Test that the class can be instantiated (basic smoke test)
-        val generator = DatabaseCodeGenerator(
-            nsWithStatements = emptyMap(),
-            createTableStatements = emptyList(),
-            createViewStatements = emptyList(),
-            packageName = "test.package",
-            outputDir = File("."),
-            databaseClassName = "TestDatabase"
+        File(queriesDir, "person/addReturning.sql").writeText(
+            """
+            -- @@{name=AddReturning}
+            INSERT INTO person (birth_date)
+            VALUES (:birthDate)
+            RETURNING id, birth_date;
+            """.trimIndent()
         )
 
-        assertNotNull(generator, "DatabaseCodeGenerator should be instantiable")
-    }
-
-    @Test
-    @DisplayName("Test reactive flow feature implementation completeness")
-    fun testReactiveFlowFeatureCompleteness() {
-        // Test that all the key components for reactive flow functionality are in place
-
-        // 1. Test that DatabaseCodeGenerator exists and can be instantiated
-        val generator = DatabaseCodeGenerator(
-            nsWithStatements = emptyMap(),
-            createTableStatements = emptyList(),
-            createViewStatements = emptyList(),
-            packageName = "test.package",
-            outputDir = File("."),
-            databaseClassName = "TestDatabase"
+        val conn = java.sql.DriverManager.getConnection("jdbc:sqlite::memory:")
+        conn.createStatement().execute(
+            """
+            CREATE TABLE person (
+                id INTEGER PRIMARY KEY,
+                birth_date TEXT
+            )
+            """.trimIndent()
         )
-        assertNotNull(generator, "DatabaseCodeGenerator should be instantiable")
 
-        // 2. Test that the naming convention is correct
-        val testMethodName = "selectVeryWeird"
-        val expectedFlowMethodName = "${testMethodName}Flow"
-        assertEquals("selectVeryWeirdFlow", expectedFlowMethodName)
+        val helper = StatementProcessingHelper(conn, FieldAnnotationResolver(emptyList(), emptyList()))
+        val statements = helper.processQueriesDirectory(queriesDir)
 
-        // 3. Test that the code generation logic is integrated
-        // We can't test the private generateFlowMethod directly, but we can verify
-        // that the DatabaseCodeGenerator compiles and includes the flow logic
-        assertTrue(true, "Flow method generation logic is integrated into DatabaseCodeGenerator")
+        DatabaseCodeGenerator(
+            nsWithStatements = statements,
+            createTableStatements = listOf(annotatedPersonTableWithBirthDateAdapter()),
+            createViewStatements = emptyList(),
+            packageName = "fixture.db",
+            outputDir = outputDir,
+            databaseClassName = "FixtureDatabase",
+            debug = true,
+        ).generateDatabaseClass()
+
+        val generated = File(outputDir, "fixture/db/FixtureDatabase.kt").readText()
+        assertTrue(generated.contains("ExecuteReturningStatement("))
+        assertTrue(generated.contains("val result = PersonQuery.AddReturning.executeReturningList("))
+        assertTrue(generated.contains("val result = PersonQuery.AddReturning.executeReturningOne("))
+        assertTrue(generated.contains("val result = PersonQuery.AddReturning.executeReturningOneOrNull("))
+        assertTrue(generated.contains("sqliteNowLogger.d { \"notifyTablesChanged -> \" + PersonQuery.AddReturning.affectedTables.joinToString(\", \") }"))
+
+        val listNotify = generated.indexOf("ref.notifyTablesChanged(PersonQuery.AddReturning.affectedTables)")
+        val listResult = generated.indexOf("val result = PersonQuery.AddReturning.executeReturningList(")
+        assertTrue(listResult >= 0 && listNotify > listResult)
+        assertFalse(generated.contains("ref.notifyTablesChanged(PersonQuery.AddReturning.affectedTables)\n                val result"))
+
+        conn.close()
     }
+
+    private fun annotatedPersonTableWithBirthDateAdapter(): AnnotatedCreateTableStatement =
+        AnnotatedCreateTableStatement(
+            name = "CreatePerson",
+            src = CreateTableStatement(
+                sql = "CREATE TABLE person (id INTEGER PRIMARY KEY, birth_date TEXT)",
+                tableName = "person",
+                columns = listOf(
+                    CreateTableStatement.Column(
+                        name = "id",
+                        dataType = "INTEGER",
+                        notNull = false,
+                        primaryKey = true,
+                        autoIncrement = false,
+                        unique = false,
+                    ),
+                    CreateTableStatement.Column(
+                        name = "birth_date",
+                        dataType = "TEXT",
+                        notNull = false,
+                        primaryKey = false,
+                        autoIncrement = false,
+                        unique = false,
+                    ),
+                ),
+            ),
+            annotations = StatementAnnotationOverrides(
+                name = null,
+                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
+                queryResult = null,
+                collectionKey = null,
+            ),
+            columns = listOf(
+                AnnotatedCreateTableStatement.Column(
+                    src = CreateTableStatement.Column(
+                        name = "id",
+                        dataType = "INTEGER",
+                        notNull = false,
+                        primaryKey = true,
+                        autoIncrement = false,
+                        unique = false,
+                    ),
+                    annotations = emptyMap(),
+                ),
+                AnnotatedCreateTableStatement.Column(
+                    src = CreateTableStatement.Column(
+                        name = "birth_date",
+                        dataType = "TEXT",
+                        notNull = false,
+                        primaryKey = false,
+                        autoIncrement = false,
+                        unique = false,
+                    ),
+                    annotations = mapOf(AnnotationConstants.ADAPTER to "custom"),
+                ),
+            ),
+        )
 }

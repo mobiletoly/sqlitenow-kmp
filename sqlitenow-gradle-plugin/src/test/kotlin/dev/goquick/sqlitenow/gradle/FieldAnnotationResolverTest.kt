@@ -1,9 +1,15 @@
 package dev.goquick.sqlitenow.gradle
 
+import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateViewStatement
 import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationResolver
+import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationOverrides
+import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
 import dev.goquick.sqlitenow.gradle.processing.StatementProcessingHelper
+import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.SchemaInspector
+import dev.goquick.sqlitenow.gradle.sqlinspect.CreateViewStatement
+import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
 import java.io.File
 import java.sql.DriverManager
 import kotlin.io.path.createTempDirectory
@@ -61,6 +67,78 @@ class FieldAnnotationResolverTest {
             assertNotNull(field, "Query should expose joined__act__pi__doc_id column")
             assertEquals("joined__act__pi__doc_id", field.src.fieldName)
         }
+    }
+
+    @Test
+    fun viewAnnotationsOverrideInheritedAnnotationsAndAugmentPropertyType() {
+        val root = createTempDirectory("field-annotation-override").toFile()
+        val schemaDir = root.resolve("schema").apply { mkdirs() }
+
+        schemaDir.resolve("views.sql").writeText(
+            """
+            CREATE TABLE person (
+                doc_id TEXT PRIMARY KEY NOT NULL
+            );
+
+            CREATE VIEW base_person_view AS
+            SELECT
+                p.doc_id AS doc_id
+                /* @@{ field=doc_id, propertyName=baseDocId } */
+            FROM person p;
+
+            CREATE VIEW outer_person_view AS
+            SELECT
+                bp.doc_id AS doc_id
+                /* @@{ field=doc_id, propertyName=outerDocId, notNull=true } */
+            FROM base_person_view bp;
+            """.trimIndent()
+        )
+
+        DriverManager.getConnection("jdbc:sqlite::memory:").use { conn ->
+            val inspector = SchemaInspector(schemaDir)
+            val tables = inspector.getCreateTableStatements(conn)
+            val views = inspector.getCreateViewStatements(conn)
+            val resolver = FieldAnnotationResolver(tables, views)
+
+            val resolved = resolver.getFieldAnnotations("outer_person_view", "doc_id")
+            assertNotNull(resolved)
+            assertEquals("outerDocId", resolved.propertyName)
+            assertEquals(true, resolved.notNull)
+            assertEquals("kotlin.String", resolved.propertyType)
+        }
+    }
+
+    @Test
+    fun resolverHandlesViewCyclesWithoutRecursingForever() {
+        val resolver = FieldAnnotationResolver(
+            createTableStatements = emptyList(),
+            createViewStatements = listOf(
+                fakeView(
+                    viewName = "view_a",
+                    aliasTarget = "view_b",
+                    fieldAnnotations = FieldAnnotationOverrides(
+                        propertyName = "fromA",
+                        propertyType = null,
+                        notNull = null,
+                        adapter = null,
+                    ),
+                ),
+                fakeView(
+                    viewName = "view_b",
+                    aliasTarget = "view_a",
+                    fieldAnnotations = FieldAnnotationOverrides(
+                        propertyName = "fromB",
+                        propertyType = null,
+                        notNull = null,
+                        adapter = null,
+                    ),
+                ),
+            )
+        )
+
+        val resolved = resolver.getFieldAnnotations("view_a", "value")
+        assertNotNull(resolved)
+        assertEquals("fromA", resolved.propertyName)
     }
 
     private fun createNestedViewFixture(): File {
@@ -133,5 +211,57 @@ class FieldAnnotationResolverTest {
         )
 
         return root
+    }
+
+    private fun fakeView(
+        viewName: String,
+        aliasTarget: String,
+        fieldAnnotations: FieldAnnotationOverrides,
+    ): AnnotatedCreateViewStatement {
+        val selectStatement = SelectStatement(
+            sql = "SELECT value FROM $aliasTarget",
+            fromTable = aliasTarget,
+            joinTables = emptyList(),
+            fields = listOf(
+                SelectStatement.FieldSource(
+                    fieldName = "value",
+                    tableName = aliasTarget,
+                    originalColumnName = "value",
+                    dataType = "TEXT",
+                )
+            ),
+            namedParameters = emptyList(),
+            namedParametersToColumns = emptyMap(),
+            offsetNamedParam = null,
+            limitNamedParam = null,
+            tableAliases = mapOf(aliasTarget to aliasTarget),
+        )
+
+        return AnnotatedCreateViewStatement(
+            name = viewName,
+            src = CreateViewStatement(
+                sql = "CREATE VIEW $viewName AS SELECT value FROM $aliasTarget",
+                viewName = viewName,
+                selectStatement = selectStatement,
+            ),
+            annotations = StatementAnnotationOverrides(
+                name = null,
+                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
+                queryResult = null,
+                collectionKey = null,
+            ),
+            fields = listOf(
+                AnnotatedCreateViewStatement.Field(
+                    src = SelectStatement.FieldSource(
+                        fieldName = "value",
+                        tableName = aliasTarget,
+                        originalColumnName = "value",
+                        dataType = "TEXT",
+                    ),
+                    annotations = fieldAnnotations,
+                )
+            ),
+            dynamicFields = emptyList(),
+        )
     }
 }

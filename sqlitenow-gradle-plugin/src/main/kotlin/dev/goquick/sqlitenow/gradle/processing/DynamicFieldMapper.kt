@@ -108,16 +108,24 @@ class DynamicFieldMapper {
             selectStatement: SelectStatement,
             sourceTableAlias: String
         ): String? {
-            // Find JOIN condition where the right side matches our source table alias
+            // Find JOIN condition where either side matches our source table alias.
+            // When the collection source appears on the left side of the predicate
+            // (e.g. "pkg.person_id = p.id"), the grouping column lives on the right side.
             selectStatement.joinConditions.forEach { joinCondition ->
-                if (joinCondition.rightTable == sourceTableAlias) {
-                    // Find the field in SELECT that matches the left side of the JOIN
-                    // e.g., for JOIN condition "p.id = a.person_id", find field with table "p" and column "id"
-                    val leftTable = joinCondition.leftTable.lowercase()
-                    val leftColumn = joinCondition.leftColumn.lowercase()
+                val (groupTable, groupColumn) = when {
+                    joinCondition.rightTable.equals(sourceTableAlias, ignoreCase = true) ->
+                        joinCondition.leftTable to joinCondition.leftColumn
+
+                    joinCondition.leftTable.equals(sourceTableAlias, ignoreCase = true) ->
+                        joinCondition.rightTable to joinCondition.rightColumn
+
+                    else -> null to null
+                }
+
+                if (groupTable != null && groupColumn != null) {
                     val matchingField = selectStatement.fields.find { field ->
-                        field.tableName.lowercase() == leftTable &&
-                                field.originalColumnName.lowercase() == leftColumn
+                        field.tableName.equals(groupTable, ignoreCase = true) &&
+                            field.originalColumnName.equals(groupColumn, ignoreCase = true)
                     }
 
                     // Return the field name (which might be aliased, e.g., "person_id" from "p.id AS person_id")

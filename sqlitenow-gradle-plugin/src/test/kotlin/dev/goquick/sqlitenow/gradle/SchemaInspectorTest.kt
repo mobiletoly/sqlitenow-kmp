@@ -12,6 +12,7 @@ import kotlin.test.assertTrue
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
+import kotlin.test.assertFalse
 
 class SchemaInspectorTest {
 
@@ -275,5 +276,76 @@ class SchemaInspectorTest {
         assertTrue(postsSql.contains("DEFERRABLE INITIALLY DEFERRED"))
         assertTrue(commentsSql.contains("NOT DEFERRABLE"))
         assertTrue(likesSql.contains("DEFERRABLE INITIALLY IMMEDIATE"))
+    }
+
+    @Test
+    @DisplayName("Test SchemaInspector supports WITHOUT ROWID tables while normalizing parser input")
+    fun testSchemaInspectorSupportsWithoutRowIdTables() {
+        File(schemaDir, "01_lookup.sql").writeText(
+            """
+            CREATE TABLE lookup (
+                code TEXT PRIMARY KEY NOT NULL,
+                label TEXT NOT NULL
+            ) WITHOUT ROWID;
+            """.trimIndent()
+        )
+
+        val inspector = SchemaInspector(schemaDirectory = schemaDir)
+        val createdTables = inspector.getCreateTableStatements(conn)
+
+        assertEquals(1, createdTables.size)
+        val normalized = normalizeForParser(
+            inspector,
+            inspector.sqlStatements.single().sql,
+        )
+        assertFalse(normalized.contains("WITHOUT ROWID"))
+
+        val storedSql = conn.createStatement().use { stmt ->
+            stmt.executeQuery("SELECT sql FROM sqlite_master WHERE type='table' AND name='lookup'").use { rs ->
+                assertTrue(rs.next(), "lookup table should exist")
+                rs.getString("sql")
+            }
+        }
+        assertNotNull(storedSql)
+        assertTrue(storedSql.contains("WITHOUT ROWID"))
+    }
+
+    @Test
+    @DisplayName("Test SchemaInspector normalization strips unsupported FK clauses without touching comments or strings")
+    fun testSchemaInspectorNormalizationPreservesCommentsAndStrings() {
+        File(schemaDir, "01_base.sql").writeText(
+            """
+            CREATE TABLE base_table (
+                id INTEGER PRIMARY KEY NOT NULL
+            );
+            """.trimIndent()
+        )
+        val sampleSql = """
+            -- DEFERRABLE INITIALLY DEFERRED should stay in comments
+            CREATE TABLE child (
+                id TEXT PRIMARY KEY NOT NULL,
+                /* NOT DEFERRABLE should stay in block comments */
+                note TEXT DEFAULT 'NOT DEFERRABLE inside string literal',
+                parent_id TEXT REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED
+            );
+            """.trimIndent()
+
+        val inspector = SchemaInspector(schemaDirectory = schemaDir)
+        val normalized = normalizeForParser(inspector, sampleSql)
+
+        assertTrue(normalized.contains("-- DEFERRABLE INITIALLY DEFERRED should stay in comments"))
+        assertTrue(normalized.contains("'NOT DEFERRABLE inside string literal'"))
+        assertTrue(normalized.contains("/* NOT DEFERRABLE should stay in block comments */"))
+        assertFalse(normalized.contains("REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED"))
+        assertTrue(normalized.contains("REFERENCES parent(id)"))
+
+        val createdTables = inspector.getCreateTableStatements(conn)
+        assertEquals(1, createdTables.size)
+    }
+
+    private fun normalizeForParser(inspector: SchemaInspector, sql: String): String {
+        val method = SchemaInspector::class.java.getDeclaredMethod("normalizeForParser", String::class.java)
+        method.isAccessible = true
+        return method.invoke(inspector, sql) as String
     }
 }

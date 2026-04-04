@@ -52,6 +52,7 @@ class NamedParametersProcessor(
         val seen = mutableListOf<String>()
         val buffer = StringBuilder()
         val castTypes = mutableMapOf<String, String>()
+        val inParameters = mutableSetOf<String>()
 
         // Extract common parameter processing logic
         fun processParameter(param: JdbcNamedParameter) {
@@ -65,10 +66,28 @@ class NamedParametersProcessor(
 
             if (value is InExpression) {
                 // We are using json_each() to expand the array into individual values
+                inParameters += param.name
                 buffer.append("(SELECT value FROM json_each(?))")
             } else {
                 buffer.append('?')
             }
+        }
+
+        fun collectMetadataOnly(expression: net.sf.jsqlparser.expression.Expression?) {
+            expression ?: return
+            expression.accept(object : ExpressionDeParser() {
+                override fun visit(param: JdbcNamedParameter) {
+                    seen += param.name
+                    val parent = param.astNode?.jjtGetParent() as? SimpleNode
+                    val value = parent?.jjtGetValue()
+                    if (value is CastExpression && value.leftExpression == param) {
+                        castTypes[param.name] = value.colDataType.dataType
+                    }
+                    if (value is InExpression) {
+                        inParameters += param.name
+                    }
+                }
+            })
         }
 
         val exprDp = object : ExpressionDeParser() {
@@ -81,65 +100,86 @@ class NamedParametersProcessor(
         // Use custom StatementDeParser that handles INSERT ON CONFLICT properly
         val stmtDp = object : StatementDeParser(exprDp, selectDp, buffer) {
             override fun visit(insert: Insert) {
-                // Use the default INSERT handling but with custom expression visitor
                 val customExprDp = object : ExpressionDeParser(exprDp.selectVisitor, buffer) {
                     override fun visit(param: JdbcNamedParameter) = processParameter(param)
                 }
-
                 val customSelectDp = SelectDeParser(customExprDp, buffer)
                 customExprDp.selectVisitor = customSelectDp
-
-                // Create a custom INSERT deparser that handles conflict actions
-                val insertDp = object : InsertDeParser(customExprDp, customSelectDp, buffer) {
-                    override fun deParse(insert: Insert) {
-                        // Manually handle the entire INSERT statement to avoid duplication
-                        buffer.append("INSERT INTO ")
-                        buffer.append(insert.table.name)
-
-                        if (insert.columns != null) {
-                            buffer.append(" (")
-                            buffer.append(insert.columns.joinToString(", ") { it.columnName })
-                            buffer.append(")")
-                        }
-
-                        if (insert.select != null) {
-                            buffer.append(" VALUES (")
-                            insert.select.values.expressions.forEachIndexed { index, expr ->
-                                if (index > 0) buffer.append(", ")
-                                expr.accept(customExprDp)
-                            }
-                            buffer.append(")")
-                        }
-
-                        // Handle ON CONFLICT clause manually
-                        insert.conflictAction?.let { conflictAction ->
-                            buffer.append(" ON CONFLICT")
-                            buffer.append(" DO UPDATE SET ")
-                            conflictAction.updateSets.forEachIndexed { index, updateSet ->
-                                if (index > 0) buffer.append(", ")
-                                buffer.append(updateSet.columns[0].columnName)
-                                buffer.append(" = ")
-                                updateSet.values[0].accept(customExprDp)
-                            }
-                        }
-
-                        // Handle RETURNING clause manually
-                        insert.returningClause?.let { returningClause ->
-                            buffer.append(" RETURNING ")
-                            returningClause.forEachIndexed { index, selectItem ->
-                                if (index > 0) buffer.append(", ")
-                                buffer.append(selectItem.toString())
-                            }
-                        }
-                    }
-                }
-
-                insertDp.deParse(insert)
+                InsertDeParser(customExprDp, customSelectDp, buffer).deParse(insert)
             }
         }
 
         stmt.accept(stmtDp)
 
-        return Triple(buffer.toString(), seen, castTypes)
+        if (stmt is Insert) {
+            stmt.conflictTarget?.indexExpression?.let(::collectMetadataOnly)
+            stmt.conflictTarget?.whereExpression?.let(::collectMetadataOnly)
+            stmt.conflictAction?.updateSets.orEmpty().forEach { updateSet ->
+                updateSet.values.orEmpty().forEach { expr ->
+                    collectMetadataOnly(expr)
+                }
+            }
+            stmt.conflictAction?.whereExpression?.let(::collectMetadataOnly)
+        }
+
+        return Triple(rewriteRemainingNamedParameters(buffer.toString(), inParameters), seen, castTypes)
+    }
+
+    private fun rewriteRemainingNamedParameters(sql: String, inParameters: Set<String>): String {
+        val out = StringBuilder()
+        var index = 0
+        var inSingleQuote = false
+        var inDoubleQuote = false
+
+        while (index < sql.length) {
+            val current = sql[index]
+
+            when (current) {
+                '\'' -> {
+                    out.append(current)
+                    if (!inDoubleQuote) {
+                        inSingleQuote = !inSingleQuote
+                    }
+                    index++
+                }
+
+                '"' -> {
+                    out.append(current)
+                    if (!inSingleQuote) {
+                        inDoubleQuote = !inDoubleQuote
+                    }
+                    index++
+                }
+
+                ':' -> {
+                    if (!inSingleQuote && !inDoubleQuote) {
+                        val start = index + 1
+                        var end = start
+                        while (end < sql.length && (sql[end].isLetterOrDigit() || sql[end] == '_')) {
+                            end++
+                        }
+                        if (end > start) {
+                            val paramName = sql.substring(start, end)
+                            if (paramName in inParameters) {
+                                out.append("(SELECT value FROM json_each(?))")
+                            } else {
+                                out.append('?')
+                            }
+                            index = end
+                            continue
+                        }
+                    }
+                    out.append(current)
+                    index++
+                }
+
+                else -> {
+                    out.append(current)
+                    index++
+                }
+            }
+        }
+
+        return out.toString()
     }
 }
