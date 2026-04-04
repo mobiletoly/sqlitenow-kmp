@@ -229,7 +229,7 @@ internal suspend fun resetRealServerState(baseUrl: String) {
         }
     }
     try {
-        val status = http.get("/status")
+        val status = http.get("/syncx/status")
         check(status.status == HttpStatusCode.OK) {
             "real-server Android e2e status probe failed: HTTP ${status.status} - ${status.bodyAsText()}"
         }

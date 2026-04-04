@@ -221,7 +221,7 @@ internal open class RealServerHarnessSupport : PlatformCrossTargetTestSupport() 
         val http = newRealServerHttpClient(baseUrl)
         return try {
             runCatching {
-                val response = http.get("/health")
+                val response = http.get("/syncx/health")
                 response.status == HttpStatusCode.OK
             }.getOrDefault(false)
         } finally {
@@ -232,7 +232,7 @@ internal open class RealServerHarnessSupport : PlatformCrossTargetTestSupport() 
     private suspend fun fetchRealServerStatus(baseUrl: String): RealServerHarnessStatusResponse {
         val http = newRealServerHttpClient(baseUrl)
         return try {
-            val response = http.get("/status")
+            val response = http.get("/syncx/status")
             check(response.status == HttpStatusCode.OK) {
                 "realserver status probe failed: HTTP ${response.status} - ${response.bodyAsText()}"
             }

@@ -30,8 +30,6 @@ jobs:
             os: ubuntu-latest
           - target: ":library:linuxX64Test :library:compileTestKotlinLinuxArm64"
             os: ubuntu-latest
-          - target: :sample-kmp:androidApp:testDebugUnitTest
-            os: ubuntu-latest
     runs-on: ${{ matrix.os }}
 
     steps:

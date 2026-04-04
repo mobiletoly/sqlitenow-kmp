@@ -219,7 +219,7 @@ internal open class RealServerSupport : CrossTargetSyncTestSupport() {
         val http = newRealServerHttpClient(baseUrl)
         return try {
             runCatching {
-                val response = http.get("/health")
+                val response = http.get("/syncx/health")
                 response.status == HttpStatusCode.OK
             }.getOrDefault(false)
         } finally {
@@ -230,7 +230,7 @@ internal open class RealServerSupport : CrossTargetSyncTestSupport() {
     private suspend fun fetchRealServerStatus(baseUrl: String): RealServerStatusResponse {
         val http = newRealServerHttpClient(baseUrl)
         return try {
-            val response = http.get("/status")
+            val response = http.get("/syncx/status")
             check(response.status == HttpStatusCode.OK) {
                 "realserver status probe failed: HTTP ${response.status} - ${response.bodyAsText()}"
             }

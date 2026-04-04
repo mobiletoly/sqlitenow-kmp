@@ -54,7 +54,7 @@ suspend fun ensureSampleSyncServer(baseUrl: String) {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
     }
     try {
-        val response = http.get("$baseUrl/status")
+        val response = http.get("$baseUrl/syncx/status")
         check(response.status == HttpStatusCode.OK) {
             "SampleSync server check failed: HTTP ${response.status}"
         }
