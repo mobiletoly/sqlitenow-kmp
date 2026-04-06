@@ -60,6 +60,7 @@ class SyncKeyColumnNameAnnotationTest {
             outDir = outputDir,
             schemaDatabaseFile = null,
             debug = false,
+            oversqlite = true,
         )
 
         val generatedFiles = outputDir.walkTopDown()
@@ -216,6 +217,7 @@ class SyncKeyColumnNameAnnotationTest {
             outDir = outputDir,
             schemaDatabaseFile = null,
             debug = false,
+            oversqlite = true,
         )
 
         val generatedFiles = outputDir.walkTopDown()
@@ -233,5 +235,110 @@ class SyncKeyColumnNameAnnotationTest {
             !generatedContent.contains("regular_table"),
             "Should not include non-sync table in syncTables"
         )
+    }
+
+    @Test
+    @DisplayName("enableSync validation still runs when oversqlite bridge generation is disabled")
+    fun syncKeyColumnNameAnnotation_validatesEvenWhenOversqliteDisabled() {
+        val schemaDir = File(tempDir, "schema")
+        schemaDir.mkdirs()
+
+        File(schemaDir, "orders.sql").writeText(
+            """
+            -- @@{enableSync=true}
+            CREATE TABLE orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                quantity INTEGER NOT NULL DEFAULT 1
+            );
+            """.trimIndent()
+        )
+
+        val outputDir = File(tempDir, "generated")
+        outputDir.mkdirs()
+
+        val error = assertFailsWith<IllegalArgumentException> {
+            generateDatabaseFiles(
+                dbName = "TestDatabase",
+                sqlDir = tempDir,
+                packageName = "com.test.db",
+                outDir = outputDir,
+                schemaDatabaseFile = null,
+                debug = false,
+                oversqlite = false,
+            )
+        }
+
+        assertTrue(error.message?.contains("TEXT PRIMARY KEY or BLOB PRIMARY KEY") == true)
+    }
+
+    @Test
+    @DisplayName("oversqlite bridge is not generated unless explicitly enabled")
+    fun oversqliteBridgeRequiresDslFlag() {
+        val schemaDir = File(tempDir, "schema")
+        schemaDir.mkdirs()
+
+        File(schemaDir, "users.sql").writeText(
+            """
+            -- @@{enableSync=true}
+            CREATE TABLE users (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL
+            );
+            """.trimIndent()
+        )
+
+        val outputDir = File(tempDir, "generated")
+        outputDir.mkdirs()
+
+        generateDatabaseFiles(
+            dbName = "TestDatabase",
+            sqlDir = tempDir,
+            packageName = "com.test.db",
+            outDir = outputDir,
+            schemaDatabaseFile = null,
+            debug = false,
+            oversqlite = false,
+        )
+
+        val databaseFile = outputDir.walkTopDown()
+            .first { it.isFile && it.name == "TestDatabase.kt" }
+
+        val generatedContent = databaseFile.readText()
+        assertTrue(!generatedContent.contains("syncTables: List<SyncTable>"))
+        assertTrue(!generatedContent.contains("fun buildOversqliteConfig"))
+        assertTrue(!generatedContent.contains("fun newOversqliteClient("))
+    }
+
+    @Test
+    @DisplayName("oversqlite bridge requires at least one sync-enabled table")
+    fun oversqliteBridgeRequiresSyncEnabledTable() {
+        val schemaDir = File(tempDir, "schema")
+        schemaDir.mkdirs()
+
+        File(schemaDir, "users.sql").writeText(
+            """
+            CREATE TABLE users (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL
+            );
+            """.trimIndent()
+        )
+
+        val outputDir = File(tempDir, "generated")
+        outputDir.mkdirs()
+
+        val error = assertFailsWith<IllegalArgumentException> {
+            generateDatabaseFiles(
+                dbName = "TestDatabase",
+                sqlDir = tempDir,
+                packageName = "com.test.db",
+                outDir = outputDir,
+                schemaDatabaseFile = null,
+                debug = false,
+                oversqlite = true,
+            )
+        }
+
+        assertTrue(error.message?.contains("no tables are annotated with enableSync=true") == true)
     }
 }

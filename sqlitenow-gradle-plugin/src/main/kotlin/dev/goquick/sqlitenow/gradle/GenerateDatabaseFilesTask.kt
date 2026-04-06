@@ -82,6 +82,12 @@ abstract class GenerateDatabaseFilesTask @Inject constructor(
     @get:Input
     abstract val debug: Property<Boolean>
 
+    @get:Input
+    abstract val oversqlite: Property<Boolean>
+
+    @get:Input
+    abstract val oversqliteRuntimePresent: Property<Boolean>
+
     @TaskAction
     fun generate() {
         // 1. Ensure the output directory exists
@@ -96,6 +102,14 @@ abstract class GenerateDatabaseFilesTask @Inject constructor(
 
         val sqlDir = dbDir.get().asFile
         val packageName = packageName.get()
+        val oversqliteEnabled = oversqlite.get()
+
+        if (oversqliteEnabled && !oversqliteRuntimePresent.get()) {
+            error(
+                "Database '${dbName.get()}' sets oversqlite=true, but no oversqlite runtime dependency was found. " +
+                    "Add implementation(\"dev.goquick.sqlitenow:oversqlite:<version>\") or depend on project(\":library-oversqlite\")."
+            )
+        }
 
         generateDatabaseFiles(
             dbName = dbName.get(),
@@ -104,6 +118,8 @@ abstract class GenerateDatabaseFilesTask @Inject constructor(
             outDir = outDir,
             schemaDatabaseFile = dbFile,
             debug = debug.get(),
+            oversqlite = oversqliteEnabled,
+            warningReporter = { logger.warn(it) },
         )
     }
 }
@@ -111,6 +127,8 @@ abstract class GenerateDatabaseFilesTask @Inject constructor(
 fun generateDatabaseFiles(
     dbName: String, sqlDir: File, packageName: String, outDir: File, schemaDatabaseFile: File?,
     debug: Boolean,
+    oversqlite: Boolean = false,
+    warningReporter: (String) -> Unit = {},
 ) {
     val schemaDir = sqlDir.resolve("schema")
     val initSqlDir = sqlDir.resolve("init")
@@ -177,8 +195,18 @@ fun generateDatabaseFiles(
             packageName = packageName,
             outputDir = outDir,
             databaseClassName = dbName,
-            debug = debug
+            debug = debug,
+            oversqlite = oversqlite,
         )
+        val syncTables = dataStructCodeGenerator.createTableStatements
+            .filter { it.annotations.enableSync }
+            .distinct()
+        if (!oversqlite && syncTables.isNotEmpty()) {
+            warningReporter(
+                "Database '$dbName' has tables annotated with enableSync=true, but oversqlite=false. " +
+                    "Oversqlite bridge helpers will not be generated."
+            )
+        }
         dbCodeGen.generateDatabaseClass()
     } finally {
         conn.close()

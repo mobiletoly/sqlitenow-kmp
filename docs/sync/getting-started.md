@@ -19,10 +19,25 @@ This is the current oversqlite lifecycle:
 You need:
 
 - SQLiteNow already set up in your Kotlin Multiplatform module
+- `dev.goquick.sqlitenow:oversqlite` added to the module that owns the generated database
 - a compatible oversqlite server
 - a Ktor `HttpClient` that already knows how to authenticate requests
 
-## Step 1: Add Ktor Dependencies
+## Step 1: Add Runtime Dependencies
+
+Sync-enabled databases use two SQLiteNow runtime artifacts:
+
+- `dev.goquick.sqlitenow:core`
+- `dev.goquick.sqlitenow:oversqlite`
+
+```kotlin
+commonMain.dependencies {
+    implementation("dev.goquick.sqlitenow:core:<latest-version>")
+    implementation("dev.goquick.sqlitenow:oversqlite:<latest-version>")
+}
+```
+
+## Step 2: Add Ktor Dependencies
 
 ```kotlin
 commonMain.dependencies {
@@ -41,7 +56,26 @@ iosMain.dependencies {
 }
 ```
 
-## Step 2: Mark Sync-Managed Tables
+## Step 3: Enable Oversqlite Bridge Generation
+
+The plugin only generates `buildOversqliteConfig(...)` and `newOversqliteClient(...)` when the
+database DSL opts in explicitly:
+
+```kotlin
+sqliteNow {
+    databases {
+        create("AppDatabase") {
+            packageName = "com.example.app.db"
+            oversqlite = true
+        }
+    }
+}
+```
+
+`oversqlite = true` enables oversqlite bridge code generation for that database. Table-level
+`enableSync=true` still decides which tables participate in sync.
+
+## Step 4: Mark Sync-Managed Tables
 
 Use `enableSync=true` on every table that should participate in oversqlite sync.
 
@@ -75,7 +109,7 @@ Unsupported for sync-managed tables:
 - `INTEGER PRIMARY KEY`
 - composite keys
 
-## Step 3: Create an Authenticated `HttpClient`
+## Step 5: Create an Authenticated `HttpClient`
 
 Oversqlite does not own auth. Build a normal authenticated Ktor client:
 
@@ -108,7 +142,7 @@ fun createSyncHttpClient(
 }
 ```
 
-## Step 4: Create the Client
+## Step 6: Create the Client
 
 ```kotlin
 val client = db.newOversqliteClient(
@@ -120,7 +154,7 @@ val client = db.newOversqliteClient(
 
 The client is lifecycle-neutral until `open()` runs.
 
-## Step 5: Open on Every Launch
+## Step 7: Open on Every Launch
 
 ```kotlin
 client.open().getOrThrow()
@@ -128,7 +162,7 @@ client.open().getOrThrow()
 
 `open()` is local-only and safe to run repeatedly.
 
-## Step 6: Attach the Authenticated User
+## Step 8: Attach the Authenticated User
 
 ```kotlin
 when (val attach = client.attach(currentUserId).getOrThrow()) {
@@ -148,7 +182,7 @@ when (val attach = client.attach(currentUserId).getOrThrow()) {
 
 Call `attach(userId)` whenever an authenticated session exists. It is not a one-time setup method.
 
-## Step 7: Run Sync Operations
+## Step 9: Run Sync Operations
 
 Normal interactive sync:
 
@@ -168,7 +202,7 @@ Pull-only:
 client.pullToStable().getOrThrow()
 ```
 
-## Step 8: Detach Safely
+## Step 10: Detach Safely
 
 Direct detach:
 
@@ -196,7 +230,7 @@ if (!result.isSuccess()) {
 On successful destructive detach, the next attach starts from a fresh oversqlite source stream even
 on the same install.
 
-## Step 9: Rebuild Explicitly When Recovery Requires It
+## Step 11: Rebuild Explicitly When Recovery Requires It
 
 ```kotlin
 client.rebuild().getOrThrow()
@@ -205,7 +239,7 @@ client.rebuild().getOrThrow()
 `rebuild()` is the explicit recovery entry point. Oversqlite decides internally whether that
 rebuild keeps the current source or performs rebuild-plus-rotate recovery.
 
-## Step 10: Inspect Debug Diagnostics When Needed
+## Step 12: Inspect Debug Diagnostics When Needed
 
 ```kotlin
 val info = client.sourceInfo().getOrThrow()

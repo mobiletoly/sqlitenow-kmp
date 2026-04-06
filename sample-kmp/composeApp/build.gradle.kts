@@ -88,7 +88,7 @@ kotlin {
             implementation(libs.kotlinx.serialization.cbor)
             implementation(libs.kermit)
 
-            implementation(project(":library"))
+            implementation(project(":library-core"))
         }
 
         androidMain.dependencies {
@@ -153,7 +153,7 @@ sqliteNow {
     }
 }
 
-val libraryProject = project(":library")
+val libraryProject = project(":library-core")
 val librarySqlJsResource = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sqlitenow-sqljs.js")
 val librarySqlWasmBinary = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sql-wasm.wasm")
 val libraryIndexedDbResource = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sqlitenow-indexeddb.js")

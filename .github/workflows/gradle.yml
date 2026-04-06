@@ -22,13 +22,13 @@ jobs:
     strategy:
       matrix:
         include:
-          - target: :library:iosSimulatorArm64Test
+          - target: :library-core:iosSimulatorArm64Test
             os: macos-latest
-          - target: ":library:macosArm64Test :library:compileTestKotlinMacosX64"
+          - target: ":library-core:macosArm64Test :library-core:compileTestKotlinMacosX64"
             os: macos-latest
-          - target: :library:jvmTest
+          - target: :library-core:jvmTest
             os: ubuntu-latest
-          - target: ":library:linuxX64Test :library:compileTestKotlinLinuxArm64"
+          - target: ":library-core:linuxX64Test :library-core:compileTestKotlinLinuxArm64"
             os: ubuntu-latest
     runs-on: ${{ matrix.os }}
 

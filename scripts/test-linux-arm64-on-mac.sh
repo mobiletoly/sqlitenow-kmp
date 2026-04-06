@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BINARY_DIR="$ROOT_DIR/library/build/bin/linuxArm64/debugTest"
+BINARY_DIR="$ROOT_DIR/library-core/build/bin/linuxArm64/debugTest"
 BINARY_PATH="$BINARY_DIR/test.kexe"
 DOCKER_IMAGE="ubuntu:24.04"
 SKIP_BUILD=0
@@ -12,7 +12,7 @@ usage() {
   cat <<'EOF'
 Usage: scripts/test-linux-arm64-on-mac.sh [--skip-build] [--image <docker-image>] [-- <test args>]
 
-Builds the Linux ARM64 native test binary for :library and runs it inside a Docker
+Builds the Linux ARM64 native test binary for :library-core and runs it inside a Docker
 linux/arm64 container. Any arguments after `--` are forwarded to `test.kexe`.
 
 Options:
@@ -67,7 +67,7 @@ fi
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
   (
     cd "$ROOT_DIR"
-    ./gradlew :library:linkDebugTestLinuxArm64
+    ./gradlew :library-core:linkDebugTestLinuxArm64
   )
 fi
 

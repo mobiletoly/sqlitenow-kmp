@@ -125,7 +125,12 @@ Full example is available in the [`/sample-kmp`](https://github.com/mobiletoly/s
 ## Multi-Device Synchronization (optional)
 
 SQLiteNow includes a complete synchronization system for building multi-device applications.
-Simply annotate your tables with `enableSync=true` and the sync system handles the rest.
+Sync setup requires:
+
+- `dev.goquick.sqlitenow:core`
+- `dev.goquick.sqlitenow:oversqlite`
+- `oversqlite = true` in the database DSL
+- `enableSync=true` on each sync-managed table
 
 **Key Requirements:**
 - **Primary keys must be TEXT type containing UUIDs** (not INTEGER)

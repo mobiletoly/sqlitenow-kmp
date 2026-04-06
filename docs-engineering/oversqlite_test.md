@@ -13,8 +13,8 @@ The oversqlite test layout is organized around three suite semantics:
 
 These are suite concepts, not target-task names.
 
-Broad Gradle target tasks such as `:library:jvmTest`,
-`:library:iosSimulatorArm64Test`, or
+Broad Gradle target tasks such as `:library-oversqlite:jvmTest`,
+`:library-oversqlite:iosSimulatorArm64Test`, or
 `:platform-oversqlite-test:composeApp:iosSimulatorArm64Test`
 remain generic execution surfaces. They are still useful for broad library verification, but they
 are not the preferred maintainer entry points for oversqlite suites.
@@ -32,7 +32,7 @@ It should:
 - cover the canonical local oversqlite behavior catalog
 - remain the only oversqlite suite required in CI/CD for now
 
-The canonical home of `comprehensive` is `:library`.
+The canonical home of `comprehensive` is `:library-oversqlite`.
 
 ### `platform`
 
@@ -62,14 +62,14 @@ It should:
 
 `realserver` has two homes:
 
-- shared JVM-side catalog and helpers in `:library`
+- shared JVM-side catalog and helpers in `:library-oversqlite`
 - concrete runtime-harness execution in `:platform-oversqlite-test:composeApp`
 
 ## Ownership
 
-### `:library`
+### `:library-oversqlite`
 
-`:library` owns:
+`:library-oversqlite` owns:
 
 - the primary `comprehensive` catalog
 - shared oversqlite behavior definitions and helpers
@@ -77,9 +77,9 @@ It should:
 
 Relevant suite tasks:
 
-- `:library:oversqliteComprehensiveJvm`
-- `:library:oversqliteRealserverJvm`
-- `:library:jvmRealServerSharedConnectionStress`
+- `:library-oversqlite:oversqliteComprehensiveJvm`
+- `:library-oversqlite:oversqliteRealserverJvm`
+- `:library-oversqlite:jvmRealServerSharedConnectionStress`
 
 ### `:platform-oversqlite-test:composeApp`
 
@@ -205,9 +205,9 @@ Suite tasks:
 
 Examples of broad target tasks that are not suite names:
 
-- `:library:jvmTest`
-- `:library:iosSimulatorArm64Test`
-- `:library:wasmJsBrowserTest`
+- `:library-oversqlite:jvmTest`
+- `:library-oversqlite:iosSimulatorArm64Test`
+- `:library-oversqlite:wasmJsBrowserTest`
 - `:platform-oversqlite-test:composeApp:jvmTest`
 - `:platform-oversqlite-test:composeApp:connectedAndroidDeviceTest`
 - `:platform-oversqlite-test:composeApp:iosSimulatorArm64Test`
@@ -216,9 +216,9 @@ Examples of broad target tasks that are not suite names:
 
 | Suite           | Module / Area                                         | Platforms                                                                         |
 |-----------------|-------------------------------------------------------|-----------------------------------------------------------------------------------|
-| `comprehensive` | `:library`                                            | host-side JVM entry point today                                                   |
+| `comprehensive` | `:library-oversqlite`                                 | host-side JVM entry point today                                                   |
 | `platform`      | `:platform-oversqlite-test:composeApp`                | Android, JVM, iOS, macOS, JS Node, Wasm browser                                   |
-| `realserver`    | `:library` and `:platform-oversqlite-test:composeApp` | shared JVM plus Android, JVM, iOS, macOS, JS Node, Wasm browser runtime harnesses |
+| `realserver`    | `:library-oversqlite` and `:platform-oversqlite-test:composeApp` | shared JVM plus Android, JVM, iOS, macOS, JS Node, Wasm browser runtime harnesses |
 
 ## CI/CD Policy
 
@@ -245,5 +245,5 @@ Use these defaults:
 When updating oversqlite test structure, keep this file aligned with:
 
 - root wrapper tasks in `build.gradle.kts`
-- suite-local tasks in `library/build.gradle.kts`
+- suite-local tasks in `library-oversqlite/build.gradle.kts`
 - runtime-harness notes in `platform-oversqlite-test/README.md`

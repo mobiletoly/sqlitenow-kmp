@@ -49,11 +49,13 @@ automatically.
 OverSqlite follows a simple but powerful client-server pattern:
 
 1. **Enable sync** on the tables you want to synchronize
-2. **Connect to sync HTTP server**, developer's own server that uses go-oversync library to handle 
+2. **Add the oversqlite runtime** to your app module
+3. **Enable oversqlite bridge generation** with `oversqlite = true` on the database DSL
+4. **Connect to sync HTTP server**, developer's own server that uses go-oversync library to handle 
    sync requests and synchronize data with PostgreSQL tables
-3. **Configure authentication** between your app and the sync server
-4. **Open local runtime and connect the current account**
-5. **Sync regularly** to keep data consistent across devices
+5. **Configure authentication** between your app and the sync server
+6. **Open local runtime and connect the current account**
+7. **Sync regularly** to keep data consistent across devices
 
 OverSqlite handles all the complex aspects automatically - change tracking, conflict resolution,
 network failures, and data consistency. Your HTTP server, built with the go-oversync library,
@@ -105,7 +107,8 @@ Ready to implement sync? Follow our step-by-step guide.
 
 ### [Getting Started →]({{ site.baseurl }}/sync/getting-started/)
 
-Quick start guide with step-by-step instructions to enable sync in your application.
+Quick start guide with the required `oversqlite` dependency, `oversqlite = true` DSL flag, and
+step-by-step sync setup instructions.
 
 ### [Open, Connect & Rebuild →]({{ site.baseurl }}/sync/open-connect-rebuild/)
 
@@ -137,7 +140,7 @@ Set up your sync server to handle client requests and manage data synchronizatio
 
   <a href="{{ site.baseurl }}/sync/getting-started/" class="doc-nav-card">
     <h3>🚀 Getting Started</h3>
-    <p>Quick start guide to enable sync in your application</p>
+    <p>Quick start guide covering the oversqlite dependency, DSL flag, and sync lifecycle</p>
   </a>
 
   <a href="{{ site.baseurl }}/sync/open-connect-rebuild/" class="doc-nav-card">

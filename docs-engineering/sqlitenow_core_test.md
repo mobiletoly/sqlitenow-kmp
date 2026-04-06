@@ -12,7 +12,7 @@ Core SQLiteNow testing is organized around two responsibilities:
 
 These are responsibility names, not Gradle target-task names.
 
-Broad Gradle target tasks such as `:library:jvmTest` or `:platform-core-test:harness:jvmTest`
+Broad Gradle target tasks such as `:library-core:jvmTest` or `:platform-core-test:harness:jvmTest`
 remain generic execution surfaces. They are still useful, but the preferred maintainer entry points
 for generated-code runtime validation are the `corePlatform*` wrapper tasks.
 
@@ -24,11 +24,11 @@ for generated-code runtime validation are the `corePlatform*` wrapper tasks.
 
 It should:
 
-- validate runtime primitives and target-specific behavior directly in `:library`
+- validate runtime primitives and target-specific behavior directly in `:library-core`
 - remain the primary CI/CD surface for core SQLiteNow
 - continue to cover shared host, JS, Wasm, Apple, and Linux runtime behavior
 
-The canonical home of `direct` is `:library`.
+The canonical home of `direct` is `:library-core`.
 
 ### `platform`
 
@@ -44,17 +44,17 @@ The canonical home of `platform` is `:platform-core-test:harness`.
 
 ## Ownership
 
-### `:library`
+### `:library-core`
 
-`:library` owns the `direct` surface.
+`:library-core` owns the `direct` surface.
 
 Representative entry points:
 
-- `:library:jvmTest`
-- `:library:jsTest`
-- `:library:wasmJsBrowserTest`
-- `:library:iosSimulatorArm64Test`
-- `:library:macosArm64Test`
+- `:library-core:jvmTest`
+- `:library-core:jsTest`
+- `:library-core:wasmJsBrowserTest`
+- `:library-core:iosSimulatorArm64Test`
+- `:library-core:macosArm64Test`
 - Linux direct-runtime verification commands
 
 ### `:platform-core-test:harness`
@@ -72,11 +72,11 @@ Prefer these commands during normal maintenance.
 
 | Purpose | Command |
 | --- | --- |
-| JVM direct runtime | `./gradlew :library:jvmTest` |
-| JS direct runtime | `./gradlew :library:jsTest` |
-| Wasm direct runtime | `./gradlew :library:wasmJsBrowserTest` |
-| Apple direct runtime | `./gradlew :library:iosSimulatorArm64Test :library:macosArm64Test` |
-| Linux direct runtime | `./gradlew :library:linuxX64Test :library:compileTestKotlinLinuxArm64` |
+| JVM direct runtime | `./gradlew :library-core:jvmTest` |
+| JS direct runtime | `./gradlew :library-core:jsTest` |
+| Wasm direct runtime | `./gradlew :library-core:wasmJsBrowserTest` |
+| Apple direct runtime | `./gradlew :library-core:iosSimulatorArm64Test :library-core:macosArm64Test` |
+| Linux direct runtime | `./gradlew :library-core:linuxX64Test :library-core:compileTestKotlinLinuxArm64` |
 
 ### Platform
 
@@ -114,7 +114,7 @@ This distinction matters.
 Broad target tasks:
 
 - are generic target verification surfaces
-- are useful for direct-runtime work in `:library`
+- are useful for direct-runtime work in `:library-core`
 - may run more than the specific maintainer intent you care about
 
 Wrapper tasks:
@@ -136,9 +136,9 @@ Examples of broad target tasks that are not the preferred `platform` entry point
 
 For now:
 
-- `direct` in `:library` remains the primary CI/CD surface
+- `direct` in `:library-core` remains the primary CI/CD surface
 - `platform` in `:platform-core-test:harness` is local-only
-- GitHub Actions must use qualified `:library:*` task paths for shared target names
+- GitHub Actions must use qualified `:library-core:*` task paths for shared target names
 - GitHub Actions must not run `corePlatform*`
 - GitHub Actions must not run `:platform-core-test:harness:build`, `check`, or similar broad
   aggregate harness tasks
@@ -147,7 +147,7 @@ For now:
 
 Use these defaults:
 
-- low-level runtime work: the relevant `:library:*` direct task
+- low-level runtime work: the relevant `:library-core:*` direct task
 - generated-code/runtime parity work: the relevant `corePlatform*` wrapper
 - full generated-code local sweep on a provisioned machine: `./gradlew corePlatformAll`
 

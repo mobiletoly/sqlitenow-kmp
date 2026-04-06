@@ -75,7 +75,7 @@ kotlin {
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.kotlinx.serialization.cbor)
 
-            implementation(project(":library"))
+            implementation(project(":library-oversqlite"))
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.auth)
             implementation(libs.ktor.client.content.negotiation)
@@ -151,11 +151,12 @@ sqliteNow {
     databases {
         create("NowSampleSyncDatabase") {
             packageName = "dev.goquick.sqlitenow.samplesynckmp.db"
+            oversqlite = true
         }
     }
 }
 
-val libraryProject = project(":library")
+val libraryProject = project(":library-core")
 val librarySqlJsResource = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sqlitenow-sqljs.js")
 val librarySqlWasmBinary = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sql-wasm.wasm")
 val libraryIndexedDbResource = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sqlitenow-indexeddb.js")

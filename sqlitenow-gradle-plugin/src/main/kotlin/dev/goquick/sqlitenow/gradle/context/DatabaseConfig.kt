@@ -36,4 +36,8 @@ open class DatabaseConfig @Inject constructor(
      */
     val debug: Property<Boolean> = objects.property(Boolean::class.java)
         .convention(false)
+
+    /** Enables generation of oversqlite bridge helpers for this database. */
+    val oversqlite: Property<Boolean> = objects.property(Boolean::class.java)
+        .convention(false)
 }

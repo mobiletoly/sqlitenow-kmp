@@ -34,7 +34,8 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "sqlitenow-kmp"
-include(":library")
+include(":library-core")
+include(":library-oversqlite")
 include(":platform-core-test:harness")
 include(":platform-oversqlite-test:composeApp")
 include(":sample-kmp:composeApp")

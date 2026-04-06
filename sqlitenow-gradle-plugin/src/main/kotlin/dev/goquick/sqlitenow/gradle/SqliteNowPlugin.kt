@@ -15,6 +15,7 @@
  */
 package dev.goquick.sqlitenow.gradle
 
+import org.gradle.api.artifacts.ProjectDependency
 import org.gradle.api.artifacts.Configuration
 import org.gradle.api.artifacts.component.ComponentIdentifier
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
@@ -53,6 +54,10 @@ class SqliteNowPlugin : Plugin<Project> {
                     task.packageName.set(db.packageName)
                     task.schemaDatabaseFile.set(db.schemaDatabaseFile)
                     task.debug.set(db.debug)
+                    task.oversqlite.set(db.oversqlite)
+                    task.oversqliteRuntimePresent.set(
+                        project.provider { hasOversqliteRuntimeDependency(project) }
+                    )
                 }
 
                 // Add generated dir to commonMain immediately
@@ -60,6 +65,17 @@ class SqliteNowPlugin : Plugin<Project> {
                     .getByName("commonMain")
                     .kotlin
                     .srcDir(genTask.map { it.outputDir })
+            }
+        }
+    }
+}
+
+private fun hasOversqliteRuntimeDependency(project: Project): Boolean {
+    return project.configurations.any { configuration ->
+        configuration.allDependencies.any { dependency ->
+            when (dependency) {
+                is ProjectDependency -> dependency.path == ":library-oversqlite"
+                else -> dependency.group == "dev.goquick.sqlitenow" && dependency.name == "oversqlite"
             }
         }
     }

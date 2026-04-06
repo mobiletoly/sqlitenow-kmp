@@ -436,7 +436,7 @@ class SqliteNowPluginFunctionalTest {
 
                 includeBuild("${repoRoot.invariantSeparatorsPathString}") {
                     dependencySubstitution {
-                        substitute(module("dev.goquick.sqlitenow:core")).using(project(":library"))
+                        substitute(module("dev.goquick.sqlitenow:core")).using(project(":library-core"))
                     }
                 }
             """.trimIndent()

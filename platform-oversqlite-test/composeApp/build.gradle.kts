@@ -73,7 +73,7 @@ kotlin {
             implementation(libs.ktor.client.auth)
             implementation(libs.ktor.serialization.kotlinx.json)
 
-            implementation(project(":library"))
+            implementation(project(":library-oversqlite"))
         }
 
         commonTest.dependencies {
@@ -149,11 +149,12 @@ sqliteNow {
     databases {
         create("RealServerGeneratedDatabase") {
             packageName = "dev.goquick.sqlitenow.oversqlite.platform.generated"
+            oversqlite = true
         }
     }
 }
 
-val libraryProject = project(":library")
+val libraryProject = project(":library-core")
 val librarySqlJsResource = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sqlitenow-sqljs.js")
 val librarySqlWasmBinary = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sql-wasm.wasm")
 val libraryIndexedDbResource = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sqlitenow-indexeddb.js")

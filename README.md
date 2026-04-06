@@ -151,7 +151,29 @@ Full examples is available in the [`/sample-kmp`](./sample-kmp) directory.
 ## Multi-Device Synchronization (optional)
 
 SQLiteNow includes a complete synchronization system for building multi-device applications.
-Simply annotate your tables with `enableSync=true` and the sync system handles the rest:
+Sync setup requires three explicit pieces:
+
+1. Add `dev.goquick.sqlitenow:core`
+2. Add `dev.goquick.sqlitenow:oversqlite`
+3. Set `oversqlite = true` on the generated database
+
+```kotlin
+commonMain.dependencies {
+    implementation("dev.goquick.sqlitenow:core:<version>")
+    implementation("dev.goquick.sqlitenow:oversqlite:<version>")
+}
+
+sqliteNow {
+    databases {
+        create("AppDatabase") {
+            packageName = "com.example.app.db"
+            oversqlite = true
+        }
+    }
+}
+```
+
+Then annotate your sync-managed tables with `enableSync=true`:
 
 ```sql
 -- Enable sync for this table

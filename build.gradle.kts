@@ -56,7 +56,7 @@ fun registerCorePlatformExecTask(
 tasks.register("oversqliteComprehensive") {
     group = "verification"
     description = "Runs the host-side oversqlite comprehensive suite."
-    dependsOn(":library:oversqliteComprehensiveJvm")
+    dependsOn(":library-oversqlite:oversqliteComprehensiveJvm")
 }
 
 tasks.register("oversqlitePlatformAll") {
@@ -124,13 +124,13 @@ registerCorePlatformExecTask(
 tasks.register("oversqliteRealserverJvm") {
     group = "verification"
     description = "Runs the shared JVM oversqlite realserver suite."
-    dependsOn(":library:oversqliteRealserverJvm")
+    dependsOn(":library-oversqlite:oversqliteRealserverJvm")
 }
 
 tasks.register("oversqliteRealserverJvmHeavy") {
     group = "verification"
     description = "Runs the JVM heavy oversqlite realserver scenario."
-    dependsOn(":library:jvmRealServerSharedConnectionStress")
+    dependsOn(":library-oversqlite:jvmRealServerSharedConnectionStress")
 }
 
 tasks.register("oversqliteRealserverAll") {

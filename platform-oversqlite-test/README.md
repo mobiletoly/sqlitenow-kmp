@@ -10,7 +10,7 @@ Suite model:
 - `platform`: concrete runtime-surface validation without the live server
 - `realserver`: live-server validation on concrete runtime surfaces
 
-`comprehensive` stays in `:library`.
+`comprehensive` stays in `:library-oversqlite`.
 
 ## Platform
 

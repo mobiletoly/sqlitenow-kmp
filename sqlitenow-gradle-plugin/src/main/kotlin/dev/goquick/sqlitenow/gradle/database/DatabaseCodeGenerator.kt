@@ -59,6 +59,7 @@ class DatabaseCodeGenerator(
     private val outputDir: File,
     private val databaseClassName: String,
     private val debug: Boolean = false,
+    private val oversqlite: Boolean = false,
 ) {
     private val columnLookup = ColumnLookup(createTableStatements, createViewStatements)
     private val adapterConfig = AdapterConfig(
@@ -399,7 +400,13 @@ class DatabaseCodeGenerator(
         val syncTables = createTableStatements
             .filter { it.annotations.enableSync }
             .distinct()
-        if (syncTables.isNotEmpty()) {
+        syncTables.forEach { resolveOversqliteSyncKeyColumn(it) }
+
+        if (oversqlite) {
+            require(syncTables.isNotEmpty()) {
+                "Database '$databaseClassName' sets oversqlite=true, but no tables are annotated with enableSync=true."
+            }
+
             // Generate SyncTable objects with primary key detection
             val syncTableInitializers = syncTables.map { table ->
                 // Always materialize the resolved sync key into generated code so runtime bootstrap
