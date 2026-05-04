@@ -1,0 +1,8 @@
+databases:
+  SyncDartDb:
+    input: test/sql/SyncDartDb
+    output: test/generated
+    package: test.db
+    runtime: dart
+    oversqlite: true
+    schemaDatabaseFile: build/sqlitenow/test-schema.db

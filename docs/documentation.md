@@ -1,149 +1,18 @@
 ---
 layout: page
-title: Documentation
+title: SQL Reference
 permalink: /documentation/
 ---
 
-# Documentation
+# SQL Reference
 
-Comprehensive documentation for SQLiteNow, covering everything from basic setup to advanced features.
+This URL is kept for compatibility with older documentation links.
 
-## Getting Started
+Choose the platform version so examples use the right generated API shape:
 
-If you're new to SQLiteNow, start with our [Getting Started]({{ site.baseurl }}/getting-started/) guide to set up your first project.
+- [Flutter/Dart SQL Reference]({{ site.baseurl }}/flutter/sql-reference/)
+- [Kotlin Multiplatform SQL Reference]({{ site.baseurl }}/kmp/sql-reference/)
 
-## Core Concepts
-
-### Schema Definition
-Learn how to define your database schema using SQL files with SQLiteNow annotations.
-
-[Create Schema →]({{ site.baseurl }}/documentation/create-schema/)
-
-### Querying Data
-Learn how to write SELECT queries and retrieve data from your database.
-
-[Query Data →]({{ site.baseurl }}/documentation/query-data/)
-
-### Managing Data
-Understand how to INSERT, UPDATE, and DELETE data in your database.
-
-[Manage Data →]({{ site.baseurl }}/documentation/manage-data/)
-
-### Dynamic Fields
-Understand how to embed nested objects, collections, or existing entities in your result models.
-
-[Dynamic Fields →]({{ site.baseurl }}/documentation/dynamic-fields/)
-
-### Initializing Data
-Learn how to populate your database with initial data during creation.
-
-[Initialize Data →]({{ site.baseurl }}/documentation/initialize-data/)
-
-### Migration
-Understand how to manage database schema changes over time.
-
-[Migration →]({{ site.baseurl }}/documentation/migration/)
-
-### Platform Guides
-Learn about platform-specific behavior and configuration tips.
-
-[Kotlin/JS Integration →]({{ site.baseurl }}/documentation/kotlin-js/)
-
-[Kotlin/Wasm Integration →]({{ site.baseurl }}/documentation/kotlin-wasm/)
-
-## Quick Navigation
-
-<div class="doc-nav-grid">
-  <a href="{{ site.baseurl }}/documentation/create-schema/" class="doc-nav-card">
-    <h3>📋 Create Schema</h3>
-    <p>Define tables, indexes, and database structure with SQL and annotations</p>
-  </a>
-  
-  <a href="{{ site.baseurl }}/documentation/query-data/" class="doc-nav-card">
-    <h3>🔍 Query Data</h3>
-    <p>Write SELECT queries to retrieve data as lists, single items, or reactive flows</p>
-  </a>
-
-  <a href="{{ site.baseurl }}/documentation/manage-data/" class="doc-nav-card">
-    <h3>✏️ Manage Data</h3>
-    <p>INSERT, UPDATE, and DELETE operations to modify your database</p>
-  </a>
-
-  <a href="{{ site.baseurl }}/documentation/dynamic-fields/" class="doc-nav-card">
-    <h3>🧩 Dynamic Fields</h3>
-    <p>Map JOIN results to nested objects, collections, or embedded entities</p>
-  </a>
-
-  <a href="{{ site.baseurl }}/documentation/initialize-data/" class="doc-nav-card">
-    <h3>🚀 Initialize Data</h3>
-    <p>Populate your database with initial data during creation</p>
-  </a>
-
-  <a href="{{ site.baseurl }}/documentation/migration/" class="doc-nav-card">
-    <h3>🔄 Migration</h3>
-    <p>Manage database schema changes and version upgrades</p>
-  </a>
-
-  <a href="{{ site.baseurl }}/documentation/kotlin-js/" class="doc-nav-card">
-    <h3>🌐 Kotlin/JS Integration</h3>
-    <p>Understand persistence, snapshots, and configuration for browser builds</p>
-  </a>
-
-  <a href="{{ site.baseurl }}/documentation/kotlin-wasm/" class="doc-nav-card">
-    <h3>🛰️ Kotlin/Wasm Integration</h3>
-    <p>Load sql.js from Wasm, wire IndexedDB snapshots, and run browser tests</p>
-  </a>
-
-  <a href="{{ site.baseurl }}/tutorials/" class="doc-nav-card">
-    <h3>🎓 Tutorials</h3>
-    <p>Follow the Mood Tracker series for an end-to-end walkthrough</p>
-  </a>
-
-  <a href="{{ site.baseurl }}/recipes/" class="doc-nav-card">
-    <h3>📖 Recipes</h3>
-    <p>Explore patterns for serialization, reactive flows, and schema inspection</p>
-  </a>
-</div>
-
-
-<style>
-.doc-nav-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 20px;
-  margin: 30px 0;
-}
-
-.doc-nav-card {
-  border: 1px solid #d0d7de;
-  border-radius: 8px;
-  padding: 20px;
-  text-decoration: none;
-  color: inherit;
-  transition: all 0.2s ease;
-  background: #f6f8fa;
-}
-
-.doc-nav-card:hover {
-  border-color: #0969da;
-  box-shadow: 0 4px 12px rgba(9, 105, 218, 0.1);
-  transform: translateY(-2px);
-}
-
-.doc-nav-card h3 {
-  margin: 0 0 10px 0;
-  color: #24292f;
-  font-size: 18px;
-}
-
-.doc-nav-card p {
-  margin: 0;
-  color: #656d76;
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.doc-nav-card:hover h3 {
-  color: #0969da;
-}
-</style>
+Older KMP-specific reference pages remain available at their original URLs, for
+example [Create Schema]({{ site.baseurl }}/documentation/create-schema/) and
+[Query Data]({{ site.baseurl }}/documentation/query-data/).

@@ -1,0 +1,118 @@
+import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
+
+plugins {
+    id("org.jetbrains.kotlin.jvm") version "2.3.20"
+    id("com.vanniktech.maven.publish") version "0.36.0"
+}
+
+def sharedCoordinates = new Properties()
+file("../gradle.properties").withInputStream { sharedCoordinates.load(it) }
+
+group = sharedCoordinates.getProperty("sqlitenow.group")
+version = sharedCoordinates.getProperty("sqlitenow.version")
+
+kotlin {
+    jvmToolchain(17)
+
+    compilerOptions {
+        languageVersion.set(KotlinVersion.KOTLIN_2_3)
+        freeCompilerArgs.addAll("-Xcontext-parameters")
+    }
+}
+
+dependencies {
+    implementation("com.squareup:kotlinpoet:2.2.0")
+    implementation("com.typesafe:config:1.4.6")
+    implementation("org.slf4j:slf4j-simple:2.0.17")
+    implementation("org.xerial:sqlite-jdbc:3.51.3.0")
+    implementation("com.github.jsqlparser:jsqlparser:4.9")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0")
+
+    testImplementation("org.junit.jupiter:junit-jupiter-api:6.0.3")
+    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:6.0.3")
+    testImplementation("org.jetbrains.kotlin:kotlin-test:2.3.20")
+    testImplementation(gradleTestKit())
+    testImplementation("org.mockito:mockito-core:5.23.0")
+    testImplementation("org.mockito:mockito-junit-jupiter:5.23.0")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+}
+
+def compilerJarTaskProvider = tasks.register("sqlitenowCompilerJar", Jar) {
+    group = "build"
+    description = "Builds a runnable Gradle-free SQLiteNow compiler jar for non-Gradle hosts."
+    archiveBaseName.set("sqlitenow-compiler")
+    archiveClassifier.set("compiler")
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest {
+        attributes("Main-Class": "dev.goquick.sqlitenow.gradle.compiler.SqliteNowCompilerCliKt")
+    }
+    exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA")
+    from(sourceSets.main.output)
+    from({
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    })
+}
+
+tasks.register("syncDartCliCompilerJar", Copy) {
+    group = "build"
+    description = "Copies the Gradle-free compiler jar into the Dart CLI package for embedded release packaging."
+    dependsOn(compilerJarTaskProvider)
+    from(compilerJarTaskProvider.flatMap { it.archiveFile })
+    into("../dart/packages/sqlitenow_cli/lib/src/compiler")
+    rename { "sqlitenow-compiler.jar" }
+}
+
+tasks.test {
+    useJUnitPlatform()
+    dependsOn(compilerJarTaskProvider)
+    doFirst {
+        systemProperty("sqlitenow.compilerJar", compilerJarTaskProvider.get().archiveFile.get().asFile.absolutePath)
+    }
+}
+
+mavenPublishing {
+    publishToMavenCentral()
+
+    def isPublishingToMavenLocal = gradle.startParameter.taskNames.any { it.toLowerCase().contains("publishtomavenlocal") }
+    def hasSigningCredentials =
+            System.getenv("SIGNING_KEY") ||
+                    System.getenv("SIGNING_KEY_ID") ||
+                    System.getenv("SIGNING_PASSWORD") ||
+                    project.findProperty("signingInMemoryKey") ||
+                    project.findProperty("signing.keyId") ||
+                    project.findProperty("signing.password") ||
+                    project.findProperty("signing.secretKeyRingFile") ||
+                    project.findProperty("signing.gnupg.keyName")
+
+    if (!isPublishingToMavenLocal && hasSigningCredentials) {
+        signAllPublications()
+    }
+
+    coordinates(group.toString(), "sqlitenow-compiler", version.toString())
+
+    pom {
+        name = "SQLiteNow Compiler"
+        description = "Gradle-free SQLiteNow compiler used by the Gradle plugin and Dart CLI"
+        inceptionYear = "2025"
+        url = "https://github.com/mobiletoly/sqlitenow-kmp/"
+        licenses {
+            license {
+                name = "The Apache License, Version 2.0"
+                url = "https://www.apache.org/licenses/LICENSE-2.0.txt"
+                distribution = "repo"
+            }
+        }
+        developers {
+            developer {
+                id = "mobiletoly"
+                name = "Toly Pochkin"
+                url = "https://github.com/mobiletoly"
+            }
+        }
+        scm {
+            url = "https://github.com/mobiletoly/sqlitenow-kmp"
+            connection = "scm:git:git://github.com/mobiletoly/sqlitenow-kmp.git"
+            developerConnection = "scm:git:git://github.com/mobiletoly/sqlitenow-kmp.git"
+        }
+    }
+}

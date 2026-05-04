@@ -136,4 +136,4 @@ Users upgrading from any previous version will have all necessary migrations app
 
 ## Next Steps
 
-[Recipes]({{ site.baseurl }}/recipes/) - Learn about common patterns and best practices
+[KMP Recipes]({{ site.baseurl }}/kmp/recipes/) - Learn about common patterns and best practices

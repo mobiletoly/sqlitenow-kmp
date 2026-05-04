@@ -1,0 +1,27 @@
+{
+  "formatVersion": 1,
+  "applicationTables": [
+    "users",
+    "posts"
+  ],
+  "cases": [
+    {
+      "name": "cascade-delete",
+      "setupSql": [
+        "UPDATE _sync_apply_state SET apply_mode = 1 WHERE singleton_key = 1",
+        "INSERT INTO users(id, name) VALUES('user-cascade', 'Cascade Parent')",
+        "INSERT INTO posts(id, user_id, title) VALUES('post-cascade', 'user-cascade', 'Cascade Child')",
+        "UPDATE _sync_apply_state SET apply_mode = 0 WHERE singleton_key = 1",
+        "INSERT INTO _sync_row_state(schema_name, table_name, key_json, row_version, deleted) VALUES('main', 'users', '{\"id\":\"user-cascade\"}', 11, 0)",
+        "INSERT INTO _sync_row_state(schema_name, table_name, key_json, row_version, deleted) VALUES('main', 'posts', '{\"id\":\"post-cascade\"}', 12, 0)"
+      ],
+      "actionSql": [
+        "DELETE FROM users WHERE id = 'user-cascade'"
+      ],
+      "expectedInvalidatedTables": [
+        "posts",
+        "users"
+      ]
+    }
+  ]
+}

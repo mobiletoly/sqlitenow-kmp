@@ -41,14 +41,8 @@ gradlePlugin {
 dependencies {
     implementation(gradleApi())
     implementation(localGroovy())
-    implementation("com.squareup:kotlinpoet:2.2.0")
+    implementation("dev.goquick.sqlitenow:sqlitenow-compiler:${version}")
     compileOnly("org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.0")
-    implementation("com.typesafe:config:1.4.6")
-    implementation("org.slf4j:slf4j-simple:2.0.17")
-    // SQLite JDBC for database access
-    implementation("org.xerial:sqlite-jdbc:3.51.3.0")
-    implementation("com.github.jsqlparser:jsqlparser:4.9")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0")
 
     // -- Testing dependencies --
     testImplementation("org.junit.jupiter:junit-jupiter-api:6.0.3")

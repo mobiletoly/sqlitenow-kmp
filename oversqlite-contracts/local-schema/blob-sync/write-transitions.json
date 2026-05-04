@@ -1,0 +1,18 @@
+{
+  "formatVersion": 1,
+  "applicationTables": [
+    "files"
+  ],
+  "cases": [
+    {
+      "name": "blob-key-insert",
+      "setupSql": [],
+      "actionSql": [
+        "INSERT INTO files(id, name, payload) VALUES(x'00112233445566778899aabbccddeeff', 'Spec Blob', x'6869')"
+      ],
+      "expectedInvalidatedTables": [
+        "files"
+      ]
+    }
+  ]
+}

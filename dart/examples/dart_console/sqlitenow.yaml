@@ -1,0 +1,7 @@
+databases:
+  AppDatabase:
+    input: lib/src/db/sql/AppDatabase
+    output: lib/src/db/generated
+    package: app.db
+    runtime: dart
+    oversqlite: false

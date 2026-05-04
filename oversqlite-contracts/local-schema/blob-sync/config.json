@@ -1,0 +1,9 @@
+{
+  "schema": "main",
+  "syncTables": [
+    {
+      "tableName": "files",
+      "syncKeyColumnName": "id"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "schema": "main",
+  "syncTables": [
+    {
+      "tableName": "users",
+      "syncKeyColumnName": "id"
+    },
+    {
+      "tableName": "posts",
+      "syncKeyColumnName": "id"
+    }
+  ]
+}

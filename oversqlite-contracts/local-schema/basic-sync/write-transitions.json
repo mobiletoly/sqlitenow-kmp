@@ -1,0 +1,60 @@
+{
+  "formatVersion": 1,
+  "applicationTables": [
+    "users"
+  ],
+  "cases": [
+    {
+      "name": "insert",
+      "setupSql": [],
+      "actionSql": [
+        "INSERT INTO users(id, name, updated_at) VALUES('user-insert', 'Ada', '2026-01-01T00:00:00Z')"
+      ],
+      "expectedInvalidatedTables": [
+        "users"
+      ]
+    },
+    {
+      "name": "update",
+      "setupSql": [
+        "UPDATE _sync_apply_state SET apply_mode = 1 WHERE singleton_key = 1",
+        "INSERT INTO users(id, name, updated_at) VALUES('user-update', 'Before', '2026-01-01T00:00:00Z')",
+        "UPDATE _sync_apply_state SET apply_mode = 0 WHERE singleton_key = 1",
+        "INSERT INTO _sync_row_state(schema_name, table_name, key_json, row_version, deleted) VALUES('main', 'users', '{\"id\":\"user-update\"}', 7, 0)"
+      ],
+      "actionSql": [
+        "UPDATE users SET name = 'After' WHERE id = 'user-update'"
+      ],
+      "expectedInvalidatedTables": [
+        "users"
+      ]
+    },
+    {
+      "name": "delete",
+      "setupSql": [
+        "UPDATE _sync_apply_state SET apply_mode = 1 WHERE singleton_key = 1",
+        "INSERT INTO users(id, name, updated_at) VALUES('user-delete', 'Delete Me', '2026-01-01T00:00:00Z')",
+        "UPDATE _sync_apply_state SET apply_mode = 0 WHERE singleton_key = 1",
+        "INSERT INTO _sync_row_state(schema_name, table_name, key_json, row_version, deleted) VALUES('main', 'users', '{\"id\":\"user-delete\"}', 7, 0)"
+      ],
+      "actionSql": [
+        "DELETE FROM users WHERE id = 'user-delete'"
+      ],
+      "expectedInvalidatedTables": [
+        "users"
+      ]
+    },
+    {
+      "name": "apply-mode-suppression",
+      "setupSql": [],
+      "actionSql": [
+        "UPDATE _sync_apply_state SET apply_mode = 1 WHERE singleton_key = 1",
+        "INSERT INTO users(id, name, updated_at) VALUES('user-apply', 'Remote Apply', '2026-01-01T00:00:00Z')",
+        "UPDATE _sync_apply_state SET apply_mode = 0 WHERE singleton_key = 1"
+      ],
+      "expectedInvalidatedTables": [
+        "users"
+      ]
+    }
+  ]
+}

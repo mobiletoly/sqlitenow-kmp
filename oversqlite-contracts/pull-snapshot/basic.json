@@ -1,0 +1,144 @@
+{
+  "formatVersion": 1,
+  "cases": [
+    {
+      "name": "incremental-insert-delete",
+      "afterBundleSeq": 0,
+      "pullResponse": {
+        "stable_bundle_seq": 2,
+        "bundles": [
+          {
+            "bundle_seq": 1,
+            "source_id": "remote-source",
+            "source_bundle_id": 1,
+            "rows": [
+              {
+                "schema": "main",
+                "table": "users",
+                "key": {
+                  "id": "user-1"
+                },
+                "op": "INSERT",
+                "row_version": 1,
+                "payload": {
+                  "id": "user-1",
+                  "name": "Ada"
+                }
+              }
+            ]
+          },
+          {
+            "bundle_seq": 2,
+            "source_id": "remote-source",
+            "source_bundle_id": 2,
+            "rows": [
+              {
+                "schema": "main",
+                "table": "users",
+                "key": {
+                  "id": "user-1"
+                },
+                "op": "DELETE",
+                "row_version": 2,
+                "payload": null
+              }
+            ]
+          }
+        ],
+        "has_more": false
+      },
+      "expectedFinalState": {
+        "lastBundleSeqSeen": 2,
+        "usersRowCount": 0,
+        "rowStateDeleted": 1,
+        "dirtyRowCount": 0
+      }
+    },
+    {
+      "name": "history-pruned-fallback",
+      "afterBundleSeq": 1,
+      "historyPrunedResponse": {
+        "status": 409,
+        "body": {
+          "error": "history_pruned",
+          "message": "after_bundle_seq 1 is below retained floor 2"
+        }
+      },
+      "snapshotSession": {
+        "snapshot_id": "snapshot-1",
+        "snapshot_bundle_seq": 7,
+        "row_count": 1,
+        "byte_count": 0,
+        "expires_at": "2099-01-01T00:00:00Z"
+      },
+      "snapshotChunkResponse": {
+        "snapshot_id": "snapshot-1",
+        "snapshot_bundle_seq": 7,
+        "rows": [
+          {
+            "schema": "main",
+            "table": "users",
+            "key": {
+              "id": "user-1"
+            },
+            "row_version": 7,
+            "payload": {
+              "id": "user-1",
+              "name": "Snapshot"
+            }
+          }
+        ],
+        "next_row_ordinal": 1,
+        "has_more": false
+      },
+      "expectedFinalState": {
+        "lastBundleSeqSeen": 7,
+        "usersRowCount": 1,
+        "rowStateDeleted": 0,
+        "dirtyRowCount": 0
+      }
+    },
+    {
+      "name": "source-replacement-snapshot",
+      "snapshotSessionCreateRequest": {
+        "source_replacement": {
+          "previous_source_id": "retired-source",
+          "new_source_id": "server-replacement-source",
+          "reason": "source_retired"
+        }
+      },
+      "snapshotSession": {
+        "snapshot_id": "snapshot-2",
+        "snapshot_bundle_seq": 9,
+        "row_count": 0,
+        "byte_count": 0,
+        "expires_at": "2099-01-01T00:00:00Z"
+      },
+      "snapshotChunkResponse": {
+        "snapshot_id": "snapshot-2",
+        "snapshot_bundle_seq": 9,
+        "rows": [],
+        "next_row_ordinal": 0,
+        "has_more": false
+      },
+      "expectedFinalState": {
+        "currentSourceId": "server-replacement-source",
+        "lastBundleSeqSeen": 9,
+        "dirtyRowCount": 0
+      }
+    },
+    {
+      "name": "source-replacement-invalid",
+      "sourceReplacementInvalidResponse": {
+        "status": 409,
+        "body": {
+          "error": "source_replacement_invalid",
+          "message": "source replacement does not match pending recovery"
+        }
+      },
+      "expectedFinalState": {
+        "rebuildRejected": true
+      }
+    }
+  ]
+}

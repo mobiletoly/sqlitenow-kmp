@@ -27,5 +27,5 @@ schema file through a reactive Compose UI.
    - Turn query results into `StateFlow`, surface them in Compose, and ship a cross-platform mood
      dashboard that reacts to database updates.
 
-Looking for more? Check the [Documentation]({{ site.baseurl }}/documentation/) hub for focused
-reference guides or the [Recipes]({{ site.baseurl }}/recipes/) collection for targeted how-tos.
+Looking for more? Check the [KMP SQL Reference]({{ site.baseurl }}/kmp/sql-reference/) hub for focused
+reference guides or the [KMP Recipes]({{ site.baseurl }}/kmp/recipes/) collection for targeted how-tos.

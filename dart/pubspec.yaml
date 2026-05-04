@@ -1,0 +1,11 @@
+name: sqlitenow_workspace
+publish_to: none
+
+environment:
+  sdk: ^3.11.0
+
+workspace:
+  - packages/sqlitenow_runtime
+  - packages/sqlitenow_cli
+  - packages/sqlitenow_oversqlite
+  - examples/dart_console

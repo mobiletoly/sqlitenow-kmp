@@ -55,19 +55,49 @@ class SqliteNowPluginFunctionalTest {
                 """
                     package fixture
 
-                    class FakeUsage
+                    import fixture.db.FixtureDatabase
+                    import fixture.db.PersonQuery
+                    import fixture.db.VersionBasedDatabaseMigrations
+
+                    fun createGeneratedDatabase(): FixtureDatabase {
+                        val params = PersonQuery.SelectById.Params(id = 1L)
+                        check(params.id == 1L)
+                        return FixtureDatabase(
+                            dbName = ":memory:",
+                            migration = VersionBasedDatabaseMigrations(),
+                        )
+                    }
                 """.trimIndent()
             )
         }
 
-        writeSqlFixture(projectDir, dbName = "FixtureDatabase")
+        writeSqlFixture(
+            projectDir = projectDir,
+            dbName = "FixtureDatabase",
+            queryName = "selectById",
+            querySql = """
+                SELECT *
+                FROM person
+                WHERE id = :id;
+            """.trimIndent(),
+        )
 
-        runGradle(projectDir, "compileKotlinJvm", "--stacktrace")
+        val result = runGradle(projectDir, "compileKotlinJvm", "--stacktrace")
+        assertTrue(
+            result.output.contains(":generateFixtureDatabase"),
+            "compileKotlinJvm should depend on the stable generated-source task name"
+        )
 
         val generatedFile = projectDir.resolve(
             "build/generated/sqlitenow/code/FixtureDatabase/fixture/db/VersionBasedDatabaseMigrations.kt"
         )
         assertTrue(generatedFile.exists(), "Generated migration file should exist")
+        assertTrue(
+            projectDir.resolve(
+                "build/generated/sqlitenow/code/FixtureDatabase/fixture/db/FixtureDatabase.kt"
+            ).exists(),
+            "Generated database source should use the stable SQLiteNow output directory"
+        )
         assertTrue(
             generatedFile.readText().contains("private suspend fun migrateToVersion1"),
             "Generated migration helper should be suspend in fixture build"

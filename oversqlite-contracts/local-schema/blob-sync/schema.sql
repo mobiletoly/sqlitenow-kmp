@@ -1,0 +1,5 @@
+CREATE TABLE files (
+  id BLOB PRIMARY KEY NOT NULL,
+  name TEXT NOT NULL,
+  payload BLOB
+);

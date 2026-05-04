@@ -1,0 +1,165 @@
+{
+  "formatVersion": 1,
+  "cases": [
+    {
+      "name": "unsupported-capability",
+      "capabilities": {
+        "status": 200,
+        "body": {
+          "protocol_version": "v1",
+          "schema_version": 1,
+          "features": {
+            "connect_lifecycle": false
+          }
+        }
+      },
+      "connect": null,
+      "local": {
+        "hasLocalPendingRows": false
+      },
+      "expected": {
+        "connectLifecycleSupported": false,
+        "connectCalled": false,
+        "attachKind": "unsupportedCapability"
+      }
+    },
+    {
+      "name": "retry-later",
+      "capabilities": {
+        "status": 200,
+        "body": {
+          "protocol_version": "v1",
+          "schema_version": 1,
+          "features": {
+            "connect_lifecycle": true
+          }
+        }
+      },
+      "connect": {
+        "status": 200,
+        "body": {
+          "resolution": "retry_later",
+          "retry_after_seconds": 7,
+          "lease_expires_at": "2099-01-01T00:00:00Z"
+        }
+      },
+      "local": {
+        "hasLocalPendingRows": false
+      },
+      "expected": {
+        "connectLifecycleSupported": true,
+        "connectCalled": true,
+        "attachKind": "retryLater",
+        "retryAfterSeconds": 7
+      }
+    },
+    {
+      "name": "initialize-empty",
+      "capabilities": {
+        "status": 200,
+        "body": {
+          "protocol_version": "v1",
+          "schema_version": 1,
+          "features": {
+            "connect_lifecycle": true
+          },
+          "bundle_limits": {
+            "max_rows_per_bundle": 1000,
+            "max_bytes_per_bundle": 1048576,
+            "max_bundles_per_pull": 25,
+            "default_rows_per_push_chunk": 100,
+            "max_rows_per_push_chunk": 500,
+            "push_session_ttl_seconds": 300,
+            "default_rows_per_committed_bundle_chunk": 250,
+            "max_rows_per_committed_bundle_chunk": 1000,
+            "default_rows_per_snapshot_chunk": 250,
+            "max_rows_per_snapshot_chunk": 1000,
+            "snapshot_session_ttl_seconds": 300,
+            "max_rows_per_snapshot_session": 100000,
+            "max_bytes_per_snapshot_session": 104857600,
+            "initialization_lease_ttl_seconds": 600
+          }
+        }
+      },
+      "connect": {
+        "status": 200,
+        "body": {
+          "resolution": "initialize_empty"
+        }
+      },
+      "local": {
+        "hasLocalPendingRows": false
+      },
+      "expected": {
+        "connectLifecycleSupported": true,
+        "connectCalled": true,
+        "attachKind": "connected",
+        "attachOutcome": "startedEmpty",
+        "bindingState": "attached",
+        "pendingInitializationId": ""
+      }
+    },
+    {
+      "name": "initialize-local",
+      "capabilities": {
+        "status": 200,
+        "body": {
+          "protocol_version": "v1",
+          "schema_version": 1,
+          "features": {
+            "connect_lifecycle": true
+          }
+        }
+      },
+      "connect": {
+        "status": 200,
+        "body": {
+          "resolution": "initialize_local",
+          "initialization_id": "init-connect",
+          "lease_expires_at": "2099-01-01T00:00:00Z"
+        }
+      },
+      "local": {
+        "hasLocalPendingRows": true
+      },
+      "expected": {
+        "connectLifecycleSupported": true,
+        "connectCalled": true,
+        "attachKind": "connected",
+        "attachOutcome": "seededFromLocal",
+        "bindingState": "attached",
+        "pendingInitializationId": "init-connect"
+      }
+    },
+    {
+      "name": "remote-authoritative",
+      "capabilities": {
+        "status": 200,
+        "body": {
+          "protocol_version": "v1",
+          "schema_version": 1,
+          "features": {
+            "connect_lifecycle": true
+          }
+        }
+      },
+      "connect": {
+        "status": 200,
+        "body": {
+          "resolution": "remote_authoritative"
+        }
+      },
+      "local": {
+        "hasLocalPendingRows": false
+      },
+      "expected": {
+        "connectLifecycleSupported": true,
+        "connectCalled": true,
+        "attachKind": "connected",
+        "attachOutcome": "usedRemoteState",
+        "bindingState": "attached",
+        "pendingInitializationId": ""
+      }
+    }
+  ]
+}

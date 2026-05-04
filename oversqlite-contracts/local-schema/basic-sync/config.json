@@ -1,0 +1,9 @@
+{
+  "schema": "main",
+  "syncTables": [
+    {
+      "tableName": "users",
+      "syncKeyColumnName": "id"
+    }
+  ]
+}

@@ -21,7 +21,7 @@
 title: SQLiteNow
 email:
 description: >- # this means to ignore newlines until "baseurl:"
-  A Kotlin Multiplatform library for type-safe SQLite database access
+  SQL-first, type-safe SQLite tooling for Flutter, Dart, and Kotlin Multiplatform
 baseurl: "/sqlitenow-kmp" # the subpath of your site, e.g. /blog
 url: "https://mobiletoly.github.io" # the base hostname & protocol for your site, e.g. http://example.com
 twitter_username:
@@ -37,15 +37,6 @@ github:
 theme: minima
 plugins:
   - jekyll-feed
-
-# Navigation
-header_pages:
-  - index.markdown
-  - getting-started.md
-  - documentation.md
-  - sync.md
-  - recipes.md
-  - tutorials.md
 
 # Exclude from processing.
 # The following items will not be processed, by default.

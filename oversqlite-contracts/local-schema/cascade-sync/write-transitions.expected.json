@@ -1,0 +1,33 @@
+{
+  "formatVersion": 1,
+  "fixture": "cascade-sync",
+  "cases": [
+    {
+      "name": "cascade-delete",
+      "dirtyRows": [
+        {
+          "schemaName": "main",
+          "tableName": "posts",
+          "keyJson": "{\"id\":\"post-cascade\"}",
+          "op": "DELETE",
+          "baseRowVersion": 12,
+          "payload": null,
+          "dirtyOrdinal": 1
+        },
+        {
+          "schemaName": "main",
+          "tableName": "users",
+          "keyJson": "{\"id\":\"user-cascade\"}",
+          "op": "DELETE",
+          "baseRowVersion": 11,
+          "payload": null,
+          "dirtyOrdinal": 2
+        }
+      ],
+      "applicationRowCounts": {
+        "posts": 0,
+        "users": 0
+      }
+    }
+  ]
+}

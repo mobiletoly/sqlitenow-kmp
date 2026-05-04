@@ -5,31 +5,86 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/mobiletoly/sqlitenow-kmp/gradle.yml?branch=main&logo=github&label=CI)](https://github.com/mobiletoly/sqlitenow-kmp/actions/workflows/gradle.yml)
 [![License](https://img.shields.io/github/license/mobiletoly/sqlitenow-kmp?logo=apache&label=License)](LICENSE)
 
-A Kotlin Multiplatform library for type-safe, SQLite database access, inspired by SQLDelight.
-Unlike other popular frameworks (such as Room) - it is full SQL-first framework. Write your
-queries in SQL files, get type-safe Kotlin code generated automatically. And no runtime annotations
-overhead, everything is generated at compile time.
+SQLiteNow is SQL-first tooling for type-safe SQLite access in Kotlin Multiplatform
+and Flutter/Dart apps. Write schema, migration, and query files in SQL, then
+generate platform-native code with typed parameters, typed results, migrations,
+transactions, and reactive invalidation.
 
-**Sync-Ready**: SQLiteNow includes a complete synchronization system for multi-device applications,
-allowing seamless data sync across devices with conflict resolution and offline-first capabilities.
+Kotlin Multiplatform apps use the `dev.goquick.sqlitenow` Gradle plugin and KMP
+runtime libraries.
+
+Flutter and Dart apps use `sqlitenow_runtime` plus `sqlitenow_cli`. You might see a
+little documentation bias toward KMP at first, because originally project was started
+as KMP-only, but eventually it will have a full docs parity.
+
+**Sync-Ready**: SQLiteNow includes Oversqlite, a synchronization system for
+multi-device applications with conflict resolution and offline-first behavior.
 
 ## Overview
 
-SQLiteNow generates Kotlin code from your SQL files, giving you full control over your queries
-while maintaining type safety. Unlike SQLDelight, which supports multiple database engines,
-SQLiteNow is focused exclusively on SQLite, allowing for deeper integration and SQLite-specific
-optimizations.
+SQLiteNow generates code from your SQL files, giving you full control over your
+queries while maintaining type safety. Unlike SQLDelight (for KMP), which supports
+multiple database engines, SQLiteNow is focused exclusively on SQLite, allowing
+for deeper integration and SQLite-specific optimizations.
 
-Full documentation is available in the https://mobiletoly.github.io/sqlitenow-kmp/ pages.
+Full documentation is available at https://mobiletoly.github.io/sqlitenow-kmp/.
+
+## First Run
+
+### Kotlin Multiplatform
+
+```toml
+[plugins]
+sqlitenow = { id = "dev.goquick.sqlitenow", version = "0.9.0" }
+
+[libraries]
+sqlitenow-core = { module = "dev.goquick.sqlitenow:core", version = "0.9.0" }
+```
+
+```kotlin
+sqliteNow {
+    databases {
+        create("SampleDatabase") {
+            packageName.set("com.example.app.db")
+        }
+    }
+}
+```
+
+Start here: https://mobiletoly.github.io/sqlitenow-kmp/kmp/
 
 While we have added includes few sample projects to this repository, but for a very simple
 end-to-end walkthrough, follow the [Mood Tracker tutorial series](https://mobiletoly.github.io/sqlitenow-kmp/tutorials/) and browse the
 accompanying [sample project](https://github.com/mobiletoly/moodtracker-sample-kmp).
 
+### Flutter/Dart
+
+```yaml
+dependencies:
+  sqlitenow_runtime: ^0.9.0
+
+dev_dependencies:
+  sqlitenow_cli: ^0.9.0
+```
+
+```shell
+flutter pub run sqlitenow_cli generate
+```
+
+For pure Dart packages, use:
+
+```shell
+dart run sqlitenow_cli generate
+```
+
+The released Dart CLI package embeds the SQLiteNow compiler jar. Flutter and
+Dart users do not pass `--compiler-jar` for normal consumption.
+
+Start here: https://mobiletoly.github.io/sqlitenow-kmp/flutter/
+
 ## Key Features
 
 ### Supported Platforms
-
 - Android (Kotlin/JVM via AndroidX bundled SQLite driver)
 - iOS (Kotlin/Native with bundled SQLite)
 - macOS native (`macosArm64`, `macosX64`) with bundled SQLite
@@ -37,15 +92,15 @@ accompanying [sample project](https://github.com/mobiletoly/moodtracker-sample-k
 - JVM desktop/server targets
 - JavaScript (browser) via SQL.js with optional IndexedDB persistence
 - Kotlin/Wasm (browser) using the same SQL.js runtime with automatic OPFS or IndexedDB persistence
+- Flutter native runtimes through Dart VM and `package:sqlite3`
 
 ### Type-Safe SQL Generation
 
-- **Pure SQL Control** - Write your queries in SQL files, get type-safe Kotlin code
+- **Pure SQL Control** - Write your queries in SQL files, get type-safe generated code
 - **Comment-based Annotations** - Control code generation using simple `-- @@{ annotations }`
   comments in your SQL.
-- **No IDE Plugin Required** - Works with any editor, uses Gradle plugin for code generation
-- **Kotlin Multiplatform** - Targets Android, iOS, macOS, Linux, JVM, JavaScript, and Kotlin/Wasm browsers
-  using [androidx.sqlite](https://developer.android.com/kotlin/multiplatform/sqlite) driver plus SQL.js where appropriate
+- **No IDE Plugin Required** - Works with any editor
+- **Multiple Consumption Paths** - Flutter/Dart packages use the Dart CLI; KMP apps use the Gradle plugin
 - **SQLite Focused** - Optimized specifically for SQLite features and capabilities
 - **Migration support** - Migration scripts are supported to manage database schema changes
 
@@ -64,7 +119,7 @@ accompanying [sample project](https://github.com/mobiletoly/moodtracker-sample-k
 
 Client-side framework components:
 - **SQLiteNow Generator** - The code generation component of the SQLiteNow framework that
-  generates type-safe Kotlin code from SQL files.
+  generates type-safe Kotlin or Dart code from SQL files.
 - **SQLiteNow Library** - The core library that provides convenient APIs for database access.
 - **OverSqlite** - The sync component of the SQLiteNow framework that enables seamless data
   sharing across multiple devices with automatic conflict resolution, change tracking, and
@@ -85,9 +140,8 @@ of SQLite database with PostgreSQL without using SQLiteNow Generator and SQLiteN
 Even if you don't care about multi-device synchronization, SQLiteNow has few key differences
 from SQLDelight:
 
-First of all, I wanted to target specifically SQLite in Kotlin Multiplatform environment, it is my
-platform of choice as of now for mobile development. SQLiteNow built on top of using multiplatform
-SQLite driver from AndroidX.
+First of all, I wanted to target specifically SQLite in Kotlin Multiplatform and Dart environments,
+these are my platform of choice as of now for mobile development.
 
 Second, since we use comment-based annotations, no plugin is required (like in case of SQLDelight),
 so you can easily use just a regular SQL files that will be validated by your IDE or other external
@@ -138,42 +192,27 @@ such as converting from TEXT to Kotlin's date/time etc.
 
 You can always shape your data even more with `mapTo` annotation.
 
-## How it works
-
-### Code Generation
-1. Write your SQL queries in `.sql` files
-2. Add annotations using SQL comments to control code generation
-3. Run the Gradle plugin to generate type-safe Kotlin code
-4. Use the generated database classes in your application
-
-Full examples is available in the [`/sample-kmp`](./sample-kmp) directory.
+Full example is available in the [`/sample-kmp`](./sample-kmp) directory (for KMP) and
+in [`/dart/examples`] for Dart/Flutter.
 
 ## Multi-Device Synchronization (optional)
 
 SQLiteNow includes a complete synchronization system for building multi-device applications.
-Sync setup requires three explicit pieces:
+Sync setup requires three explicit pieces on each client:
 
-1. Add `dev.goquick.sqlitenow:core`
-2. Add `dev.goquick.sqlitenow:oversqlite`
-3. Set `oversqlite = true` on the generated database
+- the SQLiteNow runtime package
+- the Oversqlite runtime package
+- generated database configuration with Oversqlite enabled
 
-```kotlin
-commonMain.dependencies {
-    implementation("dev.goquick.sqlitenow:core:<version>")
-    implementation("dev.goquick.sqlitenow:oversqlite:<version>")
-}
+The sync system automatically handles:
+- **Change tracking** for all sync-enabled tables
+- **Conflict resolution** for concurrent writes across devices
+- **Incremental sync** to minimize bandwidth usage
+- **Chunked push upload** for large dirty sets without a total-row hard ceiling
+- **Error handling** and retry logic
+- **Authentication** via customizable HTTP clients
 
-sqliteNow {
-    databases {
-        create("AppDatabase") {
-            packageName = "com.example.app.db"
-            oversqlite = true
-        }
-    }
-}
-```
-
-Then annotate your sync-managed tables with `enableSync=true`:
+If you have a table to sync, annotate it with `enableSync=true`:
 
 ```sql
 -- Enable sync for this table
@@ -190,6 +229,26 @@ CREATE TABLE person (
 Sync-enabled tables must use exactly one local `PRIMARY KEY` column of type `TEXT` or `BLOB`.
 `INTEGER`/`BIGINT` sync keys are rejected, and local sync-enabled tables must not model the
 reserved server scope column `_sync_scope_id`.
+
+### Kotlin Multiplatform
+
+Add the KMP runtime artifacts and enable Oversqlite in the Gradle DSL:
+
+```kotlin
+commonMain.dependencies {
+    implementation("dev.goquick.sqlitenow:core:<version>")
+    implementation("dev.goquick.sqlitenow:oversqlite:<version>")
+}
+
+sqliteNow {
+    databases {
+        create("AppDatabase") {
+            packageName = "com.example.app.db"
+            oversqlite = true
+        }
+    }
+}
+```
 
 Then use the generated sync client in your application:
 
@@ -222,15 +281,53 @@ syncClient.attach(userId = "user123").getOrThrow()
 syncClient.sync().getOrThrow()
 ```
 
-The sync system automatically handles:
-- **Change tracking** for all sync-enabled tables
-- **Conflict resolution** for concurrent writes across devices
-- **Incremental sync** to minimize bandwidth usage
-- **Chunked push upload** for large dirty sets without a total-row hard ceiling
-- **Error handling** and retry logic
-- **Authentication** via customizable HttpClient
+KMP sync example: [`/samplesync-kmp`](./samplesync-kmp).
 
-Full example is available in the [`/samplesync-kmp`](./samplesync-kmp) directory.
+
+### Flutter/Dart
+
+Add the Dart runtime packages and enable Oversqlite in `sqlitenow.yaml`:
+
+```yaml
+dependencies:
+  sqlitenow_runtime: ^0.9.0
+  sqlitenow_oversqlite: ^0.9.0
+
+dev_dependencies:
+  sqlitenow_cli: ^0.9.0
+```
+
+```yaml
+databases:
+  AppDatabase:
+    input: lib/db/sql/AppDatabase
+    output: lib/db/generated
+    package: app.db
+    runtime: dart
+    oversqlite: true
+```
+
+Then use the generated sync client in your application:
+
+```dart
+final httpClient = IoOversqliteHttpClient(
+  baseUri: Uri.parse('https://api.myapp.com'),
+  defaultHeaders: {
+    HttpHeaders.authorizationHeader: 'Bearer $token',
+  },
+);
+
+final syncClient = db.newOversqliteClient(
+  schema: 'myapp',
+  httpClient: httpClient,
+);
+
+await syncClient.open();
+await syncClient.attach('user123');
+await syncClient.sync();
+```
+
+Dart sync package and realserver coverage: [`/dart/packages/sqlitenow_oversqlite`](./dart/packages/sqlitenow_oversqlite).
 
 ## Documentation
 

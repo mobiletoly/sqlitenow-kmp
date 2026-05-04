@@ -1,0 +1,1025 @@
+{
+  "formatVersion": 1,
+  "fixture": "blob-sync",
+  "catalog": [
+    {
+      "type": "index",
+      "name": "idx_sync_dirty_rows_dirty_ordinal",
+      "tableName": "_sync_dirty_rows",
+      "sql": "CREATE INDEX idx_sync_dirty_rows_dirty_ordinal ON _sync_dirty_rows(dirty_ordinal)"
+    },
+    {
+      "type": "table",
+      "name": "_sync_apply_state",
+      "tableName": "_sync_apply_state",
+      "sql": "CREATE TABLE _sync_apply_state (\n  singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),\n  apply_mode INTEGER NOT NULL DEFAULT 0\n)"
+    },
+    {
+      "type": "table",
+      "name": "_sync_attachment_state",
+      "tableName": "_sync_attachment_state",
+      "sql": "CREATE TABLE _sync_attachment_state (\n  singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),\n  current_source_id TEXT NOT NULL DEFAULT '',\n  binding_state TEXT NOT NULL DEFAULT 'anonymous' CHECK (binding_state IN ('anonymous', 'attached')),\n  attached_user_id TEXT NOT NULL DEFAULT '',\n  schema_name TEXT NOT NULL DEFAULT '',\n  last_bundle_seq_seen INTEGER NOT NULL DEFAULT 0,\n  rebuild_required INTEGER NOT NULL DEFAULT 0,\n  pending_initialization_id TEXT NOT NULL DEFAULT ''\n)"
+    },
+    {
+      "type": "table",
+      "name": "_sync_dirty_rows",
+      "tableName": "_sync_dirty_rows",
+      "sql": "CREATE TABLE _sync_dirty_rows (\n  schema_name TEXT NOT NULL,\n  table_name TEXT NOT NULL,\n  key_json TEXT NOT NULL,\n  op TEXT NOT NULL CHECK (op IN ('INSERT','UPDATE','DELETE')),\n  base_row_version INTEGER NOT NULL DEFAULT 0,\n  payload TEXT,\n  dirty_ordinal INTEGER NOT NULL DEFAULT 0,\n  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),\n  PRIMARY KEY (schema_name, table_name, key_json)\n)"
+    },
+    {
+      "type": "table",
+      "name": "_sync_managed_tables",
+      "tableName": "_sync_managed_tables",
+      "sql": "CREATE TABLE _sync_managed_tables (\n  schema_name TEXT NOT NULL,\n  table_name TEXT NOT NULL,\n  PRIMARY KEY (schema_name, table_name)\n)"
+    },
+    {
+      "type": "table",
+      "name": "_sync_operation_state",
+      "tableName": "_sync_operation_state",
+      "sql": "CREATE TABLE _sync_operation_state (\n  singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),\n  kind TEXT NOT NULL DEFAULT 'none' CHECK (kind IN ('none', 'remote_replace', 'source_recovery')),\n  target_user_id TEXT NOT NULL DEFAULT '',\n  staged_snapshot_id TEXT NOT NULL DEFAULT '',\n  snapshot_bundle_seq INTEGER NOT NULL DEFAULT 0,\n  snapshot_row_count INTEGER NOT NULL DEFAULT 0,\n  reason TEXT NOT NULL DEFAULT '',\n  replacement_source_id TEXT NOT NULL DEFAULT ''\n)"
+    },
+    {
+      "type": "table",
+      "name": "_sync_outbox_bundle",
+      "tableName": "_sync_outbox_bundle",
+      "sql": "CREATE TABLE _sync_outbox_bundle (\n  singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),\n  state TEXT NOT NULL DEFAULT 'none' CHECK (state IN ('none', 'prepared', 'committed_remote')),\n  source_id TEXT NOT NULL DEFAULT '',\n  source_bundle_id INTEGER NOT NULL DEFAULT 0,\n  initialization_id TEXT NOT NULL DEFAULT '',\n  canonical_request_hash TEXT NOT NULL DEFAULT '',\n  row_count INTEGER NOT NULL DEFAULT 0,\n  remote_bundle_hash TEXT NOT NULL DEFAULT '',\n  remote_bundle_seq INTEGER NOT NULL DEFAULT 0\n)"
+    },
+    {
+      "type": "table",
+      "name": "_sync_outbox_rows",
+      "tableName": "_sync_outbox_rows",
+      "sql": "CREATE TABLE _sync_outbox_rows (\n  source_bundle_id INTEGER NOT NULL,\n  row_ordinal INTEGER NOT NULL,\n  schema_name TEXT NOT NULL,\n  table_name TEXT NOT NULL,\n  key_json TEXT NOT NULL,\n  wire_key_json TEXT NOT NULL,\n  op TEXT NOT NULL CHECK (op IN ('INSERT','UPDATE','DELETE')),\n  base_row_version INTEGER NOT NULL DEFAULT 0,\n  local_payload TEXT,\n  wire_payload TEXT,\n  PRIMARY KEY (source_bundle_id, row_ordinal)\n)"
+    },
+    {
+      "type": "table",
+      "name": "_sync_row_state",
+      "tableName": "_sync_row_state",
+      "sql": "CREATE TABLE _sync_row_state (\n  schema_name TEXT NOT NULL,\n  table_name TEXT NOT NULL,\n  key_json TEXT NOT NULL,\n  row_version INTEGER NOT NULL DEFAULT 0,\n  deleted INTEGER NOT NULL DEFAULT 0,\n  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),\n  PRIMARY KEY (schema_name, table_name, key_json)\n)"
+    },
+    {
+      "type": "table",
+      "name": "_sync_snapshot_stage",
+      "tableName": "_sync_snapshot_stage",
+      "sql": "CREATE TABLE _sync_snapshot_stage (\n  snapshot_id TEXT NOT NULL,\n  row_ordinal INTEGER NOT NULL,\n  schema_name TEXT NOT NULL,\n  table_name TEXT NOT NULL,\n  key_json TEXT NOT NULL,\n  row_version INTEGER NOT NULL,\n  payload TEXT NOT NULL,\n  PRIMARY KEY (snapshot_id, row_ordinal)\n)"
+    },
+    {
+      "type": "table",
+      "name": "_sync_source_state",
+      "tableName": "_sync_source_state",
+      "sql": "CREATE TABLE _sync_source_state (\n  source_id TEXT NOT NULL PRIMARY KEY,\n  next_source_bundle_id INTEGER NOT NULL DEFAULT 1,\n  replaced_by_source_id TEXT NOT NULL DEFAULT '',\n  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))\n)"
+    },
+    {
+      "type": "table",
+      "name": "files",
+      "tableName": "files",
+      "sql": "CREATE TABLE files (\n  id BLOB PRIMARY KEY NOT NULL,\n  name TEXT NOT NULL,\n  payload BLOB\n)"
+    },
+    {
+      "type": "trigger",
+      "name": "trg_files_ad",
+      "tableName": "files",
+      "sql": "CREATE TRIGGER trg_files_ad AFTER DELETE ON \"files\" WHEN COALESCE((SELECT apply_mode FROM _sync_apply_state WHERE singleton_key = 1), 0) = 0 BEGIN INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at) VALUES ( 'main', 'files', json_object('id', lower(hex(OLD.\"id\"))), 'DELETE', COALESCE( (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(OLD.\"id\")))), (SELECT row_version FROM _sync_row_state WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(OLD.\"id\")))), 0 ), NULL, COALESCE( (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(OLD.\"id\")))), (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows) ), strftime('%Y-%m-%dT%H:%M:%fZ','now') ) ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET op='DELETE', payload=NULL, updated_at=excluded.updated_at; END"
+    },
+    {
+      "type": "trigger",
+      "name": "trg_files_ai",
+      "tableName": "files",
+      "sql": "CREATE TRIGGER trg_files_ai AFTER INSERT ON \"files\" WHEN COALESCE((SELECT apply_mode FROM _sync_apply_state WHERE singleton_key = 1), 0) = 0 BEGIN INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at) VALUES ( 'main', 'files', json_object('id', lower(hex(NEW.\"id\"))), CASE WHEN EXISTS ( SELECT 1 FROM _sync_row_state WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(NEW.\"id\"))) AND deleted=0 ) THEN 'UPDATE' ELSE 'INSERT' END, COALESCE( (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(NEW.\"id\")))), (SELECT row_version FROM _sync_row_state WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(NEW.\"id\")))), 0 ), json_object('id', CASE WHEN NEW.\"id\" IS NULL THEN NULL ELSE lower(hex(NEW.\"id\")) END, 'name', NEW.\"name\", 'payload', CASE WHEN NEW.\"payload\" IS NULL THEN NULL ELSE lower(hex(NEW.\"payload\")) END), COALESCE( (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(NEW.\"id\")))), (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows) ), strftime('%Y-%m-%dT%H:%M:%fZ','now') ) ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET op=excluded.op, payload=excluded.payload, updated_at=excluded.updated_at; END"
+    },
+    {
+      "type": "trigger",
+      "name": "trg_files_au",
+      "tableName": "files",
+      "sql": "CREATE TRIGGER trg_files_au AFTER UPDATE ON \"files\" WHEN COALESCE((SELECT apply_mode FROM _sync_apply_state WHERE singleton_key = 1), 0) = 0 BEGIN INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at) SELECT 'main', 'files', json_object('id', lower(hex(OLD.\"id\"))), 'DELETE', COALESCE( (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(OLD.\"id\")))), (SELECT row_version FROM _sync_row_state WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(OLD.\"id\")))), 0 ), NULL, COALESCE( (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(OLD.\"id\")))), (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows) ), strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE json_object('id', lower(hex(OLD.\"id\"))) != json_object('id', lower(hex(NEW.\"id\"))) ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET op='DELETE', payload=NULL, updated_at=excluded.updated_at; INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at) VALUES ( 'main', 'files', json_object('id', lower(hex(NEW.\"id\"))), CASE WHEN EXISTS ( SELECT 1 FROM _sync_row_state WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(NEW.\"id\"))) AND deleted=0 ) THEN 'UPDATE' ELSE 'INSERT' END, COALESCE( (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(NEW.\"id\")))), (SELECT row_version FROM _sync_row_state WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(NEW.\"id\")))), 0 ), json_object('id', CASE WHEN NEW.\"id\" IS NULL THEN NULL ELSE lower(hex(NEW.\"id\")) END, 'name', NEW.\"name\", 'payload', CASE WHEN NEW.\"payload\" IS NULL THEN NULL ELSE lower(hex(NEW.\"payload\")) END), COALESCE( (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(NEW.\"id\")))), (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows) ), strftime('%Y-%m-%dT%H:%M:%fZ','now') ) ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET op=excluded.op, payload=excluded.payload, updated_at=excluded.updated_at; END"
+    },
+    {
+      "type": "trigger",
+      "name": "trg_files_bd_guard",
+      "tableName": "files",
+      "sql": "CREATE TRIGGER trg_files_bd_guard BEFORE DELETE ON \"files\" WHEN EXISTS ( SELECT 1 FROM _sync_operation_state WHERE singleton_key = 1 AND kind != 'none' ) AND NOT EXISTS ( SELECT 1 FROM _sync_apply_state WHERE singleton_key = 1 AND apply_mode = 1 ) BEGIN SELECT RAISE(ABORT, 'SYNC_TRANSITION_PENDING'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "trg_files_bi_guard",
+      "tableName": "files",
+      "sql": "CREATE TRIGGER trg_files_bi_guard BEFORE INSERT ON \"files\" WHEN EXISTS ( SELECT 1 FROM _sync_operation_state WHERE singleton_key = 1 AND kind != 'none' ) AND NOT EXISTS ( SELECT 1 FROM _sync_apply_state WHERE singleton_key = 1 AND apply_mode = 1 ) BEGIN SELECT RAISE(ABORT, 'SYNC_TRANSITION_PENDING'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "trg_files_bu_guard",
+      "tableName": "files",
+      "sql": "CREATE TRIGGER trg_files_bu_guard BEFORE UPDATE ON \"files\" WHEN EXISTS ( SELECT 1 FROM _sync_operation_state WHERE singleton_key = 1 AND kind != 'none' ) AND NOT EXISTS ( SELECT 1 FROM _sync_apply_state WHERE singleton_key = 1 AND apply_mode = 1 ) BEGIN SELECT RAISE(ABORT, 'SYNC_TRANSITION_PENDING'); END"
+    }
+  ],
+  "tables": [
+    {
+      "name": "_sync_apply_state",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "singleton_key",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "cid": 1,
+          "name": "apply_mode",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": []
+    },
+    {
+      "name": "_sync_attachment_state",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "singleton_key",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "cid": 1,
+          "name": "current_source_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 2,
+          "name": "binding_state",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "'anonymous'",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 3,
+          "name": "attached_user_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 4,
+          "name": "schema_name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 5,
+          "name": "last_bundle_seq_seen",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 6,
+          "name": "rebuild_required",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 7,
+          "name": "pending_initialization_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": []
+    },
+    {
+      "name": "_sync_dirty_rows",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "schema_name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "cid": 1,
+          "name": "table_name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 2
+        },
+        {
+          "cid": 2,
+          "name": "key_json",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 3
+        },
+        {
+          "cid": 3,
+          "name": "op",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 4,
+          "name": "base_row_version",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 5,
+          "name": "payload",
+          "type": "TEXT",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 6,
+          "name": "dirty_ordinal",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 7,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+          "primaryKeyPosition": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "idx_sync_dirty_rows_dirty_ordinal",
+          "unique": false,
+          "origin": "c",
+          "partial": false,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 6,
+              "name": "dirty_ordinal",
+              "desc": false,
+              "collation": "BINARY",
+              "key": true
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": false,
+              "collation": "BINARY",
+              "key": false
+            }
+          ]
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex__sync_dirty_rows_1",
+          "unique": true,
+          "origin": "pk",
+          "partial": false,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "schema_name",
+              "desc": false,
+              "collation": "BINARY",
+              "key": true
+            },
+            {
+              "seqno": 1,
+              "cid": 1,
+              "name": "table_name",
+              "desc": false,
+              "collation": "BINARY",
+              "key": true
+            },
+            {
+              "seqno": 2,
+              "cid": 2,
+              "name": "key_json",
+              "desc": false,
+              "collation": "BINARY",
+              "key": true
+            },
+            {
+              "seqno": 3,
+              "cid": -1,
+              "name": null,
+              "desc": false,
+              "collation": "BINARY",
+              "key": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "_sync_managed_tables",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "schema_name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "cid": 1,
+          "name": "table_name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 2
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex__sync_managed_tables_1",
+          "unique": true,
+          "origin": "pk",
+          "partial": false,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "schema_name",
+              "desc": false,
+              "collation": "BINARY",
+              "key": true
+            },
+            {
+              "seqno": 1,
+              "cid": 1,
+              "name": "table_name",
+              "desc": false,
+              "collation": "BINARY",
+              "key": true
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": false,
+              "collation": "BINARY",
+              "key": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "_sync_operation_state",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "singleton_key",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "cid": 1,
+          "name": "kind",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "'none'",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 2,
+          "name": "target_user_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 3,
+          "name": "staged_snapshot_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 4,
+          "name": "snapshot_bundle_seq",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 5,
+          "name": "snapshot_row_count",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 6,
+          "name": "reason",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 7,
+          "name": "replacement_source_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": []
+    },
+    {
+      "name": "_sync_outbox_bundle",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "singleton_key",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "cid": 1,
+          "name": "state",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "'none'",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 2,
+          "name": "source_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 3,
+          "name": "source_bundle_id",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 4,
+          "name": "initialization_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 5,
+          "name": "canonical_request_hash",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 6,
+          "name": "row_count",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 7,
+          "name": "remote_bundle_hash",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 8,
+          "name": "remote_bundle_seq",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": []
+    },
+    {
+      "name": "_sync_outbox_rows",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "source_bundle_id",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "cid": 1,
+          "name": "row_ordinal",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 2
+        },
+        {
+          "cid": 2,
+          "name": "schema_name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 3,
+          "name": "table_name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 4,
+          "name": "key_json",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 5,
+          "name": "wire_key_json",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 6,
+          "name": "op",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 7,
+          "name": "base_row_version",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 8,
+          "name": "local_payload",
+          "type": "TEXT",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 9,
+          "name": "wire_payload",
+          "type": "TEXT",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex__sync_outbox_rows_1",
+          "unique": true,
+          "origin": "pk",
+          "partial": false,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "source_bundle_id",
+              "desc": false,
+              "collation": "BINARY",
+              "key": true
+            },
+            {
+              "seqno": 1,
+              "cid": 1,
+              "name": "row_ordinal",
+              "desc": false,
+              "collation": "BINARY",
+              "key": true
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": false,
+              "collation": "BINARY",
+              "key": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "_sync_row_state",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "schema_name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "cid": 1,
+          "name": "table_name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 2
+        },
+        {
+          "cid": 2,
+          "name": "key_json",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 3
+        },
+        {
+          "cid": 3,
+          "name": "row_version",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 4,
+          "name": "deleted",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 5,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+          "primaryKeyPosition": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex__sync_row_state_1",
+          "unique": true,
+          "origin": "pk",
+          "partial": false,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "schema_name",
+              "desc": false,
+              "collation": "BINARY",
+              "key": true
+            },
+            {
+              "seqno": 1,
+              "cid": 1,
+              "name": "table_name",
+              "desc": false,
+              "collation": "BINARY",
+              "key": true
+            },
+            {
+              "seqno": 2,
+              "cid": 2,
+              "name": "key_json",
+              "desc": false,
+              "collation": "BINARY",
+              "key": true
+            },
+            {
+              "seqno": 3,
+              "cid": -1,
+              "name": null,
+              "desc": false,
+              "collation": "BINARY",
+              "key": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "_sync_snapshot_stage",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "snapshot_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "cid": 1,
+          "name": "row_ordinal",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 2
+        },
+        {
+          "cid": 2,
+          "name": "schema_name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 3,
+          "name": "table_name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 4,
+          "name": "key_json",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 5,
+          "name": "row_version",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 6,
+          "name": "payload",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex__sync_snapshot_stage_1",
+          "unique": true,
+          "origin": "pk",
+          "partial": false,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "snapshot_id",
+              "desc": false,
+              "collation": "BINARY",
+              "key": true
+            },
+            {
+              "seqno": 1,
+              "cid": 1,
+              "name": "row_ordinal",
+              "desc": false,
+              "collation": "BINARY",
+              "key": true
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": false,
+              "collation": "BINARY",
+              "key": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "_sync_source_state",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "source_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "cid": 1,
+          "name": "next_source_bundle_id",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "1",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 2,
+          "name": "replaced_by_source_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 3,
+          "name": "created_at",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+          "primaryKeyPosition": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex__sync_source_state_1",
+          "unique": true,
+          "origin": "pk",
+          "partial": false,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "source_id",
+              "desc": false,
+              "collation": "BINARY",
+              "key": true
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": false,
+              "collation": "BINARY",
+              "key": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "files",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "BLOB",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "cid": 1,
+          "name": "name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 2,
+          "name": "payload",
+          "type": "BLOB",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_files_1",
+          "unique": true,
+          "origin": "pk",
+          "partial": false,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "id",
+              "desc": false,
+              "collation": "BINARY",
+              "key": true
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": false,
+              "collation": "BINARY",
+              "key": false
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "views": [],
+  "triggers": [
+    {
+      "name": "trg_files_ad",
+      "tableName": "files",
+      "sql": "CREATE TRIGGER trg_files_ad AFTER DELETE ON \"files\" WHEN COALESCE((SELECT apply_mode FROM _sync_apply_state WHERE singleton_key = 1), 0) = 0 BEGIN INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at) VALUES ( 'main', 'files', json_object('id', lower(hex(OLD.\"id\"))), 'DELETE', COALESCE( (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(OLD.\"id\")))), (SELECT row_version FROM _sync_row_state WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(OLD.\"id\")))), 0 ), NULL, COALESCE( (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(OLD.\"id\")))), (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows) ), strftime('%Y-%m-%dT%H:%M:%fZ','now') ) ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET op='DELETE', payload=NULL, updated_at=excluded.updated_at; END"
+    },
+    {
+      "name": "trg_files_ai",
+      "tableName": "files",
+      "sql": "CREATE TRIGGER trg_files_ai AFTER INSERT ON \"files\" WHEN COALESCE((SELECT apply_mode FROM _sync_apply_state WHERE singleton_key = 1), 0) = 0 BEGIN INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at) VALUES ( 'main', 'files', json_object('id', lower(hex(NEW.\"id\"))), CASE WHEN EXISTS ( SELECT 1 FROM _sync_row_state WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(NEW.\"id\"))) AND deleted=0 ) THEN 'UPDATE' ELSE 'INSERT' END, COALESCE( (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(NEW.\"id\")))), (SELECT row_version FROM _sync_row_state WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(NEW.\"id\")))), 0 ), json_object('id', CASE WHEN NEW.\"id\" IS NULL THEN NULL ELSE lower(hex(NEW.\"id\")) END, 'name', NEW.\"name\", 'payload', CASE WHEN NEW.\"payload\" IS NULL THEN NULL ELSE lower(hex(NEW.\"payload\")) END), COALESCE( (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(NEW.\"id\")))), (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows) ), strftime('%Y-%m-%dT%H:%M:%fZ','now') ) ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET op=excluded.op, payload=excluded.payload, updated_at=excluded.updated_at; END"
+    },
+    {
+      "name": "trg_files_au",
+      "tableName": "files",
+      "sql": "CREATE TRIGGER trg_files_au AFTER UPDATE ON \"files\" WHEN COALESCE((SELECT apply_mode FROM _sync_apply_state WHERE singleton_key = 1), 0) = 0 BEGIN INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at) SELECT 'main', 'files', json_object('id', lower(hex(OLD.\"id\"))), 'DELETE', COALESCE( (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(OLD.\"id\")))), (SELECT row_version FROM _sync_row_state WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(OLD.\"id\")))), 0 ), NULL, COALESCE( (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(OLD.\"id\")))), (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows) ), strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE json_object('id', lower(hex(OLD.\"id\"))) != json_object('id', lower(hex(NEW.\"id\"))) ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET op='DELETE', payload=NULL, updated_at=excluded.updated_at; INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at) VALUES ( 'main', 'files', json_object('id', lower(hex(NEW.\"id\"))), CASE WHEN EXISTS ( SELECT 1 FROM _sync_row_state WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(NEW.\"id\"))) AND deleted=0 ) THEN 'UPDATE' ELSE 'INSERT' END, COALESCE( (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(NEW.\"id\")))), (SELECT row_version FROM _sync_row_state WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(NEW.\"id\")))), 0 ), json_object('id', CASE WHEN NEW.\"id\" IS NULL THEN NULL ELSE lower(hex(NEW.\"id\")) END, 'name', NEW.\"name\", 'payload', CASE WHEN NEW.\"payload\" IS NULL THEN NULL ELSE lower(hex(NEW.\"payload\")) END), COALESCE( (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='files' AND key_json=json_object('id', lower(hex(NEW.\"id\")))), (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows) ), strftime('%Y-%m-%dT%H:%M:%fZ','now') ) ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET op=excluded.op, payload=excluded.payload, updated_at=excluded.updated_at; END"
+    },
+    {
+      "name": "trg_files_bd_guard",
+      "tableName": "files",
+      "sql": "CREATE TRIGGER trg_files_bd_guard BEFORE DELETE ON \"files\" WHEN EXISTS ( SELECT 1 FROM _sync_operation_state WHERE singleton_key = 1 AND kind != 'none' ) AND NOT EXISTS ( SELECT 1 FROM _sync_apply_state WHERE singleton_key = 1 AND apply_mode = 1 ) BEGIN SELECT RAISE(ABORT, 'SYNC_TRANSITION_PENDING'); END"
+    },
+    {
+      "name": "trg_files_bi_guard",
+      "tableName": "files",
+      "sql": "CREATE TRIGGER trg_files_bi_guard BEFORE INSERT ON \"files\" WHEN EXISTS ( SELECT 1 FROM _sync_operation_state WHERE singleton_key = 1 AND kind != 'none' ) AND NOT EXISTS ( SELECT 1 FROM _sync_apply_state WHERE singleton_key = 1 AND apply_mode = 1 ) BEGIN SELECT RAISE(ABORT, 'SYNC_TRANSITION_PENDING'); END"
+    },
+    {
+      "name": "trg_files_bu_guard",
+      "tableName": "files",
+      "sql": "CREATE TRIGGER trg_files_bu_guard BEFORE UPDATE ON \"files\" WHEN EXISTS ( SELECT 1 FROM _sync_operation_state WHERE singleton_key = 1 AND kind != 'none' ) AND NOT EXISTS ( SELECT 1 FROM _sync_apply_state WHERE singleton_key = 1 AND apply_mode = 1 ) BEGIN SELECT RAISE(ABORT, 'SYNC_TRANSITION_PENDING'); END"
+    }
+  ]
+}

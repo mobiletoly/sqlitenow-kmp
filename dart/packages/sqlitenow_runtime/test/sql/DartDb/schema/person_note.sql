@@ -1,0 +1,6 @@
+CREATE TABLE person_note (
+  id INTEGER PRIMARY KEY NOT NULL,
+  person_id INTEGER NOT NULL,
+  body TEXT NOT NULL,
+  FOREIGN KEY (person_id) REFERENCES person(id) ON DELETE CASCADE
+);

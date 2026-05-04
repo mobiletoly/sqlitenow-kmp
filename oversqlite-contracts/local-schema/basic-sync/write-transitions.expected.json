@@ -1,0 +1,64 @@
+{
+  "formatVersion": 1,
+  "fixture": "basic-sync",
+  "cases": [
+    {
+      "name": "insert",
+      "dirtyRows": [
+        {
+          "schemaName": "main",
+          "tableName": "users",
+          "keyJson": "{\"id\":\"user-insert\"}",
+          "op": "INSERT",
+          "baseRowVersion": 0,
+          "payload": "{\"id\":\"user-insert\",\"name\":\"Ada\",\"updated_at\":\"2026-01-01T00:00:00Z\"}",
+          "dirtyOrdinal": 1
+        }
+      ],
+      "applicationRowCounts": {
+        "users": 1
+      }
+    },
+    {
+      "name": "update",
+      "dirtyRows": [
+        {
+          "schemaName": "main",
+          "tableName": "users",
+          "keyJson": "{\"id\":\"user-update\"}",
+          "op": "UPDATE",
+          "baseRowVersion": 7,
+          "payload": "{\"id\":\"user-update\",\"name\":\"After\",\"updated_at\":\"2026-01-01T00:00:00Z\"}",
+          "dirtyOrdinal": 1
+        }
+      ],
+      "applicationRowCounts": {
+        "users": 1
+      }
+    },
+    {
+      "name": "delete",
+      "dirtyRows": [
+        {
+          "schemaName": "main",
+          "tableName": "users",
+          "keyJson": "{\"id\":\"user-delete\"}",
+          "op": "DELETE",
+          "baseRowVersion": 7,
+          "payload": null,
+          "dirtyOrdinal": 1
+        }
+      ],
+      "applicationRowCounts": {
+        "users": 0
+      }
+    },
+    {
+      "name": "apply-mode-suppression",
+      "dirtyRows": [],
+      "applicationRowCounts": {
+        "users": 1
+      }
+    }
+  ]
+}

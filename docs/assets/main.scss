@@ -31,3 +31,161 @@ table {
   max-width: 100%;
   height: auto;
 }
+
+.site-header .wrapper {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 24px;
+}
+
+.site-title {
+  margin-right: auto;
+}
+
+.platform-switch {
+  flex: 1 0 100%;
+  order: 2;
+  text-align: center;
+  font-size: 14px;
+}
+
+.platform-switch a {
+  color: #57606a;
+  text-decoration: none;
+}
+
+.platform-switch a.active {
+  color: #24292f;
+  font-weight: 600;
+}
+
+.platform-switch span {
+  color: #8c959f;
+  padding: 0 8px;
+}
+
+.platform-nav {
+  order: 3;
+  flex: 1 0 100%;
+  float: none;
+  line-height: 32px;
+  text-align: center;
+}
+
+.platform-nav .trigger {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 0 18px;
+}
+
+.platform-nav .page-link {
+  margin-left: 0;
+}
+
+.platform-nav .page-link.active {
+  color: #24292f;
+  font-weight: 600;
+}
+
+.nav-dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.dropdown-content {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 220px;
+  border: 1px solid #d0d7de;
+  border-radius: 4px;
+  background-color: #ffffff;
+  box-shadow: 0 8px 16px rgba(27, 31, 36, 0.12);
+  text-align: left;
+  z-index: 10;
+}
+
+.dropdown-content a {
+  display: block;
+  padding: 4px 14px;
+  border-bottom: 1px solid #eaeef2;
+  color: #424242 !important;
+  font-size: 14px;
+  line-height: 28px;
+  text-decoration: none;
+}
+
+.dropdown-content a:last-child {
+  border-bottom: none;
+}
+
+.dropdown-content a:hover {
+  background-color: #f6f8fa;
+  color: #0969da !important;
+}
+
+.nav-dropdown:hover .dropdown-content {
+  display: block;
+}
+
+.dropdown-toggle::after {
+  content: " ▼";
+  font-size: 10px;
+  margin-left: 4px;
+}
+
+@media screen and (max-width: 600px) {
+  .site-header .wrapper {
+    display: block;
+  }
+
+  .platform-switch {
+    padding: 6px 0;
+    text-align: left;
+  }
+
+  .platform-nav {
+    position: absolute;
+    top: 9px;
+    right: 15px;
+    float: none;
+    line-height: normal;
+    text-align: left;
+  }
+
+  .platform-nav .trigger {
+    display: none;
+  }
+
+  .platform-nav .nav-trigger:checked ~ .trigger {
+    display: block;
+  }
+
+  .nav-dropdown {
+    display: block;
+  }
+
+  .dropdown-content {
+    position: static;
+    display: none;
+    min-width: 0;
+    margin-left: 16px;
+    border: none;
+    box-shadow: none;
+    background-color: transparent;
+  }
+
+  .dropdown-content a {
+    padding: 4px 10px;
+    border-bottom: none;
+    color: #828282 !important;
+  }
+
+  .nav-dropdown:hover .dropdown-content {
+    display: block;
+  }
+}

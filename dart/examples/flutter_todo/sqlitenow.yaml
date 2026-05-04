@@ -1,0 +1,7 @@
+databases:
+  TodoDatabase:
+    input: lib/src/db/sql/TodoDatabase
+    output: lib/src/db/generated
+    package: app.db
+    runtime: dart
+    oversqlite: false

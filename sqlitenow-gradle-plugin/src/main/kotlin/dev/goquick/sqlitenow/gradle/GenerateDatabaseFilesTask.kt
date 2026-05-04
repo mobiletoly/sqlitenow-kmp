@@ -15,16 +15,9 @@
  */
 package dev.goquick.sqlitenow.gradle
 
-import dev.goquick.sqlitenow.gradle.generator.data.DataStructCodeGenerator
-import dev.goquick.sqlitenow.gradle.database.DatabaseCodeGenerator
-import dev.goquick.sqlitenow.gradle.database.MigratorCodeGenerator
-import dev.goquick.sqlitenow.gradle.generator.query.QueryCodeGenerator
-import dev.goquick.sqlitenow.gradle.database.MigrationInspector
-import dev.goquick.sqlitenow.gradle.sqlinspect.SQLBatchInspector
-import dev.goquick.sqlitenow.gradle.sqlinspect.SchemaInspector
+import dev.goquick.sqlitenow.gradle.compiler.SqliteNowCompilerInput
+import dev.goquick.sqlitenow.gradle.compiler.compileSqliteNowDatabase
 import java.io.File
-import java.io.FileNotFoundException
-import java.sql.Connection
 import javax.inject.Inject
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
@@ -94,10 +87,6 @@ abstract class GenerateDatabaseFilesTask @Inject constructor(
         val outDir: File = outputDir.asFile.get().apply { mkdirs() }
 
         val dbDir = sqlDir.dir(dbName.get())
-        if (!dbDir.get().asFile.exists()) {
-            throw FileNotFoundException("SQL database directory '${dbDir.get().asFile.path}' not found")
-        }
-
         val dbFile = if (schemaDatabaseFile.isPresent) schemaDatabaseFile.asFile.get() else null
 
         val sqlDir = dbDir.get().asFile
@@ -111,16 +100,18 @@ abstract class GenerateDatabaseFilesTask @Inject constructor(
             )
         }
 
-        generateDatabaseFiles(
-            dbName = dbName.get(),
-            sqlDir = sqlDir,
-            packageName = packageName,
-            outDir = outDir,
-            schemaDatabaseFile = dbFile,
-            debug = debug.get(),
-            oversqlite = oversqliteEnabled,
-            warningReporter = { logger.warn(it) },
-        )
+        val result = compileSqliteNowDatabase(
+            SqliteNowCompilerInput(
+                databaseName = dbName.get(),
+                sqlDirectory = sqlDir,
+                packageName = packageName,
+                outputDirectory = outDir,
+                schemaDatabaseFile = dbFile,
+                debug = debug.get(),
+                oversqlite = oversqliteEnabled,
+            )
+        ) { logger.lifecycle(it) }
+        result.warnings.forEach { logger.warn(it) }
     }
 }
 
@@ -130,85 +121,16 @@ fun generateDatabaseFiles(
     oversqlite: Boolean = false,
     warningReporter: (String) -> Unit = {},
 ) {
-    val schemaDir = sqlDir.resolve("schema")
-    val initSqlDir = sqlDir.resolve("init")
-    val migrationDir = sqlDir.resolve("migration")
-    val queriesDirs = sqlDir.resolve("queries")
-
-    val conn: Connection = if (schemaDatabaseFile != null) {
-        schemaDatabaseFile.delete()
-        TempDatabaseConnector(MigratorTempStorage.File(schemaDatabaseFile)).connection
-    } else {
-        TempDatabaseConnector(MigratorTempStorage.Memory).connection
-    }
-
-    try {
-        val schemaInspector = SchemaInspector(schemaDirectory = schemaDir)
-        val sqlBatchInspector = SQLBatchInspector(sqlDirectory = initSqlDir, mandatory = false)
-        val migrationInspector = MigrationInspector(sqlDirectory = migrationDir)
-
-        if (outDir.path.contains("/generated/")) {      // just for safety reasons
-            outDir.deleteRecursively()
-        }
-
-        val migratorCodeGenerator = MigratorCodeGenerator(
-            schemaInspector = schemaInspector,
-            sqlBatchInspector = sqlBatchInspector,
-            migrationInspector = migrationInspector,
+    val result = compileSqliteNowDatabase(
+        SqliteNowCompilerInput(
+            databaseName = dbName,
+            sqlDirectory = sqlDir,
             packageName = packageName,
-            outputDir = outDir,
-            debug = debug
-        )
-        migratorCodeGenerator.generateCode()
-
-        val dataStructCodeGenerator = DataStructCodeGenerator(
-            conn = conn,
-            queriesDir = queriesDirs,
-            statementExecutors = schemaInspector.statementExecutors,
-            packageName = packageName,
-            outputDir = outDir
-        )
-        dataStructCodeGenerator.generateCode()
-        val queryCodeGenerator = QueryCodeGenerator(
-            generatorContext = dataStructCodeGenerator.generatorContext,
-            dataStructCodeGenerator = dataStructCodeGenerator,
-            debug = debug
-        )
-        queryCodeGenerator.generateCode()
-
-        val allStatements = sqlBatchInspector.sqlStatements
-        conn.autoCommit = true
-        allStatements.forEach {
-            conn.createStatement().use { stmt ->
-                try {
-                    stmt.executeUpdate(it.sql)
-                } catch (e: Throwable) {
-                    StandardErrorHandler.handleSqlExecutionError(it.sql, e, "GenerateDatabaseFilesTask")
-                }
-            }
-        }
-
-        val dbCodeGen = DatabaseCodeGenerator(
-            nsWithStatements = dataStructCodeGenerator.nsWithStatements,
-            createTableStatements = dataStructCodeGenerator.createTableStatements,
-            createViewStatements = dataStructCodeGenerator.createViewStatements,
-            packageName = packageName,
-            outputDir = outDir,
-            databaseClassName = dbName,
+            outputDirectory = outDir,
+            schemaDatabaseFile = schemaDatabaseFile,
             debug = debug,
             oversqlite = oversqlite,
         )
-        val syncTables = dataStructCodeGenerator.createTableStatements
-            .filter { it.annotations.enableSync }
-            .distinct()
-        if (!oversqlite && syncTables.isNotEmpty()) {
-            warningReporter(
-                "Database '$dbName' has tables annotated with enableSync=true, but oversqlite=false. " +
-                    "Oversqlite bridge helpers will not be generated."
-            )
-        }
-        dbCodeGen.generateDatabaseClass()
-    } finally {
-        conn.close()
-    }
+    )
+    result.warnings.forEach(warningReporter)
 }

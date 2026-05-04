@@ -50,3 +50,75 @@ jobs:
       uses: gradle/gradle-build-action@ce999babab2de1c4b649dc15f0ee67e6246c994f
       with:
         arguments: ${{ matrix.target }}
+
+  dart-flutter:
+    name: Dart and Flutter
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Validate Gradle Wrapper
+      uses: gradle/actions/wrapper-validation@v3
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+    - name: Set up Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        cache: true
+    - name: Build embedded Dart compiler jar
+      run: ./gradlew :sqlitenow-compiler:test :sqlitenow-compiler:syncDartCliCompilerJar --no-configuration-cache
+    - name: Validate Dart and Flutter packages
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        cd dart
+        flutter pub get
+
+        dart packages/sqlitenow_cli/bin/sqlitenow_cli.dart generate -c packages/sqlitenow_runtime/sqlitenow.yaml
+        git diff --exit-code -- packages/sqlitenow_runtime/test/generated/dart_db.dart
+
+        for target in packages/sqlitenow_runtime packages/sqlitenow_cli examples/dart_console examples/flutter_todo; do
+          flutter analyze "$target"
+        done
+        flutter test packages/sqlitenow_runtime
+        flutter test packages/sqlitenow_cli
+        flutter test examples/dart_console
+        flutter test examples/flutter_todo
+
+  flutter-android-integration:
+    name: Flutter Android Integration
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+    - name: Set up Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        cache: true
+    - name: Build embedded Dart compiler jar
+      run: ./gradlew :sqlitenow-compiler:syncDartCliCompilerJar --no-configuration-cache
+    - name: Run Flutter todo integration test on Android
+      uses: reactivecircus/android-emulator-runner@v2
+      with:
+        api-level: 35
+        target: google_apis
+        arch: x86_64
+        profile: pixel_6
+        script: |
+          set -euo pipefail
+          cd dart
+          flutter pub get
+          cd examples/flutter_todo
+          flutter pub run sqlitenow_cli generate
+          flutter test integration_test -d emulator-5554

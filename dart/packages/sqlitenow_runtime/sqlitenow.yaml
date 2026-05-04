@@ -1,0 +1,7 @@
+databases:
+  DartDb:
+    input: test/sql/DartDb
+    output: test/generated
+    package: test.db
+    runtime: dart
+    schemaDatabaseFile: build/sqlitenow/test-schema.db

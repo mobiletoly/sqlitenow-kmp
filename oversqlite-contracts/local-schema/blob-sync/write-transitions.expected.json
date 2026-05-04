@@ -1,0 +1,23 @@
+{
+  "formatVersion": 1,
+  "fixture": "blob-sync",
+  "cases": [
+    {
+      "name": "blob-key-insert",
+      "dirtyRows": [
+        {
+          "schemaName": "main",
+          "tableName": "files",
+          "keyJson": "{\"id\":\"00112233445566778899aabbccddeeff\"}",
+          "op": "INSERT",
+          "baseRowVersion": 0,
+          "payload": "{\"id\":\"00112233445566778899aabbccddeeff\",\"name\":\"Spec Blob\",\"payload\":\"6869\"}",
+          "dirtyOrdinal": 1
+        }
+      ],
+      "applicationRowCounts": {
+        "files": 1
+      }
+    }
+  ]
+}

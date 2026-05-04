@@ -1,0 +1,118 @@
+{
+  "formatVersion": 1,
+  "cases": [
+    {
+      "name": "single-insert-commit",
+      "pushSessionCreateRequest": {
+        "source_bundle_id": 1,
+        "planned_row_count": 1
+      },
+      "pushSessionCreateResponse": {
+        "status": "staging",
+        "push_id": "push-1",
+        "planned_row_count": 1,
+        "next_expected_row_ordinal": 0
+      },
+      "pushChunkRequest": {
+        "start_row_ordinal": 0,
+        "rows": [
+          {
+            "schema": "main",
+            "table": "users",
+            "key": {
+              "id": "user-1"
+            },
+            "op": "INSERT",
+            "base_row_version": 0,
+            "payload": {
+              "id": "user-1",
+              "name": "Ada"
+            }
+          }
+        ]
+      },
+      "pushChunkResponse": {
+        "push_id": "push-1",
+        "next_expected_row_ordinal": 1
+      },
+      "pushCommitResponse": {
+        "bundle_seq": 1,
+        "source_id": "source-fixture",
+        "source_bundle_id": 1,
+        "row_count": 1,
+        "bundle_hash": "fixture-hash"
+      },
+      "committedBundleRowsResponse": {
+        "bundle_seq": 1,
+        "source_id": "source-fixture",
+        "source_bundle_id": 1,
+        "row_count": 1,
+        "bundle_hash": "fixture-hash",
+        "rows": [
+          {
+            "schema": "main",
+            "table": "users",
+            "key": {
+              "id": "user-1"
+            },
+            "op": "INSERT",
+            "row_version": 1,
+            "payload": {
+              "id": "user-1",
+              "name": "Ada"
+            }
+          }
+        ],
+        "next_row_ordinal": 0,
+        "has_more": false
+      },
+      "expectedFinalState": {
+        "dirtyRowCount": 0,
+        "outboxRowCount": 0,
+        "lastBundleSeqSeen": 1,
+        "rowState": {
+          "table": "users",
+          "key": {
+            "id": "user-1"
+          },
+          "rowVersion": 1,
+          "deleted": false
+        }
+      }
+    },
+    {
+      "name": "server-wins-update-conflict",
+      "pushConflictResponse": {
+        "error": "push_conflict",
+        "message": "conflict",
+        "conflict": {
+          "schema": "main",
+          "table": "users",
+          "key": {
+            "id": "user-1"
+          },
+          "op": "UPDATE",
+          "base_row_version": 0,
+          "server_row_version": 2,
+          "server_row_deleted": false,
+          "server_row": {
+            "id": "user-1",
+            "name": "Server"
+          }
+        }
+      },
+      "expectedFinalState": {
+        "dirtyRowCount": 0,
+        "outboxRowCount": 0,
+        "rowState": {
+          "table": "users",
+          "key": {
+            "id": "user-1"
+          },
+          "rowVersion": 2,
+          "deleted": false
+        }
+      }
+    }
+  ]
+}

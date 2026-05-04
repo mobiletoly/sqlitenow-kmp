@@ -1,10 +1,15 @@
 ---
 layout: page
-title: Getting Started
+title: KMP Getting Started
 permalink: /getting-started/
 ---
 
-This guide will help you set up SQLiteNow in your Kotlin Multiplatform project and create your first type-safe database queries.
+This guide is for Kotlin Multiplatform projects using the SQLiteNow Gradle plugin.
+Flutter and pure Dart apps should start with the
+[Flutter/Dart getting-started guide]({{ site.baseurl }}/flutter/getting-started/).
+
+This page will help you set up SQLiteNow in your Kotlin Multiplatform project
+and create your first type-safe database queries.
 
 ## Prerequisites
 
@@ -19,7 +24,7 @@ First add SQLiteNow version to your `libs.version.toml` file
 ```toml
 [version]
 sqlite = "2.6.2"
-sqlitenow = "0.8.0"
+sqlitenow = "0.9.0"
 kotlinx-datetime = "0.7.1"
 
 [libraries]
@@ -298,4 +303,4 @@ This will automatically re-execute the query whenever the `Person` table changes
 
 ## Next Step
 
-Check out our [Full Documentation]({{ site.baseurl }}/documentation/) guide to set up SQLiteNow in your project.
+Check out the [KMP SQL Reference]({{ site.baseurl }}/kmp/sql-reference/) for more SQL and generated API details.
