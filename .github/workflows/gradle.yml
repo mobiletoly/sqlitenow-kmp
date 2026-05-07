@@ -82,13 +82,20 @@ jobs:
         dart packages/sqlitenow_cli/bin/sqlitenow_cli.dart generate -c packages/sqlitenow_runtime/sqlitenow.yaml
         git diff --exit-code -- packages/sqlitenow_runtime/test/generated/dart_db.dart
 
-        for target in packages/sqlitenow_runtime packages/sqlitenow_cli examples/dart_console examples/flutter_todo; do
+        for target in packages/sqlitenow_runtime packages/sqlitenow_cli packages/sqlitenow_oversqlite examples/dart_console; do
           flutter analyze "$target"
         done
         flutter test packages/sqlitenow_runtime
         flutter test packages/sqlitenow_cli
+        flutter test packages/sqlitenow_oversqlite
         flutter test examples/dart_console
-        flutter test examples/flutter_todo
+        (
+          cd examples/flutter_todo
+          flutter pub get
+          flutter analyze
+          flutter pub run sqlitenow_cli generate
+          flutter test
+        )
 
   flutter-android-integration:
     name: Flutter Android Integration
@@ -108,6 +115,11 @@ jobs:
         cache: true
     - name: Build embedded Dart compiler jar
       run: ./gradlew :sqlitenow-compiler:syncDartCliCompilerJar --no-configuration-cache
+    - name: Enable KVM
+      run: |
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
     - name: Run Flutter todo integration test on Android
       uses: reactivecircus/android-emulator-runner@v2
       with:
@@ -120,5 +132,6 @@ jobs:
           cd dart
           flutter pub get
           cd examples/flutter_todo
+          flutter pub get
           flutter pub run sqlitenow_cli generate
           flutter test integration_test -d emulator-5554
