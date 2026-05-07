@@ -85,10 +85,22 @@ jobs:
         for target in packages/sqlitenow_runtime packages/sqlitenow_cli packages/sqlitenow_oversqlite examples/dart_console; do
           dart analyze "$target"
         done
-        dart test packages/sqlitenow_runtime
-        dart test packages/sqlitenow_cli
-        dart test packages/sqlitenow_oversqlite
-        dart test examples/dart_console
+        (
+          cd packages/sqlitenow_runtime
+          dart test
+        )
+        (
+          cd packages/sqlitenow_cli
+          dart test
+        )
+        (
+          cd packages/sqlitenow_oversqlite
+          dart test
+        )
+        (
+          cd examples/dart_console
+          dart test
+        )
         (
           cd examples/flutter_todo
           flutter pub get
