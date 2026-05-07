@@ -1,0 +1,158 @@
+name: Publish Dart Oversqlite
+
+on:
+  push:
+    tags:
+      - 'sqlitenow_oversqlite-v[0-9]+.[0-9]+.[0-9]+'
+      - 'sqlitenow_oversqlite-v[0-9]+.[0-9]+.[0-9]+-*'
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Release version to validate, without the package prefix'
+        required: true
+        type: string
+      dry_run:
+        description: 'Run validation and archive dry-run without publishing'
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish sqlitenow_oversqlite to pub.dev
+    runs-on: ubuntu-latest
+    env:
+      SQLITENOW_DART_PACKAGE: sqlitenow_oversqlite
+      SQLITENOW_DART_PACKAGE_DIR: dart/packages/sqlitenow_oversqlite
+      SQLITENOW_DART_TAG_PREFIX: sqlitenow_oversqlite-v
+      SQLITENOW_RELEASE_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
+      SQLITENOW_RELEASE_VERSION_INPUT: ${{ inputs.release_version || '' }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Dart
+        uses: dart-lang/setup-dart@v1
+
+      - name: Validate release version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            if [[ "${SQLITENOW_RELEASE_DRY_RUN}" != "true" ]]; then
+              echo "Manual Dart release workflow runs are dry-run only; publish by pushing a package version tag."
+              exit 1
+            fi
+            release_version="${SQLITENOW_RELEASE_VERSION_INPUT}"
+            release_ref_name="${SQLITENOW_DART_TAG_PREFIX}${release_version}"
+          else
+            release_version="${GITHUB_REF_NAME:${#SQLITENOW_DART_TAG_PREFIX}}"
+            release_ref_name="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ "${release_version}" == *SNAPSHOT* || "${release_version}" == *snapshot* ]]; then
+            echo "Refusing to publish snapshot version from ${release_ref_name}."
+            exit 1
+          fi
+
+          package_version="$(awk '/^version: / { print $2; exit }' "${SQLITENOW_DART_PACKAGE_DIR}/pubspec.yaml")"
+          echo "Release tag version: ${release_version}"
+          echo "${SQLITENOW_DART_PACKAGE} version: ${package_version}"
+
+          if [[ "${package_version}" != "${release_version}" ]]; then
+            echo "${SQLITENOW_DART_PACKAGE} version must match ${release_ref_name}."
+            exit 1
+          fi
+
+          echo "SQLITENOW_RELEASE_VERSION=${release_version}" >> "${GITHUB_ENV}"
+
+      - name: Validate Dart Oversqlite package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dart
+          dart pub get
+          dart analyze packages/sqlitenow_oversqlite
+          cd packages/sqlitenow_oversqlite
+          dart test
+
+      - name: Prepare Dart publish workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          publish_workspace="${RUNNER_TEMP}/sqlitenow-dart-publish"
+          rm -rf "${publish_workspace}"
+          mkdir -p "${publish_workspace}/packages"
+
+          copy_package() {
+            local source_dir="$1"
+            local target_dir="$2"
+            mkdir -p "${target_dir}"
+            cp -R "${source_dir}/." "${target_dir}/"
+            rm -rf "${target_dir}/.dart_tool" "${target_dir}/build"
+            rm -f "${target_dir}/pubspec.lock"
+          }
+
+          copy_package dart/packages/sqlitenow_runtime "${publish_workspace}/packages/sqlitenow_runtime"
+          copy_package dart/packages/sqlitenow_cli "${publish_workspace}/packages/sqlitenow_cli"
+          copy_package dart/packages/sqlitenow_oversqlite "${publish_workspace}/packages/sqlitenow_oversqlite"
+
+          cat > "${publish_workspace}/pubspec.yaml" <<'YAML'
+          name: sqlitenow_publish_workspace
+          publish_to: none
+
+          environment:
+            sdk: ^3.11.0
+
+          workspace:
+            - packages/sqlitenow_runtime
+            - packages/sqlitenow_cli
+            - packages/sqlitenow_oversqlite
+          YAML
+
+          echo "SQLITENOW_PUB_PUBLISH_WORKSPACE=${publish_workspace}" >> "${GITHUB_ENV}"
+
+      - name: Validate Dart package archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${SQLITENOW_PUB_PUBLISH_WORKSPACE}/packages/${SQLITENOW_DART_PACKAGE}"
+          dart pub publish --dry-run
+
+      - name: Wait for sqlitenow_runtime on pub.dev
+        if: env.SQLITENOW_RELEASE_DRY_RUN != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in {1..30}; do
+            if curl -fsS https://pub.dev/api/packages/sqlitenow_runtime | grep -q "\"version\":\"${SQLITENOW_RELEASE_VERSION}\""; then
+              echo "sqlitenow_runtime ${SQLITENOW_RELEASE_VERSION} is visible on pub.dev."
+              exit 0
+            fi
+            echo "Waiting for sqlitenow_runtime ${SQLITENOW_RELEASE_VERSION} to become visible on pub.dev (${attempt}/30)."
+            sleep 20
+          done
+          echo "sqlitenow_runtime ${SQLITENOW_RELEASE_VERSION} is not visible on pub.dev yet."
+          exit 1
+
+      - name: Refresh Dart pub.dev credentials
+        if: env.SQLITENOW_RELEASE_DRY_RUN != 'true'
+        uses: dart-lang/setup-dart@v1
+
+      - name: Publish Dart package to pub.dev
+        if: env.SQLITENOW_RELEASE_DRY_RUN != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${SQLITENOW_PUB_PUBLISH_WORKSPACE}/packages/${SQLITENOW_DART_PACKAGE}"
+          dart pub publish --force
+
+      - name: Confirm release dry run
+        if: env.SQLITENOW_RELEASE_DRY_RUN == 'true'
+        run: echo "Dart Oversqlite release dry run completed; remote publish was skipped."

@@ -1,4 +1,4 @@
-name: Publish
+name: Publish Maven/KMP
 
 on:
   push:
@@ -19,11 +19,10 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   publish:
-    name: Release build and publish
+    name: Release Maven/KMP artifacts
     runs-on: macos-latest
     env:
       SQLITENOW_RELEASE_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
@@ -37,16 +36,6 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: 17
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          architecture: x64
-          cache: true
-
-      - name: Set up Dart
-        uses: dart-lang/setup-dart@v1
 
       - name: Validate release versions
         shell: bash
@@ -71,134 +60,17 @@ jobs:
           fi
 
           gradle_version="$(grep '^sqlitenow.version=' gradle.properties | cut -d= -f2)"
-          runtime_version="$(awk '/^version: / { print $2; exit }' dart/packages/sqlitenow_runtime/pubspec.yaml)"
-          cli_version="$(awk '/^version: / { print $2; exit }' dart/packages/sqlitenow_cli/pubspec.yaml)"
-          oversqlite_version="$(awk '/^version: / { print $2; exit }' dart/packages/sqlitenow_oversqlite/pubspec.yaml)"
 
           echo "Release tag version: ${release_version}"
           echo "Gradle/KMP version: ${gradle_version}"
-          echo "Dart runtime version: ${runtime_version}"
-          echo "Dart CLI version: ${cli_version}"
-          echo "Dart Oversqlite version: ${oversqlite_version}"
 
           if [[ "${gradle_version}" != "${release_version}" ]]; then
             echo "gradle.properties sqlitenow.version must match ${release_ref_name}."
             exit 1
           fi
-          if [[ "${runtime_version}" != "${release_version}" ]]; then
-            echo "sqlitenow_runtime version must match ${release_ref_name}."
-            exit 1
-          fi
-          if [[ "${cli_version}" != "${release_version}" ]]; then
-            echo "sqlitenow_cli version must match ${release_ref_name}."
-            exit 1
-          fi
-          if [[ "${oversqlite_version}" != "${release_version}" ]]; then
-            echo "sqlitenow_oversqlite version must match ${release_ref_name}."
-            exit 1
-          fi
 
       - name: Validate compiler and Gradle plugin
         run: ./gradlew :sqlitenow-compiler:test :sqlitenow-gradle-plugin:test --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
-
-      - name: Build embedded Dart compiler jar
-        run: ./gradlew :sqlitenow-compiler:syncDartCliCompilerJar --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
-
-      - name: Validate Dart and Flutter packages
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          (
-            cd dart
-            flutter pub get
-            dart packages/sqlitenow_cli/bin/sqlitenow_cli.dart generate -c packages/sqlitenow_runtime/sqlitenow.yaml
-            git diff --exit-code -- packages/sqlitenow_runtime/test/generated/dart_db.dart
-            for target in packages/sqlitenow_runtime packages/sqlitenow_cli packages/sqlitenow_oversqlite examples/dart_console; do
-              flutter analyze "$target"
-            done
-          )
-
-          (
-            cd dart/packages/sqlitenow_runtime
-            flutter test
-          )
-          (
-            cd dart/packages/sqlitenow_cli
-            flutter test
-          )
-          (
-            cd dart/packages/sqlitenow_oversqlite
-            flutter test
-          )
-          (
-            cd dart/examples/dart_console
-            flutter pub run sqlitenow_cli generate
-            flutter test
-          )
-          (
-            cd dart/examples/flutter_todo
-            flutter pub get
-            flutter analyze
-            flutter pub run sqlitenow_cli generate
-            flutter test
-          )
-
-      - name: Prepare Dart publish workspace
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          publish_workspace="${RUNNER_TEMP}/sqlitenow-dart-publish"
-          rm -rf "${publish_workspace}"
-          mkdir -p "${publish_workspace}/packages"
-
-          copy_package() {
-            local source_dir="$1"
-            local target_dir="$2"
-            mkdir -p "${target_dir}"
-            cp -R "${source_dir}/." "${target_dir}/"
-            rm -rf "${target_dir}/.dart_tool" "${target_dir}/build"
-            rm -f "${target_dir}/pubspec.lock"
-          }
-
-          copy_package dart/packages/sqlitenow_runtime "${publish_workspace}/packages/sqlitenow_runtime"
-          copy_package dart/packages/sqlitenow_cli "${publish_workspace}/packages/sqlitenow_cli"
-          copy_package dart/packages/sqlitenow_oversqlite "${publish_workspace}/packages/sqlitenow_oversqlite"
-
-          cat > "${publish_workspace}/pubspec.yaml" <<'YAML'
-          name: sqlitenow_publish_workspace
-          publish_to: none
-
-          environment:
-            sdk: ^3.11.0
-
-          workspace:
-            - packages/sqlitenow_runtime
-            - packages/sqlitenow_cli
-            - packages/sqlitenow_oversqlite
-          YAML
-
-          test -f "${publish_workspace}/packages/sqlitenow_cli/lib/src/compiler/sqlitenow-compiler.jar"
-          echo "SQLITENOW_PUB_PUBLISH_WORKSPACE=${publish_workspace}" >> "${GITHUB_ENV}"
-
-      - name: Validate Dart package archives
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          (
-            cd "${SQLITENOW_PUB_PUBLISH_WORKSPACE}/packages/sqlitenow_runtime"
-            dart pub publish --dry-run
-          )
-          (
-            cd "${SQLITENOW_PUB_PUBLISH_WORKSPACE}/packages/sqlitenow_cli"
-            dart pub publish --dry-run
-          )
-          (
-            cd "${SQLITENOW_PUB_PUBLISH_WORKSPACE}/packages/sqlitenow_oversqlite"
-            dart pub publish --dry-run
-          )
 
       - name: Publish compiler to Maven Central
         if: env.SQLITENOW_RELEASE_DRY_RUN != 'true'
@@ -220,30 +92,6 @@ jobs:
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_PASSWORD }}
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.GPG_KEY_CONTENTS }}
 
-      - name: Publish Dart runtime to pub.dev
-        if: env.SQLITENOW_RELEASE_DRY_RUN != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "${SQLITENOW_PUB_PUBLISH_WORKSPACE}/packages/sqlitenow_runtime"
-          dart pub publish --force
-
-      - name: Publish Dart CLI to pub.dev
-        if: env.SQLITENOW_RELEASE_DRY_RUN != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "${SQLITENOW_PUB_PUBLISH_WORKSPACE}/packages/sqlitenow_cli"
-          dart pub publish --force
-
-      - name: Publish Dart Oversqlite to pub.dev
-        if: env.SQLITENOW_RELEASE_DRY_RUN != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "${SQLITENOW_PUB_PUBLISH_WORKSPACE}/packages/sqlitenow_oversqlite"
-          dart pub publish --force
-
       - name: Confirm release dry run
         if: env.SQLITENOW_RELEASE_DRY_RUN == 'true'
-        run: echo "Release dry run completed; remote publish steps were skipped."
+        run: echo "Maven/KMP release dry run completed; remote publish steps were skipped."
