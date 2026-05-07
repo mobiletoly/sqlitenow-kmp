@@ -140,7 +140,7 @@ jobs:
         arch: x86_64
         profile: pixel_6
         script: |
-          set -euo pipefail
+          set -eu
           cd dart
           flutter pub get
           cd examples/flutter_todo
