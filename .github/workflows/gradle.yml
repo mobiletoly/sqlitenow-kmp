@@ -139,11 +139,4 @@ jobs:
         target: google_apis
         arch: x86_64
         profile: pixel_6
-        script: |
-          set -eu
-          cd dart
-          flutter pub get
-          cd examples/flutter_todo
-          flutter pub get
-          flutter pub run sqlitenow_cli generate
-          flutter test integration_test -d emulator-5554
+        script: bash -lc 'set -euo pipefail; cd dart; flutter pub get; cd examples/flutter_todo; flutter pub get; flutter pub run sqlitenow_cli generate; flutter test integration_test -d emulator-5554'
