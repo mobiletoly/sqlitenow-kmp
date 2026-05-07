@@ -77,18 +77,18 @@ jobs:
         set -euo pipefail
 
         cd dart
-        flutter pub get
+        dart pub get
 
         dart packages/sqlitenow_cli/bin/sqlitenow_cli.dart generate -c packages/sqlitenow_runtime/sqlitenow.yaml
         git diff --exit-code -- packages/sqlitenow_runtime/test/generated/dart_db.dart
 
         for target in packages/sqlitenow_runtime packages/sqlitenow_cli packages/sqlitenow_oversqlite examples/dart_console; do
-          flutter analyze "$target"
+          dart analyze "$target"
         done
-        flutter test packages/sqlitenow_runtime
-        flutter test packages/sqlitenow_cli
-        flutter test packages/sqlitenow_oversqlite
-        flutter test examples/dart_console
+        dart test packages/sqlitenow_runtime
+        dart test packages/sqlitenow_cli
+        dart test packages/sqlitenow_oversqlite
+        dart test examples/dart_console
         (
           cd examples/flutter_todo
           flutter pub get
