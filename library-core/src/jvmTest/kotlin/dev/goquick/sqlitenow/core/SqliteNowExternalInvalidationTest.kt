@@ -47,6 +47,32 @@ class SqliteNowExternalInvalidationTest {
     }
 
     @Test
+    fun reportExternalTableChanges_reEmitsAfterCloseAndReopen() = runBlocking {
+        withTestDatabase { database ->
+            database.open()
+            database.close()
+            database.open()
+
+            val (emissions, collector) = collectFlow(database.userNamesFlow())
+            try {
+                assertEquals(emptyList(), receiveNext(emissions))
+
+                database.connection().execSQL(
+                    """
+                    INSERT INTO users(id, name) VALUES('user-1', 'Ada')
+                    """.trimIndent(),
+                )
+                database.reportExternalTableChanges(setOf("users"))
+
+                assertEquals(listOf("Ada"), receiveNext(emissions))
+            } finally {
+                collector.cancel()
+                collector.join()
+            }
+        }
+    }
+
+    @Test
     fun reportExternalTableChanges_emptySetDoesNotEmit() = runBlocking {
         withTestDatabase { database ->
             database.open()

@@ -69,7 +69,8 @@ open class SqliteNowDatabase private constructor(
     // Table change notification system
     private val tableChangeFlows = mutableMapOf<String, MutableSharedFlow<Unit>>()
     private val tableChangesFlowMutex = Mutex()
-    private val tableChangeScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    @Volatile
+    private var tableChangeScope: CoroutineScope? = null
 
     @Volatile
     private var enableTableChangeNotifications = false
@@ -153,6 +154,7 @@ open class SqliteNowDatabase private constructor(
                 }
 
                 c.setTableInvalidationListener(::notifyTablesChanged)
+                tableChangeScope = createNotificationScope()
 
                 // Publish only after successful initialization/migrations
                 _conn = c
@@ -226,7 +228,8 @@ open class SqliteNowDatabase private constructor(
             _conn = null
             c.setTableInvalidationListener(null)
             c.close()
-            tableChangeScope.cancel()
+            tableChangeScope?.cancel()
+            tableChangeScope = null
         }
     }
 
@@ -277,7 +280,7 @@ open class SqliteNowDatabase private constructor(
     protected fun notifyTablesChanged(affectedTables: Set<String>) {
         if (!enableTableChangeNotifications || affectedTables.isEmpty()) return
 
-        tableChangeScope.launch {
+        tableChangeScope?.launch {
             val flowsToNotify = tableChangesFlowMutex.withLock {
                 affectedTables.asSequence()
                     .map { tableChangeFlows[it.lowercase()] }
@@ -335,6 +338,9 @@ open class SqliteNowDatabase private constructor(
             emit(queryExecutor())
         }
     }
+
+    private fun createNotificationScope(): CoroutineScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.Default)
 }
 
 interface DatabaseMigrations {
