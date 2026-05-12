@@ -18,7 +18,28 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Detect Changed Files
+    runs-on: ubuntu-latest
+    outputs:
+      code_changed: ${{ github.event_name == 'workflow_call' && 'true' || steps.filter.outputs.code }}
+    steps:
+    - uses: actions/checkout@v4
+      if: ${{ github.event_name != 'workflow_call' }}
+    - name: Detect code changes
+      if: ${{ github.event_name != 'workflow_call' }}
+      id: filter
+      uses: dorny/paths-filter@v3
+      with:
+        filters: |
+          code:
+            - '**'
+            - '!**/*.md'
+            - '!docs/**'
+
   build:
+    needs: changes
+    if: ${{ needs.changes.outputs.code_changed == 'true' }}
     strategy:
       matrix:
         include:
@@ -53,6 +74,8 @@ jobs:
 
   dart-flutter:
     name: Dart and Flutter
+    needs: changes
+    if: ${{ needs.changes.outputs.code_changed == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -111,6 +134,8 @@ jobs:
 
   flutter-android-integration:
     name: Flutter Android Integration
+    needs: changes
+    if: ${{ needs.changes.outputs.code_changed == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
