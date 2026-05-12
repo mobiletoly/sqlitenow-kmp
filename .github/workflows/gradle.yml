@@ -29,8 +29,9 @@ jobs:
     - name: Detect code changes
       if: ${{ github.event_name != 'workflow_call' }}
       id: filter
-      uses: dorny/paths-filter@v3
+      uses: dorny/paths-filter@v4
       with:
+        predicate-quantifier: every
         filters: |
           code:
             - '**'
