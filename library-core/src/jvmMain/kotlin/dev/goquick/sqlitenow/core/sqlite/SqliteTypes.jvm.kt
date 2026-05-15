@@ -15,13 +15,12 @@
  */
 package dev.goquick.sqlitenow.core.sqlite
 
-import androidx.sqlite.SQLiteConnection as JvmSQLiteConnection
-import androidx.sqlite.SQLiteException as JvmSQLiteException
-import androidx.sqlite.SQLiteStatement as JvmSQLiteStatement
+import androidx.sqlite.SQLiteConnection
+import androidx.sqlite.SQLiteStatement
 import androidx.sqlite.execSQL
 
 actual class SqliteConnection internal constructor(
-    internal val delegate: JvmSQLiteConnection,
+    internal val delegate: SQLiteConnection,
 ) {
     actual fun execSQL(sql: String) = wrapSqliteCall { delegate.execSQL(sql) }
     actual fun prepare(sql: String): SqliteStatement = wrapSqliteCall { delegate.prepare(sql) }.let(::SqliteStatement)
@@ -30,7 +29,7 @@ actual class SqliteConnection internal constructor(
 }
 
 actual class SqliteStatement internal constructor(
-    internal val delegate: JvmSQLiteStatement,
+    internal val delegate: SQLiteStatement,
 ) {
     actual fun bindBlob(index: Int, value: ByteArray) = wrapSqliteCall { delegate.bindBlob(index, value) }
     actual fun bindDouble(index: Int, value: Double) = wrapSqliteCall { delegate.bindDouble(index, value) }
@@ -50,16 +49,4 @@ actual class SqliteStatement internal constructor(
     actual fun reset() = wrapSqliteCall { delegate.reset() }
     actual fun clearBindings() = wrapSqliteCall { delegate.clearBindings() }
     actual fun close() = delegate.close()
-}
-
-private inline fun <T> wrapSqliteCall(block: () -> T): T {
-    return try {
-        block()
-    } catch (t: Throwable) {
-        if (t is JvmSQLiteException) {
-            throw SqliteException(t.message, t)
-        } else {
-            throw t
-        }
-    }
 }

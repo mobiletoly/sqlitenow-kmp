@@ -16,7 +16,6 @@ import dev.goquick.sqlitenow.gradle.sqlinspect.DeleteStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.ExecuteStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.InsertStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
-import dev.goquick.sqlitenow.gradle.sqlinspect.UpdateStatement
 import java.io.File
 import kotlin.io.path.createTempDirectory
 
@@ -180,6 +179,47 @@ internal fun annotatedSelectStatement(
     mapTo = mapTo,
 )
 
+internal fun annotatedField(
+    source: SelectStatement.FieldSource,
+    annotations: Map<String, Any?> = emptyMap(),
+    aliasPath: List<String> = emptyList(),
+): AnnotatedSelectStatement.Field = AnnotatedSelectStatement.Field(
+    src = source,
+    annotations = FieldAnnotationOverrides.parse(annotations),
+    aliasPath = aliasPath,
+)
+
+internal fun annotatedSelectStatementWithFieldAnnotations(
+    name: String = "FixtureSelect",
+    sql: String = "SELECT fixture",
+    fromTable: String,
+    joinTables: List<String> = emptyList(),
+    sources: List<SelectStatement.FieldSource>,
+    fieldAnnotations: Map<String, Map<String, Any?>> = emptyMap(),
+    queryResult: String? = null,
+    collectionKey: String? = null,
+    mapTo: String? = null,
+): AnnotatedSelectStatement = annotatedSelectStatement(
+    name = name,
+    src = SelectStatement(
+        sql = sql,
+        fromTable = fromTable,
+        joinTables = joinTables,
+        fields = sources,
+        namedParameters = emptyList(),
+        namedParametersToColumns = emptyMap(),
+        offsetNamedParam = null,
+        limitNamedParam = null,
+        parameterCastTypes = emptyMap(),
+    ),
+    fields = sources.map { source ->
+        annotatedField(source, fieldAnnotations[source.fieldName].orEmpty())
+    },
+    queryResult = queryResult,
+    collectionKey = collectionKey,
+    mapTo = mapTo,
+)
+
 internal fun selectStatementWithParameters(
     fields: List<SelectStatement.FieldSource>,
     namedParameters: List<String>,
@@ -238,31 +278,6 @@ internal fun annotatedInsertStatement(
     annotations = annotations,
 )
 
-internal fun annotatedUpdateStatement(
-    name: String,
-    table: String,
-    namedParameters: List<String> = emptyList(),
-    parameterToColumns: Map<String, AssociatedColumn> = emptyMap(),
-    parameterToColumnNames: Map<String, String> = emptyMap(),
-    returningColumns: List<String> = emptyList(),
-    sql: String = "UPDATE $table SET id = id",
-    annotations: StatementAnnotationOverrides = statementAnnotations(),
-): AnnotatedExecuteStatement = AnnotatedExecuteStatement(
-    name = name,
-    src = UpdateStatement(
-        sql = sql,
-        table = table,
-        namedParameters = namedParameters,
-        namedParametersToColumns = parameterToColumns,
-        namedParametersToColumnNames = parameterToColumnNames,
-        withSelectStatements = emptyList(),
-        parameterCastTypes = emptyMap(),
-        hasReturningClause = returningColumns.isNotEmpty(),
-        returningColumns = returningColumns,
-    ),
-    annotations = annotations,
-)
-
 internal fun annotatedDeleteStatement(
     name: String,
     table: String,
@@ -309,13 +324,18 @@ internal fun annotatedTableColumn(
     name: String,
     dataType: String,
     notNull: Boolean = true,
+    primaryKey: Boolean = false,
+    autoIncrement: Boolean = false,
+    unique: Boolean = false,
     propertyName: String? = null,
     propertyType: String? = null,
     adapter: Boolean = false,
+    annotationNotNull: Boolean? = null,
 ): AnnotatedCreateTableStatement.Column {
     val annotations = buildMap<String, Any?> {
         propertyName?.let { put(AnnotationConstants.PROPERTY_NAME, it) }
         propertyType?.let { put(AnnotationConstants.PROPERTY_TYPE, it) }
+        annotationNotNull?.let { put(AnnotationConstants.NOT_NULL, it) }
         if (adapter) {
             put(AnnotationConstants.ADAPTER, AnnotationConstants.ADAPTER_CUSTOM)
         }
@@ -325,9 +345,9 @@ internal fun annotatedTableColumn(
             name = name,
             dataType = dataType,
             notNull = notNull,
-            primaryKey = false,
-            autoIncrement = false,
-            unique = false,
+            primaryKey = primaryKey,
+            autoIncrement = autoIncrement,
+            unique = unique,
         ),
         annotations = annotations,
     )

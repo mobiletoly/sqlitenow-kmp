@@ -22,7 +22,7 @@ import dev.goquick.sqlitenow.gradle.context.GeneratorContext
 import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.processing.ReturningColumnsResolver
-import dev.goquick.sqlitenow.gradle.util.pascalize
+import dev.goquick.sqlitenow.gradle.processing.SharedResultTypeUtils
 import java.io.File
 
 internal class DataStructResultFileEmitter(
@@ -36,7 +36,7 @@ internal class DataStructResultFileEmitter(
         namespace: String,
         packageName: String,
     ) {
-        val className = statement.annotations.queryResult ?: "${pascalize(namespace)}${statement.getDataClassName()}Result"
+        val className = SharedResultTypeUtils.createResultTypeString(namespace, statement)
         val resultDataClass = resultEmitter.generateSelectResult(
             statement = statement,
             className = className,
@@ -52,8 +52,7 @@ internal class DataStructResultFileEmitter(
         namespace: String,
         packageName: String,
     ) {
-        val className = statement.annotations.queryResult
-            ?: "${pascalize(namespace)}${statement.getDataClassName()}Result"
+        val className = SharedResultTypeUtils.createResultTypeString(namespace, statement)
         val columnsToInclude = ReturningColumnsResolver.resolveColumns(generatorContext, statement)
         val resultDataClass = resultEmitter.generateExecuteResult(
             statement = statement,
@@ -71,12 +70,7 @@ internal class DataStructResultFileEmitter(
         namespace: String,
         packageName: String,
     ) {
-        val joinedClassName = if (statement.annotations.queryResult != null) {
-            "${statement.annotations.queryResult}_Joined"
-        } else {
-            val queryClassName = statement.getDataClassName()
-            "${pascalize(namespace)}${queryClassName}Result_Joined"
-        }
+        val joinedClassName = SharedResultTypeUtils.createJoinedResultTypeString(namespace, statement)
         val joinedDataClass = joinedEmitter.generateJoinedDataClass(
             joinedClassName = joinedClassName,
             fields = statement.fields,

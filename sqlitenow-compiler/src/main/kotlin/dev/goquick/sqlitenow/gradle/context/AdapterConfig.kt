@@ -24,6 +24,7 @@ import dev.goquick.sqlitenow.gradle.model.AnnotatedStatement
 import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
 import dev.goquick.sqlitenow.gradle.processing.DynamicFieldMapper
 import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
+import dev.goquick.sqlitenow.gradle.processing.ReturningColumnsResolver
 import dev.goquick.sqlitenow.gradle.processing.SelectFieldCodeGenerator
 import dev.goquick.sqlitenow.gradle.processing.SharedResultTypeUtils
 import dev.goquick.sqlitenow.gradle.processing.StatementUtils
@@ -96,6 +97,11 @@ class AdapterConfig(
         MAP_RESULT,
     }
 
+    private enum class ColumnAdapterDirection {
+        PROPERTY_TO_SQL,
+        SQL_TO_PROPERTY,
+    }
+
     data class ParamConfig(
         val paramName: String,
         val adapterFunctionName: String,
@@ -105,6 +111,13 @@ class AdapterConfig(
         // Optional hint for which namespace should provide this adapter (e.g., table behind aliasPrefix)
         val providerNamespace: String? = null,
         val kind: AdapterKind,
+    )
+
+    private data class ColumnAdapterTypes(
+        val baseType: TypeName,
+        val targetType: TypeName,
+        val propertyNullable: Boolean,
+        val sqlNullable: Boolean,
     )
 
     /** Collects all adapter configurations needed for a statement. */
@@ -136,6 +149,39 @@ class AdapterConfig(
             is AnnotatedCreateViewStatement -> {
                 // CREATE VIEW statements don't need adapter parameters
             }
+        }
+        return configs
+    }
+
+    fun collectExecuteReturningOutputParamConfigs(
+        statement: AnnotatedExecuteStatement,
+    ): List<ParamConfig> {
+        if (!statement.hasReturningClause()) {
+            return emptyList()
+        }
+
+        val configs = mutableListOf<ParamConfig>()
+        val processedAdapters = mutableSetOf<String>()
+        ReturningColumnsResolver.resolveColumnsOrEmpty(createTableStatements, statement).forEach { column ->
+            if (!column.annotations.containsKey(AnnotationConstants.ADAPTER)) {
+                return@forEach
+            }
+
+            val propertyName = statement.annotations.propertyNameGenerator.convertToPropertyName(column.src.name)
+            val adapterFunctionName = getOutputAdapterFunctionName(propertyName)
+            if (!processedAdapters.add(adapterFunctionName)) {
+                return@forEach
+            }
+
+            configs.add(
+                createColumnAdapterParamConfig(
+                    paramName = column.src.name,
+                    column = column,
+                    adapterFunctionName = adapterFunctionName,
+                    kind = AdapterKind.RESULT_FIELD,
+                    direction = ColumnAdapterDirection.SQL_TO_PROPERTY,
+                )
+            )
         }
         return configs
     }
@@ -175,10 +221,12 @@ class AdapterConfig(
 
             // Create adapter configuration for input (parameter binding)
             // Use the first parameter name for type inference, but name after column
-            val config = createInputParamConfig(
-                parameterName = firstParamName,
+            val config = createColumnAdapterParamConfig(
+                paramName = firstParamName,
                 adapterFunctionName = adapterFunctionName,
-                column = column
+                column = column,
+                kind = AdapterKind.INPUT,
+                direction = ColumnAdapterDirection.PROPERTY_TO_SQL,
             )
             configs.add(config)
         }
@@ -284,35 +332,51 @@ class AdapterConfig(
         return configs
     }
 
-    /** Creates an input adapter configuration for parameter binding. */
-    private fun createInputParamConfig(
-        parameterName: String,
+    private fun createColumnAdapterParamConfig(
+        paramName: String,
         adapterFunctionName: String,
-        column: AnnotatedCreateTableStatement.Column
+        column: AnnotatedCreateTableStatement.Column,
+        kind: AdapterKind,
+        direction: ColumnAdapterDirection,
     ): ParamConfig {
+        val types = resolveColumnAdapterTypes(column)
+        val inputType = when (direction) {
+            ColumnAdapterDirection.PROPERTY_TO_SQL -> types.targetType.copy(nullable = types.propertyNullable)
+            ColumnAdapterDirection.SQL_TO_PROPERTY -> types.baseType.copy(nullable = types.sqlNullable)
+        }
+        val outputType = when (direction) {
+            ColumnAdapterDirection.PROPERTY_TO_SQL -> types.baseType.copy(nullable = types.sqlNullable)
+            ColumnAdapterDirection.SQL_TO_PROPERTY -> types.targetType.copy(nullable = types.propertyNullable)
+        }
+
+        return ParamConfig(
+            paramName = paramName,
+            adapterFunctionName = adapterFunctionName,
+            inputType = inputType,
+            outputType = outputType,
+            isNullable = types.propertyNullable,
+            providerNamespace = null,
+            kind = kind,
+        )
+    }
+
+    private fun resolveColumnAdapterTypes(
+        column: AnnotatedCreateTableStatement.Column,
+    ): ColumnAdapterTypes {
         val baseType = SqliteTypeToKotlinCodeConverter.Companion.mapSqlTypeToKotlinType(column.src.dataType)
         val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE] as? String
         val propertyNullable = column.isNullable()
-        val sqlNullable = column.isSqlNullable()
-
         val targetType = SqliteTypeToKotlinCodeConverter.Companion.determinePropertyType(
             baseType,
             propertyType,
             propertyNullable,
             packageName
         )
-
-        val inputType = targetType.copy(nullable = propertyNullable)
-        val outputType = baseType.copy(nullable = sqlNullable)
-
-        return ParamConfig(
-            paramName = parameterName,
-            adapterFunctionName = adapterFunctionName,
-            inputType = inputType,
-            outputType = outputType,
-            isNullable = propertyNullable,
-            providerNamespace = null, // inputs don't need cross-namespace routing for now
-            kind = AdapterKind.INPUT,
+        return ColumnAdapterTypes(
+            baseType = baseType,
+            targetType = targetType,
+            propertyNullable = propertyNullable,
+            sqlNullable = column.isSqlNullable(),
         )
     }
 

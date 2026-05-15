@@ -92,18 +92,46 @@ kotlin {
             implementation(libs.kotlinx.coroutines.test)
         }
 
-        val nativeMain by getting {
+        val bundledDriverTest by creating {
+            dependsOn(commonTest.get())
             dependencies {
                 implementation(libs.sqlite.bundled)
             }
         }
 
-        jvmMain.dependencies {
-            implementation(libs.sqlite.bundled)
+        val bundledDriverMain by creating {
+            dependsOn(commonMain.get())
+            dependencies {
+                implementation(libs.sqlite.bundled)
+            }
         }
 
-        androidMain.dependencies {
-            implementation(libs.sqlite.bundled)
+        val nativeMain by getting {
+            dependsOn(bundledDriverMain)
+        }
+
+        val nativeTest by getting {
+            dependsOn(bundledDriverTest)
+        }
+
+        val jvmAndroidMain by creating {
+            dependsOn(bundledDriverMain)
+        }
+
+        val jvmMain by getting {
+            dependsOn(jvmAndroidMain)
+        }
+
+        val jvmTest by getting {
+            dependsOn(bundledDriverTest)
+        }
+
+        val androidMain by getting {
+            dependsOn(jvmAndroidMain)
+        }
+
+        val androidDeviceTest by getting {
+            dependsOn(bundledDriverTest)
         }
 
         getByName("androidDeviceTest").dependencies {

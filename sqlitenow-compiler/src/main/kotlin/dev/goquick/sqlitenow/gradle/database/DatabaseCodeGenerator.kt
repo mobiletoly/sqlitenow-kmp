@@ -27,7 +27,6 @@ import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
 import dev.goquick.sqlitenow.gradle.util.IndentedCodeBuilder
-import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter
 import dev.goquick.sqlitenow.gradle.context.AdapterConfig
 import dev.goquick.sqlitenow.gradle.context.AdapterParameterNameResolver
 import dev.goquick.sqlitenow.gradle.context.ColumnLookup
@@ -39,9 +38,9 @@ import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedStatement
 import dev.goquick.sqlitenow.gradle.oversqlite.resolveOversqliteSyncTables
 import dev.goquick.sqlitenow.gradle.util.CaseInsensitiveMap
-import dev.goquick.sqlitenow.gradle.util.CaseInsensitiveSet
 import dev.goquick.sqlitenow.gradle.util.pascalize
-import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
+import dev.goquick.sqlitenow.gradle.util.queryNamespaceClassName
+import dev.goquick.sqlitenow.gradle.util.queryParamsTypeName
 import dev.goquick.sqlitenow.gradle.processing.SharedResultManager
 import dev.goquick.sqlitenow.gradle.processing.SharedResultTypeUtils
 import dev.goquick.sqlitenow.gradle.processing.StatementUtils
@@ -138,7 +137,7 @@ class DatabaseCodeGenerator(
         return cls.lowercaseFirst()
     }
 
-    private fun queryNamespaceName(namespace: String): String = pascalize(namespace) + "Query"
+    private fun queryNamespaceName(namespace: String): String = queryNamespaceClassName(namespace)
     private fun routerClassNameFor(namespace: String): String =
         baseNameForNamespace(namespace) + "Router"
 
@@ -610,68 +609,7 @@ class DatabaseCodeGenerator(
      * This is similar to how SELECT statements collect output adapters.
      */
     private fun collectOutputAdaptersForExecuteReturning(statement: AnnotatedExecuteStatement): List<AdapterConfig.ParamConfig> {
-        if (!statement.hasReturningClause()) {
-            return emptyList()
-        }
-
-        // Find the table definition
-        val tableStatement = tableLookup[statement.src.table] ?: return emptyList()
-
-        // Get RETURNING columns
-        val returningColumns = statement.src.returningColumns
-
-        // Determine which columns to include
-        val columnsToInclude = if (returningColumns.contains("*")) {
-            tableStatement.columns
-        } else {
-            val returningSet = CaseInsensitiveSet().apply { addAll(returningColumns) }
-            tableStatement.columns.filter { column -> returningSet.containsIgnoreCase(column.src.name) }
-        }
-
-        // Create adapter configurations for columns that need them
-        val configs = mutableListOf<AdapterConfig.ParamConfig>()
-        val processedAdapters = mutableSetOf<String>()
-
-        columnsToInclude.forEach { column ->
-            if (column.annotations.containsKey(AnnotationConstants.ADAPTER)) {
-                val propertyName = statement.annotations.propertyNameGenerator.convertToPropertyName(column.src.name)
-                val adapterFunctionName = adapterConfig.getOutputAdapterFunctionName(propertyName)
-
-                // Skip if already processed
-                if (adapterFunctionName in processedAdapters) {
-                    return@forEach
-                }
-                processedAdapters.add(adapterFunctionName)
-
-                // Create adapter configuration for output (result conversion)
-                val baseType = SqliteTypeToKotlinCodeConverter.Companion.mapSqlTypeToKotlinType(column.src.dataType)
-                val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE] as? String
-                val propertyNullable = column.isNullable()
-                val sqlNullable = column.isSqlNullable()
-                val targetType = SqliteTypeToKotlinCodeConverter.Companion.determinePropertyType(
-                    baseType,
-                    propertyType,
-                    propertyNullable,
-                    packageName
-                )
-
-                val inputType = baseType.copy(nullable = sqlNullable)
-                val outputType = targetType.copy(nullable = propertyNullable)
-
-                val config = AdapterConfig.ParamConfig(
-                    paramName = column.src.name,
-                    adapterFunctionName = adapterFunctionName,
-                    inputType = inputType,
-                    outputType = outputType,
-                    isNullable = propertyNullable,
-                    providerNamespace = null,
-                    kind = AdapterConfig.AdapterKind.RESULT_FIELD,
-                )
-                configs.add(config)
-            }
-        }
-
-        return configs
+        return adapterConfig.collectExecuteReturningOutputParamConfigs(statement)
     }
 
     /** Generates an adapter wrapper class for a specific namespace. */
@@ -795,7 +733,7 @@ class DatabaseCodeGenerator(
         val propertyName = className.lowercaseFirst()
 
         // Determine result type (handles shared results)
-        val resultType = resolvePublicResultType(namespace, statement)
+        val resultType = SharedResultTypeUtils.createPublicResultTypeName(packageName, namespace, statement)
 
         // Check if statement has parameters
         val namedParameters = StatementUtils.getNamedParameters(statement)
@@ -848,7 +786,7 @@ class DatabaseCodeGenerator(
         )
 
         val b = IndentedCodeBuilder()
-        val resultTypeName = resolvePublicResultTypeString(namespace, statement)
+        val resultTypeName = SharedResultTypeUtils.createPublicResultTypeString(namespace, statement)
         if (hasParams) {
             b.line("{ params ->")
         }
@@ -920,11 +858,8 @@ class DatabaseCodeGenerator(
     ): PropertySpec {
         val className = statement.getDataClassName()
         val propertyName = className.lowercaseFirst()
-        val paramsType = ClassName(packageName, queryNamespaceName(namespace))
-            .nestedClass(className)
-            .nestedClass("Params")
         val propertyType = ClassName("dev.goquick.sqlitenow.core", "ExecuteStatement")
-            .parameterizedBy(paramsType)
+            .parameterizedBy(queryParamsTypeName(packageName, queryNamespaceName(namespace), className))
 
         val initializer = buildExecuteStatementInitializer(
             statement = statement,
@@ -933,9 +868,7 @@ class DatabaseCodeGenerator(
             adaptersByNamespace = adaptersByNamespace,
         )
 
-        return PropertySpec.builder(propertyName, propertyType)
-            .initializer(initializer)
-            .build()
+        return buildExecuteProperty(propertyName, propertyType, initializer)
     }
 
     private fun buildExecuteStatementInitializer(
@@ -953,29 +886,17 @@ class DatabaseCodeGenerator(
             adaptersByNamespace = adaptersByNamespace,
         )
 
-        val b = IndentedCodeBuilder()
-        b.line("ExecuteStatement(")
-        b.indent {
-            b.line("executeBlock = { params ->")
-            b.indent {
-                b.line("$capitalizedNamespace.$className.execute(")
-                b.indent {
-                    paramLines.forEachIndexed { idx, line ->
-                        val suffix = if (idx < paramLines.lastIndex) "," else ""
-                        b.line("$line$suffix")
-                    }
-                }
-                b.line(")")
-                b.line("// Notify listeners that tables have changed")
-                if (debug) {
-                    b.line("sqliteNowLogger.d { \"notifyTablesChanged -> \" + $capitalizedNamespace.$className.affectedTables.joinToString(\", \") }")
-                }
-                b.line("ref.notifyTablesChanged($capitalizedNamespace.$className.affectedTables)")
-            }
-            b.line("}")
-        }
-        b.line(")")
-        return b.build()
+        return buildExecuteInitializerExpression(
+            constructorName = "ExecuteStatement",
+            paramLines = paramLines,
+            affectedTablesOwner = "$capitalizedNamespace.$className",
+            blocks = listOf(
+                ExecuteInitializerBlock(
+                    name = "executeBlock",
+                    invocationStart = "$capitalizedNamespace.$className.execute",
+                )
+            ),
+        )
     }
 
     private fun generateExecuteFunctionWithoutParams(
@@ -995,19 +916,11 @@ class DatabaseCodeGenerator(
         )
 
         val body = IndentedCodeBuilder()
-        body.line("$capitalizedNamespace.$className.execute(")
-        body.indent {
-            paramLines.forEachIndexed { idx, line ->
-                val suffix = if (idx < paramLines.lastIndex) "," else ""
-                body.line("$line$suffix")
-            }
-        }
-        body.line(")")
-        body.line("// Notify listeners that tables have changed")
-        if (debug) {
-            body.line("sqliteNowLogger.d { \"notifyTablesChanged -> \" + $capitalizedNamespace.$className.affectedTables.joinToString(\", \") }")
-        }
-        body.line("ref.notifyTablesChanged($capitalizedNamespace.$className.affectedTables)")
+        body.addInvocationAndNotify(
+            invocationStart = "$capitalizedNamespace.$className.execute",
+            paramLines = paramLines,
+            affectedTablesOwner = "$capitalizedNamespace.$className",
+        )
 
         return FunSpec.builder(functionName)
             .addModifiers(KModifier.PUBLIC, KModifier.SUSPEND)
@@ -1024,11 +937,8 @@ class DatabaseCodeGenerator(
         val className = statement.getDataClassName()
         val propertyName = className.lowercaseFirst()
 
-        val paramsType = ClassName(packageName, queryNamespaceName(namespace))
-            .nestedClass(className)
-            .nestedClass("Params")
-        val resultType = SharedResultTypeUtils.createResultTypeNameForExecute(packageName, namespace, statement)
-
+        val paramsType = queryParamsTypeName(packageName, queryNamespaceName(namespace), className)
+        val resultType = SharedResultTypeUtils.createResultTypeName(packageName, namespace, statement)
         val propertyType = ClassName("dev.goquick.sqlitenow.core", "ExecuteReturningStatement")
             .parameterizedBy(paramsType, resultType)
 
@@ -1039,6 +949,14 @@ class DatabaseCodeGenerator(
             adaptersByNamespace = adaptersByNamespace,
         )
 
+        return buildExecuteProperty(propertyName, propertyType, initializer)
+    }
+
+    private fun buildExecuteProperty(
+        propertyName: String,
+        propertyType: TypeName,
+        initializer: String,
+    ): PropertySpec {
         return PropertySpec.builder(propertyName, propertyType)
             .initializer(initializer)
             .build()
@@ -1060,68 +978,30 @@ class DatabaseCodeGenerator(
             namespace = namespace,
             adaptersByNamespace = adaptersByNamespace,
         )
-        val resultTypeString = SharedResultTypeUtils.createResultTypeStringForExecute(namespace, statement)
+        val resultTypeString = SharedResultTypeUtils.createResultTypeString(namespace, statement)
 
-        val b = IndentedCodeBuilder()
-        b.line("ExecuteReturningStatement(")
-        b.indent {
-            b.line("listBlock = { params ->")
-            b.indent {
-                b.line("val result = $capitalizedNamespace.$className.executeReturningList(")
-                b.indent {
-                    paramLines.forEachIndexed { idx, line ->
-                        val suffix = if (idx < paramLines.lastIndex) "," else ""
-                        b.line("$line$suffix")
-                    }
-                }
-                b.line(")")
-                b.line("// Notify listeners that tables have changed")
-                if (debug) {
-                    b.line("sqliteNowLogger.d { \"notifyTablesChanged -> \" + $capitalizedNamespace.$className.affectedTables.joinToString(\", \") }")
-                }
-                b.line("ref.notifyTablesChanged($capitalizedNamespace.$className.affectedTables)")
-                b.line("result")
-            }
-            b.line("},")
-            b.line("oneBlock = { params ->")
-            b.indent {
-                b.line("val result = $capitalizedNamespace.$className.executeReturningOne(")
-                b.indent {
-                    paramLines.forEachIndexed { idx, line ->
-                        val suffix = if (idx < paramLines.lastIndex) "," else ""
-                        b.line("$line$suffix")
-                    }
-                }
-                b.line(")")
-                b.line("// Notify listeners that tables have changed")
-                if (debug) {
-                    b.line("sqliteNowLogger.d { \"notifyTablesChanged -> \" + $capitalizedNamespace.$className.affectedTables.joinToString(\", \") }")
-                }
-                b.line("ref.notifyTablesChanged($capitalizedNamespace.$className.affectedTables)")
-                b.line("result")
-            }
-            b.line("},")
-            b.line("oneOrNullBlock = { params ->")
-            b.indent {
-                b.line("val result = $capitalizedNamespace.$className.executeReturningOneOrNull(")
-                b.indent {
-                    paramLines.forEachIndexed { idx, line ->
-                        val suffix = if (idx < paramLines.lastIndex) "," else ""
-                        b.line("$line$suffix")
-                    }
-                }
-                b.line(")")
-                b.line("// Notify listeners that tables have changed")
-                if (debug) {
-                    b.line("sqliteNowLogger.d { \"notifyTablesChanged -> \" + $capitalizedNamespace.$className.affectedTables.joinToString(\", \") }")
-                }
-                b.line("ref.notifyTablesChanged($capitalizedNamespace.$className.affectedTables)")
-                b.line("result")
-            }
-            b.line("}")
-        }
-        b.line(")")
-        return b.build()
+        return buildExecuteInitializerExpression(
+            constructorName = "ExecuteReturningStatement",
+            paramLines = paramLines,
+            affectedTablesOwner = "$capitalizedNamespace.$className",
+            blocks = listOf(
+                ExecuteInitializerBlock(
+                    name = "listBlock",
+                    invocationStart = "val result = $capitalizedNamespace.$className.executeReturningList",
+                    resultLine = "result",
+                ),
+                ExecuteInitializerBlock(
+                    name = "oneBlock",
+                    invocationStart = "val result = $capitalizedNamespace.$className.executeReturningOne",
+                    resultLine = "result",
+                ),
+                ExecuteInitializerBlock(
+                    name = "oneOrNullBlock",
+                    invocationStart = "val result = $capitalizedNamespace.$className.executeReturningOneOrNull",
+                    resultLine = "result",
+                ),
+            ),
+        )
     }
 
     private fun generateExecuteReturningFunctionsWithoutParams(
@@ -1143,26 +1023,18 @@ class DatabaseCodeGenerator(
             adaptersByNamespace = adaptersByNamespace,
         )
 
-        val resultTypeName = SharedResultTypeUtils.createResultTypeNameForExecute(packageName, namespace, statement)
+        val resultTypeName = SharedResultTypeUtils.createResultTypeName(packageName, namespace, statement)
         val listTypeName = ClassName("kotlin.collections", "List").parameterizedBy(resultTypeName)
         val resultTypeNullable = resultTypeName.copy(nullable = true)
 
         fun createBody(invocation: String): String {
             val bodyBuilder = IndentedCodeBuilder()
-            bodyBuilder.line("val result = $capitalizedNamespace.$className.$invocation(")
-            bodyBuilder.indent {
-                paramLines.forEachIndexed { idx, line ->
-                    val suffix = if (idx < paramLines.lastIndex) "," else ""
-                    bodyBuilder.line("$line$suffix")
-                }
-            }
-            bodyBuilder.line(")")
-            bodyBuilder.line("// Notify listeners that tables have changed")
-            if (debug) {
-                bodyBuilder.line("sqliteNowLogger.d { \"notifyTablesChanged -> \" + $capitalizedNamespace.$className.affectedTables.joinToString(\", \") }")
-            }
-            bodyBuilder.line("ref.notifyTablesChanged($capitalizedNamespace.$className.affectedTables)")
-            bodyBuilder.line("return result")
+            bodyBuilder.addInvocationAndNotify(
+                invocationStart = "val result = $capitalizedNamespace.$className.$invocation",
+                paramLines = paramLines,
+                affectedTablesOwner = "$capitalizedNamespace.$className",
+                resultLine = "return result",
+            )
             return bodyBuilder.build()
         }
 
@@ -1190,24 +1062,69 @@ class DatabaseCodeGenerator(
         return listOf(listFunction, oneFunction, oneOrNullFunction)
     }
 
-    private fun resolvePublicResultType(
-        namespace: String,
-        statement: AnnotatedSelectStatement,
-    ): TypeName {
-        return resolveMapToType(statement) ?: SharedResultTypeUtils.createResultTypeName(packageName, namespace, statement)
-    }
+    private data class ExecuteInitializerBlock(
+        val name: String,
+        val invocationStart: String,
+        val resultLine: String? = null,
+    )
 
-    private fun resolveMapToType(statement: AnnotatedSelectStatement): TypeName? {
-        val target = statement.annotations.mapTo ?: return null
-        return SqliteTypeToKotlinCodeConverter.parseCustomType(target, packageName)
-    }
-
-    private fun resolvePublicResultTypeString(
-        namespace: String,
-        statement: AnnotatedSelectStatement,
+    private fun buildExecuteInitializerExpression(
+        constructorName: String,
+        paramLines: List<String>,
+        affectedTablesOwner: String,
+        blocks: List<ExecuteInitializerBlock>,
     ): String {
-        val override = statement.annotations.mapTo?.trim()
-        if (!override.isNullOrEmpty()) return override
-        return SharedResultTypeUtils.createResultTypeString(namespace, statement)
+        val b = IndentedCodeBuilder()
+        b.line("$constructorName(")
+        b.indent {
+            blocks.forEachIndexed { idx, block ->
+                b.line("${block.name} = { params ->")
+                b.indent {
+                    b.addInvocationAndNotify(
+                        invocationStart = block.invocationStart,
+                        paramLines = paramLines,
+                        affectedTablesOwner = affectedTablesOwner,
+                        resultLine = block.resultLine,
+                    )
+                }
+                val suffix = if (idx < blocks.lastIndex) "," else ""
+                b.line("}$suffix")
+            }
+        }
+        b.line(")")
+        return b.build()
     }
+
+    private fun IndentedCodeBuilder.addInvocationAndNotify(
+        invocationStart: String,
+        paramLines: List<String>,
+        affectedTablesOwner: String,
+        resultLine: String? = null,
+    ) {
+        line("$invocationStart(")
+        indent {
+            addParamLines(paramLines)
+        }
+        line(")")
+        addNotifyTablesChanged(affectedTablesOwner)
+        if (resultLine != null) {
+            line(resultLine)
+        }
+    }
+
+    private fun IndentedCodeBuilder.addParamLines(paramLines: List<String>) {
+        paramLines.forEachIndexed { idx, paramLine ->
+            val suffix = if (idx < paramLines.lastIndex) "," else ""
+            line("$paramLine$suffix")
+        }
+    }
+
+    private fun IndentedCodeBuilder.addNotifyTablesChanged(affectedTablesOwner: String) {
+        line("// Notify listeners that tables have changed")
+        if (debug) {
+            line("sqliteNowLogger.d { \"notifyTablesChanged -> \" + $affectedTablesOwner.affectedTables.joinToString(\", \") }")
+        }
+        line("ref.notifyTablesChanged($affectedTablesOwner.affectedTables)")
+    }
+
 }

@@ -4,7 +4,9 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.ParameterizedTypeName
 import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter
 import org.junit.jupiter.api.DisplayName
+import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestFactory
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -46,55 +48,68 @@ class SqliteTypeToKotlinCodeConverterTest {
         assertEquals("kotlin.String", kotlinType.toString())
     }
 
-    @Test
-    @DisplayName("Test determining property type with custom type annotation")
-    fun testDeterminePropertyTypeWithCustomType() {
-        val baseType = ClassName("kotlin", "Int")
-        val propertyType = "java.time.LocalDateTime"
-        val isNullable = false
+    @TestFactory
+    fun determinePropertyTypeCases(): List<DynamicTest> = listOf(
+        PropertyTypeCase(
+            displayName = "custom type annotation",
+            propertyType = "java.time.LocalDateTime",
+            isNullable = false,
+            expectedType = "java.time.LocalDateTime",
+            expectedNullable = false,
+        ),
+        PropertyTypeCase(
+            displayName = "Kotlin standard library type annotation",
+            propertyType = "String",
+            isNullable = true,
+            expectedType = "kotlin.String?",
+            expectedNullable = true,
+        ),
+        PropertyTypeCase(
+            displayName = "without type annotation",
+            propertyType = null,
+            isNullable = true,
+            expectedType = "kotlin.Int?",
+            expectedNullable = true,
+        ),
+    ).map { case ->
+        DynamicTest.dynamicTest(case.displayName) {
+            val baseType = ClassName("kotlin", "Int")
 
-        val resultType = SqliteTypeToKotlinCodeConverter.determinePropertyType(baseType, propertyType, isNullable)
-        assertEquals("java.time.LocalDateTime", resultType.toString())
-        assertFalse(resultType.isNullable)
+            val resultType = SqliteTypeToKotlinCodeConverter.determinePropertyType(
+                baseType = baseType,
+                propertyType = case.propertyType,
+                isNullable = case.isNullable,
+            )
+
+            assertEquals(case.expectedType, resultType.toString())
+            assertEquals(case.expectedNullable, resultType.isNullable)
+        }
     }
 
-    @Test
-    @DisplayName("Test determining property type with Kotlin standard library type annotation")
-    fun testDeterminePropertyTypeWithKotlinStdlibType() {
-        val baseType = ClassName("kotlin", "Int")
-        val propertyType = "String"
-        val isNullable = true
+    @TestFactory
+    fun genericTypeParsingCases(): List<DynamicTest> = listOf(
+        GenericTypeCase(
+            displayName = "simple List",
+            propertyType = "List<String>",
+            expectedRawType = "kotlin.collections.List",
+            expectedTypeArguments = listOf("kotlin.String"),
+        ),
+        GenericTypeCase(
+            displayName = "custom generic type",
+            propertyType = "com.example.CustomList<String>",
+            expectedRawType = "com.example.CustomList",
+            expectedTypeArguments = listOf("kotlin.String"),
+        ),
+    ).map { case ->
+        DynamicTest.dynamicTest(case.displayName) {
+            val baseType = ClassName("kotlin", "String")
+            val resultType = SqliteTypeToKotlinCodeConverter.determinePropertyType(baseType, case.propertyType, false)
 
-        val resultType = SqliteTypeToKotlinCodeConverter.determinePropertyType(baseType, propertyType, isNullable)
-        assertEquals("kotlin.String?", resultType.toString())
-        assertTrue(resultType.isNullable)
-    }
-
-    @Test
-    @DisplayName("Test determining property type without type annotation")
-    fun testDeterminePropertyTypeWithoutAnnotation() {
-        val baseType = ClassName("kotlin", "Int")
-        val propertyType: String? = null
-        val isNullable = true
-
-        val resultType = SqliteTypeToKotlinCodeConverter.determinePropertyType(baseType, propertyType, isNullable)
-        assertEquals("kotlin.Int?", resultType.toString())
-        assertTrue(resultType.isNullable)
-    }
-
-    @Test
-    @DisplayName("Test generic type parsing with simple List")
-    fun testGenericTypeParsingSimpleList() {
-        val baseType = ClassName("kotlin", "String")
-        val propertyType = "List<String>"
-        val isNullable = false
-
-        val resultType = SqliteTypeToKotlinCodeConverter.determinePropertyType(baseType, propertyType, isNullable)
-        assertTrue(resultType is ParameterizedTypeName, "Result should be a ParameterizedTypeName")
-        val parameterizedType = resultType
-        assertEquals("kotlin.collections.List", parameterizedType.rawType.toString())
-        assertEquals(1, parameterizedType.typeArguments.size)
-        assertEquals("kotlin.String", parameterizedType.typeArguments[0].toString())
+            assertTrue(resultType is ParameterizedTypeName, "Result should be a ParameterizedTypeName")
+            val parameterizedType = resultType
+            assertEquals(case.expectedRawType, parameterizedType.rawType.toString())
+            assertEquals(case.expectedTypeArguments, parameterizedType.typeArguments.map { it.toString() })
+        }
     }
 
     @Test
@@ -113,24 +128,9 @@ class SqliteTypeToKotlinCodeConverterTest {
 
         val secondArg = parameterizedType.typeArguments[1]
         assertTrue(secondArg is ParameterizedTypeName, "Second argument should be parameterized")
-        val nestedType = secondArg as ParameterizedTypeName
+        val nestedType = secondArg
         assertEquals("kotlin.collections.List", nestedType.rawType.toString())
         assertEquals("kotlin.Int", nestedType.typeArguments[0].toString())
-    }
-
-    @Test
-    @DisplayName("Test generic type parsing with custom types")
-    fun testGenericTypeParsingCustomTypes() {
-        val baseType = ClassName("kotlin", "String")
-        val propertyType = "com.example.CustomList<String>"
-        val isNullable = false
-
-        val resultType = SqliteTypeToKotlinCodeConverter.determinePropertyType(baseType, propertyType, isNullable)
-        assertTrue(resultType is ParameterizedTypeName, "Result should be a ParameterizedTypeName")
-        val parameterizedType = resultType
-        assertEquals("com.example.CustomList", parameterizedType.rawType.toString())
-        assertEquals(1, parameterizedType.typeArguments.size)
-        assertEquals("kotlin.String", parameterizedType.typeArguments[0].toString())
     }
 
     @Test
@@ -144,4 +144,19 @@ class SqliteTypeToKotlinCodeConverterTest {
         assertTrue(resultType.isNullable, "Result should be nullable")
         assertTrue(resultType is ParameterizedTypeName, "Result should be a ParameterizedTypeName")
     }
+
+    private data class GenericTypeCase(
+        val displayName: String,
+        val propertyType: String,
+        val expectedRawType: String,
+        val expectedTypeArguments: List<String>,
+    )
+
+    private data class PropertyTypeCase(
+        val displayName: String,
+        val propertyType: String?,
+        val isNullable: Boolean,
+        val expectedType: String,
+        val expectedNullable: Boolean,
+    )
 }

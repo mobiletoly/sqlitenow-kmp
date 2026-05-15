@@ -574,7 +574,14 @@ class SqliteNowPluginFunctionalTest {
     }
 
     private fun writeBuildGradle(projectDir: File, text: String) {
-        File(projectDir, "build.gradle.kts").writeText(text)
+        writeFixtureFile(projectDir, "build.gradle.kts", text)
+    }
+
+    private fun writeFixtureFile(root: File, relativePath: String, text: String) {
+        File(root, relativePath).apply {
+            parentFile.mkdirs()
+            writeText(text)
+        }
     }
 
     private fun writeSqlFixture(
@@ -589,196 +596,178 @@ class SqliteNowPluginFunctionalTest {
         """.trimIndent(),
     ) {
         val dbRoot = projectDir.resolve("src/commonMain/sql/$dbName")
-        File(dbRoot, "schema/person.sql").apply {
-            parentFile.mkdirs()
-            writeText(
-                """
-                    CREATE TABLE person (
-                        id INTEGER PRIMARY KEY NOT NULL,
-                        name TEXT NOT NULL,
-                        ${packageMarker}_email TEXT
-                    );
-                """.trimIndent()
-            )
-        }
-        File(dbRoot, "queries/person/$queryName.sql").apply {
-            parentFile.mkdirs()
-            writeText(querySql)
-        }
-        File(dbRoot, "migration/0001.sql").apply {
-            parentFile.mkdirs()
-            writeText("ALTER TABLE person ADD COLUMN migrated_$packageMarker TEXT;")
-        }
+        writeFixtureFile(
+            dbRoot,
+            "schema/person.sql",
+            """
+                CREATE TABLE person (
+                    id INTEGER PRIMARY KEY NOT NULL,
+                    name TEXT NOT NULL,
+                    ${packageMarker}_email TEXT
+                );
+            """.trimIndent(),
+        )
+        writeFixtureFile(dbRoot, "queries/person/$queryName.sql", querySql)
+        writeFixtureFile(dbRoot, "migration/0001.sql", "ALTER TABLE person ADD COLUMN migrated_$packageMarker TEXT;")
     }
 
     private fun writeComplexCompositionFixture(projectDir: File) {
         val dbRoot = projectDir.resolve("src/commonMain/sql/FixtureDatabase")
 
-        File(dbRoot, "schema/person.sql").apply {
-            parentFile.mkdirs()
-            writeText(
-                """
-                    CREATE TABLE person (
-                        id INTEGER PRIMARY KEY NOT NULL,
-                        /* @@{ field=birth_date, adapter=custom, propertyType=BirthDate } */
-                        birth_date TEXT
-                    );
-                """.trimIndent()
-            )
-        }
-        File(dbRoot, "schema/person_address.sql").apply {
-            parentFile.mkdirs()
-            writeText(
-                """
-                    CREATE TABLE person_address (
-                        id INTEGER PRIMARY KEY NOT NULL,
-                        person_id INTEGER NOT NULL,
-                        city TEXT,
-                        FOREIGN KEY (person_id) REFERENCES person(id)
-                    );
-                """.trimIndent()
-            )
-        }
-        File(dbRoot, "schema/comment.sql").apply {
-            parentFile.mkdirs()
-            writeText(
-                """
-                    CREATE TABLE comment (
-                        id INTEGER PRIMARY KEY NOT NULL,
-                        person_id INTEGER NOT NULL,
-                        comment TEXT,
-                        FOREIGN KEY (person_id) REFERENCES person(id)
-                    );
-                """.trimIndent()
-            )
-        }
-        File(dbRoot, "schema/category.sql").apply {
-            parentFile.mkdirs()
-            writeText(
-                """
-                    CREATE TABLE category (
-                        id INTEGER PRIMARY KEY NOT NULL,
-                        name TEXT
-                    );
-                """.trimIndent()
-            )
-        }
-        File(dbRoot, "schema/person_category.sql").apply {
-            parentFile.mkdirs()
-            writeText(
-                """
-                    CREATE TABLE person_category (
-                        id INTEGER PRIMARY KEY NOT NULL,
-                        person_id INTEGER NOT NULL,
-                        category_id INTEGER NOT NULL,
-                        FOREIGN KEY (person_id) REFERENCES person(id),
-                        FOREIGN KEY (category_id) REFERENCES category(id)
-                    );
-                """.trimIndent()
-            )
-        }
-        File(dbRoot, "queries/person/selectSnapshots.sql").apply {
-            parentFile.mkdirs()
-            writeText(
-                """
-                    /* @@{ queryResult=PeopleSnapshotRow, mapTo=fixture.model.PeopleSnapshot, collectionKey=person_id } */
-                    SELECT
-                        p.id AS person_id,
-                        p.birth_date,
-                        a.id AS address__id,
-                        a.person_id AS address__person_id,
-                        a.city AS address__city,
-                        c.id AS comment__id,
-                        c.person_id AS comment__person_id,
-                        c.comment AS comment__comment,
-                        cat.id AS category__id,
-                        cat.name AS category__name
+        writeFixtureFile(
+            dbRoot,
+            "schema/person.sql",
+            """
+                CREATE TABLE person (
+                    id INTEGER PRIMARY KEY NOT NULL,
+                    /* @@{ field=birth_date, adapter=custom, propertyType=BirthDate } */
+                    birth_date TEXT
+                );
+            """.trimIndent(),
+        )
+        writeFixtureFile(
+            dbRoot,
+            "schema/person_address.sql",
+            """
+                CREATE TABLE person_address (
+                    id INTEGER PRIMARY KEY NOT NULL,
+                    person_id INTEGER NOT NULL,
+                    city TEXT,
+                    FOREIGN KEY (person_id) REFERENCES person(id)
+                );
+            """.trimIndent(),
+        )
+        writeFixtureFile(
+            dbRoot,
+            "schema/comment.sql",
+            """
+                CREATE TABLE comment (
+                    id INTEGER PRIMARY KEY NOT NULL,
+                    person_id INTEGER NOT NULL,
+                    comment TEXT,
+                    FOREIGN KEY (person_id) REFERENCES person(id)
+                );
+            """.trimIndent(),
+        )
+        writeFixtureFile(
+            dbRoot,
+            "schema/category.sql",
+            """
+                CREATE TABLE category (
+                    id INTEGER PRIMARY KEY NOT NULL,
+                    name TEXT
+                );
+            """.trimIndent(),
+        )
+        writeFixtureFile(
+            dbRoot,
+            "schema/person_category.sql",
+            """
+                CREATE TABLE person_category (
+                    id INTEGER PRIMARY KEY NOT NULL,
+                    person_id INTEGER NOT NULL,
+                    category_id INTEGER NOT NULL,
+                    FOREIGN KEY (person_id) REFERENCES person(id),
+                    FOREIGN KEY (category_id) REFERENCES category(id)
+                );
+            """.trimIndent(),
+        )
+        writeFixtureFile(
+            dbRoot,
+            "queries/person/selectSnapshots.sql",
+            """
+                /* @@{ queryResult=PeopleSnapshotRow, mapTo=fixture.model.PeopleSnapshot, collectionKey=person_id } */
+                SELECT
+                    p.id AS person_id,
+                    p.birth_date,
+                    a.id AS address__id,
+                    a.person_id AS address__person_id,
+                    a.city AS address__city,
+                    c.id AS comment__id,
+                    c.person_id AS comment__person_id,
+                    c.comment AS comment__comment,
+                    cat.id AS category__id,
+                    cat.name AS category__name
 
-                      /* @@{ dynamicField=addresses,
-                             mappingType=collection,
-                             propertyType=List<PersonAddressItem>,
-                             sourceTable=a,
-                             collectionKey=address__id,
-                             aliasPrefix=address__,
-                             notNull=true } */
+                  /* @@{ dynamicField=addresses,
+                         mappingType=collection,
+                         propertyType=List<PersonAddressItem>,
+                         sourceTable=a,
+                         collectionKey=address__id,
+                         aliasPrefix=address__,
+                         notNull=true } */
 
-                      /* @@{ dynamicField=comments,
-                             mappingType=collection,
-                             propertyType=List<CommentItem>,
-                             sourceTable=c,
-                             collectionKey=comment__id,
-                             aliasPrefix=comment__,
-                             notNull=true } */
+                  /* @@{ dynamicField=comments,
+                         mappingType=collection,
+                         propertyType=List<CommentItem>,
+                         sourceTable=c,
+                         collectionKey=comment__id,
+                         aliasPrefix=comment__,
+                         notNull=true } */
 
-                      /* @@{ dynamicField=categories,
-                             mappingType=collection,
-                             propertyType=List<CategoryItem>,
-                             sourceTable=cat,
-                             collectionKey=category__id,
-                             aliasPrefix=category__,
-                             notNull=true } */
-                    FROM person p
-                    LEFT JOIN person_address a ON p.id = a.person_id
-                    LEFT JOIN comment c ON p.id = c.person_id
-                    LEFT JOIN person_category pc ON p.id = pc.person_id
-                    LEFT JOIN category cat ON pc.category_id = cat.id
-                    WHERE p.id = :personId
-                """.trimIndent()
-            )
-        }
-        File(dbRoot, "queries/personAddress/selectAll.sql").apply {
-            parentFile.mkdirs()
-            writeText(
-                """
-                    -- @@{ queryResult=PersonAddressItem }
-                    SELECT
-                        a.id,
-                        a.person_id,
-                        a.city
-                    FROM person_address a
-                """.trimIndent()
-            )
-        }
-        File(dbRoot, "queries/comment/selectAll.sql").apply {
-            parentFile.mkdirs()
-            writeText(
-                """
-                    -- @@{ queryResult=CommentItem }
-                    SELECT
-                        c.id,
-                        c.person_id,
-                        c.comment
-                    FROM comment c
-                """.trimIndent()
-            )
-        }
-        File(dbRoot, "queries/category/selectAll.sql").apply {
-            parentFile.mkdirs()
-            writeText(
-                """
-                    -- @@{ queryResult=CategoryItem }
-                    SELECT
-                        c.id,
-                        c.name
-                    FROM category c
-                """.trimIndent()
-            )
-        }
+                  /* @@{ dynamicField=categories,
+                         mappingType=collection,
+                         propertyType=List<CategoryItem>,
+                         sourceTable=cat,
+                         collectionKey=category__id,
+                         aliasPrefix=category__,
+                         notNull=true } */
+                FROM person p
+                LEFT JOIN person_address a ON p.id = a.person_id
+                LEFT JOIN comment c ON p.id = c.person_id
+                LEFT JOIN person_category pc ON p.id = pc.person_id
+                LEFT JOIN category cat ON pc.category_id = cat.id
+                WHERE p.id = :personId
+            """.trimIndent(),
+        )
+        writeFixtureFile(
+            dbRoot,
+            "queries/personAddress/selectAll.sql",
+            """
+                -- @@{ queryResult=PersonAddressItem }
+                SELECT
+                    a.id,
+                    a.person_id,
+                    a.city
+                FROM person_address a
+            """.trimIndent(),
+        )
+        writeFixtureFile(
+            dbRoot,
+            "queries/comment/selectAll.sql",
+            """
+                -- @@{ queryResult=CommentItem }
+                SELECT
+                    c.id,
+                    c.person_id,
+                    c.comment
+                FROM comment c
+            """.trimIndent(),
+        )
+        writeFixtureFile(
+            dbRoot,
+            "queries/category/selectAll.sql",
+            """
+                -- @@{ queryResult=CategoryItem }
+                SELECT
+                    c.id,
+                    c.name
+                FROM category c
+            """.trimIndent(),
+        )
     }
 
-    private fun runGradle(projectDir: File, vararg arguments: String): BuildResult =
+    private fun gradleRunner(projectDir: File, vararg arguments: String): GradleRunner =
         GradleRunner.create()
             .withProjectDir(projectDir)
             .withArguments(*arguments)
             .forwardOutput()
-            .build()
+
+    private fun runGradle(projectDir: File, vararg arguments: String): BuildResult =
+        gradleRunner(projectDir, *arguments).build()
 
     private fun runGradleAndFail(projectDir: File, vararg arguments: String): BuildResult =
-        GradleRunner.create()
-            .withProjectDir(projectDir)
-            .withArguments(*arguments)
-            .forwardOutput()
-            .buildAndFail()
+        gradleRunner(projectDir, *arguments).buildAndFail()
 
     private fun writeFakeKlib(file: File, marker: String) {
         file.parentFile.mkdirs()

@@ -66,6 +66,11 @@ CREATE TABLE task
 );
 ```
 
+Unqualified custom types, such as `TaskStatus`, are resolved in the generated
+database package. Use the fully qualified type name, for example
+`propertyType=org.library.sqlite.TaskStatus`, when the type lives in another
+package.
+
 {% if include.platform == "dart" %}
 Generated Dart code expects an adapter that converts between the SQLite column
 value and your Dart type:

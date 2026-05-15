@@ -1,346 +1,366 @@
 package dev.goquick.sqlitenow.gradle
 
-import org.junit.jupiter.api.Test
-import java.io.File
-import kotlin.io.path.createTempDirectory
+import org.junit.jupiter.api.DynamicTest
+import org.junit.jupiter.api.TestFactory
 import kotlin.test.assertTrue
 
 class CollectionMappingGenerationTest {
-    @Test
-    fun generates_grouping_and_distinct_for_collection_mapping() {
-        val root = createTempDirectory(prefix = "coll-map-int-").toFile()
-        val schemaDir = File(root, "schema").apply { mkdirs() }
-        val queriesDir = File(root, "queries").apply { mkdirs() }
+    @TestFactory
+    fun collectionMappingScenarios(): List<DynamicTest> {
+        return listOf(
+            CodegenCase(
+                name = "generates grouping and distinct for collection mapping",
+                prefix = "coll-map-int-",
+                schemas = listOf(
+                    FixtureFile(
+                        path = "person.sql",
+                        text = """
+                            CREATE TABLE person (
+                              id BLOB PRIMARY KEY NOT NULL,
+                              doc_id TEXT NOT NULL UNIQUE,
+                              name TEXT NOT NULL
+                            ) WITHOUT ROWID;
+                        """.trimIndent(),
+                    ),
+                    FixtureFile(
+                        path = "address.sql",
+                        text = """
+                            CREATE TABLE address (
+                              address_id TEXT PRIMARY KEY NOT NULL,
+                              person_doc_id TEXT NOT NULL,
+                              city TEXT NOT NULL
+                            );
+                        """.trimIndent(),
+                    ),
+                ),
+                queries = listOf(
+                    QueryFile(
+                        namespace = "address",
+                        path = "selectAll.sql",
+                        text = """
+                            -- @@{ queryResult=Row }
+                            SELECT address_id, person_doc_id, city FROM address;
+                        """.trimIndent(),
+                    ),
+                    QueryFile(
+                        namespace = "person",
+                        path = "selectWithAddresses.sql",
+                        text = """
+                            /* @@{ queryResult=RowWithAddresses, collectionKey=doc_id } */
+                            SELECT
+                              p.*,
+                              a.address_id AS addr_address_id,
+                              a.person_doc_id AS addr_person_doc_id,
+                              a.city AS addr_city
 
-        // Schema: person + address
-        File(schemaDir, "person.sql").writeText(
-            """
-            CREATE TABLE person (
-              id BLOB PRIMARY KEY NOT NULL,
-              doc_id TEXT NOT NULL UNIQUE,
-              name TEXT NOT NULL
-            ) WITHOUT ROWID;
-            """.trimIndent()
-        )
-        File(schemaDir, "address.sql").writeText(
-            """
-            CREATE TABLE address (
-              address_id TEXT PRIMARY KEY NOT NULL,
-              person_doc_id TEXT NOT NULL,
-              city TEXT NOT NULL
-            );
-            """.trimIndent()
-        )
+                            /* @@{ dynamicField=addresses,
+                                   mappingType=collection,
+                                   propertyType=List<AddressQuery.SharedResult.Row>,
+                                   sourceTable=a,
+                                   collectionKey=addr_address_id,
+                                   aliasPrefix=addr_ } */
 
-        // Provide shared result for Address
-        val addrDir = File(queriesDir, "address").apply { mkdirs() }
-        File(addrDir, "selectAll.sql").writeText(
-            """
-            -- @@{ queryResult=Row }
-            SELECT address_id, person_doc_id, city FROM address;
-            """.trimIndent()
-        )
+                            FROM person p LEFT JOIN address a ON p.doc_id = a.person_doc_id;
+                        """.trimIndent(),
+                    ),
+                ),
+                generatedFileNamePart = "PersonQuery_SelectWithAddresses",
+                verifyGeneratedText = { text ->
+                    assertHasGroupBy(text)
+                    assertTrue(text.contains(".distinctBy"), "Should distinct collection items by unique key")
+                    assertTrue(text.contains("addresses ="), "Should map collection items from joined rows")
+                },
+            ),
+            CodegenCase(
+                name = "includes per-row dynamic field alongside collection infrastructure",
+                prefix = "perrow-map-int-",
+                dbName = "TestDb2",
+                packageName = "dev.test2",
+                schemas = listOf(
+                    FixtureFile(
+                        path = "person.sql",
+                        text = """
+                            CREATE TABLE person (
+                              id BLOB PRIMARY KEY NOT NULL,
+                              doc_id TEXT NOT NULL UNIQUE
+                            ) WITHOUT ROWID;
+                        """.trimIndent(),
+                    ),
+                    FixtureFile(
+                        path = "detail.sql",
+                        text = """
+                            CREATE TABLE detail (
+                              doc_id TEXT PRIMARY KEY NOT NULL,
+                              info TEXT NOT NULL
+                            );
+                        """.trimIndent(),
+                    ),
+                ),
+                queries = listOf(
+                    QueryFile(
+                        namespace = "detail",
+                        path = "selectAll.sql",
+                        text = """
+                            -- @@{ queryResult=Row }
+                            SELECT doc_id, info FROM detail;
+                        """.trimIndent(),
+                    ),
+                    QueryFile(
+                        namespace = "person",
+                        path = "selectWithDetailAndList.sql",
+                        text = """
+                            /* @@{ queryResult=RowWithDetail, collectionKey=doc_id } */
+                            SELECT
+                              p.*, d.doc_id AS det_doc_id, d.info AS det_info
 
-        // Person query with collection mapping from alias a (aliasPrefix=addr_)
-        val personDir = File(queriesDir, "person").apply { mkdirs() }
-        File(personDir, "selectWithAddresses.sql").writeText(
-            """
-            /* @@{ queryResult=RowWithAddresses, collectionKey=doc_id } */
-            SELECT
-              p.*, 
-              a.address_id AS addr_address_id,
-              a.person_doc_id AS addr_person_doc_id,
-              a.city AS addr_city
+                            /* @@{ dynamicField=primaryDetail,
+                                   mappingType=perRow,
+                                   propertyType=DetailQuery.SharedResult.Row,
+                                   sourceTable=d,
+                                   aliasPrefix=det_ } */
 
-            /* @@{ dynamicField=addresses,
-                   mappingType=collection,
-                   propertyType=List<AddressQuery.SharedResult.Row>,
-                   sourceTable=a,
-                   collectionKey=addr_address_id,
-                   aliasPrefix=addr_ } */
+                            FROM person p LEFT JOIN detail d ON p.doc_id = d.doc_id;
+                        """.trimIndent(),
+                    ),
+                ),
+                generatedFileNamePart = "PersonQuery_SelectWithDetailAndList",
+                verifyGeneratedText = { text ->
+                    assertTrue(
+                        text.contains("primaryDetail ="),
+                        "Per-row dynamic field should be constructed in mapped result",
+                    )
+                },
+            ),
+            CodegenCase(
+                name = "guards per-row dynamic field when collections are present",
+                prefix = "perrow-guard-",
+                dbName = "GuardDb",
+                packageName = "dev.guard",
+                schemas = listOf(
+                    FixtureFile(
+                        path = "person.sql",
+                        text = """
+                            CREATE TABLE person (
+                              id BLOB PRIMARY KEY NOT NULL,
+                              doc_id TEXT NOT NULL UNIQUE,
+                              name TEXT NOT NULL
+                            ) WITHOUT ROWID;
+                        """.trimIndent(),
+                    ),
+                    FixtureFile(
+                        path = "address.sql",
+                        text = """
+                            CREATE TABLE address (
+                              address_id TEXT PRIMARY KEY NOT NULL,
+                              person_doc_id TEXT NOT NULL,
+                              city TEXT NOT NULL
+                            );
+                        """.trimIndent(),
+                    ),
+                    FixtureFile(
+                        path = "detail.sql",
+                        text = """
+                            CREATE TABLE detail (
+                              doc_id TEXT PRIMARY KEY NOT NULL,
+                              info TEXT NOT NULL
+                            );
+                        """.trimIndent(),
+                    ),
+                ),
+                queries = listOf(
+                    QueryFile(
+                        namespace = "address",
+                        path = "selectAll.sql",
+                        text = """
+                            -- @@{ queryResult=Row }
+                            SELECT address_id, person_doc_id, city FROM address;
+                        """.trimIndent(),
+                    ),
+                    QueryFile(
+                        namespace = "detail",
+                        path = "selectAll.sql",
+                        text = """
+                            -- @@{ queryResult=Row }
+                            SELECT doc_id, info FROM detail;
+                        """.trimIndent(),
+                    ),
+                    QueryFile(
+                        namespace = "person",
+                        path = "selectWithAddressesAndDetail.sql",
+                        text = """
+                            /* @@{ queryResult=RowWithData, collectionKey=doc_id } */
+                            SELECT
+                              p.*,
+                              a.address_id AS addr_address_id,
+                              a.person_doc_id AS addr_person_doc_id,
+                              a.city AS addr_city,
+                              d.doc_id AS det_doc_id,
+                              d.info AS det_info
 
-            FROM person p LEFT JOIN address a ON p.doc_id = a.person_doc_id;
-            """.trimIndent()
-        )
+                            /* @@{ dynamicField=addresses,
+                                   mappingType=collection,
+                                   propertyType=List<AddressQuery.SharedResult.Row>,
+                                   sourceTable=a,
+                                   collectionKey=addr_address_id,
+                                   aliasPrefix=addr_ } */
 
-        val outDir = File(root, "out").apply { mkdirs() }
-        generateDatabaseFiles(
-            dbName = "TestDb",
-            sqlDir = root,
-            packageName = "dev.test",
-            outDir = outDir,
-            schemaDatabaseFile = null,
-            debug = false,
-        )
+                            /* @@{ dynamicField=primaryDetail,
+                                   mappingType=perRow,
+                                   propertyType=DetailQuery.SharedResult.Row,
+                                   sourceTable=d,
+                                   aliasPrefix=det_ } */
 
-        val genFile = outDir.walkTopDown().first { it.name.contains("PersonQuery_SelectWithAddresses") && it.extension == "kt" }
-        val text = genFile.readText()
+                            FROM person p
+                            LEFT JOIN address a ON p.doc_id = a.person_doc_id
+                            LEFT JOIN detail d ON p.doc_id = d.doc_id;
+                        """.trimIndent(),
+                    ),
+                ),
+                generatedFileNamePart = "PersonQuery_SelectWithAddressesAndDetail",
+                verifyGeneratedText = { text ->
+                    assertTrue(
+                        text.contains("primaryDetail = rowsForEntity.firstOrNull"),
+                        "Per-row mapping inside collection context should access rowsForEntity with a firstOrNull guard",
+                    )
+                },
+            ),
+            CodegenCase(
+                name = "generates correct distinctBy path for custom dynamic field names",
+                prefix = "custom-field-names-",
+                schemas = listOf(
+                    FixtureFile(
+                        path = "product.sql",
+                        text = """
+                            CREATE TABLE product (
+                              id BLOB PRIMARY KEY NOT NULL,
+                              doc_id TEXT NOT NULL UNIQUE,
+                              name TEXT NOT NULL
+                            ) WITHOUT ROWID;
+                        """.trimIndent(),
+                    ),
+                    FixtureFile(
+                        path = "review.sql",
+                        text = """
+                            CREATE TABLE review (
+                              review_id TEXT PRIMARY KEY NOT NULL,
+                              product_doc_id TEXT NOT NULL,
+                              rating INTEGER NOT NULL,
+                              comment TEXT NOT NULL
+                            );
+                        """.trimIndent(),
+                    ),
+                ),
+                queries = listOf(
+                    QueryFile(
+                        namespace = "review",
+                        path = "selectAll.sql",
+                        text = """
+                            -- @@{ queryResult=DetailedRow }
+                            SELECT
+                              r.review_id,
+                              r.product_doc_id,
+                              r.rating,
+                              r.comment,
+                              p.name AS product_name
 
-        // Verify grouping and distinct are present
-        val hasGroupBy = text.contains("joinedRows.groupBy") || text.contains(".groupBy { row ->")
-        assertTrue(hasGroupBy, "Should group joined rows")
-        assertTrue(text.contains(".distinctBy"), "Should distinct collection items by unique key")
-        // Basic sanity: file contains mapping of collection items
-        assertTrue(text.contains("addresses ="), "Should map collection items from joined rows")
-    }
+                            /* @@{ dynamicField=productInfo,
+                                   mappingType=entity,
+                                   propertyType=ProductQuery.SharedResult.BasicRow,
+                                   sourceTable=p,
+                                   aliasPrefix=product_ } */
 
-    @Test
-    fun per_row_dynamic_field_is_included_alongside_collection() {
-        val root = createTempDirectory(prefix = "perrow-map-int-").toFile()
-        val schemaDir = File(root, "schema").apply { mkdirs() }
-        val queriesDir = File(root, "queries").apply { mkdirs() }
+                            FROM review r
+                            LEFT JOIN product p ON r.product_doc_id = p.doc_id;
+                        """.trimIndent(),
+                    ),
+                    QueryFile(
+                        namespace = "product",
+                        path = "selectBasic.sql",
+                        text = """
+                            -- @@{ queryResult=BasicRow }
+                            SELECT doc_id, name FROM product;
+                        """.trimIndent(),
+                    ),
+                    QueryFile(
+                        namespace = "product",
+                        path = "selectWithReviews.sql",
+                        text = """
+                            /* @@{ queryResult=ProductWithReviewsRow, collectionKey=doc_id } */
+                            SELECT
+                              p.*,
+                              r.review_id AS rev_review_id,
+                              r.product_doc_id AS rev_product_doc_id,
+                              r.rating AS rev_rating,
+                              r.comment AS rev_comment,
+                              p2.name AS rev_product_name
 
-        File(schemaDir, "person.sql").writeText(
-            """
-            CREATE TABLE person (
-              id BLOB PRIMARY KEY NOT NULL,
-              doc_id TEXT NOT NULL UNIQUE
-            ) WITHOUT ROWID;
-            """.trimIndent()
-        )
-        File(schemaDir, "detail.sql").writeText(
-            """
-            CREATE TABLE detail (
-              doc_id TEXT PRIMARY KEY NOT NULL,
-              info TEXT NOT NULL
-            );
-            """.trimIndent()
-        )
+                            /* @@{ dynamicField=customerReviews,
+                                   mappingType=collection,
+                                   propertyType=List<ReviewQuery.SharedResult.DetailedRow>,
+                                   sourceTable=r,
+                                   collectionKey=rev_review_id,
+                                   aliasPrefix=rev_ } */
 
-        val detDir = File(queriesDir, "detail").apply { mkdirs() }
-        File(detDir, "selectAll.sql").writeText(
-            """
-            -- @@{ queryResult=Row }
-            SELECT doc_id, info FROM detail;
-            """.trimIndent()
-        )
-
-        val personDir = File(queriesDir, "person").apply { mkdirs() }
-        File(personDir, "selectWithDetailAndList.sql").writeText(
-            """
-            /* @@{ queryResult=RowWithDetail, collectionKey=doc_id } */
-            SELECT
-              p.*, d.doc_id AS det_doc_id, d.info AS det_info
-
-            /* @@{ dynamicField=primaryDetail,
-                   mappingType=perRow,
-                   propertyType=DetailQuery.SharedResult.Row,
-                   sourceTable=d,
-                   aliasPrefix=det_ } */
-
-            FROM person p LEFT JOIN detail d ON p.doc_id = d.doc_id;
-            """.trimIndent()
-        )
-
-        val outDir = File(root, "out").apply { mkdirs() }
-        generateDatabaseFiles("TestDb2", root, "dev.test2", outDir, null, false)
-
-        val genFile = outDir.walkTopDown().first { it.name.contains("PersonQuery_SelectWithDetailAndList") && it.extension == "kt" }
-        val text = genFile.readText()
-        assertTrue(text.contains("primaryDetail ="), "Per-row dynamic field should be constructed in mapped result")
-    }
-
-    @Test
-    fun per_row_dynamic_field_is_guarded_when_collections_present() {
-        val root = createTempDirectory(prefix = "perrow-guard-").toFile()
-        val schemaDir = File(root, "schema").apply { mkdirs() }
-        val queriesDir = File(root, "queries").apply { mkdirs() }
-
-        File(schemaDir, "person.sql").writeText(
-            """
-            CREATE TABLE person (
-              id BLOB PRIMARY KEY NOT NULL,
-              doc_id TEXT NOT NULL UNIQUE,
-              name TEXT NOT NULL
-            ) WITHOUT ROWID;
-            """.trimIndent()
-        )
-        File(schemaDir, "address.sql").writeText(
-            """
-            CREATE TABLE address (
-              address_id TEXT PRIMARY KEY NOT NULL,
-              person_doc_id TEXT NOT NULL,
-              city TEXT NOT NULL
-            );
-            """.trimIndent()
-        )
-        File(schemaDir, "detail.sql").writeText(
-            """
-            CREATE TABLE detail (
-              doc_id TEXT PRIMARY KEY NOT NULL,
-              info TEXT NOT NULL
-            );
-            """.trimIndent()
-        )
-
-        val addressQueries = File(queriesDir, "address").apply { mkdirs() }
-        File(addressQueries, "selectAll.sql").writeText(
-            """
-            -- @@{ queryResult=Row }
-            SELECT address_id, person_doc_id, city FROM address;
-            """.trimIndent()
-        )
-
-        val detailQueries = File(queriesDir, "detail").apply { mkdirs() }
-        File(detailQueries, "selectAll.sql").writeText(
-            """
-            -- @@{ queryResult=Row }
-            SELECT doc_id, info FROM detail;
-            """.trimIndent()
-        )
-
-        val personQueries = File(queriesDir, "person").apply { mkdirs() }
-        File(personQueries, "selectWithAddressesAndDetail.sql").writeText(
-            """
-            /* @@{ queryResult=RowWithData, collectionKey=doc_id } */
-            SELECT
-              p.*,
-              a.address_id AS addr_address_id,
-              a.person_doc_id AS addr_person_doc_id,
-              a.city AS addr_city,
-              d.doc_id AS det_doc_id,
-              d.info AS det_info
-
-            /* @@{ dynamicField=addresses,
-                   mappingType=collection,
-                   propertyType=List<AddressQuery.SharedResult.Row>,
-                   sourceTable=a,
-                   collectionKey=addr_address_id,
-                   aliasPrefix=addr_ } */
-
-            /* @@{ dynamicField=primaryDetail,
-                   mappingType=perRow,
-                   propertyType=DetailQuery.SharedResult.Row,
-                   sourceTable=d,
-                   aliasPrefix=det_ } */
-
-            FROM person p
-            LEFT JOIN address a ON p.doc_id = a.person_doc_id
-            LEFT JOIN detail d ON p.doc_id = d.doc_id;
-            """.trimIndent()
-        )
-
-        val outDir = File(root, "out").apply { mkdirs() }
-        generateDatabaseFiles(
-            dbName = "GuardDb",
-            sqlDir = root,
-            packageName = "dev.guard",
-            outDir = outDir,
-            schemaDatabaseFile = null,
-            debug = false,
-        )
-
-        val genFile = outDir.walkTopDown().first {
-            it.name.contains("PersonQuery_SelectWithAddressesAndDetail") && it.extension == "kt"
+                            FROM product p
+                            LEFT JOIN review r ON p.doc_id = r.product_doc_id
+                            LEFT JOIN product p2 ON r.product_doc_id = p2.doc_id;
+                        """.trimIndent(),
+                    ),
+                ),
+                generatedFileNamePart = "ProductQuery_SelectWithReviews",
+                verifyGeneratedText = { text ->
+                    assertTrue(text.contains(".distinctBy"), "Should generate distinctBy for collection deduplication")
+                    assertTrue(text.contains("customerReviews ="), "Should map collection items to 'customerReviews' field")
+                    assertHasGroupBy(text)
+                },
+            ),
+        ).map { case ->
+            DynamicTest.dynamicTest(case.name) {
+                runCase(case)
+            }
         }
-        val text = genFile.readText()
-        assertTrue(
-            text.contains("primaryDetail = rowsForEntity.firstOrNull"),
-            "Per-row mapping inside collection context should access rowsForEntity with a firstOrNull guard",
-        )
     }
 
-    @Test
-    fun generates_correct_distinctBy_path_for_custom_dynamic_field_names() {
-        val root = createTempDirectory(prefix = "custom-field-names-").toFile()
-        val schemaDir = File(root, "schema").apply { mkdirs() }
-        val queriesDir = File(root, "queries").apply { mkdirs() }
-
-        // Schema: product + review
-        File(schemaDir, "product.sql").writeText(
-            """
-            CREATE TABLE product (
-              id BLOB PRIMARY KEY NOT NULL,
-              doc_id TEXT NOT NULL UNIQUE,
-              name TEXT NOT NULL
-            ) WITHOUT ROWID;
-            """.trimIndent()
+    private fun runCase(case: CodegenCase) {
+        val fixture = CodegenFixture.create(
+            prefix = case.prefix,
+            dbName = case.dbName,
+            packageName = case.packageName,
         )
-        File(schemaDir, "review.sql").writeText(
-            """
-            CREATE TABLE review (
-              review_id TEXT PRIMARY KEY NOT NULL,
-              product_doc_id TEXT NOT NULL,
-              rating INTEGER NOT NULL,
-              comment TEXT NOT NULL
-            );
-            """.trimIndent()
-        )
+        case.schemas.forEach { fixture.writeSchema(it.path, it.text) }
+        case.queries.forEach { fixture.writeQuery(it.namespace, it.path, it.text) }
 
-        // Review query for shared result with dynamic field
-        val reviewDir = File(queriesDir, "review").apply { mkdirs() }
-        File(reviewDir, "selectAll.sql").writeText(
-            """
-            -- @@{ queryResult=DetailedRow }
-            SELECT
-              r.review_id,
-              r.product_doc_id,
-              r.rating,
-              r.comment,
-              p.name AS product_name
+        fixture.generate()
 
-            /* @@{ dynamicField=productInfo,
-                   mappingType=entity,
-                   propertyType=ProductQuery.SharedResult.BasicRow,
-                   sourceTable=p,
-                   aliasPrefix=product_ } */
-
-            FROM review r
-            LEFT JOIN product p ON r.product_doc_id = p.doc_id;
-            """.trimIndent()
-        )
-
-        // Product basic query for the entity mapping
-        val productDir = File(queriesDir, "product").apply { mkdirs() }
-        File(productDir, "selectBasic.sql").writeText(
-            """
-            -- @@{ queryResult=BasicRow }
-            SELECT doc_id, name FROM product;
-            """.trimIndent()
-        )
-
-        // Product query with collection mapping using custom dynamic field name "customerReviews"
-        File(productDir, "selectWithReviews.sql").writeText(
-            """
-            /* @@{ queryResult=ProductWithReviewsRow, collectionKey=doc_id } */
-            SELECT
-              p.*,
-              r.review_id AS rev_review_id,
-              r.product_doc_id AS rev_product_doc_id,
-              r.rating AS rev_rating,
-              r.comment AS rev_comment,
-              p2.name AS rev_product_name
-
-            /* @@{ dynamicField=customerReviews,
-                   mappingType=collection,
-                   propertyType=List<ReviewQuery.SharedResult.DetailedRow>,
-                   sourceTable=r,
-                   collectionKey=rev_review_id,
-                   aliasPrefix=rev_ } */
-
-            FROM product p
-            LEFT JOIN review r ON p.doc_id = r.product_doc_id
-            LEFT JOIN product p2 ON r.product_doc_id = p2.doc_id;
-            """.trimIndent()
-        )
-
-        val outDir = File(root, "out").apply { mkdirs() }
-        generateDatabaseFiles(
-            dbName = "TestDb",
-            sqlDir = root,
-            packageName = "dev.test",
-            outDir = outDir,
-            schemaDatabaseFile = null,
-            debug = false,
-        )
-
-        val genFile = outDir.walkTopDown().first { it.name.contains("ProductQuery_SelectWithReviews") && it.extension == "kt" }
-        val text = genFile.readText()
-
-        // Verify basic collection mapping functionality
-        assertTrue(text.contains(".distinctBy"), "Should generate distinctBy for collection deduplication")
-        assertTrue(text.contains("customerReviews ="), "Should map collection items to 'customerReviews' field")
-        val hasNestedGroupBy = text.contains(".groupBy { row ->") || text.contains(".groupBy { it")
-        assertTrue(hasNestedGroupBy, "Should group joined rows")
+        case.verifyGeneratedText(fixture.generatedTextContaining(case.generatedFileNamePart))
     }
+
+    private fun assertHasGroupBy(text: String) {
+        val hasGroupBy = text.contains("joinedRows.groupBy") ||
+            text.contains(".groupBy { row ->") ||
+            text.contains(".groupBy { it")
+        assertTrue(hasGroupBy, "Should group joined rows")
+    }
+
+    private data class CodegenCase(
+        val name: String,
+        val prefix: String,
+        val dbName: String = "TestDb",
+        val packageName: String = "dev.test",
+        val schemas: List<FixtureFile>,
+        val queries: List<QueryFile>,
+        val generatedFileNamePart: String,
+        val verifyGeneratedText: (String) -> Unit,
+    )
+
+    private data class FixtureFile(
+        val path: String,
+        val text: String,
+    )
+
+    private data class QueryFile(
+        val namespace: String,
+        val path: String,
+        val text: String,
+    )
 }

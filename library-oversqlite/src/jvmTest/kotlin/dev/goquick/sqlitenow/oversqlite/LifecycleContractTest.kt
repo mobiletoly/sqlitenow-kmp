@@ -151,17 +151,13 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
     fun open_rejectsOmittedSyncKeyConfiguration() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
-        val server = newServer()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users")))
+        withClient(
+            db,
+            syncTables = listOf(SyncTable("users")),
+        ) { client ->
             val error = client.open().exceptionOrNull()
             assertTrue(error != null)
             assertTrue(error.message?.contains("syncKeyColumnName or syncKeyColumns explicitly") == true)
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -169,17 +165,13 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
     fun open_rejectsMissingSyncKeyColumn() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
-        val server = newServer()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "missing_id")))
+        withClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "missing_id")),
+        ) { client ->
             val error = client.open().exceptionOrNull()
             assertTrue(error != null)
             assertTrue(error.message?.contains("does not contain configured primary key column missing_id") == true)
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -552,17 +544,13 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
     fun open_rejectsReservedServerScopeColumnInLocalSchema() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTableWithReservedScopeColumn(db)
-        val server = newServer()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+        withClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+        ) { client ->
             val error = client.open().exceptionOrNull()
             assertTrue(error != null)
             assertTrue(error.message?.contains("must not declare reserved server column _sync_scope_id") == true)
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -570,18 +558,14 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
     fun open_rejectsNonFkClosedManagedSchema() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersAndPostsTables(db)
-        val server = newServer()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("posts", syncKeyColumnName = "id")))
+        withClient(
+            db,
+            syncTables = listOf(SyncTable("posts", syncKeyColumnName = "id")),
+        ) { client ->
             val error = client.open().exceptionOrNull()
             assertTrue(error != null)
             assertTrue(error.message?.contains("managed tables are not FK-closed") == true)
             assertTrue(error.message?.contains("posts.user_id -> users.id") == true)
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -634,17 +618,13 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
     fun open_rejectsSchemaQualifiedTableRegistration() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
-        val server = newServer()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("main.users", syncKeyColumnName = "id")))
+        withClient(
+            db,
+            syncTables = listOf(SyncTable("main.users", syncKeyColumnName = "id")),
+        ) { client ->
             val error = client.open().exceptionOrNull()
             assertTrue(error != null)
             assertTrue(error.message?.contains("must not include a schema qualifier") == true)
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -1240,10 +1220,10 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
     fun writeGuardsRejectApplicationWritesDuringDestructiveTransition() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
-        val server = newServer()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+        withClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+        ) { client ->
             client.open().getOrThrow()
             OversqliteOperationStateStore(db).persistState(
                 OversqliteOperationState(
@@ -1258,10 +1238,6 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
 
             assertTrue(error != null)
             assertTrue(error.message?.contains("SYNC_TRANSITION_PENDING") == true)
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 

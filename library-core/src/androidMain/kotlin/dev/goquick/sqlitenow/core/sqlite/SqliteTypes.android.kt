@@ -15,13 +15,12 @@
  */
 package dev.goquick.sqlitenow.core.sqlite
 
-import androidx.sqlite.SQLiteConnection as AndroidSQLiteConnection
-import androidx.sqlite.SQLiteException as AndroidSQLiteException
-import androidx.sqlite.SQLiteStatement as AndroidSQLiteStatement
+import androidx.sqlite.SQLiteConnection
+import androidx.sqlite.SQLiteStatement
 import androidx.sqlite.execSQL
 
 actual class SqliteConnection internal constructor(
-    internal val delegate: AndroidSQLiteConnection,
+    internal val delegate: SQLiteConnection,
 ) {
     actual fun execSQL(sql: String) = wrapSqliteCall { delegate.execSQL(sql) }
 
@@ -34,7 +33,7 @@ actual class SqliteConnection internal constructor(
 }
 
 actual class SqliteStatement internal constructor(
-    internal val delegate: AndroidSQLiteStatement,
+    internal val delegate: SQLiteStatement,
 ) {
     actual fun bindBlob(index: Int, value: ByteArray) = wrapSqliteCall { delegate.bindBlob(index, value) }
 
@@ -71,16 +70,4 @@ actual class SqliteStatement internal constructor(
     actual fun clearBindings() = wrapSqliteCall { delegate.clearBindings() }
 
     actual fun close() = delegate.close()
-}
-
-private inline fun <T> wrapSqliteCall(block: () -> T): T {
-    return try {
-        block()
-    } catch (t: Throwable) {
-        if (t is AndroidSQLiteException) {
-            throw SqliteException(t.message, t)
-        } else {
-            throw t
-        }
-    }
 }

@@ -27,20 +27,27 @@ object StandardErrorHandler {
      * Handles SQL parsing errors with consistent logging and re-throwing.
      */
     fun handleSqlParsingError(sql: String, error: Exception, context: String = ""): Nothing {
-        val contextInfo = if (context.isNotEmpty()) " in $context" else ""
-        logger.error("Failed to parse SQL statement$contextInfo: ${error.message}")
-        logger.error("SQL statement:\n${formatSqlWithLineNumbers(sql)}")
-        throw RuntimeException("SQL parsing failed$contextInfo", error)
+        handleSqlError(sql, error, context, action = "parse", exceptionNoun = "parsing")
     }
 
     /**
      * Handles SQL execution errors with consistent logging and re-throwing.
      */
     fun handleSqlExecutionError(sql: String, error: Throwable, context: String = ""): Nothing {
+        handleSqlError(sql, error, context, action = "execute", exceptionNoun = "execution")
+    }
+
+    private fun handleSqlError(
+        sql: String,
+        error: Throwable,
+        context: String,
+        action: String,
+        exceptionNoun: String,
+    ): Nothing {
         val contextInfo = if (context.isNotEmpty()) " in $context" else ""
-        logger.error("Failed to execute SQL statement$contextInfo: ${error.message}")
+        logger.error("Failed to $action SQL statement$contextInfo: ${error.message}")
         logger.error("SQL statement:\n${formatSqlWithLineNumbers(sql)}")
-        throw RuntimeException("SQL execution failed$contextInfo", error)
+        throw RuntimeException("SQL $exceptionNoun failed$contextInfo", error)
     }
 
     private fun formatSqlWithLineNumbers(sql: String): String {

@@ -77,6 +77,11 @@ CREATE TABLE person_address
 )
 ```
 
+Unqualified custom types, such as `AddressType`, are resolved in the generated
+database package. Use the fully qualified type name, for example
+`propertyType=org.library.sqlite.AddressType`, when the enum lives in another
+package.
+
 ```kotlin
 enum class AddressType(val value: String) {
     HOME("home"),

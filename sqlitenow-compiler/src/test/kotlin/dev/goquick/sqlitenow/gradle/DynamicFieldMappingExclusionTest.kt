@@ -10,7 +10,8 @@ import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
 import dev.goquick.sqlitenow.gradle.processing.SelectFieldCodeGenerator
 import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
 import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
-import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.DynamicTest
+import org.junit.jupiter.api.TestFactory
 import kotlin.test.assertContains
 import kotlin.test.assertFalse
 
@@ -109,63 +110,55 @@ class DynamicFieldMappingExclusionTest {
         return props
     }
 
-    @Test
-    fun excludesMappedColumnsFromResult_forCollection() {
-        val regularSources = listOf(
-            regularField(label = "id", tableName = "person", originalColumn = "id", dataType = "INTEGER"),
-            regularField(label = "joined_package_doc_id", tableName = "packages", originalColumn = "doc_id"),
-            regularField(label = "joined_package_title", tableName = "packages", originalColumn = "title"),
-        )
-        val dynamic = dynamicField(
-            name = "packageDocs",
+    @TestFactory
+    fun mappedColumnsAreExcludedFromResult(): List<DynamicTest> = listOf(
+        MappedColumnExclusionCase(
+            displayName = "collection mapping",
+            dynamicFieldName = "packageDocs",
             mappingType = AnnotationConstants.MAPPING_TYPE_COLLECTION,
-            sourceTableAlias = "pkg",
-            aliasPrefix = "joined_package_",
-            propertyType = "kotlin.collections.List<ActivityPackageQuery.SharedResult.Row>"
-        )
-
-        val statement = buildStatement(
-            regularSources = regularSources,
-            dynamicFields = listOf(dynamic),
-            tableAliases = mapOf("person" to "person", "pkg" to "packages")
-        )
-
-        val properties = emitProperties(statement)
-        val names = properties.map { it.name }.toSet()
-
-        assertContains(names, "packageDocs")
-        assertFalse(names.contains("joinedPackageDocId"))
-        assertFalse(names.contains("joinedPackageTitle"))
-        assertContains(names, "id")
-    }
-
-    @Test
-    fun excludesMappedColumns_fromPerRow() {
-        val regularSources = listOf(
-            regularField(label = "id", tableName = "person", originalColumn = "id", dataType = "INTEGER"),
-            regularField(label = "joined_package_doc_id", tableName = "packages", originalColumn = "doc_id"),
-            regularField(label = "joined_package_title", tableName = "packages", originalColumn = "title"),
-        )
-        val dynamic = dynamicField(
-            name = "packageDoc",
+            propertyType = "kotlin.collections.List<ActivityPackageQuery.SharedResult.Row>",
+        ),
+        MappedColumnExclusionCase(
+            displayName = "per-row mapping",
+            dynamicFieldName = "packageDoc",
             mappingType = AnnotationConstants.MAPPING_TYPE_PER_ROW,
-            sourceTableAlias = "pkg",
-            aliasPrefix = "joined_package_",
-            propertyType = "ActivityPackageQuery.SharedResult.Row"
-        )
+            propertyType = "ActivityPackageQuery.SharedResult.Row",
+        ),
+    ).map { case ->
+        DynamicTest.dynamicTest(case.displayName) {
+            val dynamic = dynamicField(
+                name = case.dynamicFieldName,
+                mappingType = case.mappingType,
+                sourceTableAlias = "pkg",
+                aliasPrefix = "joined_package_",
+                propertyType = case.propertyType,
+            )
 
-        val statement = buildStatement(
-            regularSources = regularSources,
-            dynamicFields = listOf(dynamic),
-            tableAliases = mapOf("person" to "person", "pkg" to "packages")
-        )
+            val statement = buildStatement(
+                regularSources = packageRegularSources(),
+                dynamicFields = listOf(dynamic),
+                tableAliases = mapOf("person" to "person", "pkg" to "packages"),
+            )
 
-        val properties = emitProperties(statement)
-        val names = properties.map { it.name }.toSet()
+            val names = emitProperties(statement).map { it.name }.toSet()
 
-        assertContains(names, "packageDoc")
-        assertFalse(names.contains("joinedPackageDocId"))
-        assertFalse(names.contains("joinedPackageTitle"))
-        assertContains(names, "id")
+            assertContains(names, case.dynamicFieldName)
+            assertFalse(names.contains("joinedPackageDocId"))
+            assertFalse(names.contains("joinedPackageTitle"))
+            assertContains(names, "id")
+        }
     }
+
+    private fun packageRegularSources(): List<SelectStatement.FieldSource> = listOf(
+        regularField(label = "id", tableName = "person", originalColumn = "id", dataType = "INTEGER"),
+        regularField(label = "joined_package_doc_id", tableName = "packages", originalColumn = "doc_id"),
+        regularField(label = "joined_package_title", tableName = "packages", originalColumn = "title"),
+    )
+
+    private data class MappedColumnExclusionCase(
+        val displayName: String,
+        val dynamicFieldName: String,
+        val mappingType: String,
+        val propertyType: String,
+    )
 }

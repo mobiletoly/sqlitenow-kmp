@@ -25,6 +25,7 @@ import dev.goquick.sqlitenow.gradle.sqlinspect.DeleteStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.InsertStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.UpdateStatement
+import dev.goquick.sqlitenow.gradle.util.addColumnNameVariants
 import java.util.LinkedHashSet
 
 /**
@@ -71,8 +72,7 @@ class ColumnLookup(
     ): AnnotatedCreateTableStatement.Column? {
         val candidates = LinkedHashSet<String>()
         fun addCandidate(name: String?) {
-            if (name.isNullOrBlank()) return
-            addNameVariants(name, candidates)
+            addColumnNameVariants(name, candidates)
         }
 
         addCandidate(field.src.originalColumnName)
@@ -360,25 +360,6 @@ class ColumnLookup(
         }
 
         return null
-    }
-
-    private fun addNameVariants(name: String, sink: MutableSet<String>) {
-        val trimmed = name.trim()
-        if (trimmed.isEmpty()) return
-        sink += trimmed
-
-        val withoutSuffix = trimmed.substringBefore(':')
-        if (withoutSuffix.isNotEmpty()) sink += withoutSuffix
-
-        val afterDot = withoutSuffix.substringAfterLast('.', withoutSuffix)
-        if (afterDot.isNotEmpty()) sink += afterDot
-
-        val segments = afterDot.split('_').filter { it.isNotEmpty() }
-        if (segments.size > 1) {
-            segments.indices.forEach { index ->
-                sink += segments.drop(index).joinToString("_")
-            }
-        }
     }
 
     private fun String?.removePrefixIfMatches(prefix: String): String? {

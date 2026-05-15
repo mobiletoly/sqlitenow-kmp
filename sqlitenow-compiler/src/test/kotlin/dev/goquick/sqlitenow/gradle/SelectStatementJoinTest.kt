@@ -1,345 +1,131 @@
 package dev.goquick.sqlitenow.gradle
 
 import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
-import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
-import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationOverrides
-import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
-import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
+import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestFactory
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 
 class SelectStatementJoinTest {
 
-    @Test
-    fun `simple LEFT JOIN is parsed correctly`() {
-        val statement = AnnotatedSelectStatement(
+    @TestFactory
+    fun `joined table fields are identified correctly`(): List<DynamicTest> = listOf(
+        JoinStatementCase(
+            displayName = "simple LEFT JOIN",
             name = "SelectWithLeftJoin",
-            src = SelectStatement(
-                sql = "SELECT p.id, p.name, a.street FROM Person p LEFT JOIN Address a ON p.id = a.person_id",
-                fromTable = "person",
-                joinTables = listOf("Address"),
-                namedParameters = emptyList(),
-                namedParametersToColumns = emptyMap(),
-                offsetNamedParam = null,
-                limitNamedParam = null,
-                fields = listOf(
-                    SelectStatement.FieldSource("id", "p", "id", "INTEGER"),
-                    SelectStatement.FieldSource("name", "p", "name", "TEXT"),
-                    SelectStatement.FieldSource("street", "a", "street", "TEXT")
-                )
-            ),
-            annotations = StatementAnnotationOverrides(
-                name = null,
-                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                queryResult = null,
-                collectionKey = null
-            ),
-            fields = listOf(
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("id", "p", "id", "INTEGER"),
-                    annotations = FieldAnnotationOverrides.parse(emptyMap())
-                ),
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("name", "p", "name", "TEXT"),
-                    annotations = FieldAnnotationOverrides.parse(emptyMap())
-                ),
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("street", "a", "street", "TEXT"),
-                    annotations = FieldAnnotationOverrides.parse(emptyMap())
-                )
-            )
-        )
-        
-        assertNotNull(statement)
-        assertEquals(1, statement.src.joinTables.size)
-        assertEquals("Address", statement.src.joinTables.first())
-        
-        // Person fields should not be nullable (main table)
-        val personFields = statement.fields.filter { it.src.tableName == "p" }
-        assertEquals(2, personFields.size)
-        
-        // Address fields should be nullable (LEFT JOIN)
-        val addressFields = statement.fields.filter { it.src.tableName == "a" }
-        assertEquals(1, addressFields.size)
-    }
-
-    @Test
-    fun `INNER JOIN is parsed correctly`() {
-        val statement = AnnotatedSelectStatement(
+            sql = "SELECT p.id, p.name, a.street FROM Person p LEFT JOIN Address a ON p.id = a.person_id",
+            joinTables = listOf("Address"),
+            sources = personSources() + fieldSource("street", "a"),
+            expectedFieldCountsByAlias = mapOf("p" to 2, "a" to 1),
+        ),
+        JoinStatementCase(
+            displayName = "INNER JOIN",
             name = "SelectWithInnerJoin",
-            src = SelectStatement(
-                sql = "SELECT p.id, p.name, a.street FROM Person p INNER JOIN Address a ON p.id = a.person_id",
-                fromTable = "person",
-                joinTables = listOf("Address"),
-                namedParameters = emptyList(),
-                namedParametersToColumns = emptyMap(),
-                offsetNamedParam = null,
-                limitNamedParam = null,
-                fields = listOf(
-                    SelectStatement.FieldSource("id", "p", "id", "INTEGER"),
-                    SelectStatement.FieldSource("name", "p", "name", "TEXT"),
-                    SelectStatement.FieldSource("street", "a", "street", "TEXT")
-                )
-            ),
-            annotations = StatementAnnotationOverrides(
-                name = null,
-                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                queryResult = null,
-                collectionKey = null
-            ),
-            fields = listOf(
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("id", "p", "id", "INTEGER"),
-                    annotations = FieldAnnotationOverrides.parse(emptyMap())
-                ),
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("name", "p", "name", "TEXT"),
-                    annotations = FieldAnnotationOverrides.parse(emptyMap())
-                ),
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("street", "a", "street", "TEXT"),
-                    annotations = FieldAnnotationOverrides.parse(emptyMap())
-                )
-            )
-        )
-        
-        assertNotNull(statement)
-        assertEquals(1, statement.src.joinTables.size)
-        assertEquals("Address", statement.src.joinTables.first())
-        
-        // INNER JOIN fields should maintain their original nullability
-        // since INNER JOIN guarantees matching records exist
-    }
-
-    @Test
-    fun `multiple JOINs are parsed correctly`() {
-        val statement = AnnotatedSelectStatement(
+            sql = "SELECT p.id, p.name, a.street FROM Person p INNER JOIN Address a ON p.id = a.person_id",
+            joinTables = listOf("Address"),
+            sources = personSources() + fieldSource("street", "a"),
+            expectedFieldCountsByAlias = mapOf("p" to 2, "a" to 1),
+        ),
+        JoinStatementCase(
+            displayName = "multiple LEFT JOINs",
             name = "SelectWithMultipleJoins",
-            src = SelectStatement(
-                sql = "SELECT p.id, p.name, a.street, c.comment FROM person p LEFT JOIN address a ON p.id = a.person_id LEFT JOIN comment c ON p.id = c.person_id",
-                fromTable = "person",
-                joinTables = listOf("address", "comment"),
-                namedParameters = emptyList(),
-                namedParametersToColumns = emptyMap(),
-                offsetNamedParam = null,
-                limitNamedParam = null,
-                fields = listOf(
-                    SelectStatement.FieldSource("id", "p", "id", "INTEGER"),
-                    SelectStatement.FieldSource("name", "p", "name", "TEXT"),
-                    SelectStatement.FieldSource("street", "a", "street", "TEXT"),
-                    SelectStatement.FieldSource("comment", "c", "comment", "TEXT")
-                )
-            ),
-            annotations = StatementAnnotationOverrides(
-                name = null,
-                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                queryResult = null,
-                collectionKey = null
-            ),
-            fields = listOf(
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("id", "p", "id", "INTEGER"),
-                    annotations = FieldAnnotationOverrides.parse(emptyMap())
-                ),
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("name", "p", "name", "TEXT"),
-                    annotations = FieldAnnotationOverrides.parse(emptyMap())
-                ),
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("street", "a", "street", "TEXT"),
-                    annotations = FieldAnnotationOverrides.parse(emptyMap())
-                ),
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("comment", "c", "comment", "TEXT"),
-                    annotations = FieldAnnotationOverrides.parse(emptyMap())
-                )
-            )
-        )
-        
-        assertNotNull(statement)
-        assertEquals(2, statement.src.joinTables.size)
-        
-        val personFields = statement.fields.filter { it.src.tableName == "p" }
-        assertEquals(2, personFields.size)
-        
-        val addressFields = statement.fields.filter { it.src.tableName == "a" }
-        assertEquals(1, addressFields.size)
-        
-        val commentFields = statement.fields.filter { it.src.tableName == "c" }
-        assertEquals(1, commentFields.size)
-    }
-
-    @Test
-    fun `fields from joined tables are identified correctly`() {
-        val statement = AnnotatedSelectStatement(
+            sql = "SELECT p.id, p.name, a.street, c.comment FROM person p LEFT JOIN address a ON p.id = a.person_id LEFT JOIN comment c ON p.id = c.person_id",
+            joinTables = listOf("address", "comment"),
+            sources = personSources() + listOf(fieldSource("street", "a"), fieldSource("comment", "c")),
+            expectedFieldCountsByAlias = mapOf("p" to 2, "a" to 1, "c" to 1),
+        ),
+        JoinStatementCase(
+            displayName = "joined table field counts",
             name = "SelectWithJoinedFields",
-            src = SelectStatement(
-                sql = "SELECT p.id, p.name, a.street, a.city, c.comment FROM person p LEFT JOIN address a ON p.id = a.person_id LEFT JOIN comment c ON p.id = c.person_id",
-                fromTable = "person",
-                joinTables = listOf("address", "comment"),
-                namedParameters = emptyList(),
-                namedParametersToColumns = emptyMap(),
-                offsetNamedParam = null,
-                limitNamedParam = null,
-                fields = listOf(
-                    SelectStatement.FieldSource("id", "p", "id", "INTEGER"),
-                    SelectStatement.FieldSource("name", "p", "name", "TEXT"),
-                    SelectStatement.FieldSource("street", "a", "street", "TEXT"),
-                    SelectStatement.FieldSource("city", "a", "city", "TEXT"),
-                    SelectStatement.FieldSource("comment", "c", "comment", "TEXT")
-                )
+            sql = "SELECT p.id, p.name, a.street, a.city, c.comment FROM person p LEFT JOIN address a ON p.id = a.person_id LEFT JOIN comment c ON p.id = c.person_id",
+            joinTables = listOf("address", "comment"),
+            sources = personSources() + listOf(
+                fieldSource("street", "a"),
+                fieldSource("city", "a"),
+                fieldSource("comment", "c"),
             ),
-            annotations = StatementAnnotationOverrides(
-                name = null,
-                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                queryResult = null,
-                collectionKey = null
-            ),
-            fields = listOf(
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("id", "p", "id", "INTEGER"),
-                    annotations = FieldAnnotationOverrides.parse(emptyMap())
-                ),
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("name", "p", "name", "TEXT"),
-                    annotations = FieldAnnotationOverrides.parse(emptyMap())
-                ),
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("street", "a", "street", "TEXT"),
-                    annotations = FieldAnnotationOverrides.parse(emptyMap())
-                ),
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("city", "a", "city", "TEXT"),
-                    annotations = FieldAnnotationOverrides.parse(emptyMap())
-                ),
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("comment", "c", "comment", "TEXT"),
-                    annotations = FieldAnnotationOverrides.parse(emptyMap())
-                )
-            )
-        )
-        
-        assertNotNull(statement)
-        
-        val personFields = statement.fields.filter { it.src.tableName == "p" }
-        assertEquals(2, personFields.size)
-        
-        val addressFields = statement.fields.filter { it.src.tableName == "a" }
-        assertEquals(2, addressFields.size)
-        
-        val commentFields = statement.fields.filter { it.src.tableName == "c" }
-        assertEquals(1, commentFields.size)
+            expectedFieldCountsByAlias = mapOf("p" to 2, "a" to 2, "c" to 1),
+        ),
+    ).map { case ->
+        DynamicTest.dynamicTest(case.displayName) {
+            val statement = case.statement()
+
+            assertEquals(case.joinTables, statement.src.joinTables)
+            case.expectedFieldCountsByAlias.forEach { (alias, count) ->
+                assertEquals(count, statement.fields.count { it.src.tableName == alias }, "field count for alias $alias")
+            }
+        }
     }
 
     @Test
     fun `LEFT JOIN fields should be nullable by default`() {
-        val statement = AnnotatedSelectStatement(
+        val statement = joinStatement(
             name = "SelectWithNullableLeftJoin",
-            src = SelectStatement(
-                sql = "SELECT p.id, p.name, a.street FROM Person p LEFT JOIN Address a ON p.id = a.person_id",
-                fromTable = "person",
-                joinTables = listOf("Address"),
-                namedParameters = emptyList(),
-                namedParametersToColumns = emptyMap(),
-                offsetNamedParam = null,
-                limitNamedParam = null,
-                fields = listOf(
-                    SelectStatement.FieldSource("id", "p", "id", "INTEGER"),
-                    SelectStatement.FieldSource("name", "p", "name", "TEXT"),
-                    SelectStatement.FieldSource("street", "a", "street", "TEXT")
-                )
-            ),
-            annotations = StatementAnnotationOverrides(
-                name = null,
-                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                queryResult = null,
-                collectionKey = null
-            ),
-            fields = listOf(
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("id", "p", "id", "INTEGER"),
-                    annotations = FieldAnnotationOverrides.parse(emptyMap())
-                ),
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("name", "p", "name", "TEXT"),
-                    annotations = FieldAnnotationOverrides.parse(emptyMap())
-                ),
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("street", "a", "street", "TEXT"),
-                    annotations = FieldAnnotationOverrides.parse(emptyMap())
-                )
-            )
+            sql = "SELECT p.id, p.name, a.street FROM Person p LEFT JOIN Address a ON p.id = a.person_id",
+            joinTables = listOf("Address"),
+            sources = personSources() + fieldSource("street", "a"),
         )
-        
+
         assertNotNull(statement)
-        
-        // Person fields should not be nullable (main table)
-        val personFields = statement.fields.filter { it.src.tableName == "p" }
-        personFields.forEach { field ->
-            // Main table fields keep their original nullability
-            // This depends on the schema definition
-        }
-        
-        // Address fields should be nullable (LEFT JOIN)
-        val addressFields = statement.fields.filter { it.src.tableName == "a" }
-        addressFields.forEach { field ->
-            // LEFT JOIN fields should be nullable unless explicitly marked notNull
-            // The actual nullability logic is handled in the code generation
-        }
+
+        val streetField = statement.fields.single { it.src.originalColumnName == "street" }
+        assertEquals(null, streetField.annotations.notNull)
     }
 
     @Test
     fun `LEFT JOIN with notNull annotation overrides nullability`() {
-        val statement = AnnotatedSelectStatement(
+        val statement = joinStatement(
             name = "SelectWithNotNullLeftJoin",
-            src = SelectStatement(
-                sql = "SELECT p.id, p.name, a.street FROM Person p LEFT JOIN Address a ON p.id = a.person_id",
-                fromTable = "person",
-                joinTables = listOf("Address"),
-                namedParameters = emptyList(),
-                namedParametersToColumns = emptyMap(),
-                offsetNamedParam = null,
-                limitNamedParam = null,
-                fields = listOf(
-                    SelectStatement.FieldSource("id", "p", "id", "INTEGER"),
-                    SelectStatement.FieldSource("name", "p", "name", "TEXT"),
-                    SelectStatement.FieldSource("street", "a", "street", "TEXT")
-                )
-            ),
-            annotations = StatementAnnotationOverrides(
-                name = null,
-                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                queryResult = null,
-                collectionKey = null
-            ),
-            fields = listOf(
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("id", "p", "id", "INTEGER"),
-                    annotations = FieldAnnotationOverrides.parse(emptyMap())
-                ),
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("name", "p", "name", "TEXT"),
-                    annotations = FieldAnnotationOverrides.parse(emptyMap())
-                ),
-                AnnotatedSelectStatement.Field(
-                    src = SelectStatement.FieldSource("street", "a", "street", "TEXT"),
-                    annotations = FieldAnnotationOverrides.parse(
-                        mapOf(
-                            AnnotationConstants.NOT_NULL to true
-                        )
-                    )
-                )
-            )
+            sql = "SELECT p.id, p.name, a.street FROM Person p LEFT JOIN Address a ON p.id = a.person_id",
+            joinTables = listOf("Address"),
+            sources = personSources() + fieldSource("street", "a"),
+            fieldAnnotations = mapOf("street" to mapOf(AnnotationConstants.NOT_NULL to true)),
         )
-        
+
         assertNotNull(statement)
-        
+
         val streetField = statement.fields.find { it.src.originalColumnName == "street" }
         assertNotNull(streetField)
         assertEquals(true, streetField.annotations.notNull)
-        
-        // Even though it's a LEFT JOIN, the notNull annotation should override the default nullability
+    }
+
+    private data class JoinStatementCase(
+        val displayName: String,
+        val name: String,
+        val sql: String,
+        val joinTables: List<String>,
+        val sources: List<SelectStatement.FieldSource>,
+        val expectedFieldCountsByAlias: Map<String, Int>,
+    ) {
+        fun statement() = joinStatement(
+            name = name,
+            sql = sql,
+            joinTables = joinTables,
+            sources = sources,
+        )
+    }
+
+    private companion object {
+        fun personSources(): List<SelectStatement.FieldSource> = listOf(
+            fieldSource("id", "p", dataType = "INTEGER"),
+            fieldSource("name", "p"),
+        )
+
+        fun joinStatement(
+            name: String,
+            sql: String,
+            joinTables: List<String>,
+            sources: List<SelectStatement.FieldSource>,
+            fieldAnnotations: Map<String, Map<String, Any?>> = emptyMap(),
+        ) = annotatedSelectStatementWithFieldAnnotations(
+            name = name,
+            sql = sql,
+            fromTable = "person",
+            joinTables = joinTables,
+            sources = sources,
+            fieldAnnotations = fieldAnnotations,
+        )
     }
 }

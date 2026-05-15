@@ -24,6 +24,8 @@ internal fun pascalize(source: String): String = source
     .filter { it.isNotBlank() }
     .joinToString("") { it.replaceFirstChar { c -> c.uppercase() } }
 
+internal fun queryNamespaceClassName(namespace: String): String = "${pascalize(namespace)}Query"
+
 internal fun String.lowercaseFirst(): String {
     return this.replaceFirstChar { it.lowercase() }
 }

@@ -1,20 +1,17 @@
 package dev.goquick.sqlitenow.gradle
 
 import org.junit.jupiter.api.Test
-import java.io.File
-import kotlin.io.path.createTempDirectory
 import kotlin.test.assertTrue
 
 class ViewDynamicFieldsIntegrationTest {
     @Test
     fun generates_code_for_select_from_view_with_dynamic_fields() {
         // Arrange: create a temporary SQL directory with schema + queries
-        val root = createTempDirectory(prefix = "view-dyn-int-").toFile()
-        val schemaDir = File(root, "schema").apply { mkdirs() }
-        val queriesDir = File(root, "queries").apply { mkdirs() }
+        val fixture = CodegenFixture.create(prefix = "view-dyn-int-")
 
         // Minimal tables
-        File(schemaDir, "activity.sql").writeText(
+        fixture.writeSchema(
+            "activity.sql",
             """
             CREATE TABLE activity (
                 id BLOB PRIMARY KEY NOT NULL,
@@ -23,7 +20,8 @@ class ViewDynamicFieldsIntegrationTest {
             ) WITHOUT ROWID;
             """.trimIndent()
         )
-        File(schemaDir, "activity_category.sql").writeText(
+        fixture.writeSchema(
+            "activity_category.sql",
             """
             CREATE TABLE activity_category (
                 id BLOB PRIMARY KEY NOT NULL,
@@ -42,8 +40,9 @@ class ViewDynamicFieldsIntegrationTest {
         )
 
         // Queries: shared result for activity_category
-        val qCatDir = File(queriesDir, "activity_category").apply { mkdirs() }
-        File(qCatDir, "selectById.sql").writeText(
+        fixture.writeQuery(
+            "activity_category",
+            "selectById.sql",
             """
             -- @@{ queryResult=Row }
             SELECT doc_id, title, icon FROM activity_category WHERE doc_id = :docId;
@@ -51,8 +50,9 @@ class ViewDynamicFieldsIntegrationTest {
         )
 
         // Query: select from view using act.* and cat.* with dynamic field mapped perRow
-        val qActDir = File(queriesDir, "activity").apply { mkdirs() }
-        File(qActDir, "loadByDocId.sql").writeText(
+        fixture.writeQuery(
+            "activity",
+            "loadByDocId.sql",
             """
             SELECT
                 act.*,
@@ -72,21 +72,11 @@ class ViewDynamicFieldsIntegrationTest {
             """.trimIndent()
         )
 
-        val outDir = File(root, "out").apply { mkdirs() }
-
         // Act: run generation
-        generateDatabaseFiles(
-            dbName = "TestDb",
-            sqlDir = root,
-            packageName = "dev.test",
-            outDir = outDir,
-            schemaDatabaseFile = null,
-            debug = false,
-        )
+        fixture.generate()
 
         // Assert: some expected files exist (ActivityQuery_LoadByDocId should be generated)
-        val generated = outDir.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
+        val generated = fixture.generatedFiles()
         assertTrue(generated.any { it.name.contains("ActivityQuery_LoadByDocId") }, "Expected ActivityQuery_LoadByDocId to be generated")
     }
 }
-

@@ -124,6 +124,110 @@ open class BundleClientContractTestSupport {
             }
         }
 
+    protected suspend fun <T> withClient(
+        db: SafeSQLiteConnection,
+        syncTables: List<SyncTable>,
+        uploadLimit: Int = 200,
+        transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy(),
+        resolver: Resolver = ServerWinsResolver,
+        configureServer: HttpServer.() -> Unit = {},
+        block: suspend (DefaultOversqliteClient) -> T,
+    ): T {
+        val server = newServer().apply(configureServer)
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(
+                db,
+                http,
+                syncTables = syncTables,
+                uploadLimit = uploadLimit,
+                transientRetryPolicy = transientRetryPolicy,
+                resolver = resolver,
+            )
+            return block(client)
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    protected suspend fun <T> withConnectedClient(
+        db: SafeSQLiteConnection,
+        syncTables: List<SyncTable>,
+        uploadLimit: Int = 200,
+        transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy(),
+        resolver: Resolver = ServerWinsResolver,
+        userId: String = "user-1",
+        configureServer: HttpServer.() -> Unit = {},
+        block: suspend (DefaultOversqliteClient) -> T,
+    ): T {
+        return withClient(
+            db,
+            syncTables = syncTables,
+            uploadLimit = uploadLimit,
+            transientRetryPolicy = transientRetryPolicy,
+            resolver = resolver,
+            configureServer = configureServer,
+        ) { client ->
+            client.openAndConnect(userId).getOrThrow()
+            block(client)
+        }
+    }
+
+    protected suspend fun <T> withJsonRouteConnectedClient(
+        db: SafeSQLiteConnection,
+        syncTables: List<SyncTable>,
+        routePath: String,
+        responseBody: String,
+        status: Int = 200,
+        uploadLimit: Int = 200,
+        transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy(),
+        resolver: Resolver = ServerWinsResolver,
+        userId: String = "user-1",
+        block: suspend (DefaultOversqliteClient) -> T,
+    ): T {
+        return withConnectedClient(
+            db,
+            syncTables = syncTables,
+            uploadLimit = uploadLimit,
+            transientRetryPolicy = transientRetryPolicy,
+            resolver = resolver,
+            userId = userId,
+            configureServer = {
+                jsonRoute(routePath, status, responseBody)
+            },
+            block = block,
+        )
+    }
+
+    protected suspend fun <T> withPushServerClient(
+        db: SafeSQLiteConnection,
+        syncTables: List<SyncTable>,
+        uploadLimit: Int = 200,
+        transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy(),
+        resolver: Resolver = ServerWinsResolver,
+        userId: String = "user-1",
+        configurePushServer: FakeChunkedSyncServer.() -> Unit = {},
+        block: suspend (DefaultOversqliteClient, FakeChunkedSyncServer) -> T,
+    ): T {
+        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson).apply(configurePushServer)
+        return withConnectedClient(
+            db,
+            syncTables = syncTables,
+            uploadLimit = uploadLimit,
+            transientRetryPolicy = transientRetryPolicy,
+            resolver = resolver,
+            userId = userId,
+            configureServer = {
+                pushServer.install(this)
+            },
+        ) { client ->
+            block(client, pushServer)
+        }
+    }
+
     protected suspend fun createUsersTable(db: SafeSQLiteConnection) {
         db.execSQL("CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)")
     }
@@ -639,6 +743,12 @@ open class BundleClientContractTestSupport {
         exchange.responseHeaders.add("Content-Type", "application/json")
         exchange.sendResponseHeaders(status, bytes.size.toLong())
         exchange.responseBody.use { it.write(bytes) }
+    }
+
+    protected fun HttpServer.jsonRoute(path: String, status: Int = 200, body: String) {
+        createContext(path) { exchange ->
+            respondJson(exchange, status, body)
+        }
     }
 
     protected fun computeCommittedBundleHash(rows: List<BundleRow>): String {

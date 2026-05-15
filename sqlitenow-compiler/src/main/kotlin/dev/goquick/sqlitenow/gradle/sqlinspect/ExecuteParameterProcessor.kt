@@ -21,6 +21,7 @@ import net.sf.jsqlparser.expression.operators.relational.InExpression
 import net.sf.jsqlparser.parser.SimpleNode
 import net.sf.jsqlparser.statement.Statement
 import net.sf.jsqlparser.statement.select.Select
+import net.sf.jsqlparser.statement.select.WithItem
 import net.sf.jsqlparser.util.deparser.ExpressionDeParser
 import net.sf.jsqlparser.util.deparser.SelectDeParser
 import net.sf.jsqlparser.util.deparser.StatementDeParser
@@ -30,7 +31,8 @@ import net.sf.jsqlparser.util.deparser.StatementDeParser
  * Contains common logic shared between UpdateParametersProcessor and DeleteParametersProcessor.
  */
 abstract class ExecuteParameterProcessor(
-    protected val stmt: Statement
+    protected val stmt: Statement,
+    private val withItemsList: List<WithItem>?,
 ) {
     /** The preprocessed SQL with all named parameters replaced by '?' */
     val processedSql: String
@@ -47,12 +49,6 @@ abstract class ExecuteParameterProcessor(
         parameters = result.second
         parameterCastTypes = result.third
     }
-
-    /**
-     * Abstract method for processing WITH clauses.
-     * Different statement types (UPDATE vs DELETE) handle WITH clauses differently.
-     */
-    protected abstract fun processWithClauses(stmtDp: StatementDeParser, buffer: StringBuilder)
 
     private fun collectParamPairs(): Triple<String, List<String>, Map<String, String>> {
         val seen = mutableListOf<String>()
@@ -95,5 +91,12 @@ abstract class ExecuteParameterProcessor(
         stmt.accept(stmtDp)
 
         return Triple(buffer.toString(), seen, castTypes)
+    }
+
+    private fun processWithClauses(stmtDp: StatementDeParser, buffer: StringBuilder) {
+        withItemsList?.forEach {
+            it.select.accept(stmtDp)
+        }
+        buffer.clear()
     }
 }

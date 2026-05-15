@@ -22,17 +22,12 @@ import org.khronos.webgl.Uint8Array
 actual class SqliteConnection internal constructor(
     private val database: SqlJsDatabase,
 ) {
-    private var transactionDepth = 0
+    private val transactionState = SqliteTransactionState()
     private var exportedBytesCache: ByteArray? = null
 
     actual fun execSQL(sql: String) {
         wrapSqlite {
-            val normalized = sql.trim()
-            when {
-                normalized.startsWith("BEGIN", ignoreCase = true) -> transactionDepth++
-                normalized.startsWith("COMMIT", ignoreCase = true) -> if (transactionDepth > 0) transactionDepth--
-                normalized.startsWith("ROLLBACK", ignoreCase = true) -> if (transactionDepth > 0) transactionDepth--
-            }
+            transactionState.observeExecSql(sql)
             database.exec(sql)
             invalidateExportCache()
         }
@@ -42,11 +37,11 @@ actual class SqliteConnection internal constructor(
         SqliteStatement(this, database.prepare(sql))
     }
 
-    actual fun inTransaction(): Boolean = transactionDepth > 0
+    actual fun inTransaction(): Boolean = transactionState.inTransaction()
 
     actual fun close() {
         wrapSqlite { database.close() }
-        transactionDepth = 0
+        transactionState.reset()
         exportedBytesCache = null
     }
 

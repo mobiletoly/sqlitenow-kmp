@@ -15,21 +15,18 @@
  */
 package dev.goquick.sqlitenow.gradle.generator.query
 
-import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.TypeName
-import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter
 import dev.goquick.sqlitenow.gradle.context.AdapterConfig
 import dev.goquick.sqlitenow.gradle.context.AdapterParameterEmitter
-import dev.goquick.sqlitenow.gradle.context.TypeMapping
 import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedStatement
 import dev.goquick.sqlitenow.gradle.processing.JoinedPropertyNameResolver
 import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
 import dev.goquick.sqlitenow.gradle.processing.SelectFieldCodeGenerator
 import dev.goquick.sqlitenow.gradle.processing.SharedResultTypeUtils
 import dev.goquick.sqlitenow.gradle.util.IndentedCodeBuilder
-import dev.goquick.sqlitenow.gradle.util.pascalize
 
 /**
  * Emits the read* helper functions that materialise statement results into DTOs.
@@ -43,7 +40,6 @@ internal class QueryReadEmitter(
     private val adapterParameterEmitter: AdapterParameterEmitter,
     private val adapterConfig: AdapterConfig,
     private val selectFieldGenerator: SelectFieldCodeGenerator,
-    private val typeMapping: TypeMapping,
     private val resultMappingHelper: ResultMappingHelper,
     private val generateGetterCallWithPrefixes: (
         AnnotatedSelectStatement,
@@ -54,6 +50,7 @@ internal class QueryReadEmitter(
         Map<String, String>,
         List<String>,
     ) -> String,
+    private val generateExecuteReturningGetter: (AnnotatedSelectStatement.Field, TypeName, Int) -> String,
     private val generateDynamicFieldMappingFromJoined: DynamicFieldExpression,
     private val createSelectLikeFieldsFromExecuteReturning: (AnnotatedExecuteStatement) -> List<AnnotatedSelectStatement.Field>,
     private val findMainTableAlias: (List<AnnotatedSelectStatement.Field>) -> String?,
@@ -62,20 +59,11 @@ internal class QueryReadEmitter(
         namespace: String,
         statement: AnnotatedSelectStatement,
     ): FunSpec {
-        val capitalizedNamespace = queryNamespaceName(namespace)
-        val className = statement.getDataClassName()
-        val fnBld = FunSpec.builder("readStatementResult")
-            .addKdoc("Read statement and convert it to ${capitalizedNamespace}.${className}.Result entity")
-        scaffolder.setupStatementFunctionStructure(
-            fnBld = fnBld,
-            statement = statement,
+        val fnBld = createReadStatementResultFunctionBuilder(
             namespace = namespace,
-            className = className,
-            includeParamsParameter = false,
-            adapterType = QueryFunctionScaffolder.AdapterType.RESULT_CONVERSION,
+            statement = statement,
+            resultType = SharedResultTypeUtils.createPublicResultTypeName(packageName, namespace, statement),
         )
-        val publicResultType = resolvePublicResultType(namespace, statement)
-        fnBld.returns(publicResultType)
         addReadStatementResultProcessing(fnBld, statement, namespace)
         return fnBld.build()
     }
@@ -87,11 +75,12 @@ internal class QueryReadEmitter(
         val className = statement.getDataClassName()
         val fnBld = FunSpec.builder("readJoinedStatementResult")
             .addKdoc("Read statement and convert it to joined data class with all fields from the SQL query")
-        scaffolder.setupStatementFunctionStructure(
+        scaffolder.setupFunctionStructure(
             fnBld = fnBld,
             statement = statement,
             namespace = namespace,
             className = className,
+            primaryParameter = QueryFunctionScaffolder.PrimaryParameter.STATEMENT,
             includeParamsParameter = false,
             adapterType = QueryFunctionScaffolder.AdapterType.NONE,
         )
@@ -101,7 +90,7 @@ internal class QueryReadEmitter(
             statement = statement,
             includeMapAdapters = false,
         )
-        val resultType = resolveJoinedResultType(namespace, statement)
+        val resultType = SharedResultTypeUtils.createJoinedResultTypeName(packageName, namespace, statement)
         fnBld.returns(resultType)
         addReadJoinedStatementResultProcessing(fnBld, statement, resultType.simpleName)
         return fnBld.build()
@@ -111,29 +100,35 @@ internal class QueryReadEmitter(
         namespace: String,
         statement: AnnotatedExecuteStatement,
     ): FunSpec {
+        val fnBld = createReadStatementResultFunctionBuilder(
+            namespace = namespace,
+            statement = statement,
+            resultType = SharedResultTypeUtils.createResultTypeName(packageName, namespace, statement),
+        )
+        addReadStatementResultProcessingForExecute(fnBld, statement, namespace)
+        return fnBld.build()
+    }
+
+    private fun createReadStatementResultFunctionBuilder(
+        namespace: String,
+        statement: AnnotatedStatement,
+        resultType: TypeName,
+    ): FunSpec.Builder {
         val capitalizedNamespace = queryNamespaceName(namespace)
         val className = statement.getDataClassName()
         val fnBld = FunSpec.builder("readStatementResult")
             .addKdoc("Read statement and convert it to ${capitalizedNamespace}.${className}.Result entity")
-        scaffolder.setupStatementFunctionStructure(
+        scaffolder.setupFunctionStructure(
             fnBld = fnBld,
             statement = statement,
             namespace = namespace,
             className = className,
+            primaryParameter = QueryFunctionScaffolder.PrimaryParameter.STATEMENT,
             includeParamsParameter = false,
             adapterType = QueryFunctionScaffolder.AdapterType.RESULT_CONVERSION,
         )
-
-        val resultClassName = if (statement.annotations.queryResult != null) {
-            statement.annotations.queryResult!!
-        } else {
-            "${pascalize(namespace)}${className}Result"
-        }
-        val resultType = ClassName(packageName, resultClassName)
         fnBld.returns(resultType)
-
-        addReadStatementResultProcessingForExecute(fnBld, statement, namespace)
-        return fnBld.build()
+        return fnBld
     }
 
     private fun addReadStatementResultProcessing(
@@ -156,7 +151,11 @@ internal class QueryReadEmitter(
         val resultType = SharedResultTypeUtils.createResultTypeString(namespace, statement)
         val capitalizedNamespace = queryNamespaceName(namespace)
         val className = statement.getDataClassName()
-        val paramsString = buildJoinedReadParams(namespace, statement)
+        val paramsString = adapterParameterEmitter.buildSelectReadParamsList(
+            namespace,
+            statement,
+            includeMapAdapters = false,
+        ).joinToString(", ")
         val mapAdapterName = adapterParameterEmitter.mapToAdapterParameterName(namespace, statement)
         val transformationCall = buildString {
             append("    val joinedData = $capitalizedNamespace.$className.readJoinedStatementResult($paramsString)\n")
@@ -265,11 +264,6 @@ internal class QueryReadEmitter(
         )
     }
 
-    private fun buildJoinedReadParams(namespace: String, statement: AnnotatedSelectStatement): String {
-        val params = adapterParameterEmitter.buildJoinedReadParamsList(namespace, statement)
-        return params.joinToString(", ")
-    }
-
     private fun addReadStatementResultProcessingDirect(
         fnBld: FunSpec.Builder,
         statement: AnnotatedSelectStatement,
@@ -332,31 +326,12 @@ internal class QueryReadEmitter(
         return -1
     }
 
-    private fun resolvePublicResultType(
-        namespace: String,
-        statement: AnnotatedSelectStatement,
-    ): TypeName {
-        return resolveMapToType(statement) ?: resolveBaseResultType(namespace, statement)
-    }
-
-    private fun resolveBaseResultType(
-        namespace: String,
-        statement: AnnotatedSelectStatement,
-    ): ClassName {
-        return SharedResultTypeUtils.createResultTypeName(packageName, namespace, statement)
-    }
-
-    private fun resolveMapToType(statement: AnnotatedSelectStatement): TypeName? {
-        val target = statement.annotations.mapTo ?: return null
-        return SqliteTypeToKotlinCodeConverter.parseCustomType(target, packageName)
-    }
-
     private fun addReadStatementResultProcessingForExecute(
         fnBld: FunSpec.Builder,
         statement: AnnotatedExecuteStatement,
         namespace: String,
     ) {
-        val resultType = SharedResultTypeUtils.createResultTypeStringForExecute(namespace, statement)
+        val resultType = SharedResultTypeUtils.createResultTypeString(namespace, statement)
         val selectLikeFields = createSelectLikeFieldsFromExecuteReturning(statement)
         val builder = IndentedCodeBuilder()
         builder.line("return $resultType(")
@@ -367,7 +342,7 @@ internal class QueryReadEmitter(
                 val desiredType = selectFieldGenerator
                     .generateProperty(field, statement.annotations.propertyNameGenerator)
                     .type
-                val getterCall = buildExecuteReturningGetter(field, desiredType, index)
+                val getterCall = generateExecuteReturningGetter(field, desiredType, index)
                 val suffix = if (index == lastIndex) "" else ","
                 line("$propertyName = $getterCall$suffix")
             }
@@ -376,54 +351,4 @@ internal class QueryReadEmitter(
         fnBld.addStatement(builder.build())
     }
 
-    private fun isCustomKotlinType(type: TypeName): Boolean {
-        return !typeMapping.isStandardKotlinType(type.toString())
-    }
-
-    private fun buildExecuteReturningGetter(
-        field: AnnotatedSelectStatement.Field,
-        desiredType: TypeName,
-        columnIndex: Int,
-    ): String {
-        return if (isCustomKotlinType(desiredType) || adapterConfig.hasAdapterAnnotation(field)) {
-            val visibleName = field.src.fieldName
-            val columnName = PropertyNameGeneratorType.LOWER_CAMEL_CASE.convertToPropertyName(visibleName)
-            val adapterParamName = adapterConfig.getOutputAdapterFunctionName(columnName)
-            val inputGetter = typeMapping.getGetterCall(
-                SqliteTypeToKotlinCodeConverter.mapSqlTypeToKotlinType(field.src.dataType),
-                columnIndex,
-                receiver = "statement",
-            )
-            if (desiredType.isNullable) {
-                "if (statement.isNull($columnIndex)) $adapterParamName(null) else $adapterParamName($inputGetter)"
-            } else {
-                "$adapterParamName($inputGetter)"
-            }
-        } else {
-            val baseGetterCall = typeMapping.getGetterCall(
-                desiredType.copy(nullable = false),
-                columnIndex,
-                receiver = "statement",
-            )
-            if (desiredType.isNullable) {
-                "if (statement.isNull($columnIndex)) null else $baseGetterCall"
-            } else {
-                baseGetterCall
-            }
-        }
-    }
-
-    private fun resolveJoinedResultType(
-        namespace: String,
-        statement: AnnotatedSelectStatement,
-    ): ClassName {
-        val className = if (statement.annotations.queryResult != null) {
-            "${statement.annotations.queryResult}_Joined"
-        } else {
-            val baseName = statement.getDataClassName()
-            val resultClassName = "${pascalize(namespace)}${baseName}Result"
-            "${resultClassName}_Joined"
-        }
-        return ClassName(packageName, className)
-    }
 }

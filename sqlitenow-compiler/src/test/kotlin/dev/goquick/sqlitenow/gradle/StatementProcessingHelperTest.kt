@@ -10,7 +10,9 @@ import java.sql.DriverManager
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestFactory
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.io.TempDir
 
@@ -19,46 +21,42 @@ class StatementProcessingHelperTest {
     @TempDir
     lateinit var tempDir: Path
 
-    @Test
-    fun `process query file rejects multiple statements in a single file`() {
-        DriverManager.getConnection("jdbc:sqlite::memory:").use { connection ->
-            connection.createStatement().execute("CREATE TABLE person(id INTEGER PRIMARY KEY, name TEXT)")
-
-            val queriesDir = tempDir.resolve("queries/person").toFile().apply { mkdirs() }
-            val queryFile = File(queriesDir, "invalid.sql").apply {
-                writeText(
-                    """
-                        SELECT * FROM person;
-                        SELECT name FROM person;
-                    """.trimIndent()
-                )
-            }
-
-            val helper = StatementProcessingHelper(connection)
-            val error = assertThrows<RuntimeException> {
-                helper.processQueryFile(queryFile)
-            }
-
-            assertTrue(error.message!!.contains("Only one SQL statement per file is supported"))
+    @TestFactory
+    fun `process query file rejects invalid files`(): List<DynamicTest> = listOf(
+        QueryFileRejectionCase(
+            displayName = "multiple statements in a single file",
+            fileName = "invalid.sql",
+            sql = """
+                SELECT * FROM person;
+                SELECT name FROM person;
+            """.trimIndent(),
+            expectedMessage = "Only one SQL statement per file is supported",
+        ),
+        QueryFileRejectionCase(
+            displayName = "empty SQL files",
+            fileName = "empty.sql",
+            sql = "-- just a comment",
+            expectedMessage = "No SQL statements found",
+        ),
+    ).map { case ->
+        DynamicTest.dynamicTest(case.displayName) {
+            assertQueryFileRejected(case)
         }
     }
 
-    @Test
-    fun `process query file rejects empty SQL files`() {
+    private fun assertQueryFileRejected(case: QueryFileRejectionCase) {
         DriverManager.getConnection("jdbc:sqlite::memory:").use { connection ->
             connection.createStatement().execute("CREATE TABLE person(id INTEGER PRIMARY KEY, name TEXT)")
 
             val queriesDir = tempDir.resolve("queries/person").toFile().apply { mkdirs() }
-            val queryFile = File(queriesDir, "empty.sql").apply {
-                writeText("-- just a comment")
-            }
+            val queryFile = File(queriesDir, case.fileName).apply { writeText(case.sql) }
 
             val helper = StatementProcessingHelper(connection)
             val error = assertThrows<RuntimeException> {
                 helper.processQueryFile(queryFile)
             }
 
-            assertTrue(error.message!!.contains("No SQL statements found"))
+            assertTrue(error.message!!.contains(case.expectedMessage))
         }
     }
 
@@ -153,4 +151,11 @@ class StatementProcessingHelperTest {
             assertEquals(listOf("pwc", "cat"), inheritedDynamicField.aliasPath)
         }
     }
+
+    private data class QueryFileRejectionCase(
+        val displayName: String,
+        val fileName: String,
+        val sql: String,
+        val expectedMessage: String,
+    )
 }

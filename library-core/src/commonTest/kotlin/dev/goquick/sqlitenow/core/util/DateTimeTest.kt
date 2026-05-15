@@ -34,18 +34,47 @@ class DateTimeTest {
 
     @Suppress("DEPRECATION")
     @Test
-    fun testInvalidFormats() {
-        // Test a few key invalid formats that our error handling should catch
-        val invalidFormats = listOf(
-            "",                      // Empty string
-            "2025-05-26",           // Missing time
-            "2025/05/26 19:43:13",  // Wrong separator
-            "not-a-date"            // Completely invalid
+    fun testInvalidTemporalFormats() {
+        val scenarios = listOf(
+            InvalidFormatScenario(
+                name = "timestamp",
+                invalidFormats = listOf(
+                    "",
+                    "2025-05-26",
+                    "2025/05/26 19:43:13",
+                    "not-a-date",
+                ),
+                parse = { invalidFormat -> LocalDateTime.fromSqliteTimestamp(invalidFormat) },
+            ),
+            InvalidFormatScenario(
+                name = "date",
+                invalidFormats = listOf(
+                    "",
+                    "2025-05",
+                    "2025/05/26",
+                    "not-a-date",
+                ),
+                parse = { invalidFormat -> LocalDate.fromSqliteDate(invalidFormat) },
+            ),
+            InvalidFormatScenario(
+                name = "time",
+                invalidFormats = listOf(
+                    "",
+                    "19:43",
+                    "19-43-13",
+                    "not-a-time",
+                ),
+                parse = { invalidFormat -> LocalTime.fromSqliteTime(invalidFormat) },
+            ),
         )
 
-        invalidFormats.forEach { invalidFormat ->
-            assertFailsWith<IllegalArgumentException> {
-                LocalDateTime.fromSqliteTimestamp(invalidFormat)
+        scenarios.forEach { scenario ->
+            scenario.invalidFormats.forEach { invalidFormat ->
+                assertFailsWith<IllegalArgumentException>(
+                    message = "${scenario.name} parser should reject: $invalidFormat",
+                ) {
+                    scenario.parse(invalidFormat)
+                }
             }
         }
     }
@@ -121,23 +150,6 @@ class DateTimeTest {
     }
 
     @Test
-    fun testInvalidDateFormats() {
-        // Test a few key invalid date formats
-        val invalidFormats = listOf(
-            "",                    // Empty string
-            "2025-05",            // Missing day
-            "2025/05/26",         // Wrong separator
-            "not-a-date"          // Completely invalid
-        )
-
-        invalidFormats.forEach { invalidFormat ->
-            assertFailsWith<IllegalArgumentException> {
-                LocalDate.fromSqliteDate(invalidFormat)
-            }
-        }
-    }
-
-    @Test
     fun testDateRoundTripConversion() {
         // Test a few different dates to ensure data integrity
         val testDates = listOf(
@@ -174,23 +186,6 @@ class DateTimeTest {
     }
 
     @Test
-    fun testInvalidTimeFormats() {
-        // Test a few key invalid time formats
-        val invalidFormats = listOf(
-            "",                    // Empty string
-            "19:43",              // Missing seconds
-            "19-43-13",           // Wrong separator
-            "not-a-time"          // Completely invalid
-        )
-
-        invalidFormats.forEach { invalidFormat ->
-            assertFailsWith<IllegalArgumentException> {
-                LocalTime.fromSqliteTime(invalidFormat)
-            }
-        }
-    }
-
-    @Test
     fun testTimeRoundTripConversion() {
         // Test a few different times to ensure data integrity
         val testTimes = listOf(
@@ -205,4 +200,10 @@ class DateTimeTest {
             assertEquals(original, parsed, "Round-trip failed for: $original")
         }
     }
+
+    private data class InvalidFormatScenario(
+        val name: String,
+        val invalidFormats: List<String>,
+        val parse: (String) -> Unit,
+    )
 }

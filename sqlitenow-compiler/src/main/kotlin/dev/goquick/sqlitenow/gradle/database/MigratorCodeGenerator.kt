@@ -104,24 +104,12 @@ internal class MigratorCodeGenerator(
 
     /** Generates a function that executes all SQL statements from a specific version. */
     private fun generateMigrateToVersionFunction(version: Int, statements: List<SqlSingleStatement>): FunSpec {
-        // Create the function builder
-        val functionBuilder = FunSpec.Companion.builder("migrateToVersion$version")
-            .addModifiers(KModifier.PRIVATE, KModifier.SUSPEND)
-            .addParameter("conn", ClassName("dev.goquick.sqlitenow.core", "SafeSQLiteConnection"))
-
-        // Add the function body
-        val codeBlockBuilder = CodeBlock.Companion.builder()
-            .addStatement("// Execute SQL statements for version $version")
-
-        // Add each SQL statement
-        addSqlStatementsToCodeBlock(codeBlockBuilder, statements)
-
-        // Sync triggers deprecated: no trigger generation (handled by client library if needed)
-
-        // Add the code block to the function
-        functionBuilder.addCode(codeBlockBuilder.build())
-
-        return functionBuilder.build()
+        return generateSqlExecutionFunction(
+            functionName = "migrateToVersion$version",
+            statements = statements,
+            headerComment = "Execute SQL statements for version $version",
+            includeDeprecatedSyncComment = true,
+        )
     }
 
     /** Helper function to add SQL statement execution code to a CodeBlock. */
@@ -144,25 +132,12 @@ internal class MigratorCodeGenerator(
 
     /** Generates a function that executes all SQL statements from the schema and batch inspector. */
     private fun generateExecuteSqlFunction(): FunSpec {
-        // Create the function builder
-        val functionBuilder = FunSpec.Companion.builder("executeAllSql")
-            .addModifiers(KModifier.PRIVATE)
-            .addModifiers(KModifier.SUSPEND)
-            .addParameter("conn", ClassName("dev.goquick.sqlitenow.core", "SafeSQLiteConnection"))
-
-        // Add the function body
-        val codeBlockBuilder = CodeBlock.Companion.builder()
-            .addStatement("// Execute schema statements first (CREATE TABLE, CREATE VIEW)")
-
-        // Execute schema statements first
-        addSqlStatementsToCodeBlock(codeBlockBuilder, schemaInspector.sqlStatements)
-
-        // Sync triggers deprecated: no trigger generation (handled by client library if needed)
-
-        // Add the code block to the function
-        functionBuilder.addCode(codeBlockBuilder.build())
-
-        return functionBuilder.build()
+        return generateSqlExecutionFunction(
+            functionName = "executeAllSql",
+            statements = schemaInspector.sqlStatements,
+            headerComment = "Execute schema statements first (CREATE TABLE, CREATE VIEW)",
+            includeDeprecatedSyncComment = true,
+        )
     }
 
     /** Generates a function that executes init SQL statements (only for initial database creation). */
@@ -172,22 +147,30 @@ internal class MigratorCodeGenerator(
             return null
         }
 
-        // Create the function builder
-        val functionBuilder = FunSpec.Companion.builder("executeInitSql")
-            .addModifiers(KModifier.PRIVATE)
-            .addModifiers(KModifier.SUSPEND)
+        return generateSqlExecutionFunction(
+            functionName = "executeInitSql",
+            statements = sqlBatchInspector.sqlStatements,
+            headerComment = "Execute init statements (INSERT, UPDATE, etc.) - only for initial database creation",
+        )
+    }
+
+    private fun generateSqlExecutionFunction(
+        functionName: String,
+        statements: List<SqlSingleStatement>,
+        headerComment: String,
+        includeDeprecatedSyncComment: Boolean = false,
+    ): FunSpec {
+        val functionBuilder = FunSpec.Companion.builder(functionName)
+            .addModifiers(KModifier.PRIVATE, KModifier.SUSPEND)
             .addParameter("conn", ClassName("dev.goquick.sqlitenow.core", "SafeSQLiteConnection"))
 
-        // Add the function body
         val codeBlockBuilder = CodeBlock.Companion.builder()
-            .addStatement("// Execute init statements (INSERT, UPDATE, etc.) - only for initial database creation")
-
-        // Add init statements
-        addSqlStatementsToCodeBlock(codeBlockBuilder, sqlBatchInspector.sqlStatements)
-
-        // Add the code block to the function
+            .addStatement("// $headerComment")
+        addSqlStatementsToCodeBlock(codeBlockBuilder, statements)
+        if (includeDeprecatedSyncComment) {
+            codeBlockBuilder.addStatement("// Sync triggers deprecated: no trigger generation (handled by client library if needed)")
+        }
         functionBuilder.addCode(codeBlockBuilder.build())
-
         return functionBuilder.build()
     }
 

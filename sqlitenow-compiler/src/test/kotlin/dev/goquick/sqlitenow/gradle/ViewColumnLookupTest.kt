@@ -336,52 +336,9 @@ class ViewColumnLookupTest {
         )
 
         // Create VIEW with field annotations
-        val viewWithAnnotations = AnnotatedCreateViewStatement(
-            name = "PersonWithAddressView",
-            src = CreateViewStatement(
-                sql = "CREATE VIEW PersonWithAddressView AS SELECT p.birth_date FROM Person p",
-                viewName = "PersonWithAddressView",
-                selectStatement = SelectStatement(
-                    sql = "SELECT p.birth_date FROM Person p",
-                    fromTable = "person",
-                    joinTables = emptyList(),
-                    namedParameters = emptyList(),
-                    namedParametersToColumns = emptyMap(),
-                    offsetNamedParam = null,
-                    limitNamedParam = null,
-                    fields = listOf(
-                        SelectStatement.FieldSource(
-                            fieldName = "birth_date",
-                            tableName = "person",
-                            originalColumnName = "birth_date",
-                            dataType = "TEXT"
-                        )
-                    )
-                )
-            ),
-            annotations = StatementAnnotationOverrides(
-                name = null,
-                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                queryResult = null,
-                collectionKey = null
-            ),
-            fields = listOf(
-                AnnotatedCreateViewStatement.Field(
-                    src = SelectStatement.FieldSource(
-                        fieldName = "birth_date",
-                        tableName = "person",
-                        originalColumnName = "birth_date",
-                        dataType = "TEXT"
-                    ),
-                    annotations = FieldAnnotationOverrides(
-                        propertyName = "myCustomBirthDate",
-                        propertyType = "kotlinx.datetime.LocalDateTime",
-                        adapter = true,
-                        notNull = null
-                    )
-                )
-            ),
-            dynamicFields = emptyList()
+        val viewWithAnnotations = personBirthDateView(
+            propertyName = "myCustomBirthDate",
+            propertyType = "kotlinx.datetime.LocalDateTime",
         )
 
         // Create SELECT statement that queries the VIEW
@@ -437,125 +394,6 @@ class ViewColumnLookupTest {
     }
 
     @Test
-    @DisplayName("Test that AnnotatedSelectStatement merges VIEW field annotations")
-    fun testAnnotatedSelectStatementViewFieldMerging() {
-        // Create a VIEW with field annotations
-        val viewWithAnnotations = AnnotatedCreateViewStatement(
-            name = "PersonWithAddressView",
-            src = CreateViewStatement(
-                sql = "CREATE VIEW PersonWithAddressView AS SELECT p.birth_date FROM Person p",
-                viewName = "PersonWithAddressView",
-                selectStatement = SelectStatement(
-                    sql = "SELECT p.birth_date FROM Person p",
-                    fromTable = "person",
-                    joinTables = emptyList(),
-                    namedParameters = emptyList(),
-                    namedParametersToColumns = emptyMap(),
-                    offsetNamedParam = null,
-                    limitNamedParam = null,
-                    fields = listOf(
-                        SelectStatement.FieldSource(
-                            fieldName = "birth_date",
-                            tableName = "person",
-                            originalColumnName = "birth_date",
-                            dataType = "TEXT"
-                        )
-                    )
-                )
-            ),
-            annotations = StatementAnnotationOverrides(
-                name = null,
-                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                queryResult = null,
-                collectionKey = null
-            ),
-            fields = listOf(
-                AnnotatedCreateViewStatement.Field(
-                    src = SelectStatement.FieldSource(
-                        fieldName = "birth_date",
-                        tableName = "person",
-                        originalColumnName = "birth_date",
-                        dataType = "TEXT"
-                    ),
-                    annotations = FieldAnnotationOverrides(
-                        propertyName = "myCustomBirthDate",
-                        propertyType = "kotlinx.datetime.LocalDateTime",
-                        adapter = true,
-                        notNull = null
-                    )
-                )
-            ),
-            dynamicFields = emptyList()
-        )
-
-        // Create a SELECT statement that queries the VIEW
-        val selectStatement = SelectStatement(
-            sql = "SELECT * FROM PersonWithAddressView",
-            fromTable = "PersonWithAddressView",
-            joinTables = emptyList(),
-            namedParameters = emptyList(),
-            namedParametersToColumns = emptyMap(),
-            offsetNamedParam = null,
-            limitNamedParam = null,
-            fields = listOf(
-                SelectStatement.FieldSource(
-                    fieldName = "birth_date",
-                    tableName = "PersonWithAddressView",
-                    originalColumnName = "birth_date",
-                    dataType = "TEXT"
-                )
-            )
-        )
-
-        // Create annotation resolver with the VIEW
-        val annotationResolver = FieldAnnotationResolver(emptyList(), listOf(viewWithAnnotations))
-
-        // Build fields with merged annotations manually for the test
-        val fieldAnnotations = extractFieldAssociatedAnnotations(emptyList())
-        val fields = selectStatement.fields.map { column ->
-            val mergedAnnotations = mutableMapOf<String, Any?>()
-
-            // Get resolved annotations from the VIEW
-            val resolvedAnnotations = annotationResolver.getFieldAnnotations("PersonWithAddressView", column.fieldName)
-            if (resolvedAnnotations != null) {
-                FieldAnnotationMerger.mergeFieldAnnotations(mergedAnnotations, resolvedAnnotations)
-            }
-
-            AnnotatedSelectStatement.Field(
-                src = column,
-                annotations = FieldAnnotationOverrides.parse(mergedAnnotations)
-            )
-        }
-
-        // Create the SELECT statement with VIEW annotations
-        val annotatedSelectStatement = AnnotatedSelectStatement(
-            name = "SelectFromView",
-            src = selectStatement,
-            annotations = StatementAnnotationOverrides.parse(extractAnnotations(emptyList())),
-            fields = fields
-        )
-
-        // Verify that VIEW field annotations are merged into the SELECT statement fields
-        assertEquals(1, annotatedSelectStatement.fields.size, "Should have 1 field")
-
-        val birthDateField = annotatedSelectStatement.fields.find { it.src.fieldName == "birth_date" }
-        assertNotNull(birthDateField, "Should find birth_date field")
-
-        // Verify that VIEW annotations are merged
-        assertEquals(
-            "myCustomBirthDate",
-            birthDateField.annotations.propertyName,
-            "Should have VIEW's custom property name"
-        )
-        assertEquals(
-            "kotlinx.datetime.LocalDateTime",
-            birthDateField.annotations.propertyType,
-            "Should have VIEW's custom property type"
-        )
-        assertTrue(birthDateField.annotations.adapter == true, "Should have VIEW's adapter annotation")
-    }
-
-    @Test
     @DisplayName("Test that SelectFieldCodeGenerator uses VIEW field annotations for property generation")
     fun testSelectFieldCodeGeneratorWithViewAnnotations() {
         // Create a SELECT statement field that queries a VIEW with custom annotations
@@ -592,95 +430,154 @@ class ViewColumnLookupTest {
     }
 
     @Test
-    @DisplayName("Test that SELECT statement annotations take precedence over VIEW annotations")
-    fun testSelectStatementAnnotationsPrecedence() {
-        // Create a VIEW with field annotations
-        val viewWithAnnotations = AnnotatedCreateViewStatement(
-            name = "PersonWithAddressView",
-            src = CreateViewStatement(
-                sql = "CREATE VIEW PersonWithAddressView AS SELECT p.birth_date FROM Person p",
-                viewName = "PersonWithAddressView",
-                selectStatement = SelectStatement(
-                    sql = "SELECT p.birth_date FROM Person p",
-                    fromTable = "person",
-                    joinTables = emptyList(),
-                    namedParameters = emptyList(),
-                    namedParametersToColumns = emptyMap(),
-                    offsetNamedParam = null,
-                    limitNamedParam = null,
-                    fields = listOf(
-                        SelectStatement.FieldSource(
-                            fieldName = "birth_date",
-                            tableName = "person",
-                            originalColumnName = "birth_date",
-                            dataType = "TEXT"
-                        )
-                    )
-                )
+    @DisplayName("Test VIEW field annotation merging and SELECT annotation precedence")
+    fun testViewFieldAnnotationResolutionForSelectStatement() {
+        val cases = listOf(
+            ViewFieldAnnotationCase(
+                description = "VIEW annotations are merged",
+                viewPropertyName = "myCustomBirthDate",
+                viewPropertyType = "kotlinx.datetime.LocalDateTime",
+                selectSql = "SELECT * FROM PersonWithAddressView",
+                expectedPropertyName = "myCustomBirthDate",
+                expectedPropertyType = "kotlinx.datetime.LocalDateTime",
+                propertyNameMessage = "Should have VIEW's custom property name",
+                propertyTypeMessage = "Should have VIEW's custom property type",
+                adapterMessage = "Should have VIEW's adapter annotation",
             ),
-            annotations = StatementAnnotationOverrides(
-                name = null,
-                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                queryResult = null,
-                collectionKey = null
-            ),
-            fields = listOf(
-                AnnotatedCreateViewStatement.Field(
-                    src = SelectStatement.FieldSource(
-                        fieldName = "birth_date",
-                        tableName = "person",
-                        originalColumnName = "birth_date",
-                        dataType = "TEXT"
-                    ),
-                    annotations = FieldAnnotationOverrides(
-                        propertyName = "viewPropertyName",
-                        propertyType = "kotlinx.datetime.LocalDate",
-                        adapter = true,
-                        notNull = null
-                    )
-                )
-            ),
-            dynamicFields = emptyList()
-        )
-
-        // Create a SELECT statement that queries the VIEW with its own field annotations
-        val selectStatement = SelectStatement(
-            sql = "SELECT birth_date FROM PersonWithAddressView",
-            fromTable = "PersonWithAddressView",
-            joinTables = emptyList(),
-            namedParameters = emptyList(),
-            namedParametersToColumns = emptyMap(),
-            offsetNamedParam = null,
-            limitNamedParam = null,
-            fields = listOf(
-                SelectStatement.FieldSource(
-                    fieldName = "birth_date",
-                    tableName = "PersonWithAddressView",
-                    originalColumnName = "birth_date",
-                    dataType = "TEXT"
-                )
+            ViewFieldAnnotationCase(
+                description = "SELECT annotations override VIEW annotations",
+                viewPropertyName = "viewPropertyName",
+                viewPropertyType = "kotlinx.datetime.LocalDate",
+                selectSql = "SELECT birth_date FROM PersonWithAddressView",
+                innerComments = listOf(
+                    "-- @@{field=birth_date, propertyName=selectPropertyName, propertyType=kotlinx.datetime.LocalDateTime}"
+                ),
+                expectedPropertyName = "selectPropertyName",
+                expectedPropertyType = "kotlinx.datetime.LocalDateTime",
+                propertyNameMessage = "SELECT statement propertyName should override VIEW propertyName",
+                propertyTypeMessage = "SELECT statement propertyType should override VIEW propertyType",
+                adapterMessage = "Should inherit adapter annotation from VIEW (not overridden)",
             )
         )
 
-        // Create annotation resolver with the VIEW
-        val annotationResolver = FieldAnnotationResolver(emptyList(), listOf(viewWithAnnotations))
+        cases.forEach { case ->
+            val viewWithAnnotations = personBirthDateView(
+                propertyName = case.viewPropertyName,
+                propertyType = case.viewPropertyType,
+            )
+            val annotatedSelectStatement = annotatedSelectFromView(
+                selectStatement = selectFromPersonWithAddressView(case.selectSql),
+                viewWithAnnotations = viewWithAnnotations,
+                innerComments = case.innerComments,
+            )
 
-        // Build fields with merged annotations manually for the test
-        val innerComments =
-            listOf("-- @@{field=birth_date, propertyName=selectPropertyName, propertyType=kotlinx.datetime.LocalDateTime}")
+            assertBirthDateFieldAnnotations(
+                annotatedSelectStatement = annotatedSelectStatement,
+                expectedPropertyName = case.expectedPropertyName,
+                expectedPropertyType = case.expectedPropertyType,
+                propertyNameMessage = "${case.description}: ${case.propertyNameMessage}",
+                propertyTypeMessage = "${case.description}: ${case.propertyTypeMessage}",
+                adapterMessage = "${case.description}: ${case.adapterMessage}",
+            )
+        }
+    }
+
+    private data class ViewFieldAnnotationCase(
+        val description: String,
+        val viewPropertyName: String,
+        val viewPropertyType: String,
+        val selectSql: String,
+        val expectedPropertyName: String,
+        val expectedPropertyType: String,
+        val propertyNameMessage: String,
+        val propertyTypeMessage: String,
+        val adapterMessage: String,
+        val innerComments: List<String> = emptyList(),
+    )
+
+    private fun assertBirthDateFieldAnnotations(
+        annotatedSelectStatement: AnnotatedSelectStatement,
+        expectedPropertyName: String,
+        expectedPropertyType: String,
+        propertyNameMessage: String,
+        propertyTypeMessage: String,
+        adapterMessage: String,
+    ) {
+        assertEquals(1, annotatedSelectStatement.fields.size, "Should have 1 field")
+
+        val birthDateField = annotatedSelectStatement.fields.find { it.src.fieldName == BIRTH_DATE_COLUMN }
+        assertNotNull(birthDateField, "Should find birth_date field")
+
+        assertEquals(expectedPropertyName, birthDateField.annotations.propertyName, propertyNameMessage)
+        assertEquals(expectedPropertyType, birthDateField.annotations.propertyType, propertyTypeMessage)
+        assertTrue(birthDateField.annotations.adapter == true, adapterMessage)
+    }
+
+    private fun personBirthDateView(
+        propertyName: String,
+        propertyType: String,
+        adapter: Boolean = true,
+    ): AnnotatedCreateViewStatement = AnnotatedCreateViewStatement(
+        name = PERSON_WITH_ADDRESS_VIEW,
+        src = CreateViewStatement(
+            sql = "CREATE VIEW $PERSON_WITH_ADDRESS_VIEW AS SELECT p.$BIRTH_DATE_COLUMN FROM Person p",
+            viewName = PERSON_WITH_ADDRESS_VIEW,
+            selectStatement = SelectStatement(
+                sql = "SELECT p.$BIRTH_DATE_COLUMN FROM Person p",
+                fromTable = "person",
+                joinTables = emptyList(),
+                namedParameters = emptyList(),
+                namedParametersToColumns = emptyMap(),
+                offsetNamedParam = null,
+                limitNamedParam = null,
+                fields = listOf(personBirthDateFieldSource(tableName = "person"))
+            )
+        ),
+        annotations = StatementAnnotationOverrides(
+            name = null,
+            propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
+            queryResult = null,
+            collectionKey = null
+        ),
+        fields = listOf(
+            AnnotatedCreateViewStatement.Field(
+                src = personBirthDateFieldSource(tableName = "person"),
+                annotations = FieldAnnotationOverrides(
+                    propertyName = propertyName,
+                    propertyType = propertyType,
+                    adapter = adapter,
+                    notNull = null
+                )
+            )
+        ),
+        dynamicFields = emptyList()
+    )
+
+    private fun selectFromPersonWithAddressView(sql: String): SelectStatement = SelectStatement(
+        sql = sql,
+        fromTable = PERSON_WITH_ADDRESS_VIEW,
+        joinTables = emptyList(),
+        namedParameters = emptyList(),
+        namedParametersToColumns = emptyMap(),
+        offsetNamedParam = null,
+        limitNamedParam = null,
+        fields = listOf(personBirthDateFieldSource(tableName = PERSON_WITH_ADDRESS_VIEW))
+    )
+
+    private fun annotatedSelectFromView(
+        selectStatement: SelectStatement,
+        viewWithAnnotations: AnnotatedCreateViewStatement,
+        innerComments: List<String> = emptyList(),
+    ): AnnotatedSelectStatement {
+        val annotationResolver = FieldAnnotationResolver(emptyList(), listOf(viewWithAnnotations))
         val fieldAnnotations = extractFieldAssociatedAnnotations(innerComments)
         val fields = selectStatement.fields.map { column ->
             val mergedAnnotations = mutableMapOf<String, Any?>()
 
-            // Get resolved annotations from the VIEW (as base)
-            val resolvedAnnotations = annotationResolver.getFieldAnnotations("PersonWithAddressView", column.fieldName)
-            if (resolvedAnnotations != null) {
-                FieldAnnotationMerger.mergeFieldAnnotations(mergedAnnotations, resolvedAnnotations)
+            annotationResolver.getFieldAnnotations(PERSON_WITH_ADDRESS_VIEW, column.fieldName)?.let {
+                FieldAnnotationMerger.mergeFieldAnnotations(mergedAnnotations, it)
             }
-
-            // Override with SELECT statement annotations (they take precedence)
-            val selectAnnotations = fieldAnnotations[column.fieldName] ?: emptyMap()
-            mergedAnnotations.putAll(selectAnnotations)
+            mergedAnnotations.putAll(fieldAnnotations[column.fieldName].orEmpty())
 
             AnnotatedSelectStatement.Field(
                 src = column,
@@ -688,34 +585,24 @@ class ViewColumnLookupTest {
             )
         }
 
-        // Create the SELECT statement with both VIEW and SELECT annotations
-        val annotatedSelectStatement = AnnotatedSelectStatement(
+        return AnnotatedSelectStatement(
             name = "SelectFromView",
             src = selectStatement,
             annotations = StatementAnnotationOverrides.parse(extractAnnotations(emptyList())),
             fields = fields
         )
+    }
 
-        // Verify that SELECT statement annotations take precedence over VIEW annotations
-        assertEquals(1, annotatedSelectStatement.fields.size, "Should have 1 field")
+    private fun personBirthDateFieldSource(tableName: String): SelectStatement.FieldSource =
+        SelectStatement.FieldSource(
+            fieldName = BIRTH_DATE_COLUMN,
+            tableName = tableName,
+            originalColumnName = BIRTH_DATE_COLUMN,
+            dataType = "TEXT"
+        )
 
-        val birthDateField = annotatedSelectStatement.fields.find { it.src.fieldName == "birth_date" }
-        assertNotNull(birthDateField, "Should find birth_date field")
-
-        // SELECT statement annotations should override VIEW annotations
-        assertEquals(
-            "selectPropertyName",
-            birthDateField.annotations.propertyName,
-            "SELECT statement propertyName should override VIEW propertyName"
-        )
-        assertEquals(
-            "kotlinx.datetime.LocalDateTime",
-            birthDateField.annotations.propertyType,
-            "SELECT statement propertyType should override VIEW propertyType"
-        )
-        assertTrue(
-            birthDateField.annotations.adapter == true,
-            "Should inherit adapter annotation from VIEW (not overridden)"
-        )
+    private companion object {
+        const val PERSON_WITH_ADDRESS_VIEW = "PersonWithAddressView"
+        const val BIRTH_DATE_COLUMN = "birth_date"
     }
 }

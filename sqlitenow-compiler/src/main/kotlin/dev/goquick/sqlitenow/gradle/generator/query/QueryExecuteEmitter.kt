@@ -19,7 +19,6 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
-import com.squareup.kotlinpoet.TypeName
 import dev.goquick.sqlitenow.gradle.util.IndentedCodeBuilder
 import dev.goquick.sqlitenow.gradle.context.AdapterParameterEmitter
 import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
@@ -27,10 +26,8 @@ import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateViewStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedStatement
-import dev.goquick.sqlitenow.gradle.util.pascalize
 import dev.goquick.sqlitenow.gradle.processing.SharedResultTypeUtils
 import dev.goquick.sqlitenow.gradle.processing.StatementUtils
-import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter
 
 /**
  * Emits the suspend execute helpers (SELECT, INSERT/UPDATE/DELETE) that sit on generated query classes.
@@ -68,9 +65,17 @@ internal class QueryExecuteEmitter(
             .addModifiers(KModifier.SUSPEND)
             .addKdoc(kdoc)
 
-        scaffolder.setupExecuteFunctionStructure(fnBld, statement, namespace, className)
+        scaffolder.setupFunctionStructure(
+            fnBld = fnBld,
+            statement = statement,
+            namespace = namespace,
+            className = className,
+            primaryParameter = QueryFunctionScaffolder.PrimaryParameter.CONNECTION,
+            includeParamsParameter = true,
+            adapterType = QueryFunctionScaffolder.AdapterType.PARAMETER_BINDING_AND_RESULT_CONVERSION,
+        )
 
-        val publicResultType = resolvePublicResultType(namespace, statement)
+        val publicResultType = SharedResultTypeUtils.createPublicResultTypeName(packageName, namespace, statement)
         val returnType = when (functionName) {
             "executeAsList" -> ClassName("kotlin.collections", "List").parameterizedBy(publicResultType)
             "executeAsOne" -> publicResultType
@@ -94,15 +99,18 @@ internal class QueryExecuteEmitter(
             .addModifiers(KModifier.SUSPEND)
             .addKdoc("${if (hasReturning) "Executes and returns results from" else "Executes"} the ${statement.name} query.")
 
-        scaffolder.setupExecuteFunctionStructure(fnBld, statement, namespace, className)
+        scaffolder.setupFunctionStructure(
+            fnBld = fnBld,
+            statement = statement,
+            namespace = namespace,
+            className = className,
+            primaryParameter = QueryFunctionScaffolder.PrimaryParameter.CONNECTION,
+            includeParamsParameter = true,
+            adapterType = QueryFunctionScaffolder.AdapterType.PARAMETER_BINDING_AND_RESULT_CONVERSION,
+        )
 
         if (hasReturning) {
-            val resultClassName = if (statement.annotations.queryResult != null) {
-                statement.annotations.queryResult!!
-            } else {
-                "${pascalize(namespace)}${className}Result"
-            }
-            val resultType = ClassName(packageName, resultClassName)
+            val resultType = SharedResultTypeUtils.createResultTypeName(packageName, namespace, statement)
             when (functionName) {
                 "executeReturningList" ->
                     fnBld.returns(ClassName("kotlin.collections", "List").parameterizedBy(resultType))
@@ -201,93 +209,58 @@ internal class QueryExecuteEmitter(
         functionName: String,
     ) {
         val capitalizedNamespace = queryNamespaceName(namespace)
-        val resultType = resolvePublicResultTypeString(namespace, statement)
-        val joinedParams = adapterParameterEmitter.buildJoinedReadParamsList(namespace, statement).joinToString(", ")
-        val readParams = adapterParameterEmitter.buildReadStatementParamsList(namespace, statement).joinToString(", ")
+        val resultType = SharedResultTypeUtils.createPublicResultTypeString(namespace, statement)
+        val joinedParams = adapterParameterEmitter.buildSelectReadParamsList(
+            namespace,
+            statement,
+            includeMapAdapters = false,
+        ).joinToString(", ")
+        val readParams = adapterParameterEmitter.buildSelectReadParamsList(namespace, statement).joinToString(", ")
         val mapAdapterName = adapterParameterEmitter.mapToAdapterParameterName(namespace, statement)
-        builder.line("statement.use { statement ->")
-        builder.indent(by = 2) {
+        addStatementUseBlock(builder) {
             when (functionName) {
                 "executeAsList" -> {
                     if (statement.hasCollectionMapping()) {
                         collectionMappingBuilder(this, statement, namespace, className, joinedParams, mapAdapterName)
                     } else {
-                        line("val results = mutableListOf<$resultType>()")
-                        line("while (statement.step()) {")
-                        indent { line("results.add($capitalizedNamespace.$className.readStatementResult($readParams))") }
-                        line("}")
-                        line("results")
+                        addReadList(
+                            resultType = resultType,
+                            readExpression = "$capitalizedNamespace.$className.readStatementResult($readParams)",
+                        )
                     }
                 }
 
                 "executeAsOne" -> {
                     if (statement.hasCollectionMapping()) {
-                        line("val results = run {")
-                        indent {
-                            collectionMappingBuilder(
-                                this,
-                                statement,
-                                namespace,
-                                className,
-                                joinedParams,
-                                mapAdapterName,
-                            )
-                        }
-                        line("}")
-                        line("when {")
-                        indent {
-                            line("results.isEmpty() -> throw IllegalStateException(\"Query returned no results, but exactly one result was expected\")")
-                            line("results.size > 1 -> throw IllegalStateException(\"Query returned more than one result, but exactly one result was expected\")")
-                            line("else -> results.first()")
-                        }
-                        line("}")
+                        addCollectionResultsRun(statement, namespace, className, joinedParams, mapAdapterName)
+                        addExactlyOneResult(
+                            noResultsMessage = "Query returned no results, but exactly one result was expected",
+                            tooManyResultsMessage = "Query returned more than one result, but exactly one result was expected",
+                        )
                     } else {
-                        line("if (statement.step()) {")
-                        indent { line("$capitalizedNamespace.$className.readStatementResult($readParams)") }
-                        line("} else {")
-                        indent { line("throw IllegalStateException(\"Query returned no results, but exactly one result was expected\")") }
-                        line("}")
+                        addReadOneOrThrow(
+                            readExpression = "$capitalizedNamespace.$className.readStatementResult($readParams)",
+                            noResultsMessage = "Query returned no results, but exactly one result was expected",
+                        )
                     }
                 }
 
                 "executeAsOneOrNull" -> {
                     if (statement.hasCollectionMapping()) {
-                        line("val results = run {")
-                        indent {
-                            collectionMappingBuilder(
-                                this,
-                                statement,
-                                namespace,
-                                className,
-                                joinedParams,
-                                mapAdapterName,
-                            )
-                        }
-                        line("}")
-                        line("when {")
-                        indent {
-                            line("results.isEmpty() -> null")
-                            line("results.size > 1 -> throw IllegalStateException(\"Query returned more than one result, but at most one result was expected\")")
-                            line("else -> results.first()")
-                        }
-                        line("}")
+                        addCollectionResultsRun(statement, namespace, className, joinedParams, mapAdapterName)
+                        addAtMostOneResult(
+                            tooManyResultsMessage = "Query returned more than one result, but at most one result was expected",
+                        )
                     } else {
-                        line("if (statement.step()) {")
-                        indent { line("$capitalizedNamespace.$className.readStatementResult($readParams)") }
-                        line("} else {")
-                        indent { line("null") }
-                        line("}")
+                        addReadOneOrNull("$capitalizedNamespace.$className.readStatementResult($readParams)")
                     }
                 }
             }
         }
-        builder.line("}")
     }
 
     private fun addExecuteStatementImplementationToBuilder(builder: IndentedCodeBuilder) {
-        builder.line("statement.use { statement ->")
-        builder.indent(by = 2) { line("statement.step()") }
-        builder.line("}")
+        addStatementUseBlock(builder) { line("statement.step()") }
     }
 
     private fun addExecuteReturningStatementImplementationToBuilder(
@@ -299,97 +272,134 @@ internal class QueryExecuteEmitter(
     ) {
         val capitalizedNamespace = queryNamespaceName(namespace)
         val paramsString = adapterParameterEmitter.buildExecuteReadParamsList(statement).joinToString(", ")
-        val resultTypeString = SharedResultTypeUtils.createResultTypeStringForExecute(namespace, statement)
+        val resultTypeString = SharedResultTypeUtils.createResultTypeString(namespace, statement)
         when (functionName) {
             "executeReturningList" -> {
-                builder.line("statement.use { statement ->")
-                builder.indent(by = 2) {
-                    line("val results = mutableListOf<$resultTypeString>()")
-                    line("while (statement.step()) {")
-                    indent(by = 2) {
-                        line("results.add($capitalizedNamespace.$className.readStatementResult($paramsString))")
-                    }
-                    line("}")
-                    line("results")
+                addStatementUseBlock(builder) {
+                    addReadList(
+                        resultType = resultTypeString,
+                        readExpression = "$capitalizedNamespace.$className.readStatementResult($paramsString)",
+                    )
                 }
-                builder.line("}")
             }
 
             "executeReturningOne" -> {
-                builder.line("statement.use { statement ->")
-                builder.indent(by = 2) {
-                    line("if (statement.step()) {")
-                    indent(by = 2) {
-                        line("$capitalizedNamespace.$className.readStatementResult($paramsString)")
-                    }
-                    line("} else {")
-                    indent(by = 2) {
-                        line("throw IllegalStateException(\"Statement with RETURNING returned no results, but exactly one result was expected\")")
-                    }
-                    line("}")
+                addStatementUseBlock(builder) {
+                    addReadOneOrThrow(
+                        readExpression = "$capitalizedNamespace.$className.readStatementResult($paramsString)",
+                        noResultsMessage = "Statement with RETURNING returned no results, but exactly one result was expected",
+                    )
                 }
-                builder.line("}")
             }
 
             "executeReturningOneOrNull" -> {
-                builder.line("statement.use { statement ->")
-                builder.indent(by = 2) {
-                    line("if (statement.step()) {")
-                    indent(by = 2) {
-                        line("$capitalizedNamespace.$className.readStatementResult($paramsString)")
-                    }
-                    line("} else {")
-                    indent(by = 2) {
-                        line("null")
-                    }
-                    line("}")
+                addStatementUseBlock(builder) {
+                    addReadOneOrNull("$capitalizedNamespace.$className.readStatementResult($paramsString)")
                 }
-                builder.line("}")
             }
 
             else -> {
-                builder.line("statement.use { statement ->")
-                builder.indent(by = 2) {
-                    line("if (statement.step()) {")
-                    indent(by = 2) {
-                        line("$capitalizedNamespace.$className.readStatementResult($paramsString)")
-                    }
-                    line("} else {")
-                    indent(by = 2) {
-                        line("throw IllegalStateException(\"Statement with RETURNING returned no results\")")
-                    }
-                    line("}")
+                addStatementUseBlock(builder) {
+                    addReadOneOrThrow(
+                        readExpression = "$capitalizedNamespace.$className.readStatementResult($paramsString)",
+                        noResultsMessage = "Statement with RETURNING returned no results",
+                    )
                 }
-                builder.line("}")
             }
         }
     }
 
-    private fun resolvePublicResultType(
-        namespace: String,
-        statement: AnnotatedSelectStatement,
-    ): TypeName {
-        return resolveMapToType(statement) ?: resolveBaseResultType(namespace, statement)
+    private fun addStatementUseBlock(
+        builder: IndentedCodeBuilder,
+        block: IndentedCodeBuilder.() -> Unit,
+    ) {
+        builder.line("statement.use { statement ->")
+        builder.indent(by = 2, block)
+        builder.line("}")
     }
 
-    private fun resolvePublicResultTypeString(
-        namespace: String,
-        statement: AnnotatedSelectStatement,
-    ): String {
-        val override = statement.annotations.mapTo?.trim()
-        if (!override.isNullOrEmpty()) return override
-        return SharedResultTypeUtils.createResultTypeString(namespace, statement)
+    private fun IndentedCodeBuilder.addReadList(
+        resultType: String,
+        readExpression: String,
+    ) {
+        line("val results = mutableListOf<$resultType>()")
+        line("while (statement.step()) {")
+        indent(by = 2) {
+            line("results.add($readExpression)")
+        }
+        line("}")
+        line("results")
     }
 
-    private fun resolveBaseResultType(
-        namespace: String,
-        statement: AnnotatedSelectStatement,
-    ): ClassName {
-        return SharedResultTypeUtils.createResultTypeName(packageName, namespace, statement)
+    private fun IndentedCodeBuilder.addReadOneOrThrow(
+        readExpression: String,
+        noResultsMessage: String,
+    ) {
+        line("if (statement.step()) {")
+        indent(by = 2) {
+            line(readExpression)
+        }
+        line("} else {")
+        indent(by = 2) {
+            line("throw IllegalStateException(\"$noResultsMessage\")")
+        }
+        line("}")
     }
 
-    private fun resolveMapToType(statement: AnnotatedSelectStatement): TypeName? {
-        val target = statement.annotations.mapTo ?: return null
-        return SqliteTypeToKotlinCodeConverter.parseCustomType(target, packageName)
+    private fun IndentedCodeBuilder.addReadOneOrNull(readExpression: String) {
+        line("if (statement.step()) {")
+        indent(by = 2) {
+            line(readExpression)
+        }
+        line("} else {")
+        indent(by = 2) {
+            line("null")
+        }
+        line("}")
     }
+
+    private fun IndentedCodeBuilder.addCollectionResultsRun(
+        statement: AnnotatedSelectStatement,
+        namespace: String,
+        className: String,
+        joinedParams: String,
+        mapAdapterName: String?,
+    ) {
+        line("val results = run {")
+        indent(by = 2) {
+            collectionMappingBuilder(
+                this,
+                statement,
+                namespace,
+                className,
+                joinedParams,
+                mapAdapterName,
+            )
+        }
+        line("}")
+    }
+
+    private fun IndentedCodeBuilder.addExactlyOneResult(
+        noResultsMessage: String,
+        tooManyResultsMessage: String,
+    ) {
+        line("when {")
+        indent(by = 2) {
+            line("results.isEmpty() -> throw IllegalStateException(\"$noResultsMessage\")")
+            line("results.size > 1 -> throw IllegalStateException(\"$tooManyResultsMessage\")")
+            line("else -> results.first()")
+        }
+        line("}")
+    }
+
+    private fun IndentedCodeBuilder.addAtMostOneResult(tooManyResultsMessage: String) {
+        line("when {")
+        indent(by = 2) {
+            line("results.isEmpty() -> null")
+            line("results.size > 1 -> throw IllegalStateException(\"$tooManyResultsMessage\")")
+            line("else -> results.first()")
+        }
+        line("}")
+    }
+
 }

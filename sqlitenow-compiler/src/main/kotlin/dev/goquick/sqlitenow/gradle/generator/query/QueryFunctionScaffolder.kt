@@ -23,6 +23,7 @@ import dev.goquick.sqlitenow.gradle.context.AdapterParameterEmitter
 import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedStatement
+import dev.goquick.sqlitenow.gradle.util.queryParamsTypeName
 
 /**
  * Provides the shared receiver/parameter boilerplate for generated query extension functions.
@@ -38,36 +39,76 @@ internal class QueryFunctionScaffolder(
         NONE,
         PARAMETER_BINDING,
         RESULT_CONVERSION,
+        PARAMETER_BINDING_AND_RESULT_CONVERSION,
+    }
+
+    enum class PrimaryParameter(
+        val parameterName: String,
+        val typeName: ClassName,
+    ) {
+        CONNECTION(
+            parameterName = "conn",
+            typeName = ClassName("dev.goquick.sqlitenow.core", "SafeSQLiteConnection"),
+        ),
+        STATEMENT(
+            parameterName = "statement",
+            typeName = ClassName("dev.goquick.sqlitenow.core.sqlite", "SqliteStatement"),
+        ),
     }
 
     fun queryNamespaceName(namespace: String): String = namespaceFormatter(namespace)
 
-    fun createParamsTypeName(namespace: String, className: String): ClassName {
-        val capitalizedNamespace = queryNamespaceName(namespace)
-        return ClassName(packageName, capitalizedNamespace)
-            .nestedClass(className)
-            .nestedClass("Params")
-    }
-
-    fun setupExecuteFunctionStructure(
+    fun setupFunctionStructure(
         fnBld: FunSpec.Builder,
         statement: AnnotatedStatement,
         namespace: String,
         className: String,
+        primaryParameter: PrimaryParameter,
+        includeParamsParameter: Boolean,
+        adapterType: AdapterType,
     ) {
         val receiverType = receiverType(namespace, className)
         fnBld.receiver(receiverType)
-        val connectionParam = ParameterSpec.builder(
-            name = "conn",
-            ClassName("dev.goquick.sqlitenow.core", "SafeSQLiteConnection"),
+        val primaryParam = ParameterSpec.builder(
+            primaryParameter.parameterName,
+            primaryParameter.typeName,
         ).build()
-        fnBld.addParameter(connectionParam)
-        if (getNamedParameters(statement).isNotEmpty()) {
-            val paramsType = createParamsTypeName(namespace, className)
+        fnBld.addParameter(primaryParam)
+        if (includeParamsParameter && getNamedParameters(statement).isNotEmpty()) {
+            val paramsType = queryParamsTypeName(packageName, queryNamespaceName(namespace), className)
             val paramsParam = ParameterSpec.builder("params", paramsType).build()
             fnBld.addParameter(paramsParam)
         }
-        adapterParameterEmitter.addParameterBindingAdapters(fnBld, namespace, statement)
+        addAdapters(fnBld, namespace, statement, adapterType)
+    }
+
+    private fun addAdapters(
+        fnBld: FunSpec.Builder,
+        namespace: String,
+        statement: AnnotatedStatement,
+        adapterType: AdapterType,
+    ) {
+        when (adapterType) {
+            AdapterType.PARAMETER_BINDING ->
+                adapterParameterEmitter.addParameterBindingAdapters(fnBld, namespace, statement)
+
+            AdapterType.RESULT_CONVERSION ->
+                addResultConversionAdapters(fnBld, namespace, statement)
+
+            AdapterType.PARAMETER_BINDING_AND_RESULT_CONVERSION -> {
+                adapterParameterEmitter.addParameterBindingAdapters(fnBld, namespace, statement)
+                addResultConversionAdapters(fnBld, namespace, statement)
+            }
+
+            AdapterType.NONE -> Unit
+        }
+    }
+
+    private fun addResultConversionAdapters(
+        fnBld: FunSpec.Builder,
+        namespace: String,
+        statement: AnnotatedStatement,
+    ) {
         when (statement) {
             is AnnotatedSelectStatement ->
                 adapterParameterEmitter.addResultConversionAdapters(fnBld, namespace, statement)
@@ -79,47 +120,6 @@ internal class QueryFunctionScaffolder(
             }
 
             else -> Unit
-        }
-    }
-
-    fun setupStatementFunctionStructure(
-        fnBld: FunSpec.Builder,
-        statement: AnnotatedStatement,
-        namespace: String,
-        className: String,
-        includeParamsParameter: Boolean,
-        adapterType: AdapterType,
-    ) {
-        val receiverType = receiverType(namespace, className)
-        fnBld.receiver(receiverType)
-        val statementParam = ParameterSpec.builder(
-            name = "statement",
-            ClassName("dev.goquick.sqlitenow.core.sqlite", "SqliteStatement"),
-        ).build()
-        fnBld.addParameter(statementParam)
-        if (includeParamsParameter && getNamedParameters(statement).isNotEmpty()) {
-            val paramsType = createParamsTypeName(namespace, className)
-            val paramsParam = ParameterSpec.builder("params", paramsType).build()
-            fnBld.addParameter(paramsParam)
-        }
-        when (adapterType) {
-            AdapterType.PARAMETER_BINDING ->
-                adapterParameterEmitter.addParameterBindingAdapters(fnBld, namespace, statement)
-
-            AdapterType.RESULT_CONVERSION -> when (statement) {
-                is AnnotatedSelectStatement ->
-                    adapterParameterEmitter.addResultConversionAdapters(fnBld, namespace, statement)
-
-                is AnnotatedExecuteStatement -> {
-                    if (statement.hasReturningClause()) {
-                        adapterParameterEmitter.addResultConversionAdaptersForExecute(fnBld, statement)
-                    }
-                }
-
-                else -> Unit
-            }
-
-            AdapterType.NONE -> Unit
         }
     }
 

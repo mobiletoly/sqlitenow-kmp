@@ -103,63 +103,59 @@ class SqliteNowDartEmitterTest {
 
     @Test
     fun dartGenerationFailsClosedWhenEnableSyncUsesOversqliteFalse() {
-        val sqlDir = createDartOversqliteFixtureSql(tempDir)
-
-        val error = assertFailsWith<IllegalStateException> {
-            compileSqliteNowDatabase(
-                SqliteNowCompilerInput(
-                    databaseName = "SyncDartDb",
-                    sqlDirectory = sqlDir,
-                    packageName = "ignored.for.dart",
-                    outputDirectory = tempDir.resolve("generated-no-oversqlite"),
-                    oversqlite = false,
-                    backend = SqliteNowCompilerBackend.DART,
-                )
-            )
-        }
-
-        assertTrue(error.message?.contains("enableSync=true, but oversqlite=false") == true)
+        assertDartGenerationFails<IllegalStateException>(
+            databaseName = "SyncDartDb",
+            sqlDir = createDartOversqliteFixtureSql(tempDir),
+            outputDir = tempDir.resolve("generated-no-oversqlite"),
+            oversqlite = false,
+            expectedMessage = "enableSync=true, but oversqlite=false",
+        )
     }
 
     @Test
     fun dartOversqliteMetadataRejectsUnsupportedSyncKey() {
-        val sqlDir = createDartInvalidSyncKeyFixtureSql(tempDir)
-
-        val error = assertFailsWith<IllegalArgumentException> {
-            compileSqliteNowDatabase(
-                SqliteNowCompilerInput(
-                    databaseName = "SyncDartDb",
-                    sqlDirectory = sqlDir,
-                    packageName = "ignored.for.dart",
-                    outputDirectory = tempDir.resolve("generated-invalid-sync"),
-                    oversqlite = true,
-                    backend = SqliteNowCompilerBackend.DART,
-                )
-            )
-        }
-
-        assertTrue(error.message?.contains("TEXT PRIMARY KEY or BLOB PRIMARY KEY") == true)
+        assertDartGenerationFails<IllegalArgumentException>(
+            databaseName = "SyncDartDb",
+            sqlDir = createDartInvalidSyncKeyFixtureSql(tempDir),
+            outputDir = tempDir.resolve("generated-invalid-sync"),
+            oversqlite = true,
+            expectedMessage = "TEXT PRIMARY KEY or BLOB PRIMARY KEY",
+        )
     }
 
     @Test
     fun dartOversqliteMetadataRequiresSyncEnabledTable() {
-        val sqlDir = createDartFixtureSql(tempDir)
-
-        val error = assertFailsWith<IllegalArgumentException> {
-            compileSqliteNowDatabase(
-                SqliteNowCompilerInput(
-                    databaseName = "DartDb",
-                    sqlDirectory = sqlDir,
-                    packageName = "ignored.for.dart",
-                    outputDirectory = tempDir.resolve("generated-empty-sync"),
-                    oversqlite = true,
-                    backend = SqliteNowCompilerBackend.DART,
-                )
-            )
-        }
-
-        assertTrue(error.message?.contains("no tables are annotated with enableSync=true") == true)
+        assertDartGenerationFails<IllegalArgumentException>(
+            databaseName = "DartDb",
+            sqlDir = createDartFixtureSql(tempDir),
+            outputDir = tempDir.resolve("generated-empty-sync"),
+            oversqlite = true,
+            expectedMessage = "no tables are annotated with enableSync=true",
+        )
     }
+}
+
+private inline fun <reified T : Throwable> assertDartGenerationFails(
+    databaseName: String,
+    sqlDir: File,
+    outputDir: File,
+    oversqlite: Boolean,
+    expectedMessage: String,
+) {
+    val error = assertFailsWith<T> {
+        compileSqliteNowDatabase(
+            SqliteNowCompilerInput(
+                databaseName = databaseName,
+                sqlDirectory = sqlDir,
+                packageName = "ignored.for.dart",
+                outputDirectory = outputDir,
+                oversqlite = oversqlite,
+                backend = SqliteNowCompilerBackend.DART,
+            )
+        )
+    }
+
+    assertTrue(error.message?.contains(expectedMessage) == true)
 }
 
 private fun assertSchemaDatabaseContains(schemaDatabaseFile: File, names: List<String>) {

@@ -6,45 +6,48 @@ import dev.goquick.sqlitenow.gradle.context.AdapterConfig
 import dev.goquick.sqlitenow.gradle.context.ColumnLookup
 import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
 import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter
+import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestFactory
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class ImportGenerationTest {
 
-    @Test
-    fun testCustomTypeWithoutPackageUsesProvidedPackage() {
-        // Test that a custom type without a dot uses the provided package name
-        val customType = SqliteTypeToKotlinCodeConverter.determinePropertyType(
-            baseType = String::class.asTypeName(),
-            propertyType = "Gender", // Custom type without package
-            isNullable = false,
-            packageName = "com.example.db"
-        )
+    @TestFactory
+    fun propertyTypeClassNamePackageCases(): List<DynamicTest> = listOf(
+        ClassNamePackageCase(
+            displayName = "custom type without package uses provided package",
+            propertyType = "Gender",
+            packageName = "com.example.db",
+            expectedPackageName = "com.example.db",
+            expectedSimpleName = "Gender",
+        ),
+        ClassNamePackageCase(
+            displayName = "custom type with package preserves that package",
+            propertyType = "com.example.Gender",
+            expectedPackageName = "com.example",
+            expectedSimpleName = "Gender",
+        ),
+        ClassNamePackageCase(
+            displayName = "Kotlin standard type resolves to kotlin package",
+            propertyType = "String",
+            expectedPackageName = "kotlin",
+            expectedSimpleName = "String",
+        ),
+    ).map { case ->
+        DynamicTest.dynamicTest(case.displayName) {
+            val customType = SqliteTypeToKotlinCodeConverter.determinePropertyType(
+                baseType = String::class.asTypeName(),
+                propertyType = case.propertyType,
+                isNullable = false,
+                packageName = case.packageName,
+            )
 
-        assertTrue(customType is ClassName, "Custom type should be a ClassName")
-        val className = customType
-
-        // The package name should be the provided package name
-        assertEquals("com.example.db", className.packageName, "Package name should be the provided package name")
-        assertEquals("Gender", className.simpleName, "Simple name should be Gender")
-    }
-
-    @Test
-    fun testCustomTypeWithPackageGeneratesImport() {
-        // Test that a custom type with a dot (different package) creates ClassName with package
-        val customType = SqliteTypeToKotlinCodeConverter.determinePropertyType(
-            baseType = String::class.asTypeName(),
-            propertyType = "com.example.Gender", // Custom type with package
-            isNullable = false
-        )
-
-        assertTrue(customType is ClassName, "Custom type should be a ClassName")
-        val className = customType
-
-        // The package name should be preserved for different-package classes
-        assertEquals("com.example", className.packageName, "Package name should be preserved for different-package classes")
-        assertEquals("Gender", className.simpleName, "Simple name should be Gender")
+            assertTrue(customType is ClassName, "Property type should be a ClassName")
+            assertEquals(case.expectedPackageName, customType.packageName)
+            assertEquals(case.expectedSimpleName, customType.simpleName)
+        }
     }
 
     @Test
@@ -64,18 +67,11 @@ class ImportGenerationTest {
         assertTrue(customType.toString().contains("com.example.db.Gender"), "Should contain fully qualified Gender type")
     }
 
-    @Test
-    fun testKotlinStandardTypesStillWork() {
-        // Test that standard Kotlin types still work correctly
-        val stringType = SqliteTypeToKotlinCodeConverter.determinePropertyType(
-            baseType = String::class.asTypeName(),
-            propertyType = "String",
-            isNullable = false
-        )
-
-        assertTrue(stringType is ClassName, "String type should be a ClassName")
-        val stringClassName = stringType
-        assertEquals("kotlin", stringClassName.packageName, "String should have kotlin package")
-        assertEquals("String", stringClassName.simpleName, "Simple name should be String")
-    }
+    private data class ClassNamePackageCase(
+        val displayName: String,
+        val propertyType: String,
+        val packageName: String = "",
+        val expectedPackageName: String,
+        val expectedSimpleName: String,
+    )
 }

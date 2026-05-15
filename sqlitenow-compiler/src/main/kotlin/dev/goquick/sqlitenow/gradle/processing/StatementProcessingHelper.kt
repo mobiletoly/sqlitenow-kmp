@@ -334,27 +334,10 @@ class StatementProcessingHelper(
         sourceAlias: String?
     ): List<String> {
         if (sourceAlias.isNullOrBlank()) {
-            val primaryAlias = selectStatement.tableAliases.keys.firstOrNull()
-                ?: selectStatement.fromTable
-            return primaryAlias?.let { listOf(it) } ?: emptyList()
+            return primaryAliasFor(selectStatement)?.let { listOf(it) } ?: emptyList()
         }
 
-        val aliasPath = computeAliasPathForAlias(selectStatement, sourceAlias)
-        if (aliasPath.isNotEmpty()) {
-            return aliasPath
-        }
-
-        // Fallback for source aliases not present on the select statement (e.g. nested view aliases)
-        val primaryAlias = selectStatement.tableAliases.keys.firstOrNull()
-            ?: selectStatement.fromTable
-        return buildList {
-            if (!primaryAlias.isNullOrBlank()) {
-                add(primaryAlias)
-            }
-            if (isEmpty() || last() != sourceAlias) {
-                add(sourceAlias)
-            }
-        }
+        return computeAliasPathForAlias(selectStatement, sourceAlias)
     }
 
     private fun computeAliasPathForAlias(
@@ -363,27 +346,20 @@ class StatementProcessingHelper(
     ): List<String> {
         if (alias.isBlank()) return emptyList()
 
-        val tableAliases = selectStatement.tableAliases
-        val primaryAlias = tableAliases.keys.firstOrNull()
+        val primaryAlias = primaryAliasFor(selectStatement)
+        return buildAliasPath(primaryAlias, alias)
+    }
+
+    private fun primaryAliasFor(selectStatement: SelectStatement): String? =
+        selectStatement.tableAliases.keys.firstOrNull()
             ?: selectStatement.fromTable
 
-        val containsAlias = tableAliases.containsKey(alias)
-        if (!containsAlias) {
-            return buildList {
-                if (!primaryAlias.isNullOrBlank()) {
-                    add(primaryAlias)
-                }
-                if (isEmpty() || last() != alias) {
-                    add(alias)
-                }
-            }
-        }
-
+    private fun buildAliasPath(primaryAlias: String?, alias: String): List<String> {
         return buildList {
             if (!primaryAlias.isNullOrBlank()) {
                 add(primaryAlias)
             }
-            if (primaryAlias != alias) {
+            if (isEmpty() || last() != alias) {
                 add(alias)
             }
         }

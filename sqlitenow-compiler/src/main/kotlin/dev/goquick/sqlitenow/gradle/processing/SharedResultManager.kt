@@ -16,11 +16,12 @@
 package dev.goquick.sqlitenow.gradle.processing
 
 import com.squareup.kotlinpoet.*
-import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
+import dev.goquick.sqlitenow.gradle.model.AnnotatedStatement
 import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants.PROPERTY_NAME_GENERATOR
 import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter
 import dev.goquick.sqlitenow.gradle.util.pascalize
+import dev.goquick.sqlitenow.gradle.util.queryNamespaceClassName
 import java.util.Locale
 import kotlin.math.max
 
@@ -43,91 +44,69 @@ object SharedResultTypeUtils {
         namespace: String,
         sharedResultName: String
     ): ClassName {
-        return ClassName(packageName, "${pascalize(namespace)}Query")
+        return ClassName(packageName, queryNamespaceClassName(namespace))
             .nestedClass(SHARED_RESULT_OBJECT_NAME)
             .nestedClass(sharedResultName)
     }
 
-    /**
-     * Creates a TypeName for either a queryResult or regular result class.
-     * @param packageName The package name for the generated code
-     * @param namespace The namespace (e.g., "person")
-     * @param statement The SELECT statement to check for queryResult annotation
-     */
     fun createResultTypeName(
         packageName: String,
         namespace: String,
-        statement: AnnotatedSelectStatement
+        statement: AnnotatedStatement
     ): ClassName {
-        return if (statement.annotations.queryResult != null) {
-            // With queryResult: generate top-level class with exact specified name
-            ClassName(packageName, statement.annotations.queryResult!!)
-        } else {
-            // Without queryResult: generate top-level class like PersonSelectSomeResult
-            val className = statement.getDataClassName()
-            val resultClassName = "${pascalize(namespace)}${className}Result"
-            ClassName(packageName, resultClassName)
-        }
+        return ClassName(packageName, createResultTypeString(namespace, statement))
     }
 
-    /**
-     * Creates a string representation of the result type for code generation.
-     * @param namespace The namespace (e.g., "person")
-     * @param statement The SELECT statement to check for queryResult annotation
-     */
-    fun createResultTypeString(
-        namespace: String,
-        statement: AnnotatedSelectStatement
-    ): String {
-        return if (statement.annotations.queryResult != null) {
-            // With queryResult: use exact specified name
-            statement.annotations.queryResult!!
-        } else {
-            // Without queryResult: generate name like PersonSelectSomeResult
-            val className = statement.getDataClassName()
-            "${pascalize(namespace)}${className}Result"
-        }
-    }
-
-    /**
-     * Creates a TypeName for EXECUTE statement result classes.
-     * @param packageName The package name for the generated code
-     * @param namespace The namespace (e.g., "person")
-     * @param statement The EXECUTE statement to check for queryResult annotation
-     */
-    fun createResultTypeNameForExecute(
+    fun createPublicResultTypeName(
         packageName: String,
         namespace: String,
-        statement: AnnotatedExecuteStatement
-    ): ClassName {
-        return if (statement.annotations.queryResult != null) {
-            // With queryResult: generate top-level class with exact specified name
-            ClassName(packageName, statement.annotations.queryResult!!)
-        } else {
-            // Without queryResult: generate top-level class like PersonAddResult
-            val className = statement.getDataClassName()
-            val resultClassName = "${pascalize(namespace)}${className}Result"
-            ClassName(packageName, resultClassName)
-        }
+        statement: AnnotatedSelectStatement,
+    ): TypeName {
+        return createMapToTypeName(packageName, statement) ?: createResultTypeName(packageName, namespace, statement)
     }
 
-    /**
-     * Creates a string representation of the result type name for EXECUTE statements.
-     * @param namespace The namespace (e.g., "person")
-     * @param statement The EXECUTE statement to check for queryResult annotation
-     */
-    fun createResultTypeStringForExecute(
+    fun createResultTypeString(
         namespace: String,
-        statement: AnnotatedExecuteStatement
+        statement: AnnotatedStatement
     ): String {
         return if (statement.annotations.queryResult != null) {
-            // With queryResult: generate top-level class with exact specified name
             statement.annotations.queryResult!!
         } else {
-            // Without queryResult: generate top-level class like PersonAddResult
             val className = statement.getDataClassName()
             "${pascalize(namespace)}${className}Result"
         }
+    }
+
+    fun createPublicResultTypeString(
+        namespace: String,
+        statement: AnnotatedSelectStatement,
+    ): String {
+        val override = statement.annotations.mapTo?.trim()
+        if (!override.isNullOrEmpty()) return override
+        return createResultTypeString(namespace, statement)
+    }
+
+    fun createJoinedResultTypeName(
+        packageName: String,
+        namespace: String,
+        statement: AnnotatedSelectStatement,
+    ): ClassName {
+        return ClassName(packageName, createJoinedResultTypeString(namespace, statement))
+    }
+
+    fun createJoinedResultTypeString(
+        namespace: String,
+        statement: AnnotatedSelectStatement,
+    ): String {
+        return "${createResultTypeString(namespace, statement)}_Joined"
+    }
+
+    private fun createMapToTypeName(
+        packageName: String,
+        statement: AnnotatedSelectStatement,
+    ): TypeName? {
+        val target = statement.annotations.mapTo ?: return null
+        return SqliteTypeToKotlinCodeConverter.parseCustomType(target, packageName)
     }
 }
 

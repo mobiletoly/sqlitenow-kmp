@@ -58,10 +58,11 @@ class SQLBatchInspectorTest {
             INSERT INTO posts (id, user_id, title, content) VALUES (2, 2, 'Second Post', 'This is the second post');
         """.trimIndent()
 
-        // Write SQL files
-        File(sqlDir, "01_users.sql").writeText(usersTableSql)
-        File(sqlDir, "02_posts.sql").writeText(postsTableSql)
-        File(sqlDir, "03_data.sql").writeText(insertDataSql)
+        writeSqlFiles(
+            "01_users.sql" to usersTableSql,
+            "02_posts.sql" to postsTableSql,
+            "03_data.sql" to insertDataSql,
+        )
 
         // Create SQLBatchInspector
         val inspector = SQLBatchInspector(sqlDir, mandatory = false)
@@ -110,7 +111,7 @@ class SQLBatchInspectorTest {
             );
         """.trimIndent()
 
-        File(sqlDir, "table.sql").writeText(tableSql)
+        writeSqlFiles("table.sql" to tableSql)
         File(sqlDir, "readme.txt").writeText("This is a readme file")
         File(sqlDir, "config.json").writeText("{}")
 
@@ -148,7 +149,7 @@ class SQLBatchInspectorTest {
             CREATE VIEW user_view AS SELECT id, name FROM users WHERE id > 0;
         """.trimIndent()
 
-        File(sqlDir, "complex.sql").writeText(complexSql)
+        writeSqlFiles("complex.sql" to complexSql)
 
         // Create SQLBatchInspector
         val inspector = SQLBatchInspector(sqlDir, mandatory = false)
@@ -169,9 +170,11 @@ class SQLBatchInspectorTest {
     @DisplayName("Test SQLBatchInspector with files in alphabetical order")
     fun testInspectWithAlphabeticalOrder() {
         // Create files that should be processed in alphabetical order
-        File(sqlDir, "c_third.sql").writeText("INSERT INTO test VALUES (3);")
-        File(sqlDir, "a_first.sql").writeText("CREATE TABLE test (id INTEGER);")
-        File(sqlDir, "b_second.sql").writeText("INSERT INTO test VALUES (1);")
+        writeSqlFiles(
+            "c_third.sql" to "INSERT INTO test VALUES (3);",
+            "a_first.sql" to "CREATE TABLE test (id INTEGER);",
+            "b_second.sql" to "INSERT INTO test VALUES (1);",
+        )
 
         val inspector = SQLBatchInspector(sqlDir, mandatory = false)
 
@@ -183,5 +186,11 @@ class SQLBatchInspectorTest {
         assertEquals("INSERT INTO test VALUES (1);", statements[1], "Second statement should be from b_second.sql")
         assertEquals("INSERT INTO test VALUES (3);", statements[2], "Third statement should be from c_third.sql")
         assertEquals(listOf("a_first.sql", "b_second.sql", "c_third.sql"), inspector.sqlFiles.map { it.name })
+    }
+
+    private fun writeSqlFiles(vararg files: Pair<String, String>) {
+        files.forEach { (name, sql) ->
+            File(sqlDir, name).writeText(sql)
+        }
     }
 }

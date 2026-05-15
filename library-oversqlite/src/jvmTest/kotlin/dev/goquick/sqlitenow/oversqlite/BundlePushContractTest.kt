@@ -26,14 +26,10 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
     fun pauseUploads_doesNotSkipExplicitPushPending() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
-        val server = newServer()
-        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
-        pushServer.install(server)
-        server.start()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.openAndConnect("user-1").getOrThrow()
+        withPushServerClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+        ) { client, pushServer ->
             db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
             client.pauseUploads()
 
@@ -43,10 +39,6 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertEquals(AuthorityStatus.AUTHORITATIVE_MATERIALIZED, report.status.authority)
             assertEquals(1L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals(1, pushServer.bundles.size)
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -54,24 +46,15 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
     fun pushPending_withNoDirtyRows_isLocalNoOpBeforeOutboundState() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
-        val server = newServer()
-        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
-        pushServer.install(server)
-        server.start()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.openAndConnect("user-1").getOrThrow()
-
+        withPushServerClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+        ) { client, pushServer ->
             client.pushPending().getOrThrow()
 
             assertEquals(0, pushServer.createRequests.size)
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -116,15 +99,10 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
     fun pushPending_localInsert_uploadsDirtyPayloadAsInsert() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
-        val server = newServer()
-        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
-        pushServer.install(server)
-        server.start()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.openAndConnect("user-1").getOrThrow()
-
+        withPushServerClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+        ) { client, pushServer ->
             db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
             client.pushPending().getOrThrow()
 
@@ -132,10 +110,6 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertEquals("INSERT", uploaded.op)
             assertEquals(0L, uploaded.baseRowVersion)
             assertEquals("""{"id":"user-1","name":"Ada"}""", uploaded.payload?.toString())
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -144,15 +118,10 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
         db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
-        val server = newServer()
-        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
-        pushServer.install(server)
-        server.start()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.openAndConnect("user-1").getOrThrow()
-
+        withPushServerClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+        ) { client, pushServer ->
             client.pushPending().getOrThrow()
 
             val uploaded = pushServer.uploadedChunks.single().rows.single()
@@ -161,10 +130,6 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertEquals("""{"id":"user-1","name":"Ada"}""", uploaded.payload?.toString())
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             assertEquals(1L, scalarLong(db, "SELECT row_version FROM _sync_row_state WHERE schema_name = 'main' AND table_name = 'users' AND key_json = '{\"id\":\"user-1\"}'"))
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -172,15 +137,10 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
     fun pushPending_syncedUpdate_uploadsUpdateWithBaseRowVersion() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
-        val server = newServer()
-        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
-        pushServer.install(server)
-        server.start()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.openAndConnect("user-1").getOrThrow()
-
+        withPushServerClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+        ) { client, pushServer ->
             db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
             client.pushPending().getOrThrow()
 
@@ -191,10 +151,6 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertEquals("UPDATE", uploaded.op)
             assertEquals(1L, uploaded.baseRowVersion)
             assertEquals("""{"id":"user-1","name":"Ada v2"}""", uploaded.payload?.toString())
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -203,39 +159,31 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
         db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Client')")
-        val server = newServer()
-        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson).apply {
-            commitError = { _, _ ->
-                409 to """
-                    {
-                      "error":"push_conflict",
-                      "message":"insert conflict on main.users user-1",
-                      "conflict":{
-                        "schema":"main",
-                        "table":"users",
-                        "key":{"id":"user-1"},
-                        "op":"INSERT",
-                        "base_row_version":0,
-                        "server_row_version":7,
-                        "server_row_deleted":false,
-                        "server_row":{"id":"user-1","name":"Server"}
-                      }
-                    }
-                """.trimIndent()
-            }
-        }
-        pushServer.install(server)
-        server.start()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(
-                db,
-                http,
-                syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
-                resolver = ServerWinsResolver,
-            )
-            client.openAndConnect("user-1").getOrThrow()
-
+        withPushServerClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+            resolver = ServerWinsResolver,
+            configurePushServer = {
+                commitError = { _, _ ->
+                    409 to """
+                        {
+                          "error":"push_conflict",
+                          "message":"insert conflict on main.users user-1",
+                          "conflict":{
+                            "schema":"main",
+                            "table":"users",
+                            "key":{"id":"user-1"},
+                            "op":"INSERT",
+                            "base_row_version":0,
+                            "server_row_version":7,
+                            "server_row_deleted":false,
+                            "server_row":{"id":"user-1","name":"Server"}
+                          }
+                        }
+                    """.trimIndent()
+                }
+            },
+        ) { client, pushServer ->
             client.pushPending().getOrThrow()
 
             val uploaded = pushServer.uploadedChunks.single().rows.single()
@@ -245,10 +193,6 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
             assertEquals(7L, scalarLong(db, "SELECT row_version FROM _sync_row_state WHERE schema_name = 'main' AND table_name = 'users' AND key_json = '{\"id\":\"user-1\"}'"))
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -256,15 +200,10 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
     fun pushPending_unsyncedInsertThenDelete_isDroppedAsNoOp() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
-        val server = newServer()
-        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
-        pushServer.install(server)
-        server.start()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.openAndConnect("user-1").getOrThrow()
-
+        withPushServerClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+        ) { client, pushServer ->
             db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
             db.execSQL("DELETE FROM users WHERE id = 'user-1'")
 
@@ -273,10 +212,6 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertEquals(0, pushServer.createRequests.size)
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -284,15 +219,10 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
     fun pushPending_syncedDelete_uploadsDeleteWithNullPayload() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
-        val server = newServer()
-        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
-        pushServer.install(server)
-        server.start()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.openAndConnect("user-1").getOrThrow()
-
+        withPushServerClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+        ) { client, pushServer ->
             db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
             client.pushPending().getOrThrow()
 
@@ -303,10 +233,6 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertEquals("DELETE", uploaded.op)
             assertEquals(1L, uploaded.baseRowVersion)
             assertEquals(null, uploaded.payload)
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -582,17 +508,12 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
     fun pushPending_sameKeyUpdateThenLaterUpdate_rebasesDirtyIntent() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
-        val server = newServer()
-        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
         val fetchStarted = CountDownLatch(1)
         val releaseFetch = CountDownLatch(1)
-        pushServer.install(server)
-        server.start()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.openAndConnect("user-1").getOrThrow()
-
+        withPushServerClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+        ) { client, pushServer ->
             db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
             client.pushPending().getOrThrow()
 
@@ -617,10 +538,6 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertEquals("Ada newer", dirtyPayload["name"]?.jsonPrimitive?.content)
             assertEquals(2L, scalarLong(db, "SELECT row_version FROM _sync_row_state WHERE table_name = 'users' AND key_json = '{\"id\":\"user-1\"}'"))
             assertEquals(0L, scalarLong(db, "SELECT deleted FROM _sync_row_state WHERE table_name = 'users' AND key_json = '{\"id\":\"user-1\"}'"))
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -628,17 +545,12 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
     fun pushPending_sameKeyUpdateThenLaterDelete_rebasesDirtyIntent() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
-        val server = newServer()
-        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
         val fetchStarted = CountDownLatch(1)
         val releaseFetch = CountDownLatch(1)
-        pushServer.install(server)
-        server.start()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.openAndConnect("user-1").getOrThrow()
-
+        withPushServerClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+        ) { client, pushServer ->
             db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
             client.pushPending().getOrThrow()
 
@@ -661,10 +573,6 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertEquals(null, dirty.payload)
             assertEquals(2L, scalarLong(db, "SELECT row_version FROM _sync_row_state WHERE table_name = 'users' AND key_json = '{\"id\":\"user-1\"}'"))
             assertEquals(0L, scalarLong(db, "SELECT deleted FROM _sync_row_state WHERE table_name = 'users' AND key_json = '{\"id\":\"user-1\"}'"))
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -672,17 +580,12 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
     fun pushPending_sameKeyDeleteThenLaterRecreate_rebasesDirtyIntent() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
-        val server = newServer()
-        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
         val fetchStarted = CountDownLatch(1)
         val releaseFetch = CountDownLatch(1)
-        pushServer.install(server)
-        server.start()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.openAndConnect("user-1").getOrThrow()
-
+        withPushServerClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+        ) { client, pushServer ->
             db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
             client.pushPending().getOrThrow()
 
@@ -707,10 +610,6 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertEquals("Ada recreated", dirtyPayload["name"]?.jsonPrimitive?.content)
             assertEquals(2L, scalarLong(db, "SELECT row_version FROM _sync_row_state WHERE table_name = 'users' AND key_json = '{\"id\":\"user-1\"}'"))
             assertEquals(1L, scalarLong(db, "SELECT deleted FROM _sync_row_state WHERE table_name = 'users' AND key_json = '{\"id\":\"user-1\"}'"))
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -718,20 +617,18 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
     fun pushPending_sameKeyInsertThenLaterUpdate_rebasesDirtyIntent() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
-        val server = newServer()
-        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
         val fetchStarted = CountDownLatch(1)
         val releaseFetch = CountDownLatch(1)
-        pushServer.beforeCommittedBundleChunkResponse = { _, _ ->
-            fetchStarted.countDown()
-            check(releaseFetch.await(5, TimeUnit.SECONDS))
-        }
-        pushServer.install(server)
-        server.start()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.openAndConnect("user-1").getOrThrow()
+        withPushServerClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+            configurePushServer = {
+                beforeCommittedBundleChunkResponse = { _, _ ->
+                    fetchStarted.countDown()
+                    check(releaseFetch.await(5, TimeUnit.SECONDS))
+                }
+            },
+        ) { client, _ ->
 
             db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
 
@@ -750,10 +647,6 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertEquals("Ada newer", dirtyPayload["name"]?.jsonPrimitive?.content)
             assertEquals(1L, scalarLong(db, "SELECT row_version FROM _sync_row_state WHERE table_name = 'users' AND key_json = '{\"id\":\"user-1\"}'"))
             assertEquals(0L, scalarLong(db, "SELECT deleted FROM _sync_row_state WHERE table_name = 'users' AND key_json = '{\"id\":\"user-1\"}'"))
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -761,20 +654,18 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
     fun pushPending_sameKeyInsertThenLaterDelete_rebasesDirtyIntent() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
-        val server = newServer()
-        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
         val fetchStarted = CountDownLatch(1)
         val releaseFetch = CountDownLatch(1)
-        pushServer.beforeCommittedBundleChunkResponse = { _, _ ->
-            fetchStarted.countDown()
-            check(releaseFetch.await(5, TimeUnit.SECONDS))
-        }
-        pushServer.install(server)
-        server.start()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.openAndConnect("user-1").getOrThrow()
+        withPushServerClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+            configurePushServer = {
+                beforeCommittedBundleChunkResponse = { _, _ ->
+                    fetchStarted.countDown()
+                    check(releaseFetch.await(5, TimeUnit.SECONDS))
+                }
+            },
+        ) { client, _ ->
 
             db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
 
@@ -791,10 +682,6 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertEquals(null, dirty.payload)
             assertEquals(1L, scalarLong(db, "SELECT row_version FROM _sync_row_state WHERE table_name = 'users' AND key_json = '{\"id\":\"user-1\"}'"))
             assertEquals(0L, scalarLong(db, "SELECT deleted FROM _sync_row_state WHERE table_name = 'users' AND key_json = '{\"id\":\"user-1\"}'"))
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -841,22 +728,13 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
     fun localDeleteCapturesFkCascadeIntoDirtyRows() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersAndCascadePostsTables(db)
-        val server = newServer()
-        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
-        pushServer.install(server)
-        server.start()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(
-                db,
-                http,
-                syncTables = listOf(
-                    SyncTable("users", syncKeyColumnName = "id"),
-                    SyncTable("posts", syncKeyColumnName = "id"),
-                )
-            )
-            client.openAndConnect("user-1").getOrThrow()
-
+        withPushServerClient(
+            db,
+            syncTables = listOf(
+                SyncTable("users", syncKeyColumnName = "id"),
+                SyncTable("posts", syncKeyColumnName = "id"),
+            ),
+        ) { client, _ ->
             db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
             db.execSQL("INSERT INTO posts(id, user_id, title) VALUES('post-1', 'user-1', 'Notes')")
             client.pushPending().getOrThrow()
@@ -865,10 +743,6 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
 
             assertEquals(2L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             assertEquals(listOf("posts:DELETE", "users:DELETE"), dirtyOps(db))
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -876,15 +750,10 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
     fun keyChangingLocalUpdate_emitsDeletePlusUpsert() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
-        val server = newServer()
-        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
-        pushServer.install(server)
-        server.start()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.openAndConnect("user-1").getOrThrow()
-
+        withPushServerClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+        ) { client, _ ->
             db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
             client.pushPending().getOrThrow()
 
@@ -892,10 +761,6 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
 
             assertEquals(2L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             assertEquals(listOf("user-1:DELETE", "user-2:INSERT"), dirtyKeysAndOps(db))
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -1488,38 +1353,31 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
     fun pushPending_structuredConflict_serverWinsResolverAppliesAuthoritativeRow() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
-        val server = newServer()
-        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson).apply {
-            commitError = { _, _ ->
-                409 to """
-                    {
-                      "error":"push_conflict",
-                      "message":"insert conflict on main.users user-1",
-                      "conflict":{
-                        "schema":"main",
-                        "table":"users",
-                        "key":{"id":"user-1"},
-                        "op":"INSERT",
-                        "base_row_version":0,
-                        "server_row_version":7,
-                        "server_row_deleted":false,
-                        "server_row":{"id":"user-1","name":"Server"}
-                      }
-                    }
-                """.trimIndent()
-            }
-        }
-        pushServer.install(server)
-        server.start()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(
-                db,
-                http,
-                syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
-                resolver = ServerWinsResolver,
-            )
-            client.openAndConnect("user-1").getOrThrow()
+        withPushServerClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+            resolver = ServerWinsResolver,
+            configurePushServer = {
+                commitError = { _, _ ->
+                    409 to """
+                        {
+                          "error":"push_conflict",
+                          "message":"insert conflict on main.users user-1",
+                          "conflict":{
+                            "schema":"main",
+                            "table":"users",
+                            "key":{"id":"user-1"},
+                            "op":"INSERT",
+                            "base_row_version":0,
+                            "server_row_version":7,
+                            "server_row_deleted":false,
+                            "server_row":{"id":"user-1","name":"Server"}
+                          }
+                        }
+                    """.trimIndent()
+                }
+            },
+        ) { client, _ ->
             db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
 
             client.pushPending().getOrThrow()
@@ -1528,10 +1386,6 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
             assertEquals(7L, scalarLong(db, "SELECT row_version FROM _sync_row_state WHERE schema_name = 'main' AND table_name = 'users' AND key_json = '{\"id\":\"user-1\"}'"))
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -2219,15 +2073,10 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
     fun pushPending_finalReplayDefersForeignKeys_forSelfReferentialRows() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createEmployeesTable(db)
-        val server = newServer()
-        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
-        pushServer.install(server)
-        server.start()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("employees", syncKeyColumnName = "id")))
-            client.openAndConnect("user-1").getOrThrow()
-
+        withPushServerClient(
+            db,
+            syncTables = listOf(SyncTable("employees", syncKeyColumnName = "id")),
+        ) { client, _ ->
             db.transaction(TransactionMode.IMMEDIATE) {
                 db.execSQL("PRAGMA defer_foreign_keys = ON")
                 db.execSQL("INSERT INTO employees(id, manager_id, name) VALUES('employee-2', 'employee-1', 'Bob')")
@@ -2240,10 +2089,6 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertEquals(2L, scalarLong(db, "SELECT COUNT(*) FROM employees"))
             assertEquals("employee-1", scalarText(db, "SELECT manager_id FROM employees WHERE id = 'employee-2'"))
             assertEquals("Alice", scalarText(db, "SELECT name FROM employees WHERE id = 'employee-1'"))
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -2251,22 +2096,13 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
     fun pushPending_finalReplayDefersForeignKeys_forImmediateCyclicGraphs() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createImmediateAuthorsAndProfilesCycleTables(db)
-        val server = newServer()
-        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
-        pushServer.install(server)
-        server.start()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(
-                db,
-                http,
-                syncTables = listOf(
-                    SyncTable("authors", syncKeyColumnName = "id"),
-                    SyncTable("profiles", syncKeyColumnName = "id"),
-                )
-            )
-            client.openAndConnect("user-1").getOrThrow()
-
+        withPushServerClient(
+            db,
+            syncTables = listOf(
+                SyncTable("authors", syncKeyColumnName = "id"),
+                SyncTable("profiles", syncKeyColumnName = "id"),
+            ),
+        ) { client, _ ->
             db.transaction(TransactionMode.IMMEDIATE) {
                 db.execSQL("PRAGMA defer_foreign_keys = ON")
                 db.execSQL("INSERT INTO authors(id, profile_id, name) VALUES('author-1', 'profile-1', 'Author')")
@@ -2279,10 +2115,6 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             assertEquals("profile-1", scalarText(db, "SELECT profile_id FROM authors WHERE id = 'author-1'"))
             assertEquals("author-1", scalarText(db, "SELECT author_id FROM profiles WHERE id = 'profile-1'"))
             assertEquals("Cyclic", scalarText(db, "SELECT bio FROM profiles WHERE id = 'profile-1'"))
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -2347,15 +2179,10 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
     fun pushPending_successfulReplayRestoresCaptureForOrdinaryWrites() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
-        val server = newServer()
-        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
-        pushServer.install(server)
-        server.start()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.openAndConnect("user-1").getOrThrow()
-
+        withPushServerClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+        ) { client, _ ->
             db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
             client.pushPending().getOrThrow()
 
@@ -2365,10 +2192,6 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
 
             assertEquals(listOf("user-1:UPDATE"), dirtyKeysAndOps(db))
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 

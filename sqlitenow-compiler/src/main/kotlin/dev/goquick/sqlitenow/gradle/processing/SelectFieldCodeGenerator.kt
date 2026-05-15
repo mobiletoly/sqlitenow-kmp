@@ -25,6 +25,7 @@ import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter
 import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateViewStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
+import dev.goquick.sqlitenow.gradle.util.buildColumnNameCandidates
 import java.util.Locale
 import net.sf.jsqlparser.expression.Function
 import net.sf.jsqlparser.expression.MySQLGroupConcat
@@ -386,34 +387,6 @@ class SelectFieldCodeGenerator(
         }
 
         return null
-    }
-
-    private fun buildColumnNameCandidates(vararg names: String): LinkedHashSet<String> {
-        val candidates = LinkedHashSet<String>()
-        names.forEach { name ->
-            if (name.isBlank()) return@forEach
-            val trimmed = name.trim()
-            addNameVariants(trimmed, candidates)
-        }
-        return candidates
-    }
-
-    private fun addNameVariants(name: String, sink: MutableSet<String>) {
-        if (name.isBlank()) return
-        sink += name
-
-        val withoutSuffix = name.substringBefore(':')
-        if (withoutSuffix.isNotBlank()) sink += withoutSuffix
-
-        val afterDot = withoutSuffix.substringAfterLast('.', withoutSuffix)
-        if (afterDot.isNotBlank()) sink += afterDot
-
-        val segments = afterDot.split('_').filter { it.isNotBlank() }
-        if (segments.size > 1) {
-            segments.indices.forEach { index ->
-                sink += segments.drop(index).joinToString("_")
-            }
-        }
     }
 
     private fun buildNameCandidatesFromAliasPrefix(field: AnnotatedSelectStatement.Field): LinkedHashSet<String> {

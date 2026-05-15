@@ -18,14 +18,10 @@ package dev.goquick.sqlitenow.gradle.context
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.LambdaTypeName
 import com.squareup.kotlinpoet.ParameterSpec
-import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedStatement
-import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
 import dev.goquick.sqlitenow.gradle.processing.SharedResultTypeUtils
-import dev.goquick.sqlitenow.gradle.util.CaseInsensitiveSet
-import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter
 
 /**
  * Handles adding adapter parameters to generated query functions and exposes helper lookups
@@ -115,15 +111,13 @@ internal class AdapterParameterEmitter(
         }
     }
 
-    fun buildJoinedReadParamsList(namespace: String, statement: AnnotatedSelectStatement): List<String> {
+    fun buildSelectReadParamsList(
+        namespace: String,
+        statement: AnnotatedSelectStatement,
+        includeMapAdapters: Boolean = true,
+    ): List<String> {
         val params = mutableListOf("statement")
-        params += resultConversionAdapterNames(namespace, statement, includeMapAdapters = false)
-        return params
-    }
-
-    fun buildReadStatementParamsList(namespace: String, statement: AnnotatedSelectStatement): List<String> {
-        val params = mutableListOf("statement")
-        params += resultConversionAdapterNames(namespace, statement, includeMapAdapters = true)
+        params += resultConversionAdapterNames(namespace, statement, includeMapAdapters)
         return params
     }
 
@@ -195,75 +189,20 @@ internal class AdapterParameterEmitter(
         fnBld: FunSpec.Builder,
         statement: AnnotatedExecuteStatement,
     ) {
-        val tableLookup =
-            generatorContext.createTableStatements.associateBy { it.src.tableName.lowercase() }
-        val tableStatement = statement.tableDefinition(tableLookup) ?: return
-        val columnsToInclude = statement.returningColumns(tableStatement)
-        val processedAdapters = mutableSetOf<String>()
-        columnsToInclude.forEach { column ->
-            if (column.annotations.containsKey(AnnotationConstants.ADAPTER)) {
-                val propertyName =
-                    statement.annotations.propertyNameGenerator.convertToPropertyName(column.src.name)
-                val adapterFunctionName = adapterConfig.getOutputAdapterFunctionName(propertyName)
-                if (!processedAdapters.add(adapterFunctionName)) return@forEach
-
-                val baseType =
-                    SqliteTypeToKotlinCodeConverter.mapSqlTypeToKotlinType(column.src.dataType)
-                val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE] as? String
-                val propertyNullable = column.isNullable()
-                val sqlNullable = column.isSqlNullable()
-                val targetType = SqliteTypeToKotlinCodeConverter.determinePropertyType(
-                    baseType,
-                    propertyType,
-                    propertyNullable,
-                    packageName
-                )
-                val inputType = baseType.copy(nullable = sqlNullable)
-                val outputType = targetType.copy(nullable = propertyNullable)
-                val adapterType =
-                    LambdaTypeName.get(parameters = arrayOf(inputType), returnType = outputType)
-                val parameterSpec = ParameterSpec.builder(adapterFunctionName, adapterType).build()
-                fnBld.addParameter(parameterSpec)
-            }
+        adapterConfig.collectExecuteReturningOutputParamConfigs(statement).forEach { config ->
+            val adapterType = LambdaTypeName.get(
+                parameters = arrayOf(config.inputType),
+                returnType = config.outputType,
+            )
+            val parameterSpec = ParameterSpec.builder(config.adapterFunctionName, adapterType).build()
+            fnBld.addParameter(parameterSpec)
         }
     }
 
     private fun resultConversionAdapterNamesForExecute(
         statement: AnnotatedExecuteStatement
     ): List<String> {
-        val tableLookup =
-            generatorContext.createTableStatements.associateBy { it.src.tableName.lowercase() }
-        val tableStatement = statement.tableDefinition(tableLookup) ?: return emptyList()
-        val columnsToInclude = statement.returningColumns(tableStatement)
-        val adapterNames = mutableListOf<String>()
-        val processedAdapters = mutableSetOf<String>()
-        columnsToInclude.forEach { column ->
-            if (column.annotations.containsKey(AnnotationConstants.ADAPTER)) {
-                val propertyName =
-                    statement.annotations.propertyNameGenerator.convertToPropertyName(column.src.name)
-                val adapterFunctionName = adapterConfig.getOutputAdapterFunctionName(propertyName)
-                if (processedAdapters.add(adapterFunctionName)) {
-                    adapterNames.add(adapterFunctionName)
-                }
-            }
-        }
-        return adapterNames
-    }
-
-    private fun AnnotatedExecuteStatement.tableDefinition(
-        tableLookup: Map<String, AnnotatedCreateTableStatement>
-    ): AnnotatedCreateTableStatement? {
-        return tableLookup[src.table.lowercase()]
-    }
-
-    private fun AnnotatedExecuteStatement.returningColumns(
-        tableStatement: AnnotatedCreateTableStatement
-    ): List<AnnotatedCreateTableStatement.Column> {
-        val returningColumns = src.returningColumns
-        if (returningColumns.contains("*")) {
-            return tableStatement.columns
-        }
-        val returningSet = CaseInsensitiveSet().apply { addAll(returningColumns) }
-        return tableStatement.columns.filter { column -> returningSet.containsIgnoreCase(column.src.name) }
+        return adapterConfig.collectExecuteReturningOutputParamConfigs(statement)
+            .map { it.adapterFunctionName }
     }
 }

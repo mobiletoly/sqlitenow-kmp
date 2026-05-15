@@ -7,100 +7,98 @@ import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
 import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationContext
 import dev.goquick.sqlitenow.gradle.processing.extractAnnotations
 import dev.goquick.sqlitenow.gradle.processing.extractFieldAssociatedAnnotations
+import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestFactory
 import org.junit.jupiter.api.assertThrows
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
-import kotlin.test.fail
 
 class AnnotationsTest {
 
-    @Test
-    fun `test basic annotation syntax`() {
-        val comment = """-- @@{field=birth_date, adapter="", propertyType=kotlinx.datetime.LocalDate}"""
-        val annotations = extractAnnotations(listOf(comment))
-
-        assertEquals("birth_date", annotations["field"])
-        assertEquals("", annotations["adapter"]) // Empty string stays empty string
-        assertEquals("kotlinx.datetime.LocalDate", annotations["propertyType"])
-    }
-
-    @Test
-    fun `test multiline annotation syntax`() {
-        val comments = listOf(
-            """-- @@{field=created_at, adapter="",""",
-            "--     propertyType=kotlinx.datetime.LocalDateTime",
-            "-- }"
+    @TestFactory
+    fun `raw annotation syntax cases`(): List<DynamicTest> = annotationExtractionTests(
+        listOf(
+            annotationExtractionCase(
+                displayName = "basic inline syntax",
+                comment = """-- @@{field=birth_date, adapter="", propertyType=kotlinx.datetime.LocalDate}""",
+                expected = mapOf(
+                    "field" to "birth_date",
+                    "adapter" to "",
+                    "propertyType" to "kotlinx.datetime.LocalDate",
+                ),
+            ),
+            AnnotationExtractionCase(
+                displayName = "multiline syntax",
+                comments = listOf(
+                    """-- @@{field=created_at, adapter="",""",
+                    "--     propertyType=kotlinx.datetime.LocalDateTime",
+                    "-- }"
+                ),
+                expected = mapOf(
+                    "field" to "created_at",
+                    "adapter" to "",
+                    "propertyType" to "kotlinx.datetime.LocalDateTime",
+                ),
+            ),
+            annotationExtractionCase(
+                displayName = "spacing syntax",
+                comment = """-- @@{ field = birth_date , adapter = "" , propertyType = kotlinx.datetime.LocalDate }""",
+                expected = mapOf(
+                    "field" to "birth_date",
+                    "adapter" to "",
+                    "propertyType" to "kotlinx.datetime.LocalDate",
+                ),
+            ),
+            annotationExtractionCase(
+                displayName = "quoted values",
+                comment = """-- @@{field="user name", propertyType="String?"}""",
+                expected = mapOf(
+                    "field" to "user name",
+                    "propertyType" to "String?",
+                ),
+            ),
+            annotationExtractionCase(
+                displayName = "empty block",
+                comment = "-- @@{}",
+                expected = emptyMap(),
+            ),
+            annotationExtractionCase(
+                displayName = "single annotation without value",
+                comment = """-- @@{adapter=""}""",
+                expected = mapOf("adapter" to ""),
+            ),
+            annotationExtractionCase(
+                displayName = "single annotation with value",
+                comment = "-- @@{field=user_id}",
+                expected = mapOf("field" to "user_id"),
+            ),
         )
-        val annotations = extractAnnotations(comments)
+    )
 
-        assertEquals("created_at", annotations["field"])
-        assertEquals("", annotations["adapter"])
-        assertEquals("kotlinx.datetime.LocalDateTime", annotations["propertyType"])
-    }
-
-    @Test
-    fun `test annotation syntax with spaces`() {
-        val comment = """-- @@{ field = birth_date , adapter = "" , propertyType = kotlinx.datetime.LocalDate }"""
-        val annotations = extractAnnotations(listOf(comment))
-
-        assertEquals("birth_date", annotations["field"])
-        assertEquals("", annotations["adapter"])
-        assertEquals("kotlinx.datetime.LocalDate", annotations["propertyType"])
-    }
-
-    @Test
-    fun `test annotation syntax with quoted values`() {
-        val comment = """-- @@{field="user name", propertyType="String?"}"""
-        val annotations = extractAnnotations(listOf(comment))
-
-        assertEquals("user name", annotations["field"]) // HOCON unquotes strings
-        assertEquals("String?", annotations["propertyType"]) // HOCON unquotes strings
-    }
-
-    @Test
-    fun `test empty annotation block`() {
-        val comment = "-- @@{}"
-        val annotations = extractAnnotations(listOf(comment))
-
-        assertEquals(0, annotations.size)
-    }
-
-    @Test
-    fun `test single annotation without value`() {
-        val comment = """-- @@{adapter=""}"""
-        val annotations = extractAnnotations(listOf(comment))
-
-        assertEquals("", annotations["adapter"])
-    }
-
-    @Test
-    fun `test single annotation with value`() {
-        val comment = "-- @@{field=user_id}"
-        val annotations = extractAnnotations(listOf(comment))
-
-        assertEquals("user_id", annotations["field"])
-    }
-
-    @Test
-    fun `test explicit null values`() {
-        val comment = "-- @@{field=user_id, adapter=null, propertyType=\"String?\"}"
-        val annotations = extractAnnotations(listOf(comment))
-
-        assertEquals("user_id", annotations["field"])
-        assertEquals(null, annotations["adapter"]) // Explicit null
-        assertEquals("String?", annotations["propertyType"])
-    }
-
-    @Test
-    fun `test empty vs null distinction`() {
-        val comment = """-- @@{field=user_id, emptyValue="", nullValue=null}"""
-        val annotations = extractAnnotations(listOf(comment))
-
-        assertEquals("user_id", annotations["field"])
-        assertEquals("", annotations["emptyValue"]) // Empty string
-        assertEquals(null, annotations["nullValue"]) // Explicit null
-    }
+    @TestFactory
+    fun `null and empty annotation values are preserved`(): List<DynamicTest> = annotationExtractionTests(
+        listOf(
+            annotationExtractionCase(
+                displayName = "explicit null values",
+                comment = "-- @@{field=user_id, adapter=null, propertyType=\"String?\"}",
+                expected = mapOf(
+                    "field" to "user_id",
+                    "adapter" to null,
+                    "propertyType" to "String?",
+                ),
+            ),
+            annotationExtractionCase(
+                displayName = "empty string and null remain distinct",
+                comment = """-- @@{field=user_id, emptyValue="", nullValue=null}""",
+                expected = mapOf(
+                    "field" to "user_id",
+                    "emptyValue" to "",
+                    "nullValue" to null,
+                ),
+            ),
+        )
+    )
 
     @Test
     fun `test multiple annotation blocks`() {
@@ -234,46 +232,36 @@ class AnnotationsTest {
         assertEquals(false, parsed.adapter, "No propertyType should mean no adapter")
     }
 
-    @Test
-    fun `test CREATE TABLE scenario - custom type without explicit adapter`() {
-        // This simulates: @@{field=birth_date, propertyType=kotlinx.datetime.LocalDate}
-        // Should automatically infer adapter=true for custom type
+    @TestFactory
+    fun `create table annotations infer adapter requirement from property type`(): List<DynamicTest> =
+        listOf(
+            CreateTableAdapterInferenceCase(
+                displayName = "custom type without explicit adapter",
+                fieldName = "birth_date",
+                propertyType = "kotlinx.datetime.LocalDate",
+                expectedAdapter = true,
+            ),
+            CreateTableAdapterInferenceCase(
+                displayName = "built-in type without explicit adapter",
+                fieldName = "name",
+                propertyType = "kotlin.String",
+                expectedAdapter = false,
+            ),
+        ).map { case ->
+            DynamicTest.dynamicTest(case.displayName) {
+                val fieldAnnotations = extractFieldAssociatedAnnotations(
+                    listOf("-- @@{field=${case.fieldName}, propertyType=${case.propertyType}}")
+                )
 
-        val fieldAnnotations = extractFieldAssociatedAnnotations(
-            listOf(
-                "-- @@{field=birth_date, propertyType=kotlinx.datetime.LocalDate}"
-            )
-        )
+                val annotations = fieldAnnotations[case.fieldName]
+                assertEquals(true, annotations != null, "${case.fieldName} annotations should exist")
+                assertEquals(case.propertyType, annotations?.get("propertyType"))
 
-        val birthDateAnnotations = fieldAnnotations["birth_date"]
-        assertEquals(true, birthDateAnnotations != null, "birth_date annotations should exist")
-        assertEquals("kotlinx.datetime.LocalDate", birthDateAnnotations?.get("propertyType"))
-
-        // Parse the annotations to check adapter inference
-        val parsed = FieldAnnotationOverrides.parse(birthDateAnnotations!!)
-        assertEquals(true, parsed.adapter, "Custom type should automatically infer adapter=true")
-        assertEquals("kotlinx.datetime.LocalDate", parsed.propertyType)
-    }
-
-    @Test
-    fun `test CREATE TABLE scenario - built-in type without explicit adapter`() {
-        // This simulates: @@{field=name, propertyType=kotlin.String}
-        // Should automatically infer adapter=false for built-in type
-        val fieldAnnotations = extractFieldAssociatedAnnotations(
-            listOf(
-                "-- @@{field=name, propertyType=kotlin.String}"
-            )
-        )
-
-        val nameAnnotations = fieldAnnotations["name"]
-        assertEquals(true, nameAnnotations != null, "name annotations should exist")
-        assertEquals("kotlin.String", nameAnnotations?.get("propertyType"))
-
-        // Parse the annotations to check adapter inference
-        val parsed = FieldAnnotationOverrides.parse(nameAnnotations!!)
-        assertEquals(false, parsed.adapter, "Built-in type should automatically infer adapter=false")
-        assertEquals("kotlin.String", parsed.propertyType)
-    }
+                val parsed = FieldAnnotationOverrides.parse(annotations!!)
+                assertEquals(case.expectedAdapter, parsed.adapter)
+                assertEquals(case.propertyType, parsed.propertyType)
+            }
+        }
 
     @Test
     fun `test adapter key added to raw annotations map for custom types`() {
@@ -613,33 +601,27 @@ class AnnotationsTest {
         assertEquals(true, fieldAnnotations[AnnotationConstants.IS_DYNAMIC_FIELD])
     }
 
-    @Test
-    fun testDynamicFieldRequiresPropertyType() {
-        val comments = listOf(
-            "-- @@{ dynamicField=addresses }"
-        )
-
-        try {
-            extractFieldAssociatedAnnotations(comments)
-            fail("Should have thrown IllegalArgumentException")
-        } catch (e: IllegalArgumentException) {
-            assertTrue(e.message?.contains("dynamicField annotation requires a 'propertyType'") == true)
+    @TestFactory
+    fun `field associated annotations reject invalid dynamic field cases`(): List<DynamicTest> =
+        listOf(
+            FieldAssociatedValidationCase(
+                displayName = "dynamicField requires propertyType",
+                comments = listOf("-- @@{ dynamicField=addresses }"),
+                expectedMessage = "dynamicField annotation requires a 'propertyType'",
+            ),
+            FieldAssociatedValidationCase(
+                displayName = "field and dynamicField cannot both be set",
+                comments = listOf("-- @@{ field=name, dynamicField=addresses, propertyType=String }"),
+                expectedMessage = "cannot contain both 'field' and 'dynamicField'",
+            ),
+        ).map { case ->
+            DynamicTest.dynamicTest(case.displayName) {
+                val exception = assertThrows<IllegalArgumentException> {
+                    extractFieldAssociatedAnnotations(case.comments)
+                }
+                assertTrue(exception.message!!.contains(case.expectedMessage))
+            }
         }
-    }
-
-    @Test
-    fun testCannotHaveBothFieldAndDynamicField() {
-        val comments = listOf(
-            "-- @@{ field=name, dynamicField=addresses, propertyType=String }"
-        )
-
-        try {
-            extractFieldAssociatedAnnotations(comments)
-            fail("Should have thrown IllegalArgumentException")
-        } catch (e: IllegalArgumentException) {
-            assertTrue(e.message?.contains("cannot contain both 'field' and 'dynamicField'") == true)
-        }
-    }
 
     @Test
     fun testFieldAnnotationOverridesWithDynamicField() {
@@ -675,47 +657,42 @@ class AnnotationsTest {
         assertEquals("address_", result.aliasPrefix)
     }
 
-    @Test
-    fun testMappingTypeValidationRequiresSourceTable() {
-        val annotations = mapOf(
-            AnnotationConstants.IS_DYNAMIC_FIELD to true,
-            AnnotationConstants.MAPPING_TYPE to "perRow"
-            // Missing sourceTable
-        )
-
-        val exception = assertThrows<IllegalArgumentException> {
-            FieldAnnotationOverrides.parse(annotations)
+    @TestFactory
+    fun `field annotation overrides reject invalid mapping type cases`(): List<DynamicTest> =
+        listOf(
+            FieldOverrideValidationCase(
+                displayName = "mappingType requires sourceTable",
+                annotations = mapOf(
+                    AnnotationConstants.IS_DYNAMIC_FIELD to true,
+                    AnnotationConstants.MAPPING_TYPE to "perRow",
+                ),
+                expectedMessage = "When annotation 'mappingType' is specified, 'sourceTable' is required",
+            ),
+            FieldOverrideValidationCase(
+                displayName = "mappingType requires dynamicField",
+                annotations = mapOf(
+                    AnnotationConstants.MAPPING_TYPE to "perRow",
+                    AnnotationConstants.SOURCE_TABLE to "a",
+                ),
+                expectedMessage = "can only be used with dynamic fields",
+            ),
+            FieldOverrideValidationCase(
+                displayName = "mappingType value must be supported",
+                annotations = mapOf(
+                    AnnotationConstants.IS_DYNAMIC_FIELD to true,
+                    AnnotationConstants.MAPPING_TYPE to "invalidType",
+                    AnnotationConstants.SOURCE_TABLE to "a",
+                ),
+                expectedMessage = "Currently supported: 'perRow'",
+            ),
+        ).map { case ->
+            DynamicTest.dynamicTest(case.displayName) {
+                val exception = assertThrows<IllegalArgumentException> {
+                    FieldAnnotationOverrides.parse(case.annotations)
+                }
+                assertTrue(exception.message!!.contains(case.expectedMessage))
+            }
         }
-        assertTrue(exception.message!!.contains("When annotation 'mappingType' is specified, 'sourceTable' is required"))
-    }
-
-    @Test
-    fun testMappingTypeValidationRequiresDynamicField() {
-        val annotations = mapOf(
-            AnnotationConstants.MAPPING_TYPE to "perRow",
-            AnnotationConstants.SOURCE_TABLE to "a"
-            // Missing isDynamicField
-        )
-
-        val exception = assertThrows<IllegalArgumentException> {
-            FieldAnnotationOverrides.parse(annotations)
-        }
-        assertTrue(exception.message!!.contains("can only be used with dynamic fields"))
-    }
-
-    @Test
-    fun testInvalidMappingTypeValue() {
-        val annotations = mapOf(
-            AnnotationConstants.IS_DYNAMIC_FIELD to true,
-            AnnotationConstants.MAPPING_TYPE to "invalidType",
-            AnnotationConstants.SOURCE_TABLE to "a"
-        )
-
-        val exception = assertThrows<IllegalArgumentException> {
-            FieldAnnotationOverrides.parse(annotations)
-        }
-        assertTrue(exception.message!!.contains("Currently supported: 'perRow'"))
-    }
 
     @Test
     fun `statement annotations capture mapTo`() {
@@ -734,29 +711,51 @@ class AnnotationsTest {
         assertTrue(exception.message!!.contains("Supported keys"))
     }
 
-    @Test
-    fun `select annotations reject unknown keys`() {
-        val exception = assertThrows<IllegalArgumentException> {
-            StatementAnnotationOverrides.parse(
-                mapOf("mystery" to "x"),
-                context = StatementAnnotationContext.SELECT
-            )
+    @TestFactory
+    fun `statement annotations reject invalid overrides`(): List<DynamicTest> =
+        listOf(
+            StatementOverrideValidationCase(
+                displayName = "select annotations reject unknown keys",
+                annotations = mapOf("mystery" to "x"),
+                context = StatementAnnotationContext.SELECT,
+                expectedMessages = listOf("Unsupported annotation(s)", "SELECT statement"),
+            ),
+            StatementOverrideValidationCase(
+                displayName = "mapTo not allowed for create table",
+                annotations = mapOf(AnnotationConstants.MAP_TO to "com.example.Target"),
+                context = StatementAnnotationContext.CREATE_TABLE,
+                expectedMessages = listOf("Unsupported annotation(s)", "CREATE TABLE statement"),
+            ),
+            StatementOverrideValidationCase(
+                displayName = "cascadeNotify rejects unsupported keys",
+                annotations = mapOf(
+                    AnnotationConstants.CASCADE_NOTIFY to mapOf(
+                        "refresh" to listOf("person"),
+                    ),
+                ),
+                context = StatementAnnotationContext.CREATE_TABLE,
+                expectedMessages = listOf("Unsupported key(s) refresh"),
+            ),
+            StatementOverrideValidationCase(
+                displayName = "cascadeNotify rejects non list values",
+                annotations = mapOf(
+                    AnnotationConstants.CASCADE_NOTIFY to mapOf(
+                        "update" to "person",
+                    ),
+                ),
+                context = StatementAnnotationContext.CREATE_TABLE,
+                expectedMessages = listOf("must be a list of table names"),
+            ),
+        ).map { case ->
+            DynamicTest.dynamicTest(case.displayName) {
+                val exception = assertThrows<IllegalArgumentException> {
+                    StatementAnnotationOverrides.parse(case.annotations, context = case.context)
+                }
+                case.expectedMessages.forEach { expectedMessage ->
+                    assertTrue(exception.message!!.contains(expectedMessage))
+                }
+            }
         }
-        assertTrue(exception.message!!.contains("Unsupported annotation(s)"))
-        assertTrue(exception.message!!.contains("SELECT statement"))
-    }
-
-    @Test
-    fun `mapTo not allowed for create table`() {
-        val exception = assertThrows<IllegalArgumentException> {
-            StatementAnnotationOverrides.parse(
-                mapOf(AnnotationConstants.MAP_TO to "com.example.Target"),
-                context = StatementAnnotationContext.CREATE_TABLE
-            )
-        }
-        assertTrue(exception.message!!.contains("Unsupported annotation(s)"))
-        assertTrue(exception.message!!.contains("CREATE TABLE statement"))
-    }
 
     @Test
     fun `extract annotations keeps nested objects and lists intact`() {
@@ -789,35 +788,56 @@ class AnnotationsTest {
         assertEquals(setOf("comment"), overrides.cascadeNotify?.delete)
     }
 
-    @Test
-    fun `cascadeNotify rejects unsupported keys`() {
-        val exception = assertThrows<IllegalArgumentException> {
-            StatementAnnotationOverrides.parse(
-                mapOf(
-                    AnnotationConstants.CASCADE_NOTIFY to mapOf(
-                        "refresh" to listOf("person")
-                    )
-                ),
-                context = StatementAnnotationContext.CREATE_TABLE
-            )
+    private data class AnnotationExtractionCase(
+        val displayName: String,
+        val comments: List<String>,
+        val expected: Map<String, String?>,
+    )
+
+    private data class FieldAssociatedValidationCase(
+        val displayName: String,
+        val comments: List<String>,
+        val expectedMessage: String,
+    )
+
+    private data class FieldOverrideValidationCase(
+        val displayName: String,
+        val annotations: Map<String, Any>,
+        val expectedMessage: String,
+    )
+
+    private data class CreateTableAdapterInferenceCase(
+        val displayName: String,
+        val fieldName: String,
+        val propertyType: String,
+        val expectedAdapter: Boolean,
+    )
+
+    private data class StatementOverrideValidationCase(
+        val displayName: String,
+        val annotations: Map<String, Any>,
+        val context: StatementAnnotationContext,
+        val expectedMessages: List<String>,
+    )
+
+    private fun annotationExtractionCase(
+        displayName: String,
+        comment: String,
+        expected: Map<String, String?>,
+    ): AnnotationExtractionCase = AnnotationExtractionCase(
+        displayName = displayName,
+        comments = listOf(comment),
+        expected = expected,
+    )
+
+    private fun annotationExtractionTests(cases: List<AnnotationExtractionCase>): List<DynamicTest> = cases.map { case ->
+        DynamicTest.dynamicTest(case.displayName) {
+            val annotations = extractAnnotations(case.comments)
+
+            assertEquals(case.expected.size, annotations.size)
+            case.expected.forEach { (key, value) ->
+                assertEquals(value, annotations[key])
+            }
         }
-
-        assertTrue(exception.message!!.contains("Unsupported key(s) refresh"))
-    }
-
-    @Test
-    fun `cascadeNotify rejects non list values`() {
-        val exception = assertThrows<IllegalArgumentException> {
-            StatementAnnotationOverrides.parse(
-                mapOf(
-                    AnnotationConstants.CASCADE_NOTIFY to mapOf(
-                        "update" to "person"
-                    )
-                ),
-                context = StatementAnnotationContext.CREATE_TABLE
-            )
-        }
-
-        assertTrue(exception.message!!.contains("must be a list of table names"))
     }
 }

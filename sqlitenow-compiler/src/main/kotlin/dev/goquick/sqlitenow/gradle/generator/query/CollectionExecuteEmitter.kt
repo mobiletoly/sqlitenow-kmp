@@ -21,7 +21,6 @@ import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
 import dev.goquick.sqlitenow.gradle.processing.SelectFieldCodeGenerator
 import dev.goquick.sqlitenow.gradle.processing.SharedResultTypeUtils
 import dev.goquick.sqlitenow.gradle.util.IndentedCodeBuilder
-import dev.goquick.sqlitenow.gradle.util.pascalize
 
 /**
  * Emits the `executeAsList` body for collection-mapped queries. Handles validation, grouping key
@@ -64,12 +63,7 @@ internal class CollectionExecuteEmitter(
             .copy(nullable = false)
             .toString()
 
-        val joinedClassFullName = if (statement.annotations.queryResult != null) {
-            "${statement.annotations.queryResult}_Joined"
-        } else {
-            val resultClassName = "${pascalize(namespace)}${className}Result"
-            "${resultClassName}_Joined"
-        }
+        val joinedClassFullName = SharedResultTypeUtils.createJoinedResultTypeString(namespace, statement)
 
         val capitalizedNamespace = queryNamespaceName(namespace)
         val baseResultType = SharedResultTypeUtils.createResultTypeString(namespace, statement)

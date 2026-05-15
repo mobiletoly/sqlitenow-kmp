@@ -4,6 +4,7 @@ import dev.goquick.sqlitenow.gradle.sqlinspect.DeleteStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.InsertStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.UpdateStatement
+import java.sql.Connection
 import java.sql.DriverManager
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -19,10 +20,8 @@ class StatementConstantValuesTest {
 
     @Test
     fun `update statement handles mixed constant assignments`() {
-        DriverManager.getConnection("jdbc:sqlite::memory:").use { conn ->
-            conn.createStatement().use { stmt ->
-                stmt.execute(
-                    """
+        withSqliteSchema(
+            """
                     CREATE TABLE person (
                         id INTEGER PRIMARY KEY,
                         age INTEGER NOT NULL,
@@ -32,10 +31,8 @@ class StatementConstantValuesTest {
                         updated_at TEXT,
                         notes TEXT
                     )
-                    """.trimIndent()
-                )
-            }
-
+            """.trimIndent()
+        ) { conn ->
             val sql = """
                 UPDATE person
                 SET age = :age,
@@ -63,10 +60,8 @@ class StatementConstantValuesTest {
 
     @Test
     fun `insert statement handles constant values and conflict updates`() {
-        DriverManager.getConnection("jdbc:sqlite::memory:").use { conn ->
-            conn.createStatement().use { stmt ->
-                stmt.execute(
-                    """
+        withSqliteSchema(
+            """
                     CREATE TABLE person (
                         id INTEGER PRIMARY KEY,
                         age INTEGER NOT NULL,
@@ -74,10 +69,8 @@ class StatementConstantValuesTest {
                         notes TEXT,
                         active INTEGER NOT NULL DEFAULT 0
                     )
-                    """.trimIndent()
-                )
-            }
-
+            """.trimIndent()
+        ) { conn ->
             val sql = """
                 INSERT INTO person (id, age, weight, notes, active)
                 VALUES (:id, 42, 2.5, NULL, 1)
@@ -104,19 +97,15 @@ class StatementConstantValuesTest {
 
     @Test
     fun `delete statement handles constants in where clause`() {
-        DriverManager.getConnection("jdbc:sqlite::memory:").use { conn ->
-            conn.createStatement().use { stmt ->
-                stmt.execute(
-                    """
+        withSqliteSchema(
+            """
                     CREATE TABLE person (
                         id INTEGER PRIMARY KEY,
                         active INTEGER NOT NULL DEFAULT 0,
                         email TEXT NOT NULL
                     )
-                    """.trimIndent()
-                )
-            }
-
+            """.trimIndent()
+        ) { conn ->
             val sql = """
                 DELETE FROM person
                 WHERE active = 0
@@ -133,20 +122,16 @@ class StatementConstantValuesTest {
 
     @Test
     fun `select statement handles constants in projections and filters`() {
-        DriverManager.getConnection("jdbc:sqlite::memory:").use { conn ->
-            conn.createStatement().use { stmt ->
-                stmt.execute(
-                    """
+        withSqliteSchema(
+            """
                     CREATE TABLE person (
                         id INTEGER PRIMARY KEY,
                         age INTEGER NOT NULL,
                         first_name TEXT NOT NULL,
                         active INTEGER NOT NULL DEFAULT 0
                     )
-                    """.trimIndent()
-                )
-            }
-
+            """.trimIndent()
+        ) { conn ->
             val sql = """
                 SELECT id,
                        first_name,
@@ -171,6 +156,18 @@ class StatementConstantValuesTest {
             assertTrue(parsed.fields.any { it.fieldName == "const_real" })
             assertTrue(parsed.fields.any { it.fieldName == "const_timestamp" })
             assertTrue(parsed.fields.any { it.fieldName == "const_null" })
+        }
+    }
+
+    private fun withSqliteSchema(
+        schemaSql: String,
+        block: (Connection) -> Unit,
+    ) {
+        DriverManager.getConnection("jdbc:sqlite::memory:").use { conn ->
+            conn.createStatement().use { stmt ->
+                stmt.execute(schemaSql)
+            }
+            block(conn)
         }
     }
 }

@@ -30,26 +30,42 @@ internal object ReturningColumnsResolver {
         generatorContext: GeneratorContext,
         statement: AnnotatedExecuteStatement,
     ): List<AnnotatedCreateTableStatement.Column> {
-        val (tableStatement, returningColumns) = resolveMetadata(generatorContext, statement)
-        val allColumns = tableStatement.columns
-        if (returningColumns.isEmpty() || returningColumns.contains("*")) {
-            return allColumns
-        }
-        val returningSet = CaseInsensitiveSet().apply { addAll(returningColumns) }
-        return allColumns.filter { column -> returningSet.containsIgnoreCase(column.src.name) }
+        return resolveColumns(generatorContext.createTableStatements, statement)
+    }
+
+    fun resolveColumns(
+        createTableStatements: List<AnnotatedCreateTableStatement>,
+        statement: AnnotatedExecuteStatement,
+    ): List<AnnotatedCreateTableStatement.Column> {
+        val (tableStatement, returningColumns) = resolveMetadata(createTableStatements, statement)
+        return selectColumns(tableStatement, returningColumns)
+    }
+
+    fun resolveColumnsOrEmpty(
+        generatorContext: GeneratorContext,
+        statement: AnnotatedExecuteStatement,
+    ): List<AnnotatedCreateTableStatement.Column> {
+        return resolveColumnsOrEmpty(generatorContext.createTableStatements, statement)
+    }
+
+    fun resolveColumnsOrEmpty(
+        createTableStatements: List<AnnotatedCreateTableStatement>,
+        statement: AnnotatedExecuteStatement,
+    ): List<AnnotatedCreateTableStatement.Column> {
+        val (tableStatement, returningColumns) = resolveMetadataOrNull(createTableStatements, statement)
+            ?: return emptyList()
+        return selectColumns(tableStatement, returningColumns)
     }
 
     fun createSelectLikeFields(
         generatorContext: GeneratorContext,
         statement: AnnotatedExecuteStatement,
     ): List<AnnotatedSelectStatement.Field> {
-        val (tableStatement, returningColumns) = resolveMetadata(generatorContext, statement)
-        val columnsToInclude = if (returningColumns.isEmpty() || returningColumns.contains("*")) {
-            tableStatement.columns
-        } else {
-            val returningSet = CaseInsensitiveSet().apply { addAll(returningColumns) }
-            tableStatement.columns.filter { column -> returningSet.containsIgnoreCase(column.src.name) }
-        }
+        val (tableStatement, returningColumns) = resolveMetadata(
+            generatorContext.createTableStatements,
+            statement,
+        )
+        val columnsToInclude = selectColumns(tableStatement, returningColumns)
 
         return columnsToInclude.map { column ->
             val fieldSrc = SelectStatement.FieldSource(
@@ -68,17 +84,37 @@ internal object ReturningColumnsResolver {
     }
 
     private fun resolveMetadata(
-        generatorContext: GeneratorContext,
+        createTableStatements: List<AnnotatedCreateTableStatement>,
         statement: AnnotatedExecuteStatement,
     ): Pair<AnnotatedCreateTableStatement, List<String>> {
+        return resolveMetadataOrNull(createTableStatements, statement)
+            ?: error("Table '${statement.src.table}' not found for RETURNING clause")
+    }
+
+    private fun resolveMetadataOrNull(
+        createTableStatements: List<AnnotatedCreateTableStatement>,
+        statement: AnnotatedExecuteStatement,
+    ): Pair<AnnotatedCreateTableStatement, List<String>>? {
         val tableName = statement.src.table
 
         val tableLookup =
-            generatorContext.createTableStatements.associateBy { it.src.tableName.lowercase() }
+            createTableStatements.associateBy { it.src.tableName.lowercase() }
         val tableStatement = tableLookup[tableName.lowercase()]
-            ?: error("Table '$tableName' not found for RETURNING clause")
+            ?: return null
 
         val returningColumns = statement.getReturningColumns()
         return tableStatement to returningColumns
+    }
+
+    private fun selectColumns(
+        tableStatement: AnnotatedCreateTableStatement,
+        returningColumns: List<String>,
+    ): List<AnnotatedCreateTableStatement.Column> {
+        val allColumns = tableStatement.columns
+        if (returningColumns.isEmpty() || returningColumns.contains("*")) {
+            return allColumns
+        }
+        val returningSet = CaseInsensitiveSet().apply { addAll(returningColumns) }
+        return allColumns.filter { column -> returningSet.containsIgnoreCase(column.src.name) }
     }
 }

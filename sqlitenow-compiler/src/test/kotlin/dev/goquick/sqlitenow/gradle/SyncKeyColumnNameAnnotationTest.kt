@@ -1,7 +1,9 @@
 package dev.goquick.sqlitenow.gradle
 
 import org.junit.jupiter.api.DisplayName
+import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestFactory
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertFailsWith
@@ -15,61 +17,35 @@ class SyncKeyColumnNameAnnotationTest {
     @Test
     @DisplayName("enableSync tables emit explicit SyncTable metadata for text and blob primary keys")
     fun syncKeyColumnNameAnnotation_generatesExplicitSyncTables() {
-        val schemaDir = File(tempDir, "schema")
-        schemaDir.mkdirs()
-
-        File(schemaDir, "users.sql").writeText(
-            """
-            -- @@{enableSync=true, syncKeyColumnName=uuid}
-            CREATE TABLE users (
-                uuid TEXT PRIMARY KEY NOT NULL,
-                name TEXT NOT NULL,
-                email TEXT UNIQUE NOT NULL
-            );
-            """.trimIndent()
+        writeSchemaFiles(
+            mapOf(
+                "users.sql" to """
+                    -- @@{enableSync=true, syncKeyColumnName=uuid}
+                    CREATE TABLE users (
+                        uuid TEXT PRIMARY KEY NOT NULL,
+                        name TEXT NOT NULL,
+                        email TEXT UNIQUE NOT NULL
+                    );
+                """,
+                "products.sql" to """
+                    -- @@{enableSync=true}
+                    CREATE TABLE products (
+                        code TEXT PRIMARY KEY NOT NULL,
+                        name TEXT NOT NULL,
+                        price REAL NOT NULL
+                    );
+                """,
+                "blob_docs.sql" to """
+                    -- @@{enableSync=true}
+                    CREATE TABLE blob_docs (
+                        id BLOB PRIMARY KEY NOT NULL,
+                        name TEXT NOT NULL
+                    );
+                """,
+            )
         )
 
-        File(schemaDir, "products.sql").writeText(
-            """
-            -- @@{enableSync=true}
-            CREATE TABLE products (
-                code TEXT PRIMARY KEY NOT NULL,
-                name TEXT NOT NULL,
-                price REAL NOT NULL
-            );
-            """.trimIndent()
-        )
-
-        File(schemaDir, "blob_docs.sql").writeText(
-            """
-            -- @@{enableSync=true}
-            CREATE TABLE blob_docs (
-                id BLOB PRIMARY KEY NOT NULL,
-                name TEXT NOT NULL
-            );
-            """.trimIndent()
-        )
-
-        val outputDir = File(tempDir, "generated")
-        outputDir.mkdirs()
-
-        generateDatabaseFiles(
-            dbName = "TestDatabase",
-            sqlDir = tempDir,
-            packageName = "com.test.db",
-            outDir = outputDir,
-            schemaDatabaseFile = null,
-            debug = false,
-            oversqlite = true,
-        )
-
-        val generatedFiles = outputDir.walkTopDown()
-            .filter { it.isFile && it.extension == "kt" }
-            .toList()
-        val databaseFile = generatedFiles.find { it.name.contains("TestDatabase") }
-        assertTrue(databaseFile != null, "Database file should be generated")
-
-        val generatedContent = databaseFile.readText()
+        val generatedContent = generatedDatabaseContent()
         assertTrue(
             generatedContent.contains("syncTables: List<SyncTable>"),
             "Should generate syncTables property with correct type"
@@ -110,123 +86,88 @@ class SyncKeyColumnNameAnnotationTest {
         )
     }
 
-    @Test
-    @DisplayName("enableSync rejects unsupported integer primary keys")
-    fun syncKeyColumnNameAnnotation_rejectsIntegerSyncTables() {
-        val schemaDir = File(tempDir, "schema")
-        schemaDir.mkdirs()
-
-        File(schemaDir, "orders.sql").writeText(
-            """
-            -- @@{enableSync=true}
-            CREATE TABLE orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                quantity INTEGER NOT NULL DEFAULT 1
-            );
-            """.trimIndent()
-        )
-
-        val outputDir = File(tempDir, "generated")
-        outputDir.mkdirs()
-
-        val error = assertFailsWith<IllegalArgumentException> {
-            generateDatabaseFiles(
-                dbName = "TestDatabase",
-                sqlDir = tempDir,
-                packageName = "com.test.db",
-                outDir = outputDir,
-                schemaDatabaseFile = null,
-                debug = false,
+    @TestFactory
+    @DisplayName("invalid sync configurations fail closed")
+    fun invalidSyncConfigurationsFailClosed(): List<DynamicTest> {
+        return listOf(
+            InvalidSyncConfigurationCase(
+                displayName = "enableSync rejects unsupported integer primary keys",
+                schemaFileName = "orders.sql",
+                schemaSql = """
+                    -- @@{enableSync=true}
+                    CREATE TABLE orders (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        quantity INTEGER NOT NULL DEFAULT 1
+                    );
+                """,
+                expectedMessage = "TEXT PRIMARY KEY or BLOB PRIMARY KEY"
+            ),
+            InvalidSyncConfigurationCase(
+                displayName = "enableSync rejects unsupported bigint primary keys",
+                schemaFileName = "events.sql",
+                schemaSql = """
+                    -- @@{enableSync=true}
+                    CREATE TABLE events (
+                        event_id BIGINT PRIMARY KEY NOT NULL,
+                        title TEXT NOT NULL
+                    );
+                """,
+                expectedMessage = "TEXT PRIMARY KEY or BLOB PRIMARY KEY"
+            ),
+            InvalidSyncConfigurationCase(
+                displayName = "enableSync validation still runs when oversqlite bridge generation is disabled",
+                schemaFileName = "orders.sql",
+                schemaSql = """
+                    -- @@{enableSync=true}
+                    CREATE TABLE orders (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        quantity INTEGER NOT NULL DEFAULT 1
+                    );
+                """,
+                oversqlite = false,
+                expectedMessage = "TEXT PRIMARY KEY or BLOB PRIMARY KEY"
+            ),
+            InvalidSyncConfigurationCase(
+                displayName = "oversqlite bridge requires at least one sync-enabled table",
+                schemaFileName = "users.sql",
+                schemaSql = """
+                    CREATE TABLE users (
+                        id TEXT PRIMARY KEY NOT NULL,
+                        name TEXT NOT NULL
+                    );
+                """,
+                oversqlite = true,
+                expectedMessage = "no tables are annotated with enableSync=true"
             )
+        ).map { case ->
+            DynamicTest.dynamicTest(case.displayName) {
+                assertInvalidSyncConfiguration(case)
+            }
         }
-
-        assertTrue(
-            error.message?.contains("TEXT PRIMARY KEY or BLOB PRIMARY KEY") == true,
-            "Should reject integer sync primary keys with a clear error"
-        )
-    }
-
-    @Test
-    @DisplayName("enableSync rejects unsupported bigint primary keys")
-    fun syncKeyColumnNameAnnotation_rejectsBigIntSyncTables() {
-        val schemaDir = File(tempDir, "schema")
-        schemaDir.mkdirs()
-
-        File(schemaDir, "events.sql").writeText(
-            """
-            -- @@{enableSync=true}
-            CREATE TABLE events (
-                event_id BIGINT PRIMARY KEY NOT NULL,
-                title TEXT NOT NULL
-            );
-            """.trimIndent()
-        )
-
-        val outputDir = File(tempDir, "generated")
-        outputDir.mkdirs()
-
-        val error = assertFailsWith<IllegalArgumentException> {
-            generateDatabaseFiles(
-                dbName = "TestDatabase",
-                sqlDir = tempDir,
-                packageName = "com.test.db",
-                outDir = outputDir,
-                schemaDatabaseFile = null,
-                debug = false,
-            )
-        }
-
-        assertTrue(
-            error.message?.contains("TEXT PRIMARY KEY or BLOB PRIMARY KEY") == true,
-            "Should reject bigint sync primary keys with a clear error"
-        )
     }
 
     @Test
     @DisplayName("tables without enableSync annotation are not included in syncTables")
     fun testNonSyncTablesExcluded() {
-        val schemaDir = File(tempDir, "schema")
-        schemaDir.mkdirs()
-
-        File(schemaDir, "sync_table.sql").writeText(
-            """
-            -- @@{enableSync=true, syncKeyColumnName=custom_id}
-            CREATE TABLE sync_table (
-                custom_id TEXT PRIMARY KEY NOT NULL,
-                data TEXT NOT NULL
-            );
-            """.trimIndent()
+        writeSchemaFiles(
+            mapOf(
+                "sync_table.sql" to """
+                    -- @@{enableSync=true, syncKeyColumnName=custom_id}
+                    CREATE TABLE sync_table (
+                        custom_id TEXT PRIMARY KEY NOT NULL,
+                        data TEXT NOT NULL
+                    );
+                """,
+                "regular_table.sql" to """
+                    CREATE TABLE regular_table (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        info TEXT NOT NULL
+                    );
+                """,
+            )
         )
 
-        File(schemaDir, "regular_table.sql").writeText(
-            """
-            CREATE TABLE regular_table (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                info TEXT NOT NULL
-            );
-            """.trimIndent()
-        )
-
-        val outputDir = File(tempDir, "generated")
-        outputDir.mkdirs()
-
-        generateDatabaseFiles(
-            dbName = "TestDatabase",
-            sqlDir = tempDir,
-            packageName = "com.test.db",
-            outDir = outputDir,
-            schemaDatabaseFile = null,
-            debug = false,
-            oversqlite = true,
-        )
-
-        val generatedFiles = outputDir.walkTopDown()
-            .filter { it.isFile && it.extension == "kt" }
-            .toList()
-        val databaseFile = generatedFiles.find { it.name.contains("TestDatabase") }
-        assertTrue(databaseFile != null, "Database file should be generated")
-
-        val generatedContent = databaseFile.readText()
+        val generatedContent = generatedDatabaseContent()
         assertTrue(
             generatedContent.contains("SyncTable(tableName = \"sync_table\", syncKeyColumnName = \"custom_id\")"),
             "Should include sync table with custom primary key"
@@ -238,107 +179,96 @@ class SyncKeyColumnNameAnnotationTest {
     }
 
     @Test
-    @DisplayName("enableSync validation still runs when oversqlite bridge generation is disabled")
-    fun syncKeyColumnNameAnnotation_validatesEvenWhenOversqliteDisabled() {
-        val schemaDir = File(tempDir, "schema")
-        schemaDir.mkdirs()
-
-        File(schemaDir, "orders.sql").writeText(
-            """
-            -- @@{enableSync=true}
-            CREATE TABLE orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                quantity INTEGER NOT NULL DEFAULT 1
-            );
-            """.trimIndent()
-        )
-
-        val outputDir = File(tempDir, "generated")
-        outputDir.mkdirs()
-
-        val error = assertFailsWith<IllegalArgumentException> {
-            generateDatabaseFiles(
-                dbName = "TestDatabase",
-                sqlDir = tempDir,
-                packageName = "com.test.db",
-                outDir = outputDir,
-                schemaDatabaseFile = null,
-                debug = false,
-                oversqlite = false,
-            )
-        }
-
-        assertTrue(error.message?.contains("TEXT PRIMARY KEY or BLOB PRIMARY KEY") == true)
-    }
-
-    @Test
     @DisplayName("oversqlite bridge is not generated unless explicitly enabled")
     fun oversqliteBridgeRequiresDslFlag() {
-        val schemaDir = File(tempDir, "schema")
-        schemaDir.mkdirs()
-
-        File(schemaDir, "users.sql").writeText(
-            """
-            -- @@{enableSync=true}
-            CREATE TABLE users (
-                id TEXT PRIMARY KEY NOT NULL,
-                name TEXT NOT NULL
-            );
-            """.trimIndent()
+        writeSchemaFiles(
+            mapOf(
+                "users.sql" to """
+                    -- @@{enableSync=true}
+                    CREATE TABLE users (
+                        id TEXT PRIMARY KEY NOT NULL,
+                        name TEXT NOT NULL
+                    );
+                """,
+            )
         )
 
-        val outputDir = File(tempDir, "generated")
-        outputDir.mkdirs()
-
-        generateDatabaseFiles(
-            dbName = "TestDatabase",
-            sqlDir = tempDir,
-            packageName = "com.test.db",
-            outDir = outputDir,
-            schemaDatabaseFile = null,
-            debug = false,
-            oversqlite = false,
-        )
-
-        val databaseFile = outputDir.walkTopDown()
-            .first { it.isFile && it.name == "TestDatabase.kt" }
-
-        val generatedContent = databaseFile.readText()
+        val generatedContent = generatedDatabaseContent(oversqlite = false)
         assertTrue(!generatedContent.contains("syncTables: List<SyncTable>"))
         assertTrue(!generatedContent.contains("fun buildOversqliteConfig"))
         assertTrue(!generatedContent.contains("fun newOversqliteClient("))
     }
 
-    @Test
-    @DisplayName("oversqlite bridge requires at least one sync-enabled table")
-    fun oversqliteBridgeRequiresSyncEnabledTable() {
-        val schemaDir = File(tempDir, "schema")
-        schemaDir.mkdirs()
+    private fun assertInvalidSyncConfiguration(case: InvalidSyncConfigurationCase) {
+        val caseDir = File(tempDir, case.displayName.replace(Regex("[^A-Za-z0-9]+"), "_"))
+        writeSchemaFiles(mapOf(case.schemaFileName to case.schemaSql), rootDir = caseDir)
 
-        File(schemaDir, "users.sql").writeText(
-            """
-            CREATE TABLE users (
-                id TEXT PRIMARY KEY NOT NULL,
-                name TEXT NOT NULL
-            );
-            """.trimIndent()
-        )
-
-        val outputDir = File(tempDir, "generated")
+        val outputDir = File(caseDir, "generated")
         outputDir.mkdirs()
 
         val error = assertFailsWith<IllegalArgumentException> {
-            generateDatabaseFiles(
-                dbName = "TestDatabase",
-                sqlDir = tempDir,
-                packageName = "com.test.db",
-                outDir = outputDir,
-                schemaDatabaseFile = null,
-                debug = false,
-                oversqlite = true,
-            )
+            if (case.oversqlite == null) {
+                generateDatabaseFiles(
+                    dbName = "TestDatabase",
+                    sqlDir = caseDir,
+                    packageName = "com.test.db",
+                    outDir = outputDir,
+                    schemaDatabaseFile = null,
+                    debug = false,
+                )
+            } else {
+                generateDatabaseFiles(
+                    dbName = "TestDatabase",
+                    sqlDir = caseDir,
+                    packageName = "com.test.db",
+                    outDir = outputDir,
+                    schemaDatabaseFile = null,
+                    debug = false,
+                    oversqlite = case.oversqlite,
+                )
+            }
         }
 
-        assertTrue(error.message?.contains("no tables are annotated with enableSync=true") == true)
+        assertTrue(error.message?.contains(case.expectedMessage) == true)
     }
+
+    private fun writeSchemaFiles(
+        files: Map<String, String>,
+        rootDir: File = tempDir,
+    ) {
+        val schemaDir = File(rootDir, "schema")
+        schemaDir.mkdirs()
+        files.forEach { (name, sql) ->
+            File(schemaDir, name).writeText(sql.trimIndent())
+        }
+    }
+
+    private fun generatedDatabaseContent(
+        rootDir: File = tempDir,
+        oversqlite: Boolean = true,
+    ): String {
+        val outputDir = File(rootDir, "generated")
+        outputDir.mkdirs()
+        generateDatabaseFiles(
+            dbName = "TestDatabase",
+            sqlDir = rootDir,
+            packageName = "com.test.db",
+            outDir = outputDir,
+            schemaDatabaseFile = null,
+            debug = false,
+            oversqlite = oversqlite,
+        )
+
+        val databaseFile = outputDir.walkTopDown()
+            .first { it.isFile && it.name == "TestDatabase.kt" }
+        return databaseFile.readText()
+    }
+
+    private data class InvalidSyncConfigurationCase(
+        val displayName: String,
+        val schemaFileName: String,
+        val schemaSql: String,
+        val expectedMessage: String,
+        val oversqlite: Boolean? = null,
+    )
 }

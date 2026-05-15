@@ -15,7 +15,9 @@ import java.sql.DriverManager
 import net.sf.jsqlparser.parser.CCJSqlParserUtil
 import net.sf.jsqlparser.statement.delete.Delete
 import net.sf.jsqlparser.statement.update.Update
+import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestFactory
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.io.TempDir
 import kotlin.test.assertEquals
@@ -70,43 +72,47 @@ class ReturningColumnsResolverTest {
         }
     }
 
-    @Test
-    fun `update returning alias remains unsupported with clear message`() {
-        DriverManager.getConnection("jdbc:sqlite::memory:").use { connection ->
-            connection.createStatement().execute(
-                "CREATE TABLE person(id INTEGER PRIMARY KEY, doc_id TEXT NOT NULL, created_at TEXT)"
+    @TestFactory
+    fun `unsupported returning clauses fail with clear messages`(): List<DynamicTest> = listOf(
+        ReturningParseErrorCase(
+            displayName = "update returning alias",
+            expectedMessage = "RETURNING clause with aliases is currently not supported",
+        ) { connection ->
+            UpdateStatement.parse(
+                CCJSqlParserUtil.parse(
+                    "UPDATE person SET created_at = :createdAt RETURNING doc_id AS alias_doc_id"
+                ) as Update,
+                connection,
             )
-
-            val error = assertThrows<IllegalArgumentException> {
-                UpdateStatement.parse(
-                    CCJSqlParserUtil.parse(
-                        "UPDATE person SET created_at = :createdAt RETURNING doc_id AS alias_doc_id"
-                    ) as Update,
-                    connection,
-                )
-            }
-
-            assertTrue(error.message!!.contains("RETURNING clause with aliases is currently not supported"))
+        },
+        ReturningParseErrorCase(
+            displayName = "delete returning expression",
+            expectedMessage = "RETURNING clause with expressions is currently not supported",
+        ) { connection ->
+            DeleteStatement.parse(
+                CCJSqlParserUtil.parse(
+                    "DELETE FROM person WHERE id = :personId RETURNING upper(doc_id)"
+                ) as Delete,
+                connection,
+            )
+        },
+    ).map { case ->
+        DynamicTest.dynamicTest(case.displayName) {
+            assertReturningParseError(case)
         }
     }
 
-    @Test
-    fun `delete returning expression remains unsupported with clear message`() {
+    private fun assertReturningParseError(case: ReturningParseErrorCase) {
         DriverManager.getConnection("jdbc:sqlite::memory:").use { connection ->
             connection.createStatement().execute(
                 "CREATE TABLE person(id INTEGER PRIMARY KEY, doc_id TEXT NOT NULL, created_at TEXT)"
             )
 
             val error = assertThrows<IllegalArgumentException> {
-                DeleteStatement.parse(
-                    CCJSqlParserUtil.parse(
-                        "DELETE FROM person WHERE id = :personId RETURNING upper(doc_id)"
-                    ) as Delete,
-                    connection,
-                )
+                case.parse(connection)
             }
 
-            assertTrue(error.message!!.contains("RETURNING clause with expressions is currently not supported"))
+            assertTrue(error.message!!.contains(case.expectedMessage))
         }
     }
 
@@ -155,5 +161,11 @@ class ReturningColumnsResolverTest {
         propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
         queryResult = null,
         collectionKey = null,
+    )
+
+    private data class ReturningParseErrorCase(
+        val displayName: String,
+        val expectedMessage: String,
+        val parse: (Connection) -> Unit,
     )
 }

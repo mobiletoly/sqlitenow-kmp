@@ -35,6 +35,7 @@ import dev.goquick.sqlitenow.gradle.sqlinspect.AssociatedColumn
 import dev.goquick.sqlitenow.gradle.sqlinspect.DeleteStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.InsertStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.UpdateStatement
+import dev.goquick.sqlitenow.gradle.sqlinspect.sortCreateViewsByDependencies
 import dev.goquick.sqlitenow.gradle.logger
 import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateViewStatement
@@ -42,6 +43,8 @@ import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedStatement
 import dev.goquick.sqlitenow.gradle.util.pascalize
+import dev.goquick.sqlitenow.gradle.util.queryNamespaceClassName
+import dev.goquick.sqlitenow.gradle.processing.AffectedTablesResolver
 import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
 import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationOverrides
 import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationResolver
@@ -78,7 +81,7 @@ open class DataStructCodeGenerator(
         }
     val createViewStatements = run {
         val viewExecs = statementExecutors.filterIsInstance<CreateViewStatementExecutor>()
-        val sorted = sortViewsByDependencies(viewExecs)
+        val sorted = sortCreateViewsByDependencies(viewExecs)
         sorted.map {
             try {
                 it.execute(conn) as AnnotatedCreateViewStatement
@@ -94,25 +97,13 @@ open class DataStructCodeGenerator(
         }
     }
 
-    private val createViewStatementsByName: Map<String, AnnotatedCreateViewStatement> =
-        createViewStatements.associateBy { it.src.viewName.lowercase() }
-
-    private val viewTableDependencies: Map<String, Set<String>> by lazy {
-        createViewStatements.associate { view ->
-            val resolved = resolveViewDependencies(view.src.viewName.lowercase(), mutableSetOf())
-            view.src.viewName.lowercase() to resolved
-        }
+    private val affectedTablesResolver by lazy {
+        AffectedTablesResolver.fromStatements(
+            createTableStatements = createTableStatements,
+            createViewStatements = createViewStatements,
+            includeSchemaStatements = true,
+        )
     }
-
-    private val cascadeNotifyByTable: Map<String, StatementAnnotationOverrides.CascadeNotify> =
-        buildMap {
-            createTableStatements.forEach { table ->
-                val cascade = table.annotations.cascadeNotify ?: return@forEach
-                put(table.src.tableName.lowercase(), cascade)
-            }
-        }
-
-    private val cascadeClosureCache = mutableMapOf<Pair<String, StatementAnnotationOverrides.CascadeAction>, Set<String>>()
 
     private val annotationResolver =
         FieldAnnotationResolver(createTableStatements, createViewStatements)
@@ -137,47 +128,11 @@ open class DataStructCodeGenerator(
         outputDir = outputDir
     )
 
-    private fun sortViewsByDependencies(viewExecutors: List<CreateViewStatementExecutor>): List<CreateViewStatementExecutor> {
-        if (viewExecutors.size <= 1) return viewExecutors
-        val nameToExec = viewExecutors.associateBy { it.viewName() }
-        val viewNames = nameToExec.keys.toSet()
-
-        val adj = mutableMapOf<String, MutableList<String>>()
-        val indeg = mutableMapOf<String, Int>().apply { viewNames.forEach { this[it] = 0 } }
-
-        viewExecutors.forEach { exec ->
-            val v = exec.viewName()
-            val deps = exec.referencedTableOrViewNames().filter { it in viewNames }
-            deps.forEach { dep ->
-                adj.getOrPut(dep) { mutableListOf() }.add(v)
-                indeg[v] = (indeg[v] ?: 0) + 1
-            }
-        }
-
-        val queue = ArrayDeque(indeg.filter { it.value == 0 }.keys)
-        val orderedNames = mutableListOf<String>()
-        while (queue.isNotEmpty()) {
-            val u = queue.removeFirst()
-            orderedNames.add(u)
-            adj[u]?.forEach { w ->
-                indeg[w] = (indeg[w] ?: 0) - 1
-                if ((indeg[w] ?: 0) == 0) queue.add(w)
-            }
-        }
-
-        if (orderedNames.size < viewExecutors.size) {
-            val remaining = viewExecutors.map { it.viewName() }.filter { it !in orderedNames }
-            orderedNames.addAll(remaining)
-        }
-
-        return orderedNames.mapNotNull { nameToExec[it] }
-    }
-
     fun generateNamespaceDataStructuresCode(
         namespace: String,
         packageName: String,
     ): FileSpec.Builder {
-        val fileName = "${pascalize(namespace)}Query"
+        val fileName = queryNamespaceClassName(namespace)
         val fileSpecBuilder = FileSpec.builder(packageName, fileName)
             .addFileComment("Generated code for $namespace namespace queries")
             .addFileComment("\nDo not modify this file manually")
@@ -192,7 +147,7 @@ open class DataStructCodeGenerator(
                     .build()
             )
 
-        val capitalizedNamespace = "${pascalize(namespace)}Query"
+        val capitalizedNamespace = queryNamespaceClassName(namespace)
         val namespaceObject = TypeSpec.objectBuilder(capitalizedNamespace)
             .addKdoc("Contains queries for the $namespace namespace")
 
@@ -263,7 +218,7 @@ open class DataStructCodeGenerator(
         queryObjectBuilder.addProperty(sqlProperty)
 
         // Add affectedTables constant
-        val affectedTables = getAffectedTablesFromStatement(statement)
+        val affectedTables = affectedTablesResolver.tablesFor(statement)
         val affectedTablesType = ClassName("kotlin.collections", "Set").parameterizedBy(ClassName("kotlin", "String"))
         val affectedTablesProperty = PropertySpec.builder("affectedTables", affectedTablesType)
             .initializer("setOf(%L)", affectedTables.joinToString(", ") { "\"$it\"" })
@@ -441,125 +396,6 @@ open class DataStructCodeGenerator(
             is AnnotatedCreateTableStatement -> statement.src.sql
             is AnnotatedCreateViewStatement -> statement.src.sql
         }
-    }
-
-    /**
-     * Helper function to extract affected tables from any statement type.
-     * Returns a set of table names that are used in the statement (main table and joined tables).
-     */
-    private fun getAffectedTablesFromStatement(statement: AnnotatedStatement): Set<String> {
-        fun expandTables(tables: Set<String>): Set<String> {
-            val expanded = mutableSetOf<String>()
-            tables.forEach { table ->
-                val key = table.lowercase()
-                expanded += key
-                val viewDeps = viewTableDependencies[key]
-                if (viewDeps != null) {
-                    expanded += viewDeps
-                }
-            }
-            return expanded
-        }
-
-        return when (statement) {
-            is AnnotatedSelectStatement -> {
-                val tables = mutableSetOf<String>()
-                // Add main table if present
-                statement.src.fromTable?.let { tables.add(it) }
-                // Add joined tables
-                tables.addAll(statement.src.joinTables)
-                expandTables(tables)
-            }
-
-            is AnnotatedExecuteStatement -> {
-                val baseTable = statement.src.table
-                val cascadeTables = when (statement.src) {
-                    is InsertStatement -> cascadeTablesFor(
-                        baseTable,
-                        StatementAnnotationOverrides.CascadeAction.INSERT
-                    )
-
-                    is UpdateStatement -> cascadeTablesFor(
-                        baseTable,
-                        StatementAnnotationOverrides.CascadeAction.UPDATE
-                    )
-
-                    is DeleteStatement -> cascadeTablesFor(
-                        baseTable,
-                        StatementAnnotationOverrides.CascadeAction.DELETE
-                    )
-                }
-                // For INSERT/UPDATE/DELETE, return the main table plus any cascaded tables.
-                expandTables(setOf(baseTable) + cascadeTables)
-            }
-
-            is AnnotatedCreateTableStatement -> {
-                // For CREATE TABLE, return the table being created
-                setOf(statement.src.tableName)
-            }
-
-            is AnnotatedCreateViewStatement -> {
-                // For CREATE VIEW, we could potentially extract tables from the view definition
-                // but for now, return empty set as views don't directly affect tables
-                emptySet()
-            }
-        }
-    }
-
-    private fun resolveViewDependencies(
-        viewName: String,
-        seen: MutableSet<String>,
-    ): Set<String> {
-        if (!seen.add(viewName)) return emptySet()
-        val view = createViewStatementsByName[viewName] ?: return emptySet()
-        val dependencies = mutableSetOf<String>()
-        val select = view.src.selectStatement
-        val referencedTables = buildList {
-            select.fromTable?.let { add(it) }
-            addAll(select.joinTables)
-        }
-        referencedTables.forEach { table ->
-            val key = table.lowercase()
-            dependencies += key
-            dependencies += resolveViewDependencies(key, seen)
-        }
-        return dependencies
-    }
-
-    private fun cascadeTablesFor(
-        tableName: String,
-        action: StatementAnnotationOverrides.CascadeAction
-    ): Set<String> {
-        val lowercase = tableName.lowercase()
-        val cacheKey = lowercase to action
-        cascadeClosureCache[cacheKey]?.let { return it }
-
-        val closure = computeCascadeClosure(
-            startTable = lowercase,
-            action = action,
-            visited = mutableSetOf()
-        )
-        cascadeClosureCache[cacheKey] = closure
-        return closure
-    }
-
-    private fun computeCascadeClosure(
-        startTable: String,
-        action: StatementAnnotationOverrides.CascadeAction,
-        visited: MutableSet<String>
-    ): Set<String> {
-        if (!visited.add(startTable)) return emptySet()
-        val direct = cascadeNotifyByTable[startTable]?.tablesFor(action) ?: emptySet()
-        if (direct.isEmpty()) return emptySet()
-
-        val result = mutableSetOf<String>()
-        direct.forEach { childRaw ->
-            val child = childRaw.lowercase()
-            if (result.add(child)) {
-                result += computeCascadeClosure(child, action, visited)
-            }
-        }
-        return result
     }
 
     /**

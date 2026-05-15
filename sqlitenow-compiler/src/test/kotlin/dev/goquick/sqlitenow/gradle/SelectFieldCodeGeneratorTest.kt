@@ -1,5 +1,6 @@
 package dev.goquick.sqlitenow.gradle
 
+import com.squareup.kotlinpoet.PropertySpec
 import dev.goquick.sqlitenow.gradle.sqlinspect.CreateTableStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
@@ -11,737 +12,405 @@ import dev.goquick.sqlitenow.gradle.processing.SelectFieldCodeGenerator
 import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
 import net.sf.jsqlparser.parser.CCJSqlParserUtil
 import org.junit.jupiter.api.DisplayName
+import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestFactory
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.`when`
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SelectFieldCodeGeneratorTest {
 
+    private fun assertGeneratedProperty(
+        fieldName: String,
+        dataType: String,
+        expectedPropertyName: String,
+        expectedType: String,
+        expectedNullable: Boolean,
+        propertyName: String? = null,
+        propertyType: String? = null,
+        notNull: Boolean? = null,
+        originalColumnName: String = fieldName,
+    ) {
+        val property = generatedProperty(
+            fieldName = fieldName,
+            originalColumnName = originalColumnName,
+            propertyName = propertyName,
+            propertyType = propertyType,
+            notNull = notNull,
+            dataType = dataType
+        )
+
+        assertProperty(property, expectedPropertyName, expectedType, expectedNullable)
+    }
+
+    private fun generatedProperty(
+        fieldName: String,
+        dataType: String,
+        tableName: String = "",
+        originalColumnName: String = fieldName,
+        propertyName: String? = null,
+        propertyType: String? = null,
+        notNull: Boolean? = null,
+        schemaTables: List<AnnotatedCreateTableStatement> = emptyList(),
+    ) = SelectFieldCodeGenerator(schemaTables).generateProperty(
+        AnnotatedSelectStatement.Field(
+            src = SelectStatement.FieldSource(
+                fieldName = fieldName,
+                tableName = tableName,
+                originalColumnName = originalColumnName,
+                dataType = dataType
+            ),
+            annotations = FieldAnnotationOverrides(
+                propertyName = propertyName,
+                propertyType = propertyType,
+                notNull = notNull,
+                adapter = false
+            )
+        )
+    )
+
+    private fun assertProperty(property: PropertySpec, name: String, type: String, nullable: Boolean) {
+        assertEquals(name, property.name)
+        assertEquals(type, property.type.toString())
+        assertEquals(nullable, property.type.isNullable)
+    }
+
+    private fun annotatedTable(
+        name: String,
+        sourceTableName: String = name,
+        columns: List<SchemaColumn>,
+    ): AnnotatedCreateTableStatement {
+        val sourceColumns = columns.map { column ->
+            mock(CreateTableStatement.Column::class.java).also {
+                `when`(it.name).thenReturn(column.name)
+                `when`(it.dataType).thenReturn(column.dataType)
+                `when`(it.notNull).thenReturn(column.notNull)
+                `when`(it.primaryKey).thenReturn(column.primaryKey)
+                `when`(it.autoIncrement).thenReturn(column.autoIncrement)
+                `when`(it.unique).thenReturn(column.unique)
+            }
+        }
+        val createTable = mock(CreateTableStatement::class.java).also {
+            `when`(it.tableName).thenReturn(sourceTableName)
+            `when`(it.columns).thenReturn(sourceColumns)
+        }
+
+        return AnnotatedCreateTableStatement(
+            name = name,
+            src = createTable,
+            annotations = StatementAnnotationOverrides(
+                name = null,
+                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
+                queryResult = null,
+                collectionKey = null
+            ),
+            columns = sourceColumns.zip(columns).map { (sourceColumn, column) ->
+                AnnotatedCreateTableStatement.Column(
+                    src = sourceColumn,
+                    annotations = column.annotations
+                )
+            }
+        )
+    }
+
     @Test
     @DisplayName("Test generating property for a field with SQLite INTEGER type")
     fun testGeneratePropertyForIntegerField() {
-        // Create a mock SelectStatement.FieldSource
-        val mockField = mock(SelectStatement.FieldSource::class.java)
-        `when`(mockField.fieldName).thenReturn("user_id")
-        `when`(mockField.dataType).thenReturn("INTEGER")
-        `when`(mockField.tableName).thenReturn("")
-        `when`(mockField.originalColumnName).thenReturn("user_id")
-
-        // Create a FieldAnnotationOverrides
-        val annotations = FieldAnnotationOverrides(
-            propertyName = null,
-            propertyType = null,
-            notNull = null,
-            adapter = false
+        assertGeneratedProperty(
+            fieldName = "user_id",
+            dataType = "INTEGER",
+            expectedPropertyName = "userId",
+            expectedType = "kotlin.Long?",
+            expectedNullable = true
         )
-
-        // Create an AnnotatedSelectStatement.Field
-        val field = AnnotatedSelectStatement.Field(
-            src = mockField,
-            annotations = annotations
-        )
-
-        // Create a SelectFieldCodeGenerator
-        val generator = SelectFieldCodeGenerator()
-
-        // Generate a property for the field
-        val property = generator.generateProperty(field)
-
-        // Verify the property name and type
-        assertEquals("userId", property.name)
-        assertEquals("kotlin.Long?", property.type.toString())
-        assertTrue(property.type.isNullable)
     }
 
     @Test
     @DisplayName("Test generating property for a field with SQLite TEXT type")
     fun testGeneratePropertyForTextField() {
-        // Create a mock SelectStatement.FieldSource
-        val mockField = mock(SelectStatement.FieldSource::class.java)
-        `when`(mockField.fieldName).thenReturn("username")
-        `when`(mockField.dataType).thenReturn("TEXT")
-        `when`(mockField.tableName).thenReturn("")
-        `when`(mockField.originalColumnName).thenReturn("username")
-
-        // Create a FieldAnnotationOverrides
-        val annotations = FieldAnnotationOverrides(
-            propertyName = null,
-            propertyType = null,
-            notNull = null,
-            adapter = false
+        assertGeneratedProperty(
+            fieldName = "username",
+            dataType = "TEXT",
+            expectedPropertyName = "username",
+            expectedType = "kotlin.String?",
+            expectedNullable = true
         )
-
-        // Create an AnnotatedSelectStatement.Field
-        val field = AnnotatedSelectStatement.Field(
-            src = mockField,
-            annotations = annotations
-        )
-
-        // Create a SelectFieldCodeGenerator
-        val generator = SelectFieldCodeGenerator()
-
-        // Generate a property for the field
-        val property = generator.generateProperty(field)
-
-        // Verify the property name and type
-        assertEquals("username", property.name)
-        assertEquals("kotlin.String?", property.type.toString())
-        assertTrue(property.type.isNullable)
     }
 
     @Test
     @DisplayName("Test generating property for a field with non-null annotation")
     fun testGeneratePropertyForNonNullField() {
-        // Create a mock SelectStatement.FieldSource
-        val mockField = mock(SelectStatement.FieldSource::class.java)
-        `when`(mockField.fieldName).thenReturn("email")
-        `when`(mockField.dataType).thenReturn("TEXT")
-        `when`(mockField.tableName).thenReturn("")
-        `when`(mockField.originalColumnName).thenReturn("email")
-
-        // Create a FieldAnnotationOverrides with nonNull=true
-        val annotations = FieldAnnotationOverrides(
-            propertyName = null,
-            propertyType = null,
-            notNull = true,
-            adapter = false
-        )
-
-        // Create an AnnotatedSelectStatement.Field
-        val field = AnnotatedSelectStatement.Field(
-            src = mockField,
-            annotations = annotations
-        )
-
-        // Create a SelectFieldCodeGenerator
-        val generator = SelectFieldCodeGenerator()
-
-        // Generate a property for the field
-        val property = generator.generateProperty(field)
-
-        // Verify the property name and type
-        assertEquals("email", property.name)
-        assertEquals("kotlin.String", property.type.toString())
-        assertFalse(property.type.isNullable)
-    }
-
-    @Test
-    @DisplayName("Test generating property for a field with NOT NULL constraint from schema")
-    fun testGeneratePropertyForNotNullConstraint() {
-        // Create a mock SelectStatement.FieldSource
-        val mockField = mock(SelectStatement.FieldSource::class.java)
-        `when`(mockField.fieldName).thenReturn("username")
-        `when`(mockField.dataType).thenReturn("TEXT")
-        `when`(mockField.tableName).thenReturn("users")
-        `when`(mockField.originalColumnName).thenReturn("username")
-
-        // Create a FieldAnnotationOverrides with no explicit nullability
-        val annotations = FieldAnnotationOverrides(
-            propertyName = null,
-            propertyType = null,
-            notNull = null,
-            adapter = false
-        )
-
-        // Create an AnnotatedSelectStatement.Field
-        val field = AnnotatedSelectStatement.Field(
-            src = mockField,
-            annotations = annotations
-        )
-
-        // Create a mock CreateTableStatement.Column
-        val mockColumn = mock(CreateTableStatement.Column::class.java)
-        `when`(mockColumn.name).thenReturn("username")
-        `when`(mockColumn.dataType).thenReturn("TEXT")
-        `when`(mockColumn.notNull).thenReturn(true)
-        `when`(mockColumn.primaryKey).thenReturn(false)
-        `when`(mockColumn.autoIncrement).thenReturn(false)
-        `when`(mockColumn.unique).thenReturn(false)
-
-        // Create a mock CreateTableStatement
-        val mockCreateTable = mock(CreateTableStatement::class.java)
-        `when`(mockCreateTable.tableName).thenReturn("users")
-        `when`(mockCreateTable.columns).thenReturn(listOf(mockColumn))
-
-        // Create a mock AnnotatedCreateTableStatement
-        val mockAnnotatedColumn = AnnotatedCreateTableStatement.Column(
-            src = mockColumn,
-            annotations = emptyMap()
-        )
-
-        val mockAnnotatedCreateTable = AnnotatedCreateTableStatement(
-            name = "users",
-            src = mockCreateTable,
-            annotations = StatementAnnotationOverrides(
-                name = null,
-                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                queryResult = null,
-                collectionKey = null
-            ),
-            columns = listOf(mockAnnotatedColumn)
-        )
-
-        // Create a SelectFieldCodeGenerator with the mock schema
-        val generator = SelectFieldCodeGenerator(listOf(mockAnnotatedCreateTable))
-
-        // Generate a property for the field
-        val property = generator.generateProperty(field)
-
-        // Verify the property name and type
-        assertEquals("username", property.name)
-        assertEquals("kotlin.String", property.type.toString())
-        assertFalse(property.type.isNullable, "Property should be non-nullable due to NOT NULL constraint in schema")
-    }
-
-    @Test
-    @DisplayName("Test generating property for a field from a joined table")
-    fun testGeneratePropertyForJoinedTable() {
-        // Create a mock SelectStatement.FieldSource for a field from a joined table
-        val mockField = mock(SelectStatement.FieldSource::class.java)
-        `when`(mockField.fieldName).thenReturn("address")
-        `when`(mockField.dataType).thenReturn("TEXT")
-        `when`(mockField.tableName).thenReturn("") // No tableName specified, simulating a field from a JOIN without explicit table name
-        `when`(mockField.originalColumnName).thenReturn("address")
-
-        // Create a FieldAnnotationOverrides with no explicit nullability
-        val annotations = FieldAnnotationOverrides(
-            propertyName = null,
-            propertyType = null,
-            notNull = null,
-            adapter = false
-        )
-
-        // Create an AnnotatedSelectStatement.Field
-        val field = AnnotatedSelectStatement.Field(
-            src = mockField,
-            annotations = annotations
-        )
-
-        // Create mock columns for the users table
-        val mockUserColumn = mock(CreateTableStatement.Column::class.java)
-        `when`(mockUserColumn.name).thenReturn("username")
-        `when`(mockUserColumn.dataType).thenReturn("TEXT")
-        `when`(mockUserColumn.notNull).thenReturn(true)
-        `when`(mockUserColumn.primaryKey).thenReturn(false)
-        `when`(mockUserColumn.autoIncrement).thenReturn(false)
-        `when`(mockUserColumn.unique).thenReturn(false)
-
-        // Create a mock CreateTableStatement for users
-        val mockUserTable = mock(CreateTableStatement::class.java)
-        `when`(mockUserTable.tableName).thenReturn("users")
-        `when`(mockUserTable.columns).thenReturn(listOf(mockUserColumn))
-
-        // Create mock columns for the addresses table
-        val mockAddressColumn = mock(CreateTableStatement.Column::class.java)
-        `when`(mockAddressColumn.name).thenReturn("address")
-        `when`(mockAddressColumn.dataType).thenReturn("TEXT")
-        `when`(mockAddressColumn.notNull).thenReturn(true)
-        `when`(mockAddressColumn.primaryKey).thenReturn(false)
-        `when`(mockAddressColumn.autoIncrement).thenReturn(false)
-        `when`(mockAddressColumn.unique).thenReturn(false)
-
-        // Create a mock CreateTableStatement for addresses
-        val mockAddressTable = mock(CreateTableStatement::class.java)
-        `when`(mockAddressTable.tableName).thenReturn("addresses")
-        `when`(mockAddressTable.columns).thenReturn(listOf(mockAddressColumn))
-
-        // Create mock AnnotatedCreateTableStatement objects
-        val mockAnnotatedUserColumn = AnnotatedCreateTableStatement.Column(
-            src = mockUserColumn,
-            annotations = emptyMap()
-        )
-
-        val mockAnnotatedUserTable = AnnotatedCreateTableStatement(
-            name = "users",
-            src = mockUserTable,
-            annotations = StatementAnnotationOverrides(
-                name = null,
-                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                queryResult = null,
-                collectionKey = null
-            ),
-            columns = listOf(mockAnnotatedUserColumn)
-        )
-
-        val mockAnnotatedAddressColumn = AnnotatedCreateTableStatement.Column(
-            src = mockAddressColumn,
-            annotations = emptyMap()
-        )
-
-        val mockAnnotatedAddressTable = AnnotatedCreateTableStatement(
-            name = "addresses",
-            src = mockAddressTable,
-            annotations = StatementAnnotationOverrides(
-                name = null,
-                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                queryResult = null,
-                collectionKey = null
-            ),
-            columns = listOf(mockAnnotatedAddressColumn)
-        )
-
-        // Create a SelectFieldCodeGenerator with both tables in the schema
-        val generator =
-            SelectFieldCodeGenerator(listOf(mockAnnotatedUserTable, mockAnnotatedAddressTable))
-
-        // Generate a property for the field
-        val property = generator.generateProperty(field)
-
-        // Verify the property name and type
-        assertEquals("address", property.name)
-        assertEquals("kotlin.String", property.type.toString())
-        assertFalse(
-            property.type.isNullable,
-            "Property should be non-nullable due to NOT NULL constraint in joined table schema"
+        assertGeneratedProperty(
+            fieldName = "email",
+            dataType = "TEXT",
+            expectedPropertyName = "email",
+            expectedType = "kotlin.String",
+            expectedNullable = false,
+            notNull = true
         )
     }
 
-    @Test
-    @DisplayName("Test generating property for an aliased column in a JOIN query")
-    fun testGeneratePropertyForAliasedColumn() {
-        // Create a mock SelectStatement.FieldSource for an aliased column
-        val mockField = mock(SelectStatement.FieldSource::class.java)
-        `when`(mockField.fieldName).thenReturn("address_id") // Using the alias name
-        `when`(mockField.dataType).thenReturn("INTEGER")
-        `when`(mockField.tableName).thenReturn("a") // Using the table alias
-        `when`(mockField.originalColumnName).thenReturn("id") // The original column name
-
-        // Create a FieldAnnotationOverrides with a custom property name
-        val annotations = FieldAnnotationOverrides(
-            propertyName = "myAddressId",
-            propertyType = null,
-            notNull = null,
-            adapter = false
-        )
-
-        // Create an AnnotatedSelectStatement.Field
-        val field = AnnotatedSelectStatement.Field(
-            src = mockField,
-            annotations = annotations
-        )
-
-        // Create a mock column for the PersonAddress table
-        val mockIdColumn = mock(CreateTableStatement.Column::class.java)
-        `when`(mockIdColumn.name).thenReturn("id")
-        `when`(mockIdColumn.dataType).thenReturn("INTEGER")
-        `when`(mockIdColumn.notNull).thenReturn(true)
-        `when`(mockIdColumn.primaryKey).thenReturn(false)
-        `when`(mockIdColumn.autoIncrement).thenReturn(false)
-        `when`(mockIdColumn.unique).thenReturn(false)
-
-        // Create a mock CreateTableStatement for PersonAddress
-        val mockPersonAddressTable = mock(CreateTableStatement::class.java)
-        `when`(mockPersonAddressTable.tableName).thenReturn("person_address")
-        `when`(mockPersonAddressTable.columns).thenReturn(listOf(mockIdColumn))
-
-        // Create a mock AnnotatedCreateTableStatement
-        val mockAnnotatedIdColumn = AnnotatedCreateTableStatement.Column(
-            src = mockIdColumn,
-            annotations = emptyMap()
-        )
-
-        val mockAnnotatedPersonAddressTable = AnnotatedCreateTableStatement(
-            name = "PersonAddress",
-            src = mockPersonAddressTable,
-            annotations = StatementAnnotationOverrides(
-                name = null,
-                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                queryResult = null,
-                collectionKey = null
+    @TestFactory
+    @DisplayName("Schema-backed property generation")
+    fun schemaBackedPropertyGeneration(): List<DynamicTest> {
+        return listOf(
+            SchemaBackedPropertyCase(
+                displayName = "uses NOT NULL constraint from schema",
+                fieldName = "username",
+                tableName = "users",
+                dataType = "TEXT",
+                schemaTables = {
+                    listOf(
+                        annotatedTable(
+                            name = "users",
+                            columns = listOf(SchemaColumn(name = "username", dataType = "TEXT", notNull = true))
+                        )
+                    )
+                },
+                expectedName = "username",
+                expectedType = "kotlin.String",
+                expectedNullable = false
             ),
-            columns = listOf(mockAnnotatedIdColumn)
-        )
+            SchemaBackedPropertyCase(
+                displayName = "uses joined table schema when SELECT field has no table name",
+                fieldName = "address",
+                dataType = "TEXT",
+                schemaTables = {
+                    listOf(
+                        annotatedTable(
+                            name = "users",
+                            columns = listOf(SchemaColumn(name = "username", dataType = "TEXT", notNull = true))
+                        ),
+                        annotatedTable(
+                            name = "addresses",
+                            columns = listOf(SchemaColumn(name = "address", dataType = "TEXT", notNull = true))
+                        )
+                    )
+                },
+                expectedName = "address",
+                expectedType = "kotlin.String",
+                expectedNullable = false
+            ),
+            SchemaBackedPropertyCase(
+                displayName = "uses original column for aliased JOIN field nullability",
+                fieldName = "address_id",
+                tableName = "a",
+                originalColumnName = "id",
+                dataType = "INTEGER",
+                propertyName = "myAddressId",
+                schemaTables = {
+                    listOf(
+                        annotatedTable(
+                            name = "PersonAddress",
+                            sourceTableName = "person_address",
+                            columns = listOf(SchemaColumn(name = "id", dataType = "INTEGER", notNull = true))
+                        )
+                    )
+                },
+                expectedName = "myAddressId",
+                expectedType = "kotlin.Long",
+                expectedNullable = false
+            ),
+            SchemaBackedPropertyCase(
+                displayName = "CREATE TABLE nullability annotation overrides schema constraint",
+                fieldName = "id",
+                tableName = "person",
+                dataType = "INTEGER",
+                schemaTables = {
+                    listOf(
+                        annotatedTable(
+                            name = "person",
+                            columns = listOf(
+                                SchemaColumn(
+                                    name = "id",
+                                    dataType = "INTEGER",
+                                    notNull = true,
+                                    primaryKey = true,
+                                    annotations = mapOf(AnnotationConstants.NOT_NULL to false)
+                                )
+                            )
+                        )
+                    )
+                },
+                expectedName = "id",
+                expectedType = "kotlin.Long?",
+                expectedNullable = true
+            ),
+            SchemaBackedPropertyCase(
+                displayName = "CREATE TABLE propertyType annotation is respected",
+                fieldName = "created_at",
+                tableName = "person",
+                dataType = "TEXT",
+                schemaTables = {
+                    listOf(
+                        annotatedTable(
+                            name = "person",
+                            columns = listOf(
+                                SchemaColumn(
+                                    name = "created_at",
+                                    dataType = "TEXT",
+                                    annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "java.time.LocalDateTime")
+                                )
+                            )
+                        )
+                    )
+                },
+                expectedName = "createdAt",
+                expectedType = "java.time.LocalDateTime?",
+                expectedNullable = true
+            ),
+            SchemaBackedPropertyCase(
+                displayName = "SELECT propertyType annotation overrides CREATE TABLE propertyType",
+                fieldName = "created_at",
+                tableName = "person",
+                dataType = "TEXT",
+                propertyType = "java.time.ZonedDateTime",
+                schemaTables = {
+                    listOf(
+                        annotatedTable(
+                            name = "person",
+                            columns = listOf(
+                                SchemaColumn(
+                                    name = "created_at",
+                                    dataType = "TEXT",
+                                    annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "java.time.LocalDateTime")
+                                )
+                            )
+                        )
+                    )
+                },
+                expectedName = "createdAt",
+                expectedType = "java.time.ZonedDateTime?",
+                expectedNullable = true
+            )
+        ).map { case ->
+            DynamicTest.dynamicTest(case.displayName) {
+                val property = generatedProperty(
+                    fieldName = case.fieldName,
+                    tableName = case.tableName,
+                    originalColumnName = case.originalColumnName,
+                    dataType = case.dataType,
+                    propertyName = case.propertyName,
+                    propertyType = case.propertyType,
+                    schemaTables = case.schemaTables()
+                )
 
-        // Create a SelectFieldCodeGenerator with the mock schema
-        val generator = SelectFieldCodeGenerator(listOf(mockAnnotatedPersonAddressTable))
-
-        // Generate a property for the field
-        val property = generator.generateProperty(field)
-
-        // Verify the property name and type
-        assertEquals("myAddressId", property.name)
-        assertEquals("kotlin.Long", property.type.toString())
-        assertFalse(
-            property.type.isNullable,
-            "Property should be non-nullable due to NOT NULL constraint in original column"
-        )
+                assertProperty(property, case.expectedName, case.expectedType, case.expectedNullable)
+            }
+        }
     }
 
     @Test
     @DisplayName("Test generating property for a field with custom property name")
     fun testGeneratePropertyWithCustomName() {
-        // Create a mock SelectStatement.FieldSource
-        val mockField = mock(SelectStatement.FieldSource::class.java)
-        `when`(mockField.fieldName).thenReturn("user_full_name")
-        `when`(mockField.dataType).thenReturn("TEXT")
-        `when`(mockField.tableName).thenReturn("")
-        `when`(mockField.originalColumnName).thenReturn("user_full_name")
-
-        // Create a FieldAnnotationOverrides with custom property name
-        val annotations = FieldAnnotationOverrides(
-            propertyName = "fullName",
-            propertyType = null,
-            notNull = null,
-            adapter = false
+        assertGeneratedProperty(
+            fieldName = "user_full_name",
+            dataType = "TEXT",
+            expectedPropertyName = "fullName",
+            expectedType = "kotlin.String?",
+            expectedNullable = true,
+            propertyName = "fullName"
         )
-
-        // Create an AnnotatedSelectStatement.Field
-        val field = AnnotatedSelectStatement.Field(
-            src = mockField,
-            annotations = annotations
-        )
-
-        // Create a SelectFieldCodeGenerator
-        val generator = SelectFieldCodeGenerator()
-
-        // Generate a property for the field
-        val property = generator.generateProperty(field)
-
-        // Verify the property name and type
-        assertEquals("fullName", property.name)
-        assertEquals("kotlin.String?", property.type.toString())
-        assertTrue(property.type.isNullable)
     }
 
     @Test
     @DisplayName("Test generating property for a field with custom property type")
     fun testGeneratePropertyWithCustomType() {
-        // Create a mock SelectStatement.FieldSource
-        val mockField = mock(SelectStatement.FieldSource::class.java)
-        `when`(mockField.fieldName).thenReturn("created_at")
-        `when`(mockField.dataType).thenReturn("TEXT")
-        `when`(mockField.tableName).thenReturn("")
-        `when`(mockField.originalColumnName).thenReturn("created_at")
-
-        // Create a FieldAnnotationOverrides with custom property type
-        val annotations = FieldAnnotationOverrides(
-            propertyName = null,
-            propertyType = "java.time.LocalDateTime",
-            notNull = null,
-            adapter = false
-        )
-
-        // Create an AnnotatedSelectStatement.Field
-        val field = AnnotatedSelectStatement.Field(
-            src = mockField,
-            annotations = annotations
-        )
-
-        // Create a SelectFieldCodeGenerator
-        val generator = SelectFieldCodeGenerator()
-
-        // Generate a property for the field
-        val property = generator.generateProperty(field)
-
-        // Verify the property name and type
-        assertEquals("createdAt", property.name)
-        assertEquals("java.time.LocalDateTime?", property.type.toString())
-        assertTrue(property.type.isNullable)
-    }
-
-    @Test
-    @DisplayName("COUNT inference returns non-null Long")
-    fun testAggregateInferenceCount() {
-        val expression = CCJSqlParserUtil.parseExpression("COUNT(*)")
-        val fieldSource = SelectStatement.FieldSource(
-            fieldName = "activityCount",
-            tableName = "",
-            originalColumnName = "activityCount",
-            dataType = "INTEGER",
-            expression = expression
-        )
-
-        val annotations = FieldAnnotationOverrides(
-            propertyName = null,
-            propertyType = null,
-            notNull = null,
-            adapter = false
-        )
-
-        val field = AnnotatedSelectStatement.Field(
-            src = fieldSource,
-            annotations = annotations
-        )
-
-        val generator = SelectFieldCodeGenerator()
-        val property = generator.generateProperty(field)
-
-        assertEquals("activityCount", property.name)
-        assertEquals("kotlin.Long", property.type.toString())
-        assertFalse(property.type.isNullable)
-    }
-
-    @Test
-    @DisplayName("GROUP_CONCAT inference returns nullable String")
-    fun testAggregateInferenceGroupConcat() {
-        val expression = CCJSqlParserUtil.parseExpression("GROUP_CONCAT(act__title, ', ')")
-        val fieldSource = SelectStatement.FieldSource(
-            fieldName = "titles",
-            tableName = "",
-            originalColumnName = "titles",
+        assertGeneratedProperty(
+            fieldName = "created_at",
             dataType = "TEXT",
-            expression = expression
+            expectedPropertyName = "createdAt",
+            expectedType = "java.time.LocalDateTime?",
+            expectedNullable = true,
+            propertyType = "java.time.LocalDateTime"
         )
-
-        val annotations = FieldAnnotationOverrides(
-            propertyName = null,
-            propertyType = null,
-            notNull = null,
-            adapter = false
-        )
-
-        val field = AnnotatedSelectStatement.Field(
-            src = fieldSource,
-            annotations = annotations
-        )
-
-        val generator = SelectFieldCodeGenerator()
-        val property = generator.generateProperty(field)
-
-        assertEquals("titles", property.name)
-        assertEquals("kotlin.String?", property.type.toString())
-        assertTrue(property.type.isNullable)
     }
 
-    @Test
-    @DisplayName("SUM inference returns nullable Double")
-    fun testAggregateInferenceSum() {
-        val expression = CCJSqlParserUtil.parseExpression("SUM(amount)")
-        val fieldSource = SelectStatement.FieldSource(
-            fieldName = "totalAmount",
-            tableName = "",
-            originalColumnName = "totalAmount",
+    @TestFactory
+    @DisplayName("Aggregate inference maps generated property types")
+    fun aggregateInferenceMapsGeneratedPropertyTypes(): List<DynamicTest> = listOf(
+        AggregateInferenceCase(
+            displayName = "COUNT inference returns non-null Long",
+            expressionSql = "COUNT(*)",
+            fieldName = "activityCount",
             dataType = "INTEGER",
-            expression = expression
-        )
+            expectedType = "kotlin.Long",
+            expectedNullable = false,
+        ),
+        AggregateInferenceCase(
+            displayName = "GROUP_CONCAT inference returns nullable String",
+            expressionSql = "GROUP_CONCAT(act__title, ', ')",
+            fieldName = "titles",
+            dataType = "TEXT",
+            expectedType = "kotlin.String?",
+            expectedNullable = true,
+        ),
+        AggregateInferenceCase(
+            displayName = "SUM inference returns nullable Double",
+            expressionSql = "SUM(amount)",
+            fieldName = "totalAmount",
+            dataType = "INTEGER",
+            expectedType = "kotlin.Double?",
+            expectedNullable = true,
+        ),
+    ).map { case ->
+        DynamicTest.dynamicTest(case.displayName) {
+            val field = AnnotatedSelectStatement.Field(
+                src = SelectStatement.FieldSource(
+                    fieldName = case.fieldName,
+                    tableName = "",
+                    originalColumnName = case.fieldName,
+                    dataType = case.dataType,
+                    expression = CCJSqlParserUtil.parseExpression(case.expressionSql),
+                ),
+                annotations = FieldAnnotationOverrides(
+                    propertyName = null,
+                    propertyType = null,
+                    notNull = null,
+                    adapter = false,
+                ),
+            )
 
-        val annotations = FieldAnnotationOverrides(
-            propertyName = null,
-            propertyType = null,
-            notNull = null,
-            adapter = false
-        )
+            val property = SelectFieldCodeGenerator().generateProperty(field)
 
-        val field = AnnotatedSelectStatement.Field(
-            src = fieldSource,
-            annotations = annotations
-        )
-
-        val generator = SelectFieldCodeGenerator()
-        val property = generator.generateProperty(field)
-
-        assertEquals("totalAmount", property.name)
-        assertEquals("kotlin.Double?", property.type.toString())
-        assertTrue(property.type.isNullable)
+            assertEquals(case.fieldName, property.name)
+            assertEquals(case.expectedType, property.type.toString())
+            assertEquals(case.expectedNullable, property.type.isNullable)
+        }
     }
 
-    @Test
-    @DisplayName("Test that CREATE TABLE annotations override schema constraints")
-    fun testCreateTableAnnotationsOverrideSchemaConstraints() {
-        // Create a mock SelectStatement.FieldSource
-        val mockField = mock(SelectStatement.FieldSource::class.java)
-        `when`(mockField.fieldName).thenReturn("id")
-        `when`(mockField.dataType).thenReturn("INTEGER")
-        `when`(mockField.tableName).thenReturn("person")
-        `when`(mockField.originalColumnName).thenReturn("id")
+    private data class AggregateInferenceCase(
+        val displayName: String,
+        val expressionSql: String,
+        val fieldName: String,
+        val dataType: String,
+        val expectedType: String,
+        val expectedNullable: Boolean,
+    )
 
-        // Create a FieldAnnotationOverrides with no explicit nullability
-        val annotations = FieldAnnotationOverrides(
-            propertyName = null,
-            propertyType = null,
-            notNull = null,
-            adapter = false
-        )
+    private data class SchemaBackedPropertyCase(
+        val displayName: String,
+        val fieldName: String,
+        val dataType: String,
+        val tableName: String = "",
+        val originalColumnName: String = fieldName,
+        val propertyName: String? = null,
+        val propertyType: String? = null,
+        val schemaTables: () -> List<AnnotatedCreateTableStatement>,
+        val expectedName: String,
+        val expectedType: String,
+        val expectedNullable: Boolean,
+    )
 
-        // Create an AnnotatedSelectStatement.Field
-        val field = AnnotatedSelectStatement.Field(
-            src = mockField,
-            annotations = annotations
-        )
-
-        // Create a mock column for the Person table with NOT NULL constraint but @@nullable annotation
-        val mockColumn = mock(CreateTableStatement.Column::class.java)
-        `when`(mockColumn.name).thenReturn("id")
-        `when`(mockColumn.dataType).thenReturn("INTEGER")
-        `when`(mockColumn.notNull).thenReturn(true) // NOT NULL constraint
-        `when`(mockColumn.primaryKey).thenReturn(true)
-        `when`(mockColumn.autoIncrement).thenReturn(false)
-        `when`(mockColumn.unique).thenReturn(false)
-
-        // Create a mock CreateTableStatement
-        val mockCreateTable = mock(CreateTableStatement::class.java)
-        `when`(mockCreateTable.tableName).thenReturn("person")
-        `when`(mockCreateTable.columns).thenReturn(listOf(mockColumn))
-
-        // Create a mock AnnotatedCreateTableStatement with @@nullable annotation
-        val mockAnnotatedColumn = AnnotatedCreateTableStatement.Column(
-            src = mockColumn,
-            annotations = mapOf(AnnotationConstants.NOT_NULL to false) // @@nullable annotation
-        )
-
-        val mockAnnotatedCreateTable = AnnotatedCreateTableStatement(
-            name = "person",
-            src = mockCreateTable,
-            annotations = StatementAnnotationOverrides(
-                name = null,
-                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                queryResult = null,
-                collectionKey = null
-            ),
-            columns = listOf(mockAnnotatedColumn)
-        )
-
-        // Create a SelectFieldCodeGenerator with the mock schema
-        val generator = SelectFieldCodeGenerator(listOf(mockAnnotatedCreateTable))
-
-        // Generate a property for the field
-        val property = generator.generateProperty(field)
-
-        // Verify the property name and type
-        assertEquals("id", property.name)
-        assertEquals("kotlin.Long?", property.type.toString())
-        assertTrue(
-            property.type.isNullable,
-            "Property should be nullable due to @@nullable annotation in CREATE TABLE despite NOT NULL constraint"
-        )
-    }
-
-    @Test
-    @DisplayName("Test that CREATE TABLE propertyType annotation is respected")
-    fun testCreateTablePropertyTypeAnnotation() {
-        // Create a mock SelectStatement.FieldSource
-        val mockField = mock(SelectStatement.FieldSource::class.java)
-        `when`(mockField.fieldName).thenReturn("created_at")
-        `when`(mockField.dataType).thenReturn("TEXT")
-        `when`(mockField.tableName).thenReturn("person")
-        `when`(mockField.originalColumnName).thenReturn("created_at")
-
-        // Create a FieldAnnotationOverrides with no explicit property type
-        val annotations = FieldAnnotationOverrides(
-            propertyName = null,
-            propertyType = null,
-            notNull = null,
-            adapter = false
-        )
-
-        // Create an AnnotatedSelectStatement.Field
-        val field = AnnotatedSelectStatement.Field(
-            src = mockField,
-            annotations = annotations
-        )
-
-        // Create a mock column for the Person table with propertyType annotation
-        val mockColumn = mock(CreateTableStatement.Column::class.java)
-        `when`(mockColumn.name).thenReturn("created_at")
-        `when`(mockColumn.dataType).thenReturn("TEXT")
-        `when`(mockColumn.notNull).thenReturn(false)
-        `when`(mockColumn.primaryKey).thenReturn(false)
-        `when`(mockColumn.autoIncrement).thenReturn(false)
-        `when`(mockColumn.unique).thenReturn(false)
-
-        // Create a mock CreateTableStatement
-        val mockCreateTable = mock(CreateTableStatement::class.java)
-        `when`(mockCreateTable.tableName).thenReturn("person")
-        `when`(mockCreateTable.columns).thenReturn(listOf(mockColumn))
-
-        // Create a mock AnnotatedCreateTableStatement with propertyType annotation
-        val mockAnnotatedColumn = AnnotatedCreateTableStatement.Column(
-            src = mockColumn,
-            annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "java.time.LocalDateTime")
-        )
-
-        val mockAnnotatedCreateTable = AnnotatedCreateTableStatement(
-            name = "person",
-            src = mockCreateTable,
-            annotations = StatementAnnotationOverrides(
-                name = null,
-                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                queryResult = null,
-                collectionKey = null
-            ),
-            columns = listOf(mockAnnotatedColumn)
-        )
-
-        // Create a SelectFieldCodeGenerator with the mock schema
-        val generator = SelectFieldCodeGenerator(listOf(mockAnnotatedCreateTable))
-
-        // Generate a property for the field
-        val property = generator.generateProperty(field)
-
-        // Verify the property name and type
-        assertEquals("createdAt", property.name)
-        assertEquals("java.time.LocalDateTime?", property.type.toString())
-        assertTrue(property.type.isNullable, "Property should be nullable by default")
-    }
-
-    @Test
-    @DisplayName("Test that SELECT statement propertyType annotation overrides CREATE TABLE propertyType annotation")
-    fun testSelectStatementPropertyTypeOverrideCreateTablePropertyType() {
-        // Create a mock SelectStatement.FieldSource
-        val mockField = mock(SelectStatement.FieldSource::class.java)
-        `when`(mockField.fieldName).thenReturn("created_at")
-        `when`(mockField.dataType).thenReturn("TEXT")
-        `when`(mockField.tableName).thenReturn("person")
-        `when`(mockField.originalColumnName).thenReturn("created_at")
-
-        // Create a FieldAnnotationOverrides with explicit property type
-        val annotations = FieldAnnotationOverrides(
-            propertyName = null,
-            propertyType = "java.time.ZonedDateTime", // This should override the CREATE TABLE annotation
-            notNull = null,
-            adapter = false
-        )
-
-        // Create an AnnotatedSelectStatement.Field
-        val field = AnnotatedSelectStatement.Field(
-            src = mockField,
-            annotations = annotations
-        )
-
-        // Create a mock column for the Person table with propertyType annotation
-        val mockColumn = mock(CreateTableStatement.Column::class.java)
-        `when`(mockColumn.name).thenReturn("created_at")
-        `when`(mockColumn.dataType).thenReturn("TEXT")
-        `when`(mockColumn.notNull).thenReturn(false)
-        `when`(mockColumn.primaryKey).thenReturn(false)
-        `when`(mockColumn.autoIncrement).thenReturn(false)
-        `when`(mockColumn.unique).thenReturn(false)
-
-        // Create a mock CreateTableStatement
-        val mockCreateTable = mock(CreateTableStatement::class.java)
-        `when`(mockCreateTable.tableName).thenReturn("person")
-        `when`(mockCreateTable.columns).thenReturn(listOf(mockColumn))
-
-        // Create a mock AnnotatedCreateTableStatement with propertyType annotation
-        val mockAnnotatedColumn = AnnotatedCreateTableStatement.Column(
-            src = mockColumn,
-            annotations = mapOf(AnnotationConstants.PROPERTY_TYPE to "java.time.LocalDateTime")
-        )
-
-        val mockAnnotatedCreateTable = AnnotatedCreateTableStatement(
-            name = "person",
-            src = mockCreateTable,
-            annotations = StatementAnnotationOverrides(
-                name = null,
-                propertyNameGenerator = PropertyNameGeneratorType.LOWER_CAMEL_CASE,
-                queryResult = null,
-                collectionKey = null
-            ),
-            columns = listOf(mockAnnotatedColumn)
-        )
-
-        // Create a SelectFieldCodeGenerator with the mock schema
-        val generator = SelectFieldCodeGenerator(listOf(mockAnnotatedCreateTable))
-
-        // Generate a property for the field
-        val property = generator.generateProperty(field)
-
-        // Verify the property name and type
-        assertEquals("createdAt", property.name)
-        assertEquals("java.time.ZonedDateTime?", property.type.toString())
-        assertTrue(property.type.isNullable, "Property should be nullable by default")
-    }
+    private data class SchemaColumn(
+        val name: String,
+        val dataType: String,
+        val notNull: Boolean = false,
+        val primaryKey: Boolean = false,
+        val autoIncrement: Boolean = false,
+        val unique: Boolean = false,
+        val annotations: Map<String, Any?> = emptyMap(),
+    )
 }

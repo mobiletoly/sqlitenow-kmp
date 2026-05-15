@@ -1,19 +1,20 @@
 package dev.goquick.sqlitenow.gradle
 
 import org.junit.jupiter.api.Test
-import java.io.File
-import kotlin.io.path.createTempDirectory
 import kotlin.test.assertTrue
 
 class ViewAdapterGenerationTest {
     @Test
     fun adapters_are_generated_and_used_for_view_projected_columns() {
-        val root = createTempDirectory(prefix = "view-adapter-").toFile()
-        val schemaDir = File(root, "schema").apply { mkdirs() }
-        val queriesDir = File(root, "queries").apply { mkdirs() }
+        val fixture = CodegenFixture.create(
+            prefix = "view-adapter-",
+            dbName = "TestDbAdapters",
+            packageName = "dev.test.adapters"
+        )
 
         // Activity table
-        File(schemaDir, "activity.sql").writeText(
+        fixture.writeSchema(
+            "activity.sql",
             """
             CREATE TABLE activity (
               id BLOB PRIMARY KEY NOT NULL,
@@ -24,7 +25,8 @@ class ViewAdapterGenerationTest {
         )
 
         // Category with custom type for icon + view projection
-        File(schemaDir, "activity_category.sql").writeText(
+        fixture.writeSchema(
+            "activity_category.sql",
             """
             CREATE TABLE activity_category (
               id BLOB PRIMARY KEY NOT NULL,
@@ -44,8 +46,9 @@ class ViewAdapterGenerationTest {
         )
 
         // Provide shared result for category (so type is available by name)
-        val catDir = File(queriesDir, "activity_category").apply { mkdirs() }
-        File(catDir, "selectAll.sql").writeText(
+        fixture.writeQuery(
+            "activity_category",
+            "selectAll.sql",
             """
             -- @@{ queryResult=Row }
             SELECT doc_id, title, icon FROM activity_category;
@@ -53,8 +56,9 @@ class ViewAdapterGenerationTest {
         )
 
         // Query selecting from view and enabling joined result generation via a dynamic field
-        val actDir = File(queriesDir, "activity").apply { mkdirs() }
-        File(actDir, "loadFromView.sql").writeText(
+        fixture.writeQuery(
+            "activity",
+            "loadFromView.sql",
             """
             /* @@{ queryResult=RowWithCategory } */
             SELECT
@@ -73,18 +77,9 @@ class ViewAdapterGenerationTest {
             """.trimIndent()
         )
 
-        val outDir = File(root, "out").apply { mkdirs() }
-        generateDatabaseFiles(
-            dbName = "TestDbAdapters",
-            sqlDir = root,
-            packageName = "dev.test.adapters",
-            outDir = outDir,
-            schemaDatabaseFile = null,
-            debug = false,
-        )
+        fixture.generate()
 
-        val gen = outDir.walkTopDown().first { it.name.contains("ActivityQuery_LoadFromView") && it.extension == "kt" }
-        val code = gen.readText()
+        val code = fixture.generatedTextContaining("ActivityQuery_LoadFromView")
 
         // Verify signature includes adapter for icon based on custom propertyType
         assertTrue(

@@ -47,14 +47,16 @@ private fun previewString(s: String): String {
 }
 
 private fun <T> previewPrimitiveArray(list: List<T>, size: Int): String {
-    val max = 16
-    val shown = list.take(max).joinToString(", ") { it.toString() }
-    return if (size > max) "[$shown, …](size=$size)" else "[$shown]"
+    return previewArray(list, size) { it.toString() }
 }
 
 private fun previewObjectArray(list: List<*>, size: Int): String {
+    return previewArray(list, size) { it?.toString() ?: "null" }
+}
+
+private fun <T> previewArray(list: List<T>, size: Int, renderElement: (T) -> String): String {
     val max = 16
-    val shown = list.take(max).joinToString(", ") { it?.toString() ?: "null" }
+    val shown = list.take(max).joinToString(", ", transform = renderElement)
     return if (size > max) "[$shown, …](size=$size)" else "[$shown]"
 }
 

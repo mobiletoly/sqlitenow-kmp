@@ -54,7 +54,7 @@ internal class SchemaInspector(
         if (cachedCreateViewStatements == null) {
             val viewExecutors = statementExecutors.filterIsInstance<CreateViewStatementExecutor>()
             // Topologically sort views based on dependencies between views
-            val sorted = sortViewsByDependencies(viewExecutors)
+            val sorted = sortCreateViewsByDependencies(viewExecutors)
             cachedCreateViewStatements = sorted.map { it.execute(conn) as AnnotatedCreateViewStatement }
         }
         return cachedCreateViewStatements!!
@@ -72,46 +72,6 @@ internal class SchemaInspector(
         sqlStatements.forEach { sqlStatement ->
             inspect(sqlStatement)
         }
-    }
-
-    private fun sortViewsByDependencies(viewExecutors: List<CreateViewStatementExecutor>): List<CreateViewStatementExecutor> {
-        if (viewExecutors.size <= 1) return viewExecutors
-
-        val nameToExec = viewExecutors.associateBy { it.viewName() }
-        val viewNames = nameToExec.keys.toSet()
-
-        // Build graph: dep -> list of views depending on it
-        val adj = mutableMapOf<String, MutableList<String>>()
-        val indeg = mutableMapOf<String, Int>().apply { viewNames.forEach { this[it] = 0 } }
-
-        viewExecutors.forEach { exec ->
-            val v = exec.viewName()
-            val deps = exec.referencedTableOrViewNames().filter { it in viewNames }
-            deps.forEach { dep ->
-                adj.getOrPut(dep) { mutableListOf() }.add(v)
-                indeg[v] = (indeg[v] ?: 0) + 1
-            }
-        }
-
-        // Kahn's algorithm
-        val queue = ArrayDeque(indeg.filter { it.value == 0 }.keys)
-        val orderedNames = mutableListOf<String>()
-        while (queue.isNotEmpty()) {
-            val u = queue.removeFirst()
-            orderedNames.add(u)
-            adj[u]?.forEach { w ->
-                indeg[w] = (indeg[w] ?: 0) - 1
-                if ((indeg[w] ?: 0) == 0) queue.add(w)
-            }
-        }
-
-        // If cycle or unresolved, append remaining in original order as fallback
-        if (orderedNames.size < viewExecutors.size) {
-            val remaining = viewExecutors.map { it.viewName() }.filter { it !in orderedNames }
-            orderedNames.addAll(remaining)
-        }
-
-        return orderedNames.mapNotNull { nameToExec[it] }
     }
 
     private fun inspect(sqlStatement: SqlSingleStatement) {

@@ -174,11 +174,12 @@ class QueryEmitterCoverageTest {
         val scaffolder = QueryFunctionScaffolder("fixture.db", { "PersonQuery" }, adapterEmitter)
 
         val bindFunction = com.squareup.kotlinpoet.FunSpec.builder("bind")
-        scaffolder.setupStatementFunctionStructure(
+        scaffolder.setupFunctionStructure(
             fnBld = bindFunction,
             statement = statement,
             namespace = "person",
             className = statement.getDataClassName(),
+            primaryParameter = QueryFunctionScaffolder.PrimaryParameter.STATEMENT,
             includeParamsParameter = true,
             adapterType = QueryFunctionScaffolder.AdapterType.PARAMETER_BINDING,
         )
@@ -278,9 +279,9 @@ class QueryEmitterCoverageTest {
             adapterParameterEmitter = adapterEmitter,
             adapterConfig = ctx.adapterConfig,
             selectFieldGenerator = ctx.selectFieldGenerator,
-            typeMapping = ctx.typeMapping,
             resultMappingHelper = mappingHelper,
             generateGetterCallWithPrefixes = getterFactory::buildGetterCall,
+            generateExecuteReturningGetter = getterFactory::buildExecuteReturningGetter,
             generateDynamicFieldMappingFromJoined = { _, _ -> "dynamicValue()" },
             createSelectLikeFieldsFromExecuteReturning = { emptyList() },
             findMainTableAlias = ctx::findMainTableAlias,

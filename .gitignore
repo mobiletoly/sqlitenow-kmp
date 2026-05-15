@@ -33,5 +33,7 @@ AGENTS.md
 .credentials
 .codex
 
+.drymint/
+
 /plans
 /specs/

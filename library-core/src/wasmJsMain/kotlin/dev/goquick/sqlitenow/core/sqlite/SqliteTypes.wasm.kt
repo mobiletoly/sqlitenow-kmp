@@ -28,17 +28,12 @@ private const val JS_SAFE_INTEGER_MIN = -9_007_199_254_740_991L
 actual class SqliteConnection internal constructor(
     private val handle: SqlJsDatabaseHandle,
 ) {
-    private var transactionDepth = 0
+    private val transactionState = SqliteTransactionState()
     private var exportedBytesCache: ByteArray? = null
 
     actual fun execSQL(sql: String) {
         wrapSqlite {
-            val normalized = sql.trim()
-            when {
-                normalized.startsWith("BEGIN", ignoreCase = true) -> transactionDepth++
-                normalized.startsWith("COMMIT", ignoreCase = true) -> if (transactionDepth > 0) transactionDepth--
-                normalized.startsWith("ROLLBACK", ignoreCase = true) -> if (transactionDepth > 0) transactionDepth--
-            }
+            transactionState.observeExecSql(sql)
             dbExec(handle.value, sql)
             invalidateExportCache()
         }
@@ -49,11 +44,11 @@ actual class SqliteConnection internal constructor(
         SqliteStatement(this, SqlJsStatementHandle(stmtHandle))
     }
 
-    actual fun inTransaction(): Boolean = transactionDepth > 0
+    actual fun inTransaction(): Boolean = transactionState.inTransaction()
 
     actual fun close() {
         wrapSqlite { dbClose(handle.value) }
-        transactionDepth = 0
+        transactionState.reset()
         exportedBytesCache = null
     }
 

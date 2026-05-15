@@ -51,37 +51,43 @@ class IndexedDbSqlitePersistence(
     private var databaseDeferred: CompletableDeferred<dynamic>? = null
 
     override suspend fun load(dbName: String): ByteArray? {
-        val factory = indexedDbFactory() ?: return null
-        val database = database(factory)
-        val transaction = database.transaction(arrayOf(storeName), "readonly")
-        val store = transaction.objectStore(storeName)
-        val request = store.get(dbName)
-        val result = runCatching { awaitRequest(request) }
-            .onFailure { logger.warn("[SqliteNow][IndexedDB] Failed to load $dbName", it) }
-            .getOrNull()
-        awaitTransaction(transaction)
+        var result: dynamic = null
+        val available = withObjectStore("readonly") { store ->
+            val request = store.get(dbName)
+            result = runCatching { awaitRequest(request) }
+                .onFailure { logger.warn("[SqliteNow][IndexedDB] Failed to load $dbName", it) }
+                .getOrNull()
+        }
+        if (!available) return null
         return convertResultToBytes(result)
     }
 
     override suspend fun persist(dbName: String, bytes: ByteArray) {
-        val factory = indexedDbFactory() ?: return
-        val database = database(factory)
-        val transaction = database.transaction(arrayOf(storeName), "readwrite")
-        val store = transaction.objectStore(storeName)
-        val request = store.put(bytes.toUint8Array(), dbName)
-        runCatching { awaitRequest(request) }
-            .onFailure { logger.error("[SqliteNow][IndexedDB] Failed to persist $dbName", it) }
-        awaitTransaction(transaction)
+        withObjectStore("readwrite") { store ->
+            val request = store.put(bytes.toUint8Array(), dbName)
+            runCatching { awaitRequest(request) }
+                .onFailure { logger.error("[SqliteNow][IndexedDB] Failed to persist $dbName", it) }
+        }
     }
 
     override suspend fun clear(dbName: String) {
-        val factory = indexedDbFactory() ?: return
+        withObjectStore("readwrite") { store ->
+            runCatching { awaitRequest(store.delete(dbName)) }
+                .onFailure { logger.warn("[SqliteNow][IndexedDB] Failed to clear $dbName", it) }
+        }
+    }
+
+    private suspend fun withObjectStore(
+        mode: String,
+        block: suspend (dynamic) -> Unit,
+    ): Boolean {
+        val factory = indexedDbFactory() ?: return false
         val database = database(factory)
-        val transaction = database.transaction(arrayOf(storeName), "readwrite")
+        val transaction = database.transaction(arrayOf(storeName), mode)
         val store = transaction.objectStore(storeName)
-        runCatching { awaitRequest(store.delete(dbName)) }
-            .onFailure { logger.warn("[SqliteNow][IndexedDB] Failed to clear $dbName", it) }
+        block(store)
         awaitTransaction(transaction)
+        return true
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)

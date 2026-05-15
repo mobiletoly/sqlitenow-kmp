@@ -16,70 +16,29 @@ class CastExpressionTest {
 
     @Test
     fun testCastExpressionParameterExtraction() {
-        // Test SQL with CAST expression
-        val sql = "SELECT * FROM PersonWithAddressView WHERE person_id = :personId AND phone >= CAST(:numberOfDays AS INTEGER)"
-        
-        // Parse the SQL
-        val statement = CCJSqlParserUtil.parse(sql)
-        
-        // Create NamedParametersProcessor
-        val processor = NamedParametersProcessor(statement)
-        
-        // Verify that parameters are extracted
-        assertEquals(2, processor.parameters.size)
-        assertTrue(processor.parameters.contains("personId"))
-        assertTrue(processor.parameters.contains("numberOfDays"))
-        
-        // Verify that CAST type is extracted
-        assertEquals(1, processor.parameterCastTypes.size)
-        assertEquals("INTEGER", processor.parameterCastTypes["numberOfDays"])
-        
-        // Verify that non-CAST parameters don't have cast types
-        assertEquals(null, processor.parameterCastTypes["personId"])
+        assertCastParameterExtraction(
+            sql = "SELECT * FROM PersonWithAddressView WHERE person_id = :personId AND phone >= CAST(:numberOfDays AS INTEGER)",
+            expectedParameters = listOf("personId", "numberOfDays"),
+            expectedCastTypes = mapOf("numberOfDays" to "INTEGER"),
+        )
     }
 
     @Test
     fun testMultipleCastExpressions() {
-        // Test SQL with multiple CAST expressions
-        val sql = "SELECT * FROM table WHERE col1 = CAST(:param1 AS TEXT) AND col2 = CAST(:param2 AS REAL) AND col3 = :param3"
-        
-        // Parse the SQL
-        val statement = CCJSqlParserUtil.parse(sql)
-        
-        // Create NamedParametersProcessor
-        val processor = NamedParametersProcessor(statement)
-        
-        // Verify that parameters are extracted
-        assertEquals(3, processor.parameters.size)
-        assertTrue(processor.parameters.contains("param1"))
-        assertTrue(processor.parameters.contains("param2"))
-        assertTrue(processor.parameters.contains("param3"))
-        
-        // Verify that CAST types are extracted
-        assertEquals(2, processor.parameterCastTypes.size)
-        assertEquals("TEXT", processor.parameterCastTypes["param1"])
-        assertEquals("REAL", processor.parameterCastTypes["param2"])
-        assertEquals(null, processor.parameterCastTypes["param3"])
+        assertCastParameterExtraction(
+            sql = "SELECT * FROM table WHERE col1 = CAST(:param1 AS TEXT) AND col2 = CAST(:param2 AS REAL) AND col3 = :param3",
+            expectedParameters = listOf("param1", "param2", "param3"),
+            expectedCastTypes = mapOf("param1" to "TEXT", "param2" to "REAL"),
+        )
     }
 
     @Test
     fun testNoCastExpressions() {
-        // Test SQL without CAST expressions
-        val sql = "SELECT * FROM table WHERE col1 = :param1 AND col2 = :param2"
-        
-        // Parse the SQL
-        val statement = CCJSqlParserUtil.parse(sql)
-        
-        // Create NamedParametersProcessor
-        val processor = NamedParametersProcessor(statement)
-        
-        // Verify that parameters are extracted
-        assertEquals(2, processor.parameters.size)
-        assertTrue(processor.parameters.contains("param1"))
-        assertTrue(processor.parameters.contains("param2"))
-        
-        // Verify that no CAST types are extracted
-        assertEquals(0, processor.parameterCastTypes.size)
+        assertCastParameterExtraction(
+            sql = "SELECT * FROM table WHERE col1 = :param1 AND col2 = :param2",
+            expectedParameters = listOf("param1", "param2"),
+            expectedCastTypes = emptyMap(),
+        )
     }
 
     @Test
@@ -159,5 +118,21 @@ class CastExpressionTest {
         } finally {
             tempDir.toFile().deleteRecursively()
         }
+    }
+
+    private fun assertCastParameterExtraction(
+        sql: String,
+        expectedParameters: List<String>,
+        expectedCastTypes: Map<String, String>,
+    ) {
+        val statement = CCJSqlParserUtil.parse(sql)
+        val processor = NamedParametersProcessor(statement)
+
+        assertEquals(expectedParameters.size, processor.parameters.size)
+        expectedParameters.forEach { parameter ->
+            assertTrue(processor.parameters.contains(parameter))
+            assertEquals(expectedCastTypes[parameter], processor.parameterCastTypes[parameter])
+        }
+        assertEquals(expectedCastTypes.size, processor.parameterCastTypes.size)
     }
 }

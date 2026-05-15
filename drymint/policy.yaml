@@ -1,0 +1,58 @@
+version: v0
+expected_dup:
+  - key: 'sqlitenow.core.sqlite.js_wasm_numeric_readers_intentional'
+    ref:
+      path: 'library-core/src/jsMain/kotlin/dev/goquick/sqlitenow/core/sqlite/SqliteTypes.js.kt'
+      symbol: 'dev.goquick.sqlitenow.core.sqlite.SqliteStatement.getDouble'
+      signature: '(Int) -> (Double)'
+    scope_mode: 'file'
+    reason: 'Intentional platform SqliteStatement numeric reader contract: getDouble and getLong share fetch/null/type-check shape while preserving distinct Double versus Long conversion semantics and error messages; helper extraction would add indirection without simplifying the platform actual implementations.'
+  - key: 'sqlitenow.core.sqlite.js_wasm_numeric_readers_intentional'
+    ref:
+      path: 'library-core/src/jsMain/kotlin/dev/goquick/sqlitenow/core/sqlite/SqliteTypes.js.kt'
+      symbol: 'dev.goquick.sqlitenow.core.sqlite.SqliteStatement.getLong'
+      signature: '(Int) -> (Long)'
+    scope_mode: 'file'
+    reason: 'Intentional platform SqliteStatement numeric reader contract: getDouble and getLong share fetch/null/type-check shape while preserving distinct Double versus Long conversion semantics and error messages; helper extraction would add indirection without simplifying the platform actual implementations.'
+  - key: 'sqlitenow.core.sqlite.js_wasm_numeric_readers_intentional'
+    ref:
+      path: 'library-core/src/wasmJsMain/kotlin/dev/goquick/sqlitenow/core/sqlite/SqliteTypes.wasm.kt'
+      symbol: 'dev.goquick.sqlitenow.core.sqlite.SqliteStatement.getDouble'
+      signature: '(Int) -> (Double)'
+    scope_mode: 'file'
+    reason: 'Intentional platform SqliteStatement numeric reader contract: getDouble and getLong share fetch/null/type-check shape while preserving distinct Double versus Long conversion semantics and error messages; helper extraction would add indirection without simplifying the platform actual implementations.'
+  - key: 'sqlitenow.core.sqlite.js_wasm_numeric_readers_intentional'
+    ref:
+      path: 'library-core/src/wasmJsMain/kotlin/dev/goquick/sqlitenow/core/sqlite/SqliteTypes.wasm.kt'
+      symbol: 'dev.goquick.sqlitenow.core.sqlite.SqliteStatement.getLong'
+      signature: '(Int) -> (Long)'
+    scope_mode: 'file'
+    reason: 'Intentional platform SqliteStatement numeric reader contract: getDouble and getLong share fetch/null/type-check shape while preserving distinct Double versus Long conversion semantics and error messages; helper extraction would add indirection without simplifying the platform actual implementations.'
+  - key: 'sqlitenow.core.sqlite.js_wasm_fetch_value_intentional'
+    ref:
+      path: 'library-core/src/jsMain/kotlin/dev/goquick/sqlitenow/core/sqlite/SqliteTypes.js.kt'
+      symbol: 'dev.goquick.sqlitenow.core.sqlite.SqliteStatement.fetchValue'
+      signature: '(Int) -> (dynamic)'
+    scope_mode: 'file'
+    reason: 'Intentional JS/Wasm SqliteStatement row accessor variant: both fetchValue helpers preserve the same active-row and bounds contract while using platform-specific row storage APIs, Array<dynamic>.size versus JsArray<JsAny?>.length; sharing this would add indirection around a small source-set boundary.'
+  - key: 'sqlitenow.core.sqlite.js_wasm_fetch_value_intentional'
+    ref:
+      path: 'library-core/src/wasmJsMain/kotlin/dev/goquick/sqlitenow/core/sqlite/SqliteTypes.wasm.kt'
+      symbol: 'dev.goquick.sqlitenow.core.sqlite.SqliteStatement.fetchValue'
+      signature: '(Int) -> (JsAny?)'
+    scope_mode: 'file'
+    reason: 'Intentional JS/Wasm SqliteStatement row accessor variant: both fetchValue helpers preserve the same active-row and bounds contract while using platform-specific row storage APIs, Array<dynamic>.size versus JsArray<JsAny?>.length; sharing this would add indirection around a small source-set boundary.'
+  - key: 'sqlitenow.core.sqlite.js_wasm_statement_binding_helpers_intentional'
+    ref:
+      path: 'library-core/src/jsMain/kotlin/dev/goquick/sqlitenow/core/sqlite/SqliteTypes.js.kt'
+      symbol: 'dev.goquick.sqlitenow.core.sqlite.SqliteStatement.setBinding'
+      signature: '(Int,dynamic) -> (?)'
+    scope_mode: 'file'
+    reason: 'Intentional JS/Wasm SqliteStatement binding helper variant: setBinding shares the same mutation bookkeeping and export-cache invalidation contract while preserving platform-specific bound value representation, dynamic versus BindingValue; extracting a helper would obscure the source-set boundary without reducing meaningful complexity.'
+  - key: 'sqlitenow.core.sqlite.js_wasm_statement_binding_helpers_intentional'
+    ref:
+      path: 'library-core/src/wasmJsMain/kotlin/dev/goquick/sqlitenow/core/sqlite/SqliteTypes.wasm.kt'
+      symbol: 'dev.goquick.sqlitenow.core.sqlite.SqliteStatement.setBinding'
+      signature: '(Int,BindingValue) -> (?)'
+    scope_mode: 'file'
+    reason: 'Intentional JS/Wasm SqliteStatement binding helper variant: setBinding shares the same mutation bookkeeping and export-cache invalidation contract while preserving platform-specific bound value representation, dynamic versus BindingValue; extracting a helper would obscure the source-set boundary without reducing meaningful complexity.'

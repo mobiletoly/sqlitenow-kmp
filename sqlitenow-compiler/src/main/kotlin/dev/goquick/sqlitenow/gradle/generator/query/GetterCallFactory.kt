@@ -54,28 +54,81 @@ internal class GetterCallFactory(
                 adapterConfig = adapterConfig,
             )
 
-            val baseGetterCall = typeMapping.getGetterCall(
-                SqliteTypeToKotlinCodeConverter.mapSqlTypeToKotlinType(field.src.dataType),
-                columnIndex,
-                receiver = "statement",
+            buildAdapterGetterCall(
+                field = field,
+                columnIndex = columnIndex,
+                adapterParamName = adapterParamName,
+                guardWhenNullable = isFromJoinedTable || desiredType.isNullable,
+                nullExpression = "null",
             )
-            val guardedCall = "$adapterParamName($baseGetterCall)"
-            if (isFromJoinedTable || desiredType.isNullable) {
-                "if (statement.isNull($columnIndex)) null else $guardedCall"
-            } else {
-                guardedCall
-            }
         } else {
-            val baseGetterCall = typeMapping.getGetterCall(
-                desiredType.copy(nullable = false),
-                columnIndex,
-                receiver = "statement",
+            buildPlainGetterCall(
+                desiredType = desiredType,
+                columnIndex = columnIndex,
+                guardWhenNullable = isFromJoinedTable || desiredType.isNullable,
             )
-            if (isFromJoinedTable || desiredType.isNullable) {
-                "if (statement.isNull($columnIndex)) null else $baseGetterCall"
-            } else {
-                baseGetterCall
-            }
+        }
+    }
+
+    fun buildExecuteReturningGetter(
+        field: AnnotatedSelectStatement.Field,
+        desiredType: TypeName,
+        columnIndex: Int,
+    ): String {
+        return if (isCustomKotlinType(desiredType) || adapterConfig.hasAdapterAnnotation(field)) {
+            val visibleName = field.src.fieldName
+            val columnName = PropertyNameGeneratorType.LOWER_CAMEL_CASE.convertToPropertyName(visibleName)
+            val adapterParamName = adapterConfig.getOutputAdapterFunctionName(columnName)
+            buildAdapterGetterCall(
+                field = field,
+                columnIndex = columnIndex,
+                adapterParamName = adapterParamName,
+                guardWhenNullable = desiredType.isNullable,
+                nullExpression = "$adapterParamName(null)",
+            )
+        } else {
+            buildPlainGetterCall(
+                desiredType = desiredType,
+                columnIndex = columnIndex,
+                guardWhenNullable = desiredType.isNullable,
+            )
+        }
+    }
+
+    private fun buildAdapterGetterCall(
+        field: AnnotatedSelectStatement.Field,
+        columnIndex: Int,
+        adapterParamName: String,
+        guardWhenNullable: Boolean,
+        nullExpression: String,
+    ): String {
+        val baseGetterCall = typeMapping.getGetterCall(
+            SqliteTypeToKotlinCodeConverter.mapSqlTypeToKotlinType(field.src.dataType),
+            columnIndex,
+            receiver = "statement",
+        )
+        val guardedCall = "$adapterParamName($baseGetterCall)"
+        return if (guardWhenNullable) {
+            "if (statement.isNull($columnIndex)) $nullExpression else $guardedCall"
+        } else {
+            guardedCall
+        }
+    }
+
+    private fun buildPlainGetterCall(
+        desiredType: TypeName,
+        columnIndex: Int,
+        guardWhenNullable: Boolean,
+    ): String {
+        val baseGetterCall = typeMapping.getGetterCall(
+            desiredType.copy(nullable = false),
+            columnIndex,
+            receiver = "statement",
+        )
+        return if (guardWhenNullable) {
+            "if (statement.isNull($columnIndex)) null else $baseGetterCall"
+        } else {
+            baseGetterCall
         }
     }
 

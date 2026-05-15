@@ -29,7 +29,7 @@ import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedStatement
 import dev.goquick.sqlitenow.gradle.processing.ReturningColumnsResolver
 import dev.goquick.sqlitenow.gradle.processing.StatementProcessor
-import dev.goquick.sqlitenow.gradle.util.pascalize
+import dev.goquick.sqlitenow.gradle.util.queryNamespaceClassName
 import java.io.File
 
 /**
@@ -43,7 +43,7 @@ internal class QueryCodeGenerator(
 ) {
     private val packageName: String = generatorContext.packageName
     private val outputDir: File = generatorContext.outputDir
-    private fun queryNamespaceName(namespace: String): String = pascalize(namespace) + "Query"
+    private fun queryNamespaceName(namespace: String): String = queryNamespaceClassName(namespace)
     private val columnLookup = generatorContext.columnLookup
     private val typeMapping = generatorContext.typeMapping
     private val parameterBinding =
@@ -91,9 +91,9 @@ internal class QueryCodeGenerator(
         adapterParameterEmitter = adapterParameterEmitter,
         adapterConfig = adapterConfig,
         selectFieldGenerator = selectFieldGenerator,
-        typeMapping = typeMapping,
         resultMappingHelper = resultMappingHelper,
         generateGetterCallWithPrefixes = getterCallFactory::buildGetterCall,
+        generateExecuteReturningGetter = getterCallFactory::buildExecuteReturningGetter,
         generateDynamicFieldMappingFromJoined = { request, rowsVar ->
             resultMappingHelper.generateDynamicFieldMappingCodeFromJoined(request, rowsVar)
         },

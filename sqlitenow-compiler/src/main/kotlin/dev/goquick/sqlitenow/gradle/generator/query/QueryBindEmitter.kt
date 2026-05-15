@@ -35,11 +35,12 @@ internal class QueryBindEmitter(
         val className = statement.getDataClassName()
         val fnBld = FunSpec.builder("bindStatementParams")
             .addKdoc("Binds parameters to an already prepared SQLiteStatement for the ${statement.name} query.")
-        scaffolder.setupStatementFunctionStructure(
+        scaffolder.setupFunctionStructure(
             fnBld = fnBld,
             statement = statement,
             namespace = namespace,
             className = className,
+            primaryParameter = QueryFunctionScaffolder.PrimaryParameter.STATEMENT,
             includeParamsParameter = true,
             adapterType = QueryFunctionScaffolder.AdapterType.PARAMETER_BINDING,
         )

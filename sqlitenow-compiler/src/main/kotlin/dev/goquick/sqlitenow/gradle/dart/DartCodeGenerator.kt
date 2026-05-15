@@ -15,27 +15,22 @@
  */
 package dev.goquick.sqlitenow.gradle.dart
 
-import com.squareup.kotlinpoet.TypeName
 import dev.goquick.sqlitenow.gradle.database.MigrationInspector
 import dev.goquick.sqlitenow.gradle.generator.data.DataStructCodeGenerator
 import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedStatement
-import dev.goquick.sqlitenow.gradle.oversqlite.resolveOversqliteSyncTables
+import dev.goquick.sqlitenow.gradle.processing.AffectedTablesResolver
 import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
 import dev.goquick.sqlitenow.gradle.processing.DynamicFieldUtils
-import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationOverrides
-import dev.goquick.sqlitenow.gradle.processing.StatementAnnotationOverrides
 import dev.goquick.sqlitenow.gradle.sqlinspect.DeleteStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.InsertStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.SQLBatchInspector
 import dev.goquick.sqlitenow.gradle.sqlinspect.SchemaInspector
-import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.UpdateStatement
 import dev.goquick.sqlitenow.gradle.util.pascalize
 import java.io.File
-import java.util.Locale
 
 internal class DartCodeGenerator(
     private val databaseName: String,
@@ -47,34 +42,27 @@ internal class DartCodeGenerator(
     private val oversqlite: Boolean,
 ) {
     private val context = dataStructCodeGenerator.generatorContext
-    private val adapterColumns = linkedMapOf<String, DartAdapterColumn>()
-    private val createViewStatementsByName by lazy {
-        context.createViewStatements.associateBy { it.src.viewName.lowercase(Locale.ROOT) }
-    }
-    private val viewTableDependencies by lazy {
-        context.createViewStatements.associate { view ->
-            val key = view.src.viewName.lowercase(Locale.ROOT)
-            key to resolveViewDependencies(key, mutableSetOf())
-        }
-    }
-    private val cascadeNotifyByTable by lazy {
-        context.createTableStatements.mapNotNull { table ->
-            val cascade = table.annotations.cascadeNotify ?: return@mapNotNull null
-            table.src.tableName.lowercase(Locale.ROOT) to cascade
-        }.toMap()
-    }
-    private val cascadeClosureCache =
-        mutableMapOf<Pair<String, StatementAnnotationOverrides.CascadeAction>, Set<String>>()
-    private val resolvedSyncTables by lazy {
-        resolveOversqliteSyncTables(
-            databaseClassName = databaseName,
+    private val adapterRegistry = DartAdapterRegistry()
+    private val fieldMapper = DartFieldMapper(context, adapterRegistry)
+    private val affectedTablesResolver by lazy {
+        AffectedTablesResolver.fromStatements(
             createTableStatements = context.createTableStatements,
-            oversqlite = oversqlite,
+            createViewStatements = context.createViewStatements,
         )
     }
+    private val oversqliteEmitter = DartOversqliteEmitter(
+        databaseName = databaseName,
+        createTableStatements = context.createTableStatements,
+        oversqlite = oversqlite,
+    )
+    private val migrationEmitter = DartMigrationEmitter(
+        schemaInspector = schemaInspector,
+        sqlBatchInspector = sqlBatchInspector,
+        migrationInspector = migrationInspector,
+    )
 
     fun generateCode() {
-        validateOversqliteFlag()
+        oversqliteEmitter.validateFlag()
         outputDir.mkdirs()
         val file = outputDir.resolve("${databaseName.toSnakeCase()}.dart")
         val code = DartWriter().apply {
@@ -88,7 +76,7 @@ internal class DartCodeGenerator(
                 line("import 'package:sqlitenow_oversqlite/sqlitenow_oversqlite.dart';")
             }
             line()
-            collectAdapters()
+            adapterRegistry.collect(context)
             emitAdapters()
             emitResultModels()
             emitParameterModels()
@@ -101,19 +89,19 @@ internal class DartCodeGenerator(
     private fun DartWriter.emitAdapters() {
         line("final class ${databaseName}Adapters {")
         indent {
-            if (adapterColumns.isEmpty()) {
+            if (adapterRegistry.isEmpty()) {
                 line("const ${databaseName}Adapters();")
             } else {
                 line("const ${databaseName}Adapters({")
                 indent {
-                    adapterColumns.values.forEach { adapter ->
+                    adapterRegistry.values.forEach { adapter ->
                         line("required this.${adapter.encodeName},")
                         line("required this.${adapter.decodeName},")
                     }
                 }
                 line("});")
                 line()
-                adapterColumns.values.forEach { adapter ->
+                adapterRegistry.values.forEach { adapter ->
                     line("final Object? Function(Object? value) ${adapter.encodeName};")
                     line("final Object? Function(Object? value) ${adapter.decodeName};")
                     line()
@@ -127,21 +115,21 @@ internal class DartCodeGenerator(
     private fun DartWriter.emitResultModels() {
         val emitted = mutableSetOf<String>()
         selectStatements().forEach { (namespace, statement) ->
-            val className = selectResultClassName(namespace, statement)
+            val className = resultClassName(namespace, statement)
             if (emitted.add(className)) {
-                emitResultModel(className, statement.fields())
+                emitResultModel(className, fieldMapper.fields(statement))
             }
             val joinedClassName = joinedResultClassName(namespace, statement)
             if (statement.hasCollectionMapping() && emitted.add(joinedClassName)) {
-                emitResultModel(joinedClassName, statement.physicalFields())
+                emitResultModel(joinedClassName, fieldMapper.physicalFields(statement))
             }
         }
         executeStatements()
             .filter { (_, statement) -> statement.hasReturningClause() }
             .forEach { (namespace, statement) ->
-                val className = returningResultClassName(namespace, statement)
+                val className = resultClassName(namespace, statement)
                 if (emitted.add(className)) {
-                    emitResultModel(className, returningFields(statement))
+                    emitResultModel(className, fieldMapper.returningFields(statement))
                 }
             }
     }
@@ -193,13 +181,13 @@ internal class DartCodeGenerator(
     }
 
     private fun DartWriter.emitDatabaseFacade() {
-        line("final class $databaseName {")
-        indent {
-            line("$databaseName.inMemory({")
+            line("final class $databaseName {")
             indent {
-                line(adapterConstructorParameter())
-            }
-            line("}) : this._(")
+                line("$databaseName.inMemory({")
+                indent {
+                    line(adapterRegistry.constructorParameter(databaseName))
+                }
+                line("}) : this._(")
             indent {
                 line("SqliteNowDatabase.inMemory(migrations: _migrations),")
                 line("adapters,")
@@ -209,7 +197,7 @@ internal class DartCodeGenerator(
             line("$databaseName({")
             indent {
                 line("required String path,")
-                line(adapterConstructorParameter())
+                line(adapterRegistry.constructorParameter(databaseName))
             }
             line("}) : this._(")
             indent {
@@ -248,105 +236,11 @@ internal class DartCodeGenerator(
             line("}")
             line("SqliteNowDatabase get runtimeDatabase => _database;")
             line()
-            emitOversqliteMetadata()
-            emitMigrations()
+            oversqliteEmitter.emit(this)
+            migrationEmitter.emit(this)
         }
         line("}")
         line()
-    }
-
-    private fun DartWriter.emitOversqliteMetadata() {
-        if (!oversqlite) return
-
-        line("static const List<SyncTable> syncTables = <SyncTable>[")
-        indent {
-            resolvedSyncTables.forEach { syncTable ->
-                line(
-                    "SyncTable(tableName: '${syncTable.table.name}', " +
-                        "syncKeyColumnName: '${syncTable.syncKeyColumnName}'),"
-                )
-            }
-        }
-        line("];")
-        line()
-        line("OversqliteConfig buildOversqliteConfig({")
-        indent {
-            line("required String schema,")
-            line("int uploadLimit = 200,")
-            line("int downloadLimit = 1000,")
-            line("bool verboseLogs = false,")
-        }
-        line("}) {")
-        indent {
-            line("return OversqliteConfig(")
-            indent {
-                line("schema: schema,")
-                line("syncTables: syncTables,")
-                line("uploadLimit: uploadLimit,")
-                line("downloadLimit: downloadLimit,")
-                line("verboseLogs: verboseLogs,")
-            }
-            line(");")
-        }
-        line("}")
-        line()
-        line("DefaultOversqliteClient newOversqliteClient({")
-        indent {
-            line("required String schema,")
-            line("required OversqliteHttpClient httpClient,")
-            line("int uploadLimit = 200,")
-            line("int downloadLimit = 1000,")
-            line("bool verboseLogs = false,")
-        }
-        line("}) {")
-        indent {
-            line("final config = buildOversqliteConfig(")
-            indent {
-                line("schema: schema,")
-                line("uploadLimit: uploadLimit,")
-                line("downloadLimit: downloadLimit,")
-                line("verboseLogs: verboseLogs,")
-            }
-            line(");")
-            line("return DefaultOversqliteClient(")
-            indent {
-                line("database: _database,")
-                line("config: config,")
-                line("httpClient: httpClient,")
-            }
-            line(");")
-        }
-        line("}")
-        line()
-    }
-
-    private fun validateOversqliteFlag() {
-        if (!oversqlite && resolvedSyncTables.isNotEmpty()) {
-            error(
-                "Dart database '$databaseName' has tables annotated with enableSync=true, but oversqlite=false. " +
-                    "Set oversqlite=true for Dart Oversqlite metadata generation or remove enableSync=true."
-            )
-        }
-    }
-
-    private fun DartWriter.emitMigrations() {
-        line("static final List<SqliteNowMigrationStep> _migrations = [")
-        indent {
-            migrationSteps().forEach { step ->
-                if (step.freshOnly) {
-                    line("SqliteNowMigrationStep.fresh(${step.version}, (connection) async {")
-                } else {
-                    line("SqliteNowMigrationStep(${step.version}, (connection) async {")
-                }
-                indent {
-                    step.statements.forEach { statement ->
-                        line("await connection.execute(${statement.toDartRawString()});")
-                    }
-                }
-                line("}),")
-            }
-        }
-        line("];")
     }
 
     private fun DartWriter.emitNamespaces() {
@@ -375,8 +269,8 @@ internal class DartCodeGenerator(
         val functionName = statement.name.toLowerCamel()
         val params = parameterDescriptors(statement, unique = false)
         val paramsClass = paramsClassName(namespace, statement)
-        val resultClass = selectResultClassName(namespace, statement)
-        val affectedTables = affectedTables(statement)
+        val resultClass = resultClassName(namespace, statement)
+        val affectedTables = affectedTablesResolver.tablesFor(statement)
         if (params.isEmpty()) {
             line("SelectRunner<$resultClass> $functionName() {")
         } else {
@@ -395,7 +289,7 @@ internal class DartCodeGenerator(
                         line("return _db.connection.select(")
                         indent {
                             line("${statement.src.sql.toDartRawString()},")
-                            line("(row) => ${readResultExpression(resultClass, statement, statement.fields(), "row")},")
+                            line("(row) => ${readResultExpression(resultClass, statement, fieldMapper.fields(statement), "row")},")
                             if (params.isNotEmpty()) {
                                 line("parameters: ${parameterListExpression(params)},")
                             }
@@ -419,7 +313,7 @@ internal class DartCodeGenerator(
         val joinedClass = joinedResultClassName(namespace, statement)
         val collectionKey = statement.annotations.collectionKey
             ?: error("Collection-mapped Dart SELECT '${statement.name}' is missing statement-level collectionKey.")
-        val groupKeyField = statement.physicalFields().firstOrNull { it.source?.src?.fieldName == collectionKey }
+        val groupKeyField = fieldMapper.physicalFields(statement).firstOrNull { it.source?.src?.fieldName == collectionKey }
             ?: error("Collection key '$collectionKey' was not selected by Dart SELECT '${statement.name}'.")
 
         line("query: () async {")
@@ -427,7 +321,7 @@ internal class DartCodeGenerator(
             line("final joinedRows = await _db.connection.select(")
             indent {
                 line("${statement.src.sql.toDartRawString()},")
-                line("(row) => ${readResultExpression(joinedClass, statement, statement.physicalFields(), "row")},")
+                line("(row) => ${readResultExpression(joinedClass, statement, fieldMapper.physicalFields(statement), "row")},")
                 if (params.isNotEmpty()) {
                     line("parameters: ${parameterListExpression(params)},")
                 }
@@ -444,13 +338,13 @@ internal class DartCodeGenerator(
             indent {
                 line("final first = rowsForEntity.first;")
                 statement.mappingPlan.includedCollectionFields.forEach { dynamicField ->
-                    val collectionProperty = dynamicFieldPropertyName(dynamicField)
+                    val collectionProperty = fieldMapper.dynamicFieldPropertyName(dynamicField)
                     val collectionType = dynamicField.annotations.propertyType
                         ?: error("Collection dynamic field '${dynamicField.src.fieldName}' is missing propertyType.")
                     val elementType = collectionType.collectionElementType()
                     val collectionKeyColumn = dynamicField.annotations.collectionKey
                         ?: error("Collection dynamic field '${dynamicField.src.fieldName}' is missing collectionKey.")
-                    val collectionKeyField = statement.physicalFields()
+                    val collectionKeyField = fieldMapper.physicalFields(statement)
                         .firstOrNull { it.source?.src?.fieldName == collectionKeyColumn }
                         ?: error("Collection key '$collectionKeyColumn' was not selected by Dart SELECT '${statement.name}'.")
                     line("final ${collectionProperty}Seen = <Object?>{};")
@@ -469,7 +363,7 @@ internal class DartCodeGenerator(
                 }
                 line("resultRows.add(")
                 indent {
-                    line("${readResultExpression(resultClass, statement, statement.fields(), "first", fromJoinedRow = true)},")
+                    line("${readResultExpression(resultClass, statement, fieldMapper.fields(statement), "first", fromJoinedRow = true)},")
                 }
                 line(");")
             }
@@ -483,10 +377,10 @@ internal class DartCodeGenerator(
         val functionName = statement.name.toLowerCamel()
         val params = parameterDescriptors(statement, unique = false)
         val paramsClass = paramsClassName(namespace, statement)
-        val affectedTables = affectedTables(statement)
+        val affectedTables = affectedTablesResolver.tablesFor(statement)
         val signatureParams = if (params.isEmpty()) "" else "$paramsClass params"
         if (statement.hasReturningClause()) {
-            val resultClass = returningResultClassName(namespace, statement)
+            val resultClass = resultClassName(namespace, statement)
             line("Future<List<$resultClass>> $functionName($signatureParams) async {")
             indent {
                 line("final rows = await _db.connection.usePrepared(")
@@ -496,7 +390,7 @@ internal class DartCodeGenerator(
                     indent {
                         line("return statement.select(")
                         indent {
-                            line("(row) => ${readResultExpression(resultClass, null, returningFields(statement), "row")},")
+                            line("(row) => ${readResultExpression(resultClass, null, fieldMapper.returningFields(statement), "row")},")
                             if (params.isEmpty()) {
                                 line("const [],")
                             } else {
@@ -606,7 +500,7 @@ internal class DartCodeGenerator(
             ?: error("Dynamic field '${dynamicField.src.fieldName}' has no mapping columns.")
         val columns = mapping.columns
             .filterNot { column -> DynamicFieldUtils.isNestedAlias(column.fieldName, dynamicField.annotations.aliasPrefix) }
-            .map { column -> statement.mappingColumn(dynamicField, column) }
+            .map { column -> fieldMapper.mappingColumn(statement, dynamicField, column) }
         val mappingType = AnnotationConstants.MappingType.fromString(dynamicField.annotations.mappingType)
         val rawPropertyType = dynamicField.annotations.propertyType
             ?: error("Dynamic field '${dynamicField.src.fieldName}' is missing propertyType.")
@@ -665,15 +559,6 @@ internal class DartCodeGenerator(
         }
     }
 
-    private fun collectAdapters() {
-        context.createTableStatements.forEach { table ->
-            table.columns.forEach { column ->
-                if (!column.hasAdapter()) return@forEach
-                adapterFor(table.src.tableName, column.src.name, column)
-            }
-        }
-    }
-
     private fun parameterDescriptors(statement: AnnotatedStatement, unique: Boolean): List<DartParameter> {
         val names = if (unique) {
             statement.srcNamedParameters().distinct()
@@ -687,7 +572,7 @@ internal class DartCodeGenerator(
             DartParameter(
                 propertyName = propertyName,
                 dartType = type,
-                adapter = column?.let { adapterFor(it.first.src.tableName, it.second.src.name, it.second) },
+                adapter = column?.let { adapterRegistry.adapterFor(it.first.src.tableName, it.second.src.name, it.second) },
             )
         }
     }
@@ -747,316 +632,20 @@ internal class DartCodeGenerator(
     private fun namespaces(): List<String> = context.nsWithStatements.keys.sorted()
 
     private fun usesUint8List(): Boolean {
-        return context.createTableStatements.any { table ->
-            table.columns.any { it.toDartType().removeSuffix("?") == "Uint8List" }
-        } || selectStatements().any { (_, statement) ->
-            statement.fields().any { it.dartType.removeSuffix("?") == "Uint8List" }
-        } || executeStatements().any { (_, statement) ->
-            statement.hasReturningClause() &&
-                returningFields(statement).any { it.dartType.removeSuffix("?") == "Uint8List" }
-        }
+        return fieldMapper.usesUint8List(selectStatements(), executeStatements())
     }
 
-    private fun adapterConstructorParameter(): String =
-        if (adapterColumns.isEmpty()) {
-            "${databaseName}Adapters adapters = const ${databaseName}Adapters(),"
-        } else {
-            "required ${databaseName}Adapters adapters,"
-        }
-
-    private fun selectResultClassName(namespace: String, statement: AnnotatedSelectStatement): String =
-        statement.annotations.queryResult ?: "${pascalize(namespace)}${statement.getDataClassName()}Result"
+    private fun resultClassName(namespace: String, statement: AnnotatedStatement): String =
+        statement.annotations.queryResult ?: defaultClassName(namespace, statement, "Result")
 
     private fun joinedResultClassName(namespace: String, statement: AnnotatedSelectStatement): String =
-        "_${selectResultClassName(namespace, statement)}JoinedRow"
-
-    private fun returningResultClassName(namespace: String, statement: AnnotatedExecuteStatement): String =
-        statement.annotations.queryResult ?: "${pascalize(namespace)}${statement.getDataClassName()}Result"
+        "_${resultClassName(namespace, statement)}JoinedRow"
 
     private fun paramsClassName(namespace: String, statement: AnnotatedStatement): String =
-        "${pascalize(namespace)}${statement.getDataClassName()}Params"
+        defaultClassName(namespace, statement, "Params")
 
-    private fun AnnotatedSelectStatement.fields(): List<DartField> =
-        mappingPlan.regularFields.map { field ->
-            toDartField(field)
-        } + mappingPlan.includedDynamicFields.map { field ->
-            val propertyType = field.annotations.propertyType
-                ?: error("Dynamic field '${field.src.fieldName}' is missing propertyType.")
-            val mappingType = field.annotations.mappingType?.let { AnnotationConstants.MappingType.fromString(it) }
-            DartField(
-                index = -1,
-                propertyName = dynamicFieldPropertyName(field),
-                dartType = propertyType.toDartTypeName().let { type ->
-                    if (mappingType == AnnotationConstants.MappingType.COLLECTION || field.annotations.notNull == true) {
-                        type.removeSuffix("?")
-                    } else {
-                        type.withNullable(true)
-                    }
-                },
-                sqliteReadCall = "",
-                nullable = field.annotations.notNull != true,
-                adapter = null,
-                source = field,
-                dynamicField = field,
-            )
-        }
-
-    private fun AnnotatedSelectStatement.physicalFields(): List<DartField> =
-        fields.filterNot { it.annotations.isDynamicField }.map { field ->
-            toDartField(field)
-        }
-
-    private fun AnnotatedSelectStatement.toDartField(field: AnnotatedSelectStatement.Field): DartField {
-        val propertyName = field.annotations.propertyName
-            ?: annotations.propertyNameGenerator.convertToPropertyName(field.src.fieldName)
-        val table = createTableForSelectField(this, field.src)
-        val column = table?.findColumnByName(field.src.originalColumnName)
-        val adapter = column?.let { adapterFor(table.src.tableName, it.src.name, it) }
-        return DartField(
-            index = physicalFieldIndex(field.src),
-            propertyName = propertyName,
-            dartType = field.toDartType(),
-            sqliteReadCall = field.src.dataType.sqliteReadCall(nullable = field.isNullable()),
-            nullable = field.isNullable(),
-            adapter = adapter,
-            source = field,
-            dynamicField = null,
-        )
-    }
-
-    private fun AnnotatedSelectStatement.mappingColumn(
-        dynamicField: AnnotatedSelectStatement.Field,
-        column: SelectStatement.FieldSource,
-    ): DartMappingColumn {
-        val field = fields.firstOrNull { !it.annotations.isDynamicField && it.src.fieldName == column.fieldName }
-            ?: error("Mapped column '${column.fieldName}' not found in Dart SELECT '${name}'.")
-        val physical = toDartField(field)
-        val aliasPrefix = dynamicField.annotations.aliasPrefix
-        val rawName = if (!aliasPrefix.isNullOrBlank() && column.fieldName.startsWith(aliasPrefix)) {
-            column.fieldName.removePrefix(aliasPrefix)
-        } else {
-            column.fieldName
-        }.substringBefore(":")
-        val tableColumn = createTableForSelectField(this, column)
-            ?.findColumnByName(column.originalColumnName)
-        val tablePropertyName = tableColumn
-            ?.parsedFieldAnnotations()
-            ?.propertyName
-        val constructorField = tableColumn?.let { resolvedColumn ->
-            val adapter = adapterFor(
-                tableName = createTableForSelectField(this, column)!!.src.tableName,
-                columnName = resolvedColumn.src.name,
-                column = resolvedColumn,
-            )
-            physical.copy(
-                dartType = resolvedColumn.toDartType(),
-                sqliteReadCall = resolvedColumn.src.dataType.sqliteReadCall(nullable = resolvedColumn.isNullable()),
-                nullable = resolvedColumn.isNullable(),
-                adapter = adapter,
-            )
-        } ?: if (dynamicField.annotations.notNull == true) {
-            physical.copy(
-                dartType = physical.dartType.removeSuffix("?"),
-                sqliteReadCall = column.dataType.sqliteReadCall(nullable = false),
-                nullable = false,
-            )
-        } else {
-            physical
-        }
-        return DartMappingColumn(
-            sourcePropertyName = physical.propertyName,
-            constructorPropertyName = tablePropertyName ?: annotations.propertyNameGenerator.convertToPropertyName(rawName),
-            field = constructorField,
-        )
-    }
-
-    private fun AnnotatedSelectStatement.physicalFieldIndex(column: SelectStatement.FieldSource): Int =
-        src.fields.indexOfFirst { it.fieldName == column.fieldName }.takeIf { it >= 0 }
-            ?: error("Column '${column.fieldName}' not found in SELECT '${name}'.")
-
-    private fun createTableForSelectField(
-        statement: AnnotatedSelectStatement,
-        field: SelectStatement.FieldSource,
-    ): AnnotatedCreateTableStatement? {
-        val tableName = statement.src.tableAliases[field.tableName] ?: field.tableName
-        return context.createTableStatements.firstOrNull {
-            it.src.tableName.equals(tableName, ignoreCase = true)
-        }
-    }
-
-    private fun dynamicFieldPropertyName(field: AnnotatedSelectStatement.Field): String =
-        field.annotations.propertyName ?: field.src.fieldName
-
-    private fun returningFields(statement: AnnotatedExecuteStatement): List<DartField> {
-        val table = context.createTableStatements.first {
-            it.src.tableName.equals(statement.src.table, ignoreCase = true)
-        }
-        return statement.getReturningColumns().mapIndexed { index, columnName ->
-            val column = table.findColumnByName(columnName)
-                ?: error("RETURNING column '$columnName' not found on table '${table.src.tableName}'.")
-            val propertyName = statement.annotations.propertyNameGenerator.convertToPropertyName(column.src.name)
-            val adapter = adapterFor(table.src.tableName, column.src.name, column)
-            DartField(
-                index = index,
-                propertyName = propertyName,
-                dartType = column.toDartType(),
-                sqliteReadCall = column.src.dataType.sqliteReadCall(nullable = column.isNullable()),
-                nullable = column.isNullable(),
-                adapter = adapter,
-            )
-        }
-    }
-
-    private fun AnnotatedSelectStatement.Field.toDartType(): String {
-        val explicit = annotations.propertyType?.toDartTypeName()
-        if (explicit != null) return explicit.withNullable(isNullable())
-        return src.dataType.sqliteDartType().withNullable(isNullable())
-    }
-
-    private fun AnnotatedCreateTableStatement.Column.toDartType(): String {
-        val explicit = parsedFieldAnnotations().propertyType?.toDartTypeName()
-        if (explicit != null) return explicit.withNullable(isNullable())
-        return src.dataType.sqliteDartType().withNullable(isNullable())
-    }
-
-    private fun AnnotatedSelectStatement.Field.isNullable(): Boolean {
-        annotations.notNull?.let { return !it }
-        return src.isNullable
-    }
-
-    private fun adapterFor(
-        tableName: String,
-        columnName: String,
-        column: AnnotatedCreateTableStatement.Column,
-    ): DartAdapterColumn? {
-        if (!column.hasAdapter()) return null
-        val key = "${tableName.lowercase(Locale.ROOT)}.${columnName.lowercase(Locale.ROOT)}"
-        return adapterColumns.getOrPut(key) {
-            val baseName = "${pascalize(tableName)}${pascalize(columnName)}"
-            DartAdapterColumn(
-                encodeName = "${baseName.replaceFirstChar { it.lowercase() }}ToSql",
-                decodeName = "sqlValueTo$baseName",
-            )
-        }
-    }
-
-    private fun affectedTables(statement: AnnotatedStatement): Set<String> {
-        fun expandTables(tables: Set<String>): Set<String> {
-            val expanded = mutableSetOf<String>()
-            tables.forEach { table ->
-                val key = table.lowercase(Locale.ROOT)
-                expanded += key
-                viewTableDependencies[key]?.let { expanded += it }
-            }
-            return expanded
-        }
-
-        return when (statement) {
-            is AnnotatedSelectStatement -> buildSet {
-                statement.src.fromTable?.let { add(it) }
-                statement.src.joinTables.forEach { add(it) }
-            }.let(::expandTables)
-
-            is AnnotatedExecuteStatement -> {
-                val cascadeTables = when (statement.src) {
-                    is InsertStatement -> cascadeTablesFor(
-                        statement.src.table,
-                        StatementAnnotationOverrides.CascadeAction.INSERT
-                    )
-
-                    is UpdateStatement -> cascadeTablesFor(
-                        statement.src.table,
-                        StatementAnnotationOverrides.CascadeAction.UPDATE
-                    )
-
-                    is DeleteStatement -> cascadeTablesFor(
-                        statement.src.table,
-                        StatementAnnotationOverrides.CascadeAction.DELETE
-                    )
-                }
-                expandTables(setOf(statement.src.table) + cascadeTables)
-            }
-
-            else -> emptySet()
-        }
-    }
-
-    private fun migrationSteps(): List<DartMigrationStep> {
-        if (migrationInspector.sqlStatements.isNotEmpty()) {
-            val bootstrapStatements =
-                schemaInspector.sqlStatements.map { it.sql } + sqlBatchInspector.sqlStatements.map { it.sql }
-            return buildList {
-                if (bootstrapStatements.isNotEmpty()) {
-                    add(DartMigrationStep(migrationInspector.latestVersion, bootstrapStatements, freshOnly = true))
-                }
-                migrationInspector.sqlStatements.forEach { (version, statements) ->
-                    add(DartMigrationStep(version, statements.map { it.sql }))
-                }
-            }
-        }
-        val statements = schemaInspector.sqlStatements.map { it.sql } + sqlBatchInspector.sqlStatements.map { it.sql }
-        return if (statements.isEmpty()) {
-            emptyList()
-        } else {
-            listOf(DartMigrationStep(1, statements))
-        }
-    }
-
-    private fun resolveViewDependencies(
-        viewName: String,
-        seen: MutableSet<String>,
-    ): Set<String> {
-        if (!seen.add(viewName)) return emptySet()
-        val view = createViewStatementsByName[viewName] ?: return emptySet()
-        val dependencies = mutableSetOf<String>()
-        val select = view.src.selectStatement
-        val referencedTables = buildList {
-            select.fromTable?.let { add(it) }
-            addAll(select.joinTables)
-        }
-        referencedTables.forEach { table ->
-            val key = table.lowercase(Locale.ROOT)
-            dependencies += key
-            dependencies += resolveViewDependencies(key, seen)
-        }
-        return dependencies
-    }
-
-    private fun cascadeTablesFor(
-        tableName: String,
-        action: StatementAnnotationOverrides.CascadeAction,
-    ): Set<String> {
-        val lowercase = tableName.lowercase(Locale.ROOT)
-        val cacheKey = lowercase to action
-        cascadeClosureCache[cacheKey]?.let { return it }
-
-        val closure = computeCascadeClosure(
-            startTable = lowercase,
-            action = action,
-            visited = mutableSetOf()
-        )
-        cascadeClosureCache[cacheKey] = closure
-        return closure
-    }
-
-    private fun computeCascadeClosure(
-        startTable: String,
-        action: StatementAnnotationOverrides.CascadeAction,
-        visited: MutableSet<String>,
-    ): Set<String> {
-        if (!visited.add(startTable)) return emptySet()
-        val direct = cascadeNotifyByTable[startTable]?.tablesFor(action) ?: emptySet()
-        if (direct.isEmpty()) return emptySet()
-
-        val result = mutableSetOf<String>()
-        direct.forEach { childRaw ->
-            val child = childRaw.lowercase(Locale.ROOT)
-            if (result.add(child)) {
-                result += computeCascadeClosure(child, action, visited)
-            }
-        }
-        return result
-    }
+    private fun defaultClassName(namespace: String, statement: AnnotatedStatement, suffix: String): String =
+        "${pascalize(namespace)}${statement.getDataClassName()}$suffix"
 
     private fun AnnotatedStatement.srcNamedParameters(): List<String> =
         when (this) {
@@ -1064,158 +653,4 @@ internal class DartCodeGenerator(
             is AnnotatedExecuteStatement -> src.namedParameters
             else -> emptyList()
         }
-
-    private fun TypeName.toDartType(): String {
-        val nullable = toString().endsWith("?")
-        val rawType = toString().removeSuffix("?")
-        val type = rawType.removePrefix("kotlin.")
-        val dartType = when {
-            type == "Int" || type == "Long" || type == "Short" || type == "Byte" -> "int"
-            type == "Double" || type == "Float" -> "double"
-            type == "Boolean" -> "bool"
-            type == "String" -> "String"
-            type == "ByteArray" -> "Uint8List"
-            rawType.startsWith("kotlin.collections.Collection<") -> "List<${rawType.substringAfter("<").substringBeforeLast(">").toDartTypeName()}>"
-            rawType.startsWith("kotlin.collections.List<") -> "List<${rawType.substringAfter("<").substringBeforeLast(">").toDartTypeName()}>"
-            else -> type.toDartTypeName()
-        }
-        return dartType.withNullable(nullable)
-    }
-
-    private fun String.sqliteDartType(): String {
-        val normalized = uppercase(Locale.ROOT)
-        return when {
-            "INT" in normalized -> "int"
-            "REAL" in normalized || "FLOA" in normalized || "DOUB" in normalized -> "double"
-            "BLOB" in normalized -> "Uint8List"
-            else -> "String"
-        }
-    }
-
-    private fun String.sqliteReadCall(nullable: Boolean): String {
-        val prefix = if (nullable) "readNullable" else "read"
-        val normalized = uppercase(Locale.ROOT)
-        return when {
-            "INT" in normalized -> "${prefix}Int"
-            "REAL" in normalized || "FLOA" in normalized || "DOUB" in normalized -> "${prefix}Double"
-            "BLOB" in normalized -> "${prefix}Blob"
-            else -> "${prefix}String"
-        }
-    }
-
-    private fun String.toDartTypeName(): String {
-        val trimmed = removePrefix("kotlin.").removePrefix("dart.").substringAfterLast('.')
-        return when (trimmed) {
-            "Int", "Long", "Short", "Byte" -> "int"
-            "Double", "Float" -> "double"
-            "Boolean" -> "bool"
-            "String" -> "String"
-            "ByteArray" -> "Uint8List"
-            else -> trimmed
-        }
-    }
-
-    private fun String.collectionElementType(): String {
-        val type = toDartTypeName().removeSuffix("?")
-        require(type.startsWith("List<") && type.endsWith(">")) {
-            "Expected Dart collection type, got '$this'."
-        }
-        return type.removePrefix("List<").removeSuffix(">")
-    }
-
-    private fun String.withNullable(nullable: Boolean): String =
-        if (nullable && !endsWith("?")) "$this?" else this
 }
-
-private data class DartField(
-    val index: Int,
-    val propertyName: String,
-    val dartType: String,
-    val sqliteReadCall: String,
-    val nullable: Boolean,
-    val adapter: DartAdapterColumn?,
-    val source: AnnotatedSelectStatement.Field? = null,
-    val dynamicField: AnnotatedSelectStatement.Field? = null,
-)
-
-private data class DartMappingColumn(
-    val sourcePropertyName: String,
-    val constructorPropertyName: String,
-    val field: DartField,
-)
-
-private data class DartParameter(
-    val propertyName: String,
-    val dartType: String,
-    val adapter: DartAdapterColumn?,
-)
-
-private data class DartAdapterColumn(
-    val encodeName: String,
-    val decodeName: String,
-)
-
-private data class DartMigrationStep(
-    val version: Int,
-    val statements: List<String>,
-    val freshOnly: Boolean = false,
-)
-
-private fun AnnotatedCreateTableStatement.Column.parsedFieldAnnotations(): FieldAnnotationOverrides =
-    FieldAnnotationOverrides.parse(annotations)
-
-private fun AnnotatedCreateTableStatement.Column.hasAdapter(): Boolean =
-    parsedFieldAnnotations().adapter == true
-
-private class DartWriter {
-    private val builder = StringBuilder()
-    private var indentLevel = 0
-
-    fun line(value: String = "") {
-        if (value.isNotEmpty()) {
-            repeat(indentLevel) { builder.append("  ") }
-        }
-        builder.append(value).append('\n')
-    }
-
-    fun indent(block: DartWriter.() -> Unit) {
-        indentLevel++
-        block()
-        indentLevel--
-    }
-
-    override fun toString(): String = builder.toString().trimEnd() + "\n"
-}
-
-private fun String.toLowerCamel(): String {
-    val pascal = pascalize(this)
-    return pascal.replaceFirstChar { it.lowercase() }
-}
-
-private fun String.toSnakeCase(): String {
-    val out = StringBuilder()
-    forEachIndexed { index, char ->
-        if (char.isUpperCase() && index > 0) {
-            out.append('_')
-        }
-        out.append(char.lowercaseChar())
-    }
-    return out.toString()
-}
-
-private fun String.toDartRawString(): String {
-    require(!contains("'''")) {
-        "Dart raw string emitter does not support SQL containing triple single quotes yet."
-    }
-    return "r'''$this'''"
-}
-
-private fun Set<String>.toDartSetLiteral(): String =
-    if (isEmpty()) {
-        "const <String>{}"
-    } else {
-        "const <String>{${joinToString(", ") { "'$it'" }}}"
-    }
-
-private fun List<DartParameter>.forwardingArgument(): String =
-    if (isEmpty()) "" else "params"
