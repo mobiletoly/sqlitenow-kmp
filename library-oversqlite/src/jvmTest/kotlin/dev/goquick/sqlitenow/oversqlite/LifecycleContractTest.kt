@@ -17,6 +17,13 @@ import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
 class LifecycleContractTest : BundleClientContractTestSupport() {
+    private class OpenRejectionScenario(
+        val displayName: String,
+        val createSchema: suspend (SafeSQLiteConnection) -> Unit,
+        val syncTables: List<SyncTable>,
+        val expectedMessageFragments: List<String>,
+    )
+
     @Test
     fun open_isRequired_andConstructionIsSideEffectFree() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
@@ -148,30 +155,56 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
-    fun open_rejectsOmittedSyncKeyConfiguration() = runBlocking {
-        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
-        createUsersTable(db)
-        withClient(
-            db,
-            syncTables = listOf(SyncTable("users")),
-        ) { client ->
-            val error = client.open().exceptionOrNull()
-            assertTrue(error != null)
-            assertTrue(error.message?.contains("syncKeyColumnName or syncKeyColumns explicitly") == true)
-        }
-    }
+    fun open_rejectsInvalidManagedTableRegistrations() = runBlocking {
+        val scenarios = listOf(
+            OpenRejectionScenario(
+                displayName = "omitted sync key configuration",
+                createSchema = { createUsersTable(it) },
+                syncTables = listOf(SyncTable("users")),
+                expectedMessageFragments = listOf("syncKeyColumnName or syncKeyColumns explicitly"),
+            ),
+            OpenRejectionScenario(
+                displayName = "missing sync key column",
+                createSchema = { createUsersTable(it) },
+                syncTables = listOf(SyncTable("users", syncKeyColumnName = "missing_id")),
+                expectedMessageFragments = listOf("does not contain configured primary key column missing_id"),
+            ),
+            OpenRejectionScenario(
+                displayName = "reserved server scope column in local schema",
+                createSchema = { createUsersTableWithReservedScopeColumn(it) },
+                syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+                expectedMessageFragments = listOf("must not declare reserved server column _sync_scope_id"),
+            ),
+            OpenRejectionScenario(
+                displayName = "non-FK-closed managed schema",
+                createSchema = { createUsersAndPostsTables(it) },
+                syncTables = listOf(SyncTable("posts", syncKeyColumnName = "id")),
+                expectedMessageFragments = listOf(
+                    "managed tables are not FK-closed",
+                    "posts.user_id -> users.id",
+                ),
+            ),
+            OpenRejectionScenario(
+                displayName = "schema-qualified table registration",
+                createSchema = { createUsersTable(it) },
+                syncTables = listOf(SyncTable("main.users", syncKeyColumnName = "id")),
+                expectedMessageFragments = listOf("must not include a schema qualifier"),
+            ),
+        )
 
-    @Test
-    fun open_rejectsMissingSyncKeyColumn() = runBlocking {
-        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
-        createUsersTable(db)
-        withClient(
-            db,
-            syncTables = listOf(SyncTable("users", syncKeyColumnName = "missing_id")),
-        ) { client ->
-            val error = client.open().exceptionOrNull()
-            assertTrue(error != null)
-            assertTrue(error.message?.contains("does not contain configured primary key column missing_id") == true)
+        for (scenario in scenarios) {
+            val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+            scenario.createSchema(db)
+            withClient(db, syncTables = scenario.syncTables) { client ->
+                val error = client.open().exceptionOrNull()
+                assertTrue(error != null, scenario.displayName)
+                for (fragment in scenario.expectedMessageFragments) {
+                    assertTrue(
+                        error.message?.contains(fragment) == true,
+                        "${scenario.displayName}: expected message to contain '$fragment', got '${error.message}'",
+                    )
+                }
+            }
         }
     }
 
@@ -221,10 +254,10 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
     fun anonymousApplyModeSuppressesDirtyCapture_withoutAttachedUserRow() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
-        val server = newServer()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+        withClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+        ) { client ->
             client.open().getOrThrow()
 
             db.execSQL("UPDATE _sync_apply_state SET apply_mode = 1 WHERE singleton_key = 1")
@@ -237,10 +270,6 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
 
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
             assertEquals("""{"id":"user-2"}""", scalarText(db, "SELECT key_json FROM _sync_dirty_rows LIMIT 1"))
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -541,35 +570,6 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
-    fun open_rejectsReservedServerScopeColumnInLocalSchema() = runBlocking {
-        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
-        createUsersTableWithReservedScopeColumn(db)
-        withClient(
-            db,
-            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
-        ) { client ->
-            val error = client.open().exceptionOrNull()
-            assertTrue(error != null)
-            assertTrue(error.message?.contains("must not declare reserved server column _sync_scope_id") == true)
-        }
-    }
-
-    @Test
-    fun open_rejectsNonFkClosedManagedSchema() = runBlocking {
-        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
-        createUsersAndPostsTables(db)
-        withClient(
-            db,
-            syncTables = listOf(SyncTable("posts", syncKeyColumnName = "id")),
-        ) { client ->
-            val error = client.open().exceptionOrNull()
-            assertTrue(error != null)
-            assertTrue(error.message?.contains("managed tables are not FK-closed") == true)
-            assertTrue(error.message?.contains("posts.user_id -> users.id") == true)
-        }
-    }
-
-    @Test
     fun open_rejectsCompositeKeysAndCompositeForeignKeys() = runBlocking {
         val compositeKeyDb = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createCompositePkTable(compositeKeyDb)
@@ -611,20 +611,6 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
             compositeFkHttp.close()
             compositeFkServer.stop(0)
             compositeFkDb.close()
-        }
-    }
-
-    @Test
-    fun open_rejectsSchemaQualifiedTableRegistration() = runBlocking {
-        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
-        createUsersTable(db)
-        withClient(
-            db,
-            syncTables = listOf(SyncTable("main.users", syncKeyColumnName = "id")),
-        ) { client ->
-            val error = client.open().exceptionOrNull()
-            assertTrue(error != null)
-            assertTrue(error.message?.contains("must not include a schema qualifier") == true)
         }
     }
 
@@ -676,11 +662,10 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
             VALUES (x'00112233445566778899aabbccddeeff', 'Blob Doc', x'68656c6c6f')
             """.trimIndent(),
         )
-        val server = newServer()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("blob_docs", syncKeyColumnName = "id")))
-
+        withClient(
+            db,
+            syncTables = listOf(SyncTable("blob_docs", syncKeyColumnName = "id")),
+        ) { client ->
             client.open().getOrThrow()
 
             assertEquals(
@@ -694,10 +679,6 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
                 """{"id":"00112233445566778899aabbccddeeff","name":"Blob Doc","payload":"68656c6c6f"}""",
                 dirty.payload,
             )
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -746,11 +727,10 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
             """.trimIndent()
         )
         db.execSQL("INSERT INTO _sync_audit_log(id, message) VALUES(1, 'keep me')")
-        val server = newServer()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-
+        withClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+        ) { client ->
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM sqlite_master WHERE name = '_sync_audit_log'"))
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_audit_log"))
 
@@ -760,10 +740,6 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM sqlite_master WHERE name = '_sync_audit_log'"))
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_audit_log"))
             assertEquals("keep me", scalarText(db, "SELECT message FROM _sync_audit_log WHERE id = 1"))
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -771,10 +747,10 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
     fun open_reusesExistingInternalSourceIdentity_andPreservesExistingState() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
-        val server = newServer()
-        val http = newHttpClient(server)
-        try {
-            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+        withClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+        ) { client ->
             client.open().getOrThrow()
             val persistedSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
             db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
@@ -782,10 +758,6 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
             client.open().getOrThrow()
             assertEquals(persistedSourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM users"))
-        } finally {
-            http.close()
-            server.stop(0)
-            db.close()
         }
     }
 
@@ -891,17 +863,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
         try {
             val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
 
-            client.open().getOrThrow()
-            val result = client.attach("user-1").getOrThrow()
-
-            assertConnectedOutcome(
-                expectedOutcome = AttachOutcome.SEEDED_FROM_LOCAL,
-                actual = result,
-                expectedAuthority = AuthorityStatus.PENDING_LOCAL_SEED,
-            )
-            assertEquals("attached", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
-            assertEquals("user-1", scalarText(db, "SELECT attached_user_id FROM _sync_attachment_state"))
-            assertEquals("init-connect", scalarText(db, "SELECT pending_initialization_id FROM _sync_attachment_state"))
+            assertSeededFromLocalAttach(db, client)
             assertEquals(
                 PendingSyncStatus(
                     hasPendingSyncData = true,
@@ -1013,14 +975,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
         val http = newHttpClient(server)
         try {
             val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
-            client.open().getOrThrow()
-            assertConnectedOutcome(
-                expectedOutcome = AttachOutcome.SEEDED_FROM_LOCAL,
-                actual = client.attach("user-1").getOrThrow(),
-                expectedAuthority = AuthorityStatus.PENDING_LOCAL_SEED,
-            )
-
-            assertEquals("init-connect", scalarText(db, "SELECT pending_initialization_id FROM _sync_attachment_state"))
+            assertSeededFromLocalAttach(db, client)
 
             val report = client.pushPending().getOrThrow()
 
@@ -1481,6 +1436,21 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
             server.stop(0)
             db.close()
         }
+    }
+
+    private suspend fun assertSeededFromLocalAttach(
+        db: SafeSQLiteConnection,
+        client: DefaultOversqliteClient,
+    ) {
+        client.open().getOrThrow()
+        assertConnectedOutcome(
+            expectedOutcome = AttachOutcome.SEEDED_FROM_LOCAL,
+            actual = client.attach("user-1").getOrThrow(),
+            expectedAuthority = AuthorityStatus.PENDING_LOCAL_SEED,
+        )
+        assertEquals("attached", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
+        assertEquals("user-1", scalarText(db, "SELECT attached_user_id FROM _sync_attachment_state"))
+        assertEquals("init-connect", scalarText(db, "SELECT pending_initialization_id FROM _sync_attachment_state"))
     }
 
     private fun newLifecycleServer(

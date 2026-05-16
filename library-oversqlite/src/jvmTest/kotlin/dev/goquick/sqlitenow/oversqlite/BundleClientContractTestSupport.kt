@@ -10,36 +10,20 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
 import java.util.UUID
-
-private fun computeCommittedBundleHashForTest(rows: List<BundleRow>): String {
-    val logicalRows = rows.mapIndexed { index, row ->
-        buildJsonObject {
-            put("row_ordinal", JsonPrimitive(index.toLong()))
-            put("schema", JsonPrimitive(row.schema))
-            put("table", JsonPrimitive(row.table))
-            put("key", buildJsonObject {
-                for ((key, value) in row.key.entries.sortedBy { it.key }) {
-                    put(key, JsonPrimitive(value))
-                }
-            })
-            put("op", JsonPrimitive(row.op))
-            put("row_version", JsonPrimitive(row.rowVersion))
-            put("payload", row.payload ?: JsonNull)
-        }
-    }
-    return sha256Hex(canonicalizeJsonElement(JsonArray(logicalRows)).encodeToByteArray())
-}
 
 open class BundleClientContractTestSupport {
     protected data class DirtyRowRecord(
         val op: String,
         val baseRowVersion: Long,
         val payload: String?,
+    )
+
+    protected data class SnapshotChunkRow(
+        val table: String,
+        val keyJson: String,
+        val rowVersion: Long,
+        val payloadJson: String,
     )
 
     protected val json = Json { ignoreUnknownKeys = true }
@@ -198,6 +182,28 @@ open class BundleClientContractTestSupport {
             configureServer = {
                 jsonRoute(routePath, status, responseBody)
             },
+            block = block,
+        )
+    }
+
+    protected suspend fun <T> withBlobDocsConnectedClient(
+        db: SafeSQLiteConnection,
+        uploadLimit: Int = 200,
+        transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy(),
+        resolver: Resolver = ServerWinsResolver,
+        userId: String = "user-1",
+        configureServer: HttpServer.() -> Unit = {},
+        block: suspend (DefaultOversqliteClient) -> T,
+    ): T {
+        createBlobDocsTable(db)
+        return withConnectedClient(
+            db,
+            syncTables = listOf(SyncTable("blob_docs", syncKeyColumnName = "id")),
+            uploadLimit = uploadLimit,
+            transientRetryPolicy = transientRetryPolicy,
+            resolver = resolver,
+            userId = userId,
+            configureServer = configureServer,
             block = block,
         )
     }
@@ -749,6 +755,171 @@ open class BundleClientContractTestSupport {
         createContext(path) { exchange ->
             respondJson(exchange, status, body)
         }
+    }
+
+    protected fun HttpServer.usersSnapshotRoutes(
+        snapshotId: String,
+        snapshotBundleSeq: Long,
+        userId: String,
+        rowVersion: Long,
+        payloadJson: String,
+        rowCount: Long = 1,
+        byteCount: Long = 32,
+    ) {
+        snapshotRoutes(
+            snapshotId = snapshotId,
+            snapshotBundleSeq = snapshotBundleSeq,
+            rows = listOf(
+                SnapshotChunkRow(
+                    table = "users",
+                    keyJson = """{"id":"$userId"}""",
+                    rowVersion = rowVersion,
+                    payloadJson = payloadJson,
+                )
+            ),
+            rowCount = rowCount,
+            byteCount = byteCount,
+        )
+    }
+
+    protected fun HttpServer.snapshotRoutes(
+        snapshotId: String,
+        snapshotBundleSeq: Long,
+        rows: List<SnapshotChunkRow>,
+        rowCount: Long = rows.size.toLong(),
+        byteCount: Long = if (rows.isEmpty()) 0 else 32,
+    ) {
+        jsonRoute(
+            "/sync/snapshot-sessions",
+            body = """
+            {
+              "snapshot_id": "$snapshotId",
+              "snapshot_bundle_seq": $snapshotBundleSeq,
+              "row_count": $rowCount,
+              "byte_count": $byteCount,
+              "expires_at": "2026-03-22T00:00:00Z"
+            }
+            """.trimIndent(),
+        )
+        createContext("/sync/snapshot-sessions/$snapshotId") { exchange ->
+            when (exchange.requestMethod) {
+                "GET" -> respondJson(
+                    exchange,
+                    200,
+                    snapshotResponse(
+                        snapshotId = snapshotId,
+                        snapshotBundleSeq = snapshotBundleSeq,
+                        nextRowOrdinal = rowCount,
+                        hasMore = false,
+                        rows = rows,
+                    ),
+                )
+
+                "DELETE" -> {
+                    exchange.sendResponseHeaders(204, -1)
+                    exchange.close()
+                }
+
+                else -> {
+                    exchange.sendResponseHeaders(405, -1)
+                    exchange.close()
+                }
+            }
+        }
+    }
+
+    protected fun HttpServer.twoChunkSnapshotRoutes(
+        snapshotId: String,
+        snapshotBundleSeq: Long,
+        firstRow: SnapshotChunkRow,
+        secondRow: SnapshotChunkRow,
+        unexpectedOrdinalMessage: String,
+        byteCount: Long = 64,
+    ) {
+        jsonRoute(
+            "/sync/snapshot-sessions",
+            body = """
+            {
+              "snapshot_id": "$snapshotId",
+              "snapshot_bundle_seq": $snapshotBundleSeq,
+              "row_count": 2,
+              "byte_count": $byteCount,
+              "expires_at": "2026-03-22T00:00:00Z"
+            }
+            """.trimIndent(),
+        )
+        createContext("/sync/snapshot-sessions/$snapshotId") { exchange ->
+            when (queryParam(exchange, "after_row_ordinal")) {
+                "0" -> respondJson(
+                    exchange,
+                    200,
+                    snapshotChunkResponse(
+                        snapshotId = snapshotId,
+                        snapshotBundleSeq = snapshotBundleSeq,
+                        nextRowOrdinal = 1,
+                        hasMore = true,
+                        row = firstRow,
+                    ),
+                )
+                "1" -> respondJson(
+                    exchange,
+                    200,
+                    snapshotChunkResponse(
+                        snapshotId = snapshotId,
+                        snapshotBundleSeq = snapshotBundleSeq,
+                        nextRowOrdinal = 2,
+                        hasMore = false,
+                        row = secondRow,
+                    ),
+                )
+                else -> error(unexpectedOrdinalMessage)
+            }
+        }
+    }
+
+    private fun snapshotChunkResponse(
+        snapshotId: String,
+        snapshotBundleSeq: Long,
+        nextRowOrdinal: Long,
+        hasMore: Boolean,
+        row: SnapshotChunkRow,
+    ): String {
+        return snapshotResponse(
+            snapshotId = snapshotId,
+            snapshotBundleSeq = snapshotBundleSeq,
+            nextRowOrdinal = nextRowOrdinal,
+            hasMore = hasMore,
+            rows = listOf(row),
+        )
+    }
+
+    private fun snapshotResponse(
+        snapshotId: String,
+        snapshotBundleSeq: Long,
+        nextRowOrdinal: Long,
+        hasMore: Boolean,
+        rows: List<SnapshotChunkRow>,
+    ): String {
+        val rowsJson = rows.joinToString(separator = ",\n", prefix = "[\n", postfix = "\n          ]") { row ->
+            """
+            {
+              "schema": "main",
+              "table": "${row.table}",
+              "key": ${row.keyJson},
+              "row_version": ${row.rowVersion},
+              "payload": ${row.payloadJson}
+            }
+            """.trimIndent().prependIndent("            ")
+        }
+        return """
+        {
+          "snapshot_id": "$snapshotId",
+          "snapshot_bundle_seq": $snapshotBundleSeq,
+          "next_row_ordinal": $nextRowOrdinal,
+          "has_more": $hasMore,
+          "rows": ${if (rows.isEmpty()) "[]" else rowsJson}
+        }
+        """.trimIndent()
     }
 
     protected fun computeCommittedBundleHash(rows: List<BundleRow>): String {

@@ -3,9 +3,6 @@ package dev.goquick.sqlitenow.oversqlite
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import java.nio.file.Path
-import java.nio.file.Paths
-import kotlin.io.path.exists
 import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -15,7 +12,7 @@ class SharedPullSnapshotFixtureTest {
         ignoreUnknownKeys = true
         explicitNulls = true
     }
-    private val fixtureFile = findRepoRoot().resolve("oversqlite-contracts/pull-snapshot/basic.json")
+    private val fixtureFile = oversqliteContractFixture("pull-snapshot/basic.json")
 
     @Test
     fun kmpSharedPullSnapshotFixturesDecodeAgainstModels() {
@@ -76,17 +73,6 @@ class SharedPullSnapshotFixtureTest {
                 assertEquals(409, it.status, case.name)
                 assertEquals("source_replacement_invalid", error.error, case.name)
             }
-        }
-    }
-
-    private fun findRepoRoot(): Path {
-        var current = Paths.get("").toAbsolutePath()
-        while (true) {
-            if (current.resolve("settings.gradle.kts").exists()) {
-                return current
-            }
-            current = current.parent
-                ?: error("could not locate repository root from ${Paths.get("").toAbsolutePath()}")
         }
     }
 

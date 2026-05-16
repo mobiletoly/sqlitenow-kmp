@@ -15,12 +15,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
-import io.ktor.http.content.OutgoingContent
-import io.ktor.http.content.TextContent
 import io.ktor.serialization.kotlinx.json.json
-import io.ktor.utils.io.ByteChannel
-import io.ktor.utils.io.readRemaining
-import io.ktor.utils.io.core.readText
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -28,6 +23,25 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+
+internal fun computeCommittedBundleHashForTest(rows: List<BundleRow>): String {
+    val logicalRows = rows.mapIndexed { index, row ->
+        buildJsonObject {
+            put("row_ordinal", JsonPrimitive(index.toLong()))
+            put("schema", JsonPrimitive(row.schema))
+            put("table", JsonPrimitive(row.table))
+            put("key", buildJsonObject {
+                for ((key, value) in row.key.entries.sortedBy { it.key }) {
+                    put(key, JsonPrimitive(value))
+                }
+            })
+            put("op", JsonPrimitive(row.op))
+            put("row_version", JsonPrimitive(row.rowVersion))
+            put("payload", row.payload ?: JsonNull)
+        }
+    }
+    return sha256Hex(canonicalizeJsonElement(JsonArray(logicalRows)).encodeToByteArray())
+}
 
 internal open class CrossTargetSyncTestSupport {
     private companion object {
@@ -687,24 +701,7 @@ internal open class CrossTargetSyncTestSupport {
                 }
         }
 
-        private fun computeCommittedBundleHash(rows: List<BundleRow>): String {
-            val logicalRows = rows.mapIndexed { index, row ->
-                buildJsonObject {
-                    put("row_ordinal", JsonPrimitive(index.toLong()))
-                    put("schema", JsonPrimitive(row.schema))
-                    put("table", JsonPrimitive(row.table))
-                    put("key", buildJsonObject {
-                        for ((key, value) in row.key.entries.sortedBy { it.key }) {
-                            put(key, JsonPrimitive(value))
-                        }
-                    })
-                    put("op", JsonPrimitive(row.op))
-                    put("row_version", JsonPrimitive(row.rowVersion))
-                    put("payload", row.payload ?: JsonNull)
-                }
-            }
-            return sha256Hex(canonicalizeJsonElement(JsonArray(logicalRows)).encodeToByteArray())
-        }
+        private fun computeCommittedBundleHash(rows: List<BundleRow>): String = computeCommittedBundleHashForTest(rows)
 
         private fun liveKey(table: String, key: SyncKey): String = "$table\u0000${canonicalKey(key)}"
 
@@ -751,22 +748,6 @@ internal open class CrossTargetSyncTestSupport {
             body = json.encodeToString(SourceRetiredResponse.serializer(), retired),
             status = HttpStatusCode.Conflict,
         )
-
-        private suspend fun HttpRequestData.bodyText(): String {
-            return when (val content = body) {
-                is TextContent -> content.text
-                is OutgoingContent.ByteArrayContent -> content.bytes().decodeToString()
-                is OutgoingContent.ReadChannelContent -> content.readFrom().readRemaining().readText()
-                is OutgoingContent.WriteChannelContent -> {
-                    val channel = ByteChannel(autoFlush = true)
-                    content.writeTo(channel)
-                    channel.close()
-                    channel.readRemaining().readText()
-                }
-                is OutgoingContent.NoContent -> ""
-                else -> error("unsupported request body type ${content::class.simpleName}")
-            }
-        }
 
         private data class LiveRow(
             val table: String,

@@ -152,7 +152,7 @@ internal fun sha256Hex(bytes: ByteArray): String {
     writeIntBigEndian(digest, 20, h5)
     writeIntBigEndian(digest, 24, h6)
     writeIntBigEndian(digest, 28, h7)
-    return digest.toHexLower()
+    return bytesToHexLower(digest)
 }
 
 private fun padSha256(bytes: ByteArray): ByteArray {
@@ -175,16 +175,6 @@ private fun writeIntBigEndian(target: ByteArray, offset: Int, value: Int) {
     target[offset + 1] = (value ushr 16).toByte()
     target[offset + 2] = (value ushr 8).toByte()
     target[offset + 3] = value.toByte()
-}
-
-private fun ByteArray.toHexLower(): String {
-    val out = StringBuilder(size * 2)
-    for (byte in this) {
-        val value = byte.toInt() and 0xff
-        out.append("0123456789abcdef"[value ushr 4])
-        out.append("0123456789abcdef"[value and 0x0f])
-    }
-    return out.toString()
 }
 
 private fun Int.rotateRight(distance: Int): Int =

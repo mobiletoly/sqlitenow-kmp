@@ -817,28 +817,12 @@ class DefaultOversqliteClient(
         operationName: String,
         operation: OversqliteOperation,
     ): RemoteExecution {
-        ensureNoDestructiveTransition()
-        val state = requireConnectedRuntimeState(operationName)
-        val result = try {
-            downloadWorkflow.pullToStable(state) { phase ->
-                setProgress(operation, phase)
-            }
-        } catch (e: SourceRecoveryRequiredHttpException) {
-            persistSourceRecoveryRequiredState(state, e.reason, e.replacementSourceId)
-            throw SourceRecoveryRequiredException(e.reason)
-        } catch (e: SourceReplacementInvalidHttpException) {
-            throw SourceReplacementInvalidException(e.errorMessage)
+        return executeRemoteDownload(operationName, operation) { state, onPhaseChanged ->
+            downloadWorkflow.pullToStable(
+                state = state,
+                onPhaseChanged = onPhaseChanged,
+            )
         }
-        applyDownloadResult(result)
-        val status = syncStatusInternal(requireConnectedRuntimeState(operationName))
-        return RemoteExecution(
-            report = RemoteSyncReport(
-                outcome = result.outcome,
-                status = status,
-                restore = result.restore,
-            ),
-            updatedTables = result.updatedTables,
-        )
     }
 
     private suspend fun executeDetach(operationName: String): DetachExecution {
@@ -911,15 +895,26 @@ class DefaultOversqliteClient(
         outboxMode: SnapshotRebuildOutboxMode,
         sourceReplacementReason: String?,
     ): RemoteExecution {
-        ensureNoDestructiveTransition()
-        val state = requireConnectedRuntimeState(operationName)
-        val result = try {
+        return executeRemoteDownload(operationName, operation) { state, onPhaseChanged ->
             downloadWorkflow.rebuildFromSnapshot(
                 state = state,
                 rotatedSourceId = rotatedSourceId,
                 sourceReplacementReason = sourceReplacementReason,
                 outboxMode = outboxMode,
-            ) { phase ->
+                onPhaseChanged = onPhaseChanged,
+            )
+        }
+    }
+
+    private suspend fun executeRemoteDownload(
+        operationName: String,
+        operation: OversqliteOperation,
+        download: suspend (RuntimeState, suspend (OversqlitePhase) -> Unit) -> DownloadWorkflowResult,
+    ): RemoteExecution {
+        ensureNoDestructiveTransition()
+        val state = requireConnectedRuntimeState(operationName)
+        val result = try {
+            download(state) { phase ->
                 setProgress(operation, phase)
             }
         } catch (e: SourceRecoveryRequiredHttpException) {

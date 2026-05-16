@@ -19,7 +19,6 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.Paths
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.name
@@ -36,7 +35,7 @@ class SharedLocalContractFixtureTest : BundleClientContractTestSupport() {
         explicitNulls = true
     }
 
-    private val fixtureRoot = findRepoRoot().resolve("oversqlite-contracts/local-schema")
+    private val fixtureRoot = oversqliteContractFixture("local-schema")
     private val updateExpected =
         System.getProperty("oversqlite.contracts.update") == "true" ||
             System.getenv("OVERSQLITE_CONTRACTS_UPDATE") == "true"
@@ -454,16 +453,6 @@ class SharedLocalContractFixtureTest : BundleClientContractTestSupport() {
     }
 
     private fun quoteIdentifier(identifier: String): String = "\"" + identifier.replace("\"", "\"\"") + "\""
-
-    private fun findRepoRoot(): Path {
-        var current = Paths.get("").toAbsolutePath()
-        while (true) {
-            if (current.resolve("settings.gradle.kts").exists()) {
-                return current
-            }
-            current = current.parent ?: error("could not locate repository root from ${Paths.get("").toAbsolutePath()}")
-        }
-    }
 
     private data class LocalSchemaFixture(
         val name: String,

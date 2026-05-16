@@ -50,9 +50,8 @@ internal class OversqliteOutboxStateStore(
     internal val db: SafeSQLiteConnection,
 ) {
     suspend fun loadBundleState(): OversqliteOutboxBundleState {
-        return db.withExclusiveAccess {
-            db.prepare(
-                """
+        return db.queryRequiredSingle(
+            sql = """
                 SELECT state,
                        source_id,
                        source_bundle_id,
@@ -63,20 +62,19 @@ internal class OversqliteOutboxStateStore(
                        remote_bundle_seq
                 FROM _sync_outbox_bundle
                 WHERE singleton_key = 1
-                """.trimIndent(),
-            ).use { st ->
-                check(st.step()) { "_sync_outbox_bundle singleton row is missing" }
-                OversqliteOutboxBundleState(
-                    state = st.getText(0),
-                    sourceId = st.getText(1),
-                    sourceBundleId = st.getLong(2),
-                    initializationId = st.getText(3),
-                    canonicalRequestHash = st.getText(4),
-                    rowCount = st.getLong(5),
-                    remoteBundleHash = st.getText(6),
-                    remoteBundleSeq = st.getLong(7),
-                )
-            }
+            """.trimIndent(),
+            missingMessage = "_sync_outbox_bundle singleton row is missing",
+        ) { st ->
+            OversqliteOutboxBundleState(
+                state = st.getText(0),
+                sourceId = st.getText(1),
+                sourceBundleId = st.getLong(2),
+                initializationId = st.getText(3),
+                canonicalRequestHash = st.getText(4),
+                rowCount = st.getLong(5),
+                remoteBundleHash = st.getText(6),
+                remoteBundleSeq = st.getLong(7),
+            )
         }
     }
 
@@ -152,12 +150,7 @@ internal class OversqliteOutboxStateStore(
     }
 
     suspend fun countRows(): Int {
-        return db.withExclusiveAccess {
-            db.prepare("SELECT COUNT(*) FROM _sync_outbox_rows").use { st ->
-                check(st.step())
-                st.getLong(0).toInt()
-            }
-        }
+        return db.scalarLong("SELECT COUNT(*) FROM _sync_outbox_rows").toInt()
     }
 
     suspend fun clearRows(statementCache: StatementCache? = null) {

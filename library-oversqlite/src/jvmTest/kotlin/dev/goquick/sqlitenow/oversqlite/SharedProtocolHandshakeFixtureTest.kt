@@ -7,9 +7,6 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
-import java.nio.file.Path
-import java.nio.file.Paths
-import kotlin.io.path.exists
 import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -21,7 +18,7 @@ class SharedProtocolHandshakeFixtureTest {
         ignoreUnknownKeys = true
         explicitNulls = true
     }
-    private val fixtureFile = findRepoRoot().resolve("oversqlite-contracts/protocol-handshake/connect.json")
+    private val fixtureFile = oversqliteContractFixture("protocol-handshake/connect.json")
 
     @Test
     fun kmpSharedProtocolHandshakeFixturesDecodeAgainstModels() {
@@ -66,16 +63,6 @@ class SharedProtocolHandshakeFixtureTest {
                 assertNull(connect, case.name)
                 assertEquals("unsupportedCapability", case.expected.attachKind, case.name)
             }
-        }
-    }
-
-    private fun findRepoRoot(): Path {
-        var current = Paths.get("").toAbsolutePath()
-        while (true) {
-            if (current.resolve("settings.gradle.kts").exists()) {
-                return current
-            }
-            current = current.parent ?: error("could not locate repository root from ${Paths.get("").toAbsolutePath()}")
         }
     }
 

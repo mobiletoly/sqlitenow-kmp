@@ -7,6 +7,7 @@ import dev.goquick.sqlitenow.core.test.db.LibraryTestDatabase
 import dev.goquick.sqlitenow.core.test.db.PersonAddressQuery
 import dev.goquick.sqlitenow.core.test.db.PersonCategoryQuery
 import dev.goquick.sqlitenow.core.test.db.PersonQuery
+import dev.goquick.sqlitenow.core.test.db.PersonWithNestedCollectionsRow
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlin.test.*
@@ -29,6 +30,123 @@ class NestedCollectionMappingTest {
             database.close()
         }
     }
+
+    private data class NestedCollectionScenario(
+        val name: String,
+        val personParams: PersonQuery.Add.Params,
+        val addressParams: (Long) -> PersonAddressQuery.AddReturning.Params,
+        val commentParams: (Long) -> CommentQuery.Add.Params,
+        val categoryParams: CategoryQuery.Add.Params? = null,
+        val verify: (PersonWithNestedCollectionsRow) -> Unit
+    )
+
+    private fun baseNestedCollectionPersonParams(email: String) = PersonQuery.Add.Params(
+        firstName = "Jane",
+        lastName = "Smith",
+        email = email,
+        phone = null,
+        birthDate = null
+    )
+
+    private fun baseNestedCollectionAddressParams(personId: Long) = PersonAddressQuery.AddReturning.Params(
+        personId = personId,
+        addressType = AddressType.HOME,
+        street = "789 Oak St",
+        city = "Springfield",
+        state = "IL",
+        postalCode = "62703",
+        country = "USA",
+        isPrimary = true
+    )
+
+    private fun baseNestedCollectionCommentParams(personId: Long) = CommentQuery.Add.Params(
+        personId = personId,
+        comment = "Single comment for Jane",
+        createdAt = LocalDateTime(2024, 3, 10, 9, 15, 0),
+        tags = listOf("single")
+    )
+
+    private suspend fun runNestedCollectionScenario(scenario: NestedCollectionScenario) {
+        val person = database.person.add.one(scenario.personParams)
+
+        database.personAddress.addReturning.one(scenario.addressParams(person.id))
+        database.comment.add(scenario.commentParams(person.id))
+
+        scenario.categoryParams?.let { categoryParams ->
+            val category = database.category.add.one(categoryParams)
+            database.personCategory.add.one(PersonCategoryQuery.Add.Params(
+                personId = person.id,
+                categoryId = category.id,
+                isPrimary = true
+            ))
+        }
+
+        val result = database.person.selectWithNestedCollections(
+            PersonQuery.SelectWithNestedCollections.Params(personId = person.id)
+        ).asList()
+
+        assertEquals(1, result.size, scenario.name)
+        scenario.verify(result.first())
+    }
+
+    private fun nestedCollectionPartialAndNullScenarios() = listOf(
+        NestedCollectionScenario(
+            name = "partial data",
+            personParams = baseNestedCollectionPersonParams(email = "jane.partial@example.com"),
+            addressParams = ::baseNestedCollectionAddressParams,
+            commentParams = ::baseNestedCollectionCommentParams
+        ) { personWithCollections ->
+            assertEquals("Jane", personWithCollections.myFirstName)
+            assertEquals("Smith", personWithCollections.myLastName)
+
+            assertEquals(1, personWithCollections.addresses.size)
+            assertEquals("789 Oak St", personWithCollections.addresses.first().street)
+
+            assertEquals(1, personWithCollections.comments.size)
+            assertEquals("Single comment for Jane", personWithCollections.comments.first().comment)
+
+            assertEquals(0, personWithCollections.categories.size)
+            assertTrue(personWithCollections.categories.isEmpty())
+        },
+        NestedCollectionScenario(
+            name = "null values",
+            personParams = baseNestedCollectionPersonParams(email = "jane.nulls@example.com"),
+            addressParams = { personId ->
+                baseNestedCollectionAddressParams(personId).copy(
+                    state = null,
+                    postalCode = null
+                )
+            },
+            commentParams = { personId ->
+                baseNestedCollectionCommentParams(personId).copy(tags = null)
+            },
+            categoryParams = CategoryQuery.Add.Params(
+                name = "Null Category",
+                description = null
+            )
+        ) { personWithCollections ->
+            assertEquals("Jane", personWithCollections.myFirstName)
+            assertEquals("Smith", personWithCollections.myLastName)
+            assertEquals(null, personWithCollections.phone)
+            assertEquals(null, personWithCollections.birthDate)
+
+            assertEquals(1, personWithCollections.addresses.size)
+            val address = personWithCollections.addresses.first()
+            assertEquals("789 Oak St", address.street)
+            assertEquals(null, address.state)
+            assertEquals(null, address.postalCode)
+
+            assertEquals(1, personWithCollections.comments.size)
+            val comment = personWithCollections.comments.first()
+            assertEquals("Single comment for Jane", comment.comment)
+            assertEquals(null, comment.tags)
+
+            assertEquals(1, personWithCollections.categories.size)
+            val cat = personWithCollections.categories.first()
+            assertEquals("Null Category", cat.name)
+            assertEquals(null, cat.description)
+        }
+    )
 
     @Test
     fun testNestedCollectionsWithFullData() = runDatabaseTest {
@@ -155,57 +273,10 @@ class NestedCollectionMappingTest {
     }
 
     @Test
-    fun testNestedCollectionsWithPartialData() = runDatabaseTest {
-        // Create a person with only some nested data
-        val person = database.person.add.one(PersonQuery.Add.Params(
-            firstName = "Jane",
-            lastName = "Smith",
-            email = "jane.smith@example.com",
-            phone = null,
-            birthDate = null
-        ))
-
-        // Add only one address and one comment, no categories
-        database.personAddress.addReturning.one(PersonAddressQuery.AddReturning.Params(
-            personId = person.id,
-            addressType = AddressType.HOME,
-            street = "789 Oak St",
-            city = "Springfield",
-            state = "IL",
-            postalCode = "62703",
-            country = "USA",
-            isPrimary = true
-        ))
-
-        database.comment.add(CommentQuery.Add.Params(
-            personId = person.id,
-            comment = "Single comment for Jane",
-            createdAt = LocalDateTime(2024, 3, 10, 9, 15, 0),
-            tags = listOf("single")
-        ))
-
-        // Test the nested collections query
-        val result = database.person.selectWithNestedCollections(
-            PersonQuery.SelectWithNestedCollections.Params(personId = person.id)
-        ).asList()
-
-        assertEquals(1, result.size)
-        val personWithCollections = result.first()
-
-        // Verify person data
-        assertEquals("Jane", personWithCollections.myFirstName)
-        assertEquals("Smith", personWithCollections.myLastName)
-
-        // Verify partial collections
-        assertEquals(1, personWithCollections.addresses.size)
-        assertEquals("789 Oak St", personWithCollections.addresses.first().street)
-
-        assertEquals(1, personWithCollections.comments.size)
-        assertEquals("Single comment for Jane", personWithCollections.comments.first().comment)
-
-        // Verify empty categories collection
-        assertEquals(0, personWithCollections.categories.size)
-        assertTrue(personWithCollections.categories.isEmpty())
+    fun testNestedCollectionsWithPartialAndNullValues() = runDatabaseTest {
+        nestedCollectionPartialAndNullScenarios().forEach { scenario ->
+            runNestedCollectionScenario(scenario)
+        }
     }
 
     @Test
@@ -475,83 +546,6 @@ class NestedCollectionMappingTest {
 
         // Performance should be reasonable (adjust threshold as needed)
         assertTrue(executionTime < 5000, "Query took too long: ${executionTime}ms")
-    }
-
-    @Test
-    fun testNestedCollectionsWithNullValues() = runDatabaseTest {
-        // Test nested collections with various null values
-        val person = database.person.add.one(PersonQuery.Add.Params(
-            firstName = "Emma",
-            lastName = "Null",
-            email = "emma.null@example.com",
-            phone = null, // Null phone
-            birthDate = null // Null birth date
-        ))
-
-        // Create address with some null fields
-        database.personAddress.addReturning.one(PersonAddressQuery.AddReturning.Params(
-            personId = person.id,
-            addressType = AddressType.HOME,
-            street = "123 Null St",
-            city = "Null City",
-            state = null, // Null state
-            postalCode = null, // Null postal code
-            country = "USA",
-            isPrimary = true
-        ))
-
-        // Create comment with null tags
-        database.comment.add(CommentQuery.Add.Params(
-            personId = person.id,
-            comment = "Comment with null tags",
-            createdAt = LocalDateTime(2024, 5, 1, 10, 0, 0),
-            tags = null // Null tags
-        ))
-
-        // Create category with null description
-        val category = database.category.add.one(CategoryQuery.Add.Params(
-            name = "Null Category",
-            description = null // Null description
-        ))
-
-        database.personCategory.add.one(PersonCategoryQuery.Add.Params(
-            personId = person.id,
-            categoryId = category.id,
-            isPrimary = true
-        ))
-
-        // Test the nested collections query
-        val result = database.person.selectWithNestedCollections(
-            PersonQuery.SelectWithNestedCollections.Params(personId = person.id)
-        ).asList()
-
-        assertEquals(1, result.size)
-        val personWithCollections = result.first()
-
-        // Verify null values are handled correctly
-        assertEquals("Emma", personWithCollections.myFirstName)
-        assertEquals("Null", personWithCollections.myLastName)
-        assertEquals(null, personWithCollections.phone)
-        assertEquals(null, personWithCollections.birthDate)
-
-        // Verify address with null fields
-        assertEquals(1, personWithCollections.addresses.size)
-        val address = personWithCollections.addresses.first()
-        assertEquals("123 Null St", address.street)
-        assertEquals(null, address.state)
-        assertEquals(null, address.postalCode)
-
-        // Verify comment with null tags
-        assertEquals(1, personWithCollections.comments.size)
-        val comment = personWithCollections.comments.first()
-        assertEquals("Comment with null tags", comment.comment)
-        assertEquals(null, comment.tags)
-
-        // Verify category with null description
-        assertEquals(1, personWithCollections.categories.size)
-        val cat = personWithCollections.categories.first()
-        assertEquals("Null Category", cat.name)
-        assertEquals(null, cat.description)
     }
 
     @Test

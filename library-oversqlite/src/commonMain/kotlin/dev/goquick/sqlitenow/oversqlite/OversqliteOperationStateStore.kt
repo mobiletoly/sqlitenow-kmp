@@ -16,7 +16,6 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
-import dev.goquick.sqlitenow.core.sqlite.use
 
 internal const val operationKindNone = "none"
 internal const val operationKindRemoteReplace = "remote_replace"
@@ -64,26 +63,24 @@ internal class OversqliteOperationStateStore(
     private val db: SafeSQLiteConnection,
 ) {
     suspend fun loadState(): OversqliteOperationState {
-        return db.withExclusiveAccess {
-            db.prepare(
-                """
+        return db.queryRequiredSingle(
+            sql = """
                 SELECT kind, target_user_id, staged_snapshot_id, snapshot_bundle_seq, snapshot_row_count,
                        reason, replacement_source_id
                 FROM _sync_operation_state
                 WHERE singleton_key = 1
-                """.trimIndent(),
-            ).use { st ->
-                check(st.step()) { "_sync_operation_state singleton row is missing" }
-                OversqliteOperationState(
-                    kind = st.getText(0),
-                    targetUserId = st.getText(1),
-                    stagedSnapshotId = st.getText(2),
-                    snapshotBundleSeq = st.getLong(3),
-                    snapshotRowCount = st.getLong(4),
-                    reason = st.getText(5),
-                    replacementSourceId = st.getText(6),
-                )
-            }
+            """.trimIndent(),
+            missingMessage = "_sync_operation_state singleton row is missing",
+        ) { st ->
+            OversqliteOperationState(
+                kind = st.getText(0),
+                targetUserId = st.getText(1),
+                stagedSnapshotId = st.getText(2),
+                snapshotBundleSeq = st.getLong(3),
+                snapshotRowCount = st.getLong(4),
+                reason = st.getText(5),
+                replacementSourceId = st.getText(6),
+            )
         }
     }
 

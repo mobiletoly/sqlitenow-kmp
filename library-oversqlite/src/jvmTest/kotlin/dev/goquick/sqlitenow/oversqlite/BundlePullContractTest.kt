@@ -1,6 +1,7 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.BundledSqliteConnectionProvider
+import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -14,6 +15,41 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class BundlePullContractTest : BundleClientContractTestSupport() {
+    private enum class PullFailureSchema(val tableName: String) {
+        USERS("users"),
+        BLOB_DOCS("blob_docs"),
+    }
+
+    private enum class PullFailureLocalState {
+        EMPTY_USERS,
+        EMPTY_BLOB_DOCS,
+        USER_1_ADA,
+    }
+
+    private data class PullFailureScenario(
+        val displayName: String,
+        val schema: PullFailureSchema = PullFailureSchema.USERS,
+        val responseBody: String,
+        val expectedError: String,
+        val expectedLastBundleSeqSeen: Long,
+        val expectedLocalState: PullFailureLocalState,
+    )
+
+    private suspend fun assertPullFailureLocalState(
+        db: SafeSQLiteConnection,
+        expected: PullFailureLocalState,
+        context: String,
+    ) {
+        when (expected) {
+            PullFailureLocalState.EMPTY_USERS ->
+                assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"), "$context: users count")
+            PullFailureLocalState.EMPTY_BLOB_DOCS ->
+                assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM blob_docs"), "$context: blob_docs count")
+            PullFailureLocalState.USER_1_ADA ->
+                assertEquals("Ada", scalarText(db, "SELECT name FROM users WHERE id = 'user-1'"), "$context: user name")
+        }
+    }
+
     @Test
     fun syncOperations_rejectOverlap_andExpectedContentionHelperStaysNarrow() = runBlocking<Unit> {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
@@ -306,10 +342,8 @@ class BundlePullContractTest : BundleClientContractTestSupport() {
     @Test
     fun pullToStable_appliesBlobUuidKeysAndPayloadsFromGoWireFormat() = runBlocking<Unit> {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
-        createBlobDocsTable(db)
-        withConnectedClient(
+        withBlobDocsConnectedClient(
             db,
-            syncTables = listOf(SyncTable("blob_docs", syncKeyColumnName = "id")),
             configureServer = {
                 jsonRoute(
                     "/sync/pull",
@@ -413,48 +447,6 @@ class BundlePullContractTest : BundleClientContractTestSupport() {
             assertEquals("68656c6c6f", scalarText(db, "SELECT lower(hex(data)) FROM files"))
             assertEquals("11112222333344445555666677778888", scalarText(db, "SELECT lower(hex(id)) FROM file_reviews"))
             assertEquals("00112233445566778899aabbccddeeff", scalarText(db, "SELECT lower(hex(file_id)) FROM file_reviews"))
-        }
-    }
-
-    @Test
-    fun pullToStable_rejectsNonCanonicalBlobWireEncodings() = runBlocking<Unit> {
-        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
-        createBlobDocsTable(db)
-        withJsonRouteConnectedClient(
-            db,
-            syncTables = listOf(SyncTable("blob_docs", syncKeyColumnName = "id")),
-            routePath = "/sync/pull",
-            responseBody = """
-            {
-              "stable_bundle_seq": 2,
-              "has_more": false,
-              "bundles": [
-                {
-                  "bundle_seq": 2,
-                  "source_id": "peer-a",
-                  "source_bundle_id": 11,
-                  "rows": [
-                    {
-                      "schema": "main",
-                      "table": "blob_docs",
-                      "key": {"id":"00112233-4455-6677-8899-aabbccddeeff"},
-                      "op": "INSERT",
-                      "row_version": 5,
-                      "payload": {
-                        "id":"00112233-4455-6677-8899-aabbccddeeff",
-                        "name":"Blob Doc",
-                        "payload":"68656c6c6f"
-                      }
-                    }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent(),
-        ) { client ->
-            val error = client.pullToStable().exceptionOrNull()
-            assertTrue(error != null)
-            assertTrue(error.message?.contains("invalid canonical wire blob encoding") == true)
         }
     }
 
@@ -584,37 +576,12 @@ class BundlePullContractTest : BundleClientContractTestSupport() {
                     status = 409,
                     body = """{"error":"history_pruned","message":"after_bundle_seq 0 is below retained floor 5"}""",
                 )
-                jsonRoute(
-                    "/sync/snapshot-sessions",
-                    body = """
-                    {
-                      "snapshot_id": "snapshot-pruned",
-                      "snapshot_bundle_seq": 9,
-                      "row_count": 1,
-                      "byte_count": 32,
-                      "expires_at": "2026-03-22T00:00:00Z"
-                    }
-                    """.trimIndent(),
-                )
-                jsonRoute(
-                    "/sync/snapshot-sessions/snapshot-pruned",
-                    body = """
-                    {
-                      "snapshot_id": "snapshot-pruned",
-                      "snapshot_bundle_seq": 9,
-                      "next_row_ordinal": 1,
-                      "has_more": false,
-                      "rows": [
-                        {
-                          "schema": "main",
-                          "table": "users",
-                          "key": {"id":"user-1"},
-                          "row_version": 2,
-                          "payload": {"id":"user-1","name":"Ada"}
-                        }
-                      ]
-                    }
-                    """.trimIndent(),
+                usersSnapshotRoutes(
+                    snapshotId = "snapshot-pruned",
+                    snapshotBundleSeq = 9,
+                    userId = "user-1",
+                    rowVersion = 2,
+                    payloadJson = """{"id":"user-1","name":"Ada"}""",
                 )
             },
         ) { client ->
@@ -626,48 +593,6 @@ class BundlePullContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
-    fun pullToStable_rejectsHiddenScopeColumnInBundlePayload() = runBlocking<Unit> {
-        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
-        createUsersTable(db)
-        withJsonRouteConnectedClient(
-            db,
-            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
-            routePath = "/sync/pull",
-            responseBody = """
-            {
-              "stable_bundle_seq": 1,
-              "has_more": false,
-              "bundles": [
-                {
-                  "bundle_seq": 1,
-                  "source_id": "peer-a",
-                  "source_bundle_id": 11,
-                  "rows": [
-                    {
-                      "schema": "main",
-                      "table": "users",
-                      "key": {"id":"user-1"},
-                      "op": "INSERT",
-                      "row_version": 2,
-                      "payload": {
-                        "id":"user-1",
-                        "_sync_scope_id":"forbidden",
-                        "name":"Ada"
-                      }
-                    }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent(),
-        ) { client ->
-            val error = client.pullToStable().exceptionOrNull()
-            assertTrue(error != null)
-            assertTrue(error.message?.contains("_sync_scope_id") == true)
-        }
-    }
-
-    @Test
     fun hydrate_rejectsHiddenScopeColumnInSnapshotPayload() = runBlocking<Unit> {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
@@ -675,48 +600,19 @@ class BundlePullContractTest : BundleClientContractTestSupport() {
             db,
             syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
             configureServer = {
-                createContext("/sync/snapshot-sessions") { exchange ->
-                    respondJson(
-                        exchange,
-                        200,
-                        """
-                        {
-                          "snapshot_id": "snapshot-hidden-scope",
-                          "snapshot_bundle_seq": 3,
-                          "row_count": 1,
-                          "byte_count": 32,
-                          "expires_at": "2026-03-22T00:00:00Z"
-                        }
-                        """.trimIndent()
-                    )
-                }
-                createContext("/sync/snapshot-sessions/snapshot-hidden-scope") { exchange ->
-                    respondJson(
-                        exchange,
-                        200,
-                        """
-                        {
-                          "snapshot_id": "snapshot-hidden-scope",
-                          "snapshot_bundle_seq": 3,
-                          "next_row_ordinal": 1,
-                          "has_more": false,
-                          "rows": [
-                            {
-                              "schema": "main",
-                              "table": "users",
-                              "key": {"id":"user-1"},
-                              "row_version": 2,
-                              "payload": {
-                                "id":"user-1",
-                                "_sync_scope_id":"forbidden",
-                                "name":"Ada"
-                              }
-                            }
-                          ]
-                        }
-                        """.trimIndent()
-                    )
-                }
+                usersSnapshotRoutes(
+                    snapshotId = "snapshot-hidden-scope",
+                    snapshotBundleSeq = 3,
+                    userId = "user-1",
+                    rowVersion = 2,
+                    payloadJson = """
+                    {
+                      "id":"user-1",
+                      "_sync_scope_id":"forbidden",
+                      "name":"Ada"
+                    }
+                    """.trimIndent(),
+                )
             },
         ) { client ->
             val error = client.rebuild().exceptionOrNull()
@@ -726,82 +622,186 @@ class BundlePullContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
-    fun pullToStable_rejectsMalformedPullResponse() = runBlocking<Unit> {
-        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
-        createUsersTable(db)
-        withJsonRouteConnectedClient(
-            db,
-            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
-            routePath = "/sync/pull",
-            responseBody = """
-            {
-              "stable_bundle_seq": 1,
-              "has_more": false,
-              "bundles": [
+    fun pullToStable_rejectsInvalidPullResponses() = runBlocking<Unit> {
+        val scenarios = listOf(
+            PullFailureScenario(
+                displayName = "pullToStable_rejectsMalformedPullResponse",
+                responseBody = """
                 {
-                  "bundle_seq": 1,
-                  "source_id": "peer-a",
-                  "source_bundle_id": 1,
-                  "rows": [
+                  "stable_bundle_seq": 1,
+                  "has_more": false,
+                  "bundles": [
                     {
-                      "schema": "main",
-                      "table": "users",
-                      "key": {"id":"user-1"},
-                      "op": "INSERT",
-                      "row_version": 0,
-                      "payload": {"id":"user-1","name":"Ada"}
+                      "bundle_seq": 1,
+                      "source_id": "peer-a",
+                      "source_bundle_id": 1,
+                      "rows": [
+                        {
+                          "schema": "main",
+                          "table": "users",
+                          "key": {"id":"user-1"},
+                          "op": "INSERT",
+                          "row_version": 0,
+                          "payload": {"id":"user-1","name":"Ada"}
+                        }
+                      ]
                     }
                   ]
                 }
-              ]
-            }
-            """.trimIndent(),
-        ) { client ->
-            val error = client.pullToStable().exceptionOrNull()
-            assertTrue(error != null)
-            assertTrue(error.message?.contains("bundle row row_version 0 must be positive") == true)
-            assertEquals(0L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
-            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
-        }
-    }
+                """.trimIndent(),
+                expectedError = "bundle row row_version 0 must be positive",
+                expectedLastBundleSeqSeen = 0L,
+                expectedLocalState = PullFailureLocalState.EMPTY_USERS,
+            ),
+            PullFailureScenario(
+                displayName = "pullToStable_rejectsIncompletePullBeforeFrozenCeiling",
+                responseBody = """
+                {
+                  "stable_bundle_seq": 2,
+                  "has_more": false,
+                  "bundles": [
+                    {
+                      "bundle_seq": 1,
+                      "source_id": "peer-a",
+                      "source_bundle_id": 1,
+                      "rows": [
+                        {
+                          "schema": "main",
+                          "table": "users",
+                          "key": {"id":"user-1"},
+                          "op": "INSERT",
+                          "row_version": 1,
+                          "payload": {"id":"user-1","name":"Ada"}
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """.trimIndent(),
+                expectedError = "pull ended early at bundle seq 1 before stable bundle seq 2",
+                expectedLastBundleSeqSeen = 1L,
+                expectedLocalState = PullFailureLocalState.USER_1_ADA,
+            ),
+            PullFailureScenario(
+                displayName = "pullToStable_failedBundleApplyLeavesCheckpointUnchanged",
+                responseBody = """
+                {
+                  "stable_bundle_seq": 1,
+                  "has_more": false,
+                  "bundles": [
+                    {
+                      "bundle_seq": 1,
+                      "source_id": "peer-a",
+                      "source_bundle_id": 1,
+                      "rows": [
+                        {
+                          "schema": "main",
+                          "table": "users",
+                          "key": {"id":"user-1"},
+                          "op": "INSERT",
+                          "row_version": 1,
+                          "payload": {"id":"user-1"}
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """.trimIndent(),
+                expectedError = "payload for users must contain every table column",
+                expectedLastBundleSeqSeen = 0L,
+                expectedLocalState = PullFailureLocalState.EMPTY_USERS,
+            ),
+            PullFailureScenario(
+                displayName = "pullToStable_rejectsNonCanonicalBlobWireEncodings",
+                schema = PullFailureSchema.BLOB_DOCS,
+                responseBody = """
+                {
+                  "stable_bundle_seq": 2,
+                  "has_more": false,
+                  "bundles": [
+                    {
+                      "bundle_seq": 2,
+                      "source_id": "peer-a",
+                      "source_bundle_id": 11,
+                      "rows": [
+                        {
+                          "schema": "main",
+                          "table": "blob_docs",
+                          "key": {"id":"00112233-4455-6677-8899-aabbccddeeff"},
+                          "op": "INSERT",
+                          "row_version": 5,
+                          "payload": {
+                            "id":"00112233-4455-6677-8899-aabbccddeeff",
+                            "name":"Blob Doc",
+                            "payload":"68656c6c6f"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """.trimIndent(),
+                expectedError = "invalid canonical wire blob encoding",
+                expectedLastBundleSeqSeen = 0L,
+                expectedLocalState = PullFailureLocalState.EMPTY_BLOB_DOCS,
+            ),
+            PullFailureScenario(
+                displayName = "pullToStable_rejectsHiddenScopeColumnInBundlePayload",
+                responseBody = """
+                {
+                  "stable_bundle_seq": 1,
+                  "has_more": false,
+                  "bundles": [
+                    {
+                      "bundle_seq": 1,
+                      "source_id": "peer-a",
+                      "source_bundle_id": 11,
+                      "rows": [
+                        {
+                          "schema": "main",
+                          "table": "users",
+                          "key": {"id":"user-1"},
+                          "op": "INSERT",
+                          "row_version": 2,
+                          "payload": {
+                            "id":"user-1",
+                            "_sync_scope_id":"forbidden",
+                            "name":"Ada"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """.trimIndent(),
+                expectedError = "_sync_scope_id",
+                expectedLastBundleSeqSeen = 0L,
+                expectedLocalState = PullFailureLocalState.EMPTY_USERS,
+            ),
+        )
 
-    @Test
-    fun pullToStable_rejectsIncompletePullBeforeFrozenCeiling() = runBlocking<Unit> {
-        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
-        createUsersTable(db)
-        withJsonRouteConnectedClient(
-            db,
-            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
-            routePath = "/sync/pull",
-            responseBody = """
-            {
-              "stable_bundle_seq": 2,
-              "has_more": false,
-              "bundles": [
-                {
-                  "bundle_seq": 1,
-                  "source_id": "peer-a",
-                  "source_bundle_id": 1,
-                  "rows": [
-                    {
-                      "schema": "main",
-                      "table": "users",
-                      "key": {"id":"user-1"},
-                      "op": "INSERT",
-                      "row_version": 1,
-                      "payload": {"id":"user-1","name":"Ada"}
-                    }
-                  ]
-                }
-              ]
+        for (scenario in scenarios) {
+            val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+            when (scenario.schema) {
+                PullFailureSchema.USERS -> createUsersTable(db)
+                PullFailureSchema.BLOB_DOCS -> createBlobDocsTable(db)
             }
-            """.trimIndent(),
-        ) { client ->
-            val error = client.pullToStable().exceptionOrNull()
-            assertTrue(error != null)
-            assertTrue(error.message?.contains("pull ended early at bundle seq 1 before stable bundle seq 2") == true)
-            assertEquals(1L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
-            assertEquals("Ada", scalarText(db, "SELECT name FROM users WHERE id = 'user-1'"))
+            withJsonRouteConnectedClient(
+                db,
+                syncTables = listOf(SyncTable(scenario.schema.tableName, syncKeyColumnName = "id")),
+                routePath = "/sync/pull",
+                responseBody = scenario.responseBody,
+            ) { client ->
+                val error = client.pullToStable().exceptionOrNull()
+                assertTrue(error != null, "${scenario.displayName}: expected error")
+                assertTrue(error.message?.contains(scenario.expectedError) == true, "${scenario.displayName}: error message")
+                assertEquals(
+                    scenario.expectedLastBundleSeqSeen,
+                    client.syncStatus().getOrThrow().lastBundleSeqSeen,
+                    "${scenario.displayName}: last bundle seq",
+                )
+                assertPullFailureLocalState(db, scenario.expectedLocalState, scenario.displayName)
+            }
         }
     }
 
@@ -882,43 +882,4 @@ class BundlePullContractTest : BundleClientContractTestSupport() {
         }
     }
 
-    @Test
-    fun pullToStable_failedBundleApplyLeavesCheckpointUnchanged() = runBlocking<Unit> {
-        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
-        createUsersTable(db)
-        withJsonRouteConnectedClient(
-            db,
-            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
-            routePath = "/sync/pull",
-            responseBody = """
-            {
-              "stable_bundle_seq": 1,
-              "has_more": false,
-              "bundles": [
-                {
-                  "bundle_seq": 1,
-                  "source_id": "peer-a",
-                  "source_bundle_id": 1,
-                  "rows": [
-                    {
-                      "schema": "main",
-                      "table": "users",
-                      "key": {"id":"user-1"},
-                      "op": "INSERT",
-                      "row_version": 1,
-                      "payload": {"id":"user-1"}
-                    }
-                  ]
-                }
-              ]
-            }
-            """.trimIndent(),
-        ) { client ->
-            val error = client.pullToStable().exceptionOrNull()
-            assertTrue(error != null)
-            assertTrue(error.message?.contains("payload for users must contain every table column") == true)
-            assertEquals(0L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
-            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
-        }
-    }
 }

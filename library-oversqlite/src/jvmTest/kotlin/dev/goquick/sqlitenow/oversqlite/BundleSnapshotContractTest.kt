@@ -1,6 +1,7 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.BundledSqliteConnectionProvider
+import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -10,6 +11,50 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class BundleSnapshotContractTest : BundleClientContractTestSupport() {
+    private suspend fun <T> withUserSnapshotRecoveryClient(
+        snapshotId: String,
+        snapshotBundleSeq: Long,
+        userId: String,
+        userName: String,
+        rowVersion: Long,
+        block: suspend (SafeSQLiteConnection, DefaultOversqliteClient) -> T,
+    ): T {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        return withConnectedClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+            configureServer = {
+                usersSnapshotRoutes(
+                    snapshotId = snapshotId,
+                    snapshotBundleSeq = snapshotBundleSeq,
+                    userId = userId,
+                    rowVersion = rowVersion,
+                    payloadJson = """{"id":"$userId","name":"$userName"}""",
+                )
+            },
+        ) { client ->
+            block(db, client)
+        }
+    }
+
+    private suspend fun assertSourceRotationRecovered(
+        db: SafeSQLiteConnection,
+        client: DefaultOversqliteClient,
+        sourceBefore: String,
+        expectedLastBundleSeq: Long,
+        assertOldSourceReplacement: Boolean = false,
+    ) {
+        val newSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
+        assertNotEquals(sourceBefore, newSourceId)
+        assertEquals(newSourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
+        if (assertOldSourceReplacement) {
+            assertEquals(newSourceId, scalarText(db, "SELECT replaced_by_source_id FROM _sync_source_state WHERE source_id = '$sourceBefore'"))
+        }
+        assertEquals(1L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$newSourceId'"))
+        assertEquals(expectedLastBundleSeq, client.syncStatus().getOrThrow().lastBundleSeqSeen)
+    }
+
     @Test
     fun hydrate_rejectsSnapshotSessionWithMalformedExpiresAt() = runBlocking<Unit> {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
@@ -114,44 +159,13 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
             syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
             transientRetryPolicy = OversqliteTransientRetryPolicy(maxAttempts = 1),
             configureServer = {
-                createContext("/sync/snapshot-sessions") { exchange ->
-                    respondJson(
-                        exchange,
-                        200,
-                        """
-                        {
-                          "snapshot_id": "snapshot-one",
-                          "snapshot_bundle_seq": 9,
-                          "row_count": 1,
-                          "byte_count": 32,
-                          "expires_at": "2026-03-22T00:00:00Z"
-                        }
-                        """.trimIndent()
-                    )
-                }
-                createContext("/sync/snapshot-sessions/snapshot-one") { exchange ->
-                    respondJson(
-                        exchange,
-                        200,
-                        """
-                        {
-                          "snapshot_id": "snapshot-one",
-                          "snapshot_bundle_seq": 9,
-                          "next_row_ordinal": 1,
-                          "has_more": false,
-                          "rows": [
-                            {
-                              "schema": "main",
-                              "table": "users",
-                              "key": {"id":"user-1"},
-                              "row_version": 2,
-                              "payload": {"id":"user-1"}
-                            }
-                          ]
-                        }
-                        """.trimIndent()
-                    )
-                }
+                usersSnapshotRoutes(
+                    snapshotId = "snapshot-one",
+                    snapshotBundleSeq = 9,
+                    userId = "user-1",
+                    rowVersion = 2,
+                    payloadJson = """{"id":"user-1"}""",
+                )
             },
         ) { client ->
             db.execSQL(
@@ -261,10 +275,8 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
     @Test
     fun hydrate_blobPrimaryKeySnapshotConvertsWireUuidOnlyOnce() = runBlocking<Unit> {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
-        createBlobDocsTable(db)
-        withConnectedClient(
+        withBlobDocsConnectedClient(
             db,
-            syncTables = listOf(SyncTable("blob_docs", syncKeyColumnName = "id")),
             configureServer = {
                 jsonRoute(
                     "/sync/snapshot-sessions",
@@ -440,68 +452,23 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
             db,
             syncTables = listOf(SyncTable("employees", syncKeyColumnName = "id")),
             configureServer = {
-                createContext("/sync/snapshot-sessions") { exchange ->
-                    respondJson(
-                        exchange,
-                        200,
-                        """
-                        {
-                          "snapshot_id": "snapshot-employees",
-                          "snapshot_bundle_seq": 5,
-                          "row_count": 2,
-                          "byte_count": 64,
-                          "expires_at": "2026-03-22T00:00:00Z"
-                        }
-                        """.trimIndent()
-                    )
-                }
-                createContext("/sync/snapshot-sessions/snapshot-employees") { exchange ->
-                    when (queryParam(exchange, "after_row_ordinal")) {
-                        "0" -> respondJson(
-                            exchange,
-                            200,
-                            """
-                            {
-                              "snapshot_id": "snapshot-employees",
-                              "snapshot_bundle_seq": 5,
-                              "next_row_ordinal": 1,
-                              "has_more": true,
-                              "rows": [
-                                {
-                                  "schema": "main",
-                                  "table": "employees",
-                                  "key": {"id":"employee-2"},
-                                  "row_version": 2,
-                                  "payload": {"id":"employee-2","manager_id":"employee-1","name":"Bob"}
-                                }
-                              ]
-                            }
-                            """.trimIndent()
-                        )
-                        "1" -> respondJson(
-                            exchange,
-                            200,
-                            """
-                            {
-                              "snapshot_id": "snapshot-employees",
-                              "snapshot_bundle_seq": 5,
-                              "next_row_ordinal": 2,
-                              "has_more": false,
-                              "rows": [
-                                {
-                                  "schema": "main",
-                                  "table": "employees",
-                                  "key": {"id":"employee-1"},
-                                  "row_version": 2,
-                                  "payload": {"id":"employee-1","manager_id":null,"name":"Alice"}
-                                }
-                              ]
-                            }
-                            """.trimIndent()
-                        )
-                        else -> error("unexpected after_row_ordinal for employees snapshot")
-                    }
-                }
+                twoChunkSnapshotRoutes(
+                    snapshotId = "snapshot-employees",
+                    snapshotBundleSeq = 5,
+                    firstRow = SnapshotChunkRow(
+                        table = "employees",
+                        keyJson = """{"id":"employee-2"}""",
+                        rowVersion = 2,
+                        payloadJson = """{"id":"employee-2","manager_id":"employee-1","name":"Bob"}""",
+                    ),
+                    secondRow = SnapshotChunkRow(
+                        table = "employees",
+                        keyJson = """{"id":"employee-1"}""",
+                        rowVersion = 2,
+                        payloadJson = """{"id":"employee-1","manager_id":null,"name":"Alice"}""",
+                    ),
+                    unexpectedOrdinalMessage = "unexpected after_row_ordinal for employees snapshot",
+                )
             },
         ) { client ->
             client.rebuild().getOrThrow()
@@ -524,68 +491,23 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
                 SyncTable("profiles", syncKeyColumnName = "id"),
             ),
             configureServer = {
-                createContext("/sync/snapshot-sessions") { exchange ->
-                    respondJson(
-                        exchange,
-                        200,
-                        """
-                        {
-                          "snapshot_id": "snapshot-cycle",
-                          "snapshot_bundle_seq": 6,
-                          "row_count": 2,
-                          "byte_count": 64,
-                          "expires_at": "2026-03-22T00:00:00Z"
-                        }
-                        """.trimIndent()
-                    )
-                }
-                createContext("/sync/snapshot-sessions/snapshot-cycle") { exchange ->
-                    when (queryParam(exchange, "after_row_ordinal")) {
-                        "0" -> respondJson(
-                            exchange,
-                            200,
-                            """
-                            {
-                              "snapshot_id": "snapshot-cycle",
-                              "snapshot_bundle_seq": 6,
-                              "next_row_ordinal": 1,
-                              "has_more": true,
-                              "rows": [
-                                {
-                                  "schema": "main",
-                                  "table": "authors",
-                                  "key": {"id":"author-1"},
-                                  "row_version": 2,
-                                  "payload": {"id":"author-1","profile_id":"profile-1","name":"Author"}
-                                }
-                              ]
-                            }
-                            """.trimIndent()
-                        )
-                        "1" -> respondJson(
-                            exchange,
-                            200,
-                            """
-                            {
-                              "snapshot_id": "snapshot-cycle",
-                              "snapshot_bundle_seq": 6,
-                              "next_row_ordinal": 2,
-                              "has_more": false,
-                              "rows": [
-                                {
-                                  "schema": "main",
-                                  "table": "profiles",
-                                  "key": {"id":"profile-1"},
-                                  "row_version": 2,
-                                  "payload": {"id":"profile-1","author_id":"author-1","bio":"Cyclic"}
-                                }
-                              ]
-                            }
-                            """.trimIndent()
-                        )
-                        else -> error("unexpected after_row_ordinal for cycle snapshot")
-                    }
-                }
+                twoChunkSnapshotRoutes(
+                    snapshotId = "snapshot-cycle",
+                    snapshotBundleSeq = 6,
+                    firstRow = SnapshotChunkRow(
+                        table = "authors",
+                        keyJson = """{"id":"author-1"}""",
+                        rowVersion = 2,
+                        payloadJson = """{"id":"author-1","profile_id":"profile-1","name":"Author"}""",
+                    ),
+                    secondRow = SnapshotChunkRow(
+                        table = "profiles",
+                        keyJson = """{"id":"profile-1"}""",
+                        rowVersion = 2,
+                        payloadJson = """{"id":"profile-1","author_id":"author-1","bio":"Cyclic"}""",
+                    ),
+                    unexpectedOrdinalMessage = "unexpected after_row_ordinal for cycle snapshot",
+                )
             },
         ) { client ->
             client.rebuild().getOrThrow()
@@ -605,44 +527,13 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
             db,
             syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
             configureServer = {
-                createContext("/sync/snapshot-sessions") { exchange ->
-                    respondJson(
-                        exchange,
-                        200,
-                        """
-                        {
-                          "snapshot_id": "snapshot-recover-fail",
-                          "snapshot_bundle_seq": 9,
-                          "row_count": 1,
-                          "byte_count": 32,
-                          "expires_at": "2026-03-22T00:00:00Z"
-                        }
-                        """.trimIndent()
-                    )
-                }
-                createContext("/sync/snapshot-sessions/snapshot-recover-fail") { exchange ->
-                    respondJson(
-                        exchange,
-                        200,
-                        """
-                        {
-                          "snapshot_id": "snapshot-recover-fail",
-                          "snapshot_bundle_seq": 9,
-                          "next_row_ordinal": 1,
-                          "has_more": false,
-                          "rows": [
-                            {
-                              "schema": "main",
-                              "table": "users",
-                              "key": {"id":"user-1"},
-                              "row_version": 2,
-                              "payload": {"id":"user-1"}
-                            }
-                          ]
-                        }
-                        """.trimIndent()
-                    )
-                }
+                usersSnapshotRoutes(
+                    snapshotId = "snapshot-recover-fail",
+                    snapshotBundleSeq = 9,
+                    userId = "user-1",
+                    rowVersion = 2,
+                    payloadJson = """{"id":"user-1"}""",
+                )
             },
         ) { client ->
             val originalSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
@@ -658,52 +549,13 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
 
     @Test
     fun recover_rotatesSourceId_andResetsBundleState() = runBlocking<Unit> {
-        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
-        createUsersTable(db)
-        withConnectedClient(
-            db,
-            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
-            configureServer = {
-                createContext("/sync/snapshot-sessions") { exchange ->
-                    respondJson(
-                        exchange,
-                        200,
-                        """
-                        {
-                          "snapshot_id": "snapshot-recover",
-                          "snapshot_bundle_seq": 9,
-                          "row_count": 1,
-                          "byte_count": 32,
-                          "expires_at": "2026-03-22T00:00:00Z"
-                        }
-                        """.trimIndent()
-                    )
-                }
-                createContext("/sync/snapshot-sessions/snapshot-recover") { exchange ->
-                    respondJson(
-                        exchange,
-                        200,
-                        """
-                        {
-                          "snapshot_id": "snapshot-recover",
-                          "snapshot_bundle_seq": 9,
-                          "next_row_ordinal": 1,
-                          "has_more": false,
-                          "rows": [
-                            {
-                              "schema": "main",
-                              "table": "users",
-                              "key": {"id":"user-1"},
-                              "row_version": 2,
-                              "payload": {"id":"user-1","name":"Ada"}
-                            }
-                          ]
-                        }
-                        """.trimIndent()
-                    )
-                }
-            },
-        ) { client ->
+        withUserSnapshotRecoveryClient(
+            snapshotId = "snapshot-recover",
+            snapshotBundleSeq = 9,
+            userId = "user-1",
+            userName = "Ada",
+            rowVersion = 2,
+        ) { db, client ->
             val sourceBefore = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
             db.execSQL("UPDATE _sync_source_state SET next_source_bundle_id = 5 WHERE source_id = '$sourceBefore'")
             db.execSQL("UPDATE _sync_attachment_state SET last_bundle_seq_seen = 4 WHERE singleton_key = 1")
@@ -711,63 +563,25 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
             markSourceRecoveryRequired(db)
             client.rebuild().getOrThrow()
 
-            val newSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
-            assertNotEquals(sourceBefore, newSourceId)
-            assertEquals(newSourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
-            assertEquals(newSourceId, scalarText(db, "SELECT replaced_by_source_id FROM _sync_source_state WHERE source_id = '$sourceBefore'"))
-            assertEquals(1L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$newSourceId'"))
-            assertEquals(9L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertSourceRotationRecovered(
+                db = db,
+                client = client,
+                sourceBefore = sourceBefore,
+                expectedLastBundleSeq = 9,
+                assertOldSourceReplacement = true,
+            )
         }
     }
 
     @Test
     fun recover_sourceRotationClearsManagedTables_andRemainingLocalSyncState() = runBlocking<Unit> {
-        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
-        createUsersTable(db)
-        withConnectedClient(
-            db,
-            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
-            configureServer = {
-                createContext("/sync/snapshot-sessions") { exchange ->
-                    respondJson(
-                        exchange,
-                        200,
-                        """
-                        {
-                          "snapshot_id": "snapshot-recover-reset",
-                          "snapshot_bundle_seq": 11,
-                          "row_count": 1,
-                          "byte_count": 32,
-                          "expires_at": "2026-03-22T00:00:00Z"
-                        }
-                        """.trimIndent()
-                    )
-                }
-                createContext("/sync/snapshot-sessions/snapshot-recover-reset") { exchange ->
-                    respondJson(
-                        exchange,
-                        200,
-                        """
-                        {
-                          "snapshot_id": "snapshot-recover-reset",
-                          "snapshot_bundle_seq": 11,
-                          "next_row_ordinal": 1,
-                          "has_more": false,
-                          "rows": [
-                            {
-                              "schema": "main",
-                              "table": "users",
-                              "key": {"id":"user-2"},
-                              "row_version": 11,
-                              "payload": {"id":"user-2","name":"Grace"}
-                            }
-                          ]
-                        }
-                        """.trimIndent()
-                    )
-                }
-            },
-        ) { client ->
+        withUserSnapshotRecoveryClient(
+            snapshotId = "snapshot-recover-reset",
+            snapshotBundleSeq = 11,
+            userId = "user-2",
+            userName = "Grace",
+            rowVersion = 11,
+        ) { db, client ->
             val sourceBefore = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
 
             db.execSQL("UPDATE _sync_apply_state SET apply_mode = 1 WHERE singleton_key = 1")
@@ -798,12 +612,13 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
             markSourceRecoveryRequired(db)
             client.rebuild().getOrThrow()
 
-            val newSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
-            assertNotEquals(sourceBefore, newSourceId)
-            assertEquals(newSourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
-            assertEquals(1L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$newSourceId'"))
+            assertSourceRotationRecovered(
+                db = db,
+                client = client,
+                sourceBefore = sourceBefore,
+                expectedLastBundleSeq = 11,
+            )
             assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_attachment_state WHERE singleton_key = 1"))
-            assertEquals(11L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM users"))
             assertEquals("Grace", scalarText(db, "SELECT name FROM users WHERE id = 'user-2'"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users WHERE id = 'user-1'"))
@@ -823,44 +638,13 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
             db,
             syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
             configureServer = {
-                createContext("/sync/snapshot-sessions") { exchange ->
-                    respondJson(
-                        exchange,
-                        200,
-                        """
-                        {
-                          "snapshot_id": "snapshot-rebuild",
-                          "snapshot_bundle_seq": 9,
-                          "row_count": 1,
-                          "byte_count": 32,
-                          "expires_at": "2026-03-22T00:00:00Z"
-                        }
-                        """.trimIndent()
-                    )
-                }
-                createContext("/sync/snapshot-sessions/snapshot-rebuild") { exchange ->
-                    respondJson(
-                        exchange,
-                        200,
-                        """
-                        {
-                          "snapshot_id": "snapshot-rebuild",
-                          "snapshot_bundle_seq": 9,
-                          "next_row_ordinal": 1,
-                          "has_more": false,
-                          "rows": [
-                            {
-                              "schema": "main",
-                              "table": "users",
-                              "key": {"id":"user-1"},
-                              "row_version": 2,
-                              "payload": {"id":"user-1","name":"Ada"}
-                            }
-                          ]
-                        }
-                        """.trimIndent()
-                    )
-                }
+                usersSnapshotRoutes(
+                    snapshotId = "snapshot-rebuild",
+                    snapshotBundleSeq = 9,
+                    userId = "user-1",
+                    rowVersion = 2,
+                    payloadJson = """{"id":"user-1","name":"Ada"}""",
+                )
                 createContext("/sync/pull") { exchange ->
                     respondJson(
                         exchange,

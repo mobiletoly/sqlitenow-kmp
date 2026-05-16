@@ -1,5 +1,6 @@
 package dev.goquick.sqlitenow.oversqlite
 
+import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -15,6 +16,15 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
+    private data class ThreeClientSyncEnv(
+        val dbA: SafeSQLiteConnection,
+        val dbB: SafeSQLiteConnection,
+        val observerDb: SafeSQLiteConnection,
+        val clientA: DefaultOversqliteClient,
+        val clientB: DefaultOversqliteClient,
+        val observer: DefaultOversqliteClient,
+    )
+
     private fun updatedAtResolver(): Resolver = Resolver { conflict ->
         val serverUpdatedAt = conflict.serverRow
             ?.jsonObject
@@ -30,6 +40,117 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             MergeResult.KeepLocal
         } else {
             MergeResult.AcceptServer
+        }
+    }
+
+    private suspend fun withThreeClientSync(
+        clientBResolver: Resolver = ServerWinsResolver,
+        createTables: suspend (SafeSQLiteConnection) -> Unit = ::createUsersAndPostsTables,
+        block: suspend ThreeClientSyncEnv.() -> Unit,
+    ) {
+        val server = MockSyncServer()
+        val dbA = newDb()
+        val dbB = newDb()
+        val observerDb = newDb()
+        val httpA = server.newHttpClient()
+        val httpB = server.newHttpClient()
+        val observerHttp = server.newHttpClient()
+        try {
+            createTables(dbA)
+            createTables(dbB)
+            createTables(observerDb)
+
+            val clientA = newClient(dbA, httpA)
+            val clientB = newClient(dbB, httpB, resolver = clientBResolver)
+            val observer = newClient(observerDb, observerHttp)
+
+            clientA.openAndConnect(userId = "user-1").getOrThrow()
+            clientB.openAndConnect(userId = "user-1").getOrThrow()
+            observer.openAndConnect(userId = "user-1").getOrThrow()
+            clientA.rebuild().getOrThrow()
+            clientB.rebuild().getOrThrow()
+            observer.rebuild().getOrThrow()
+
+            ThreeClientSyncEnv(dbA, dbB, observerDb, clientA, clientB, observer).block()
+        } finally {
+            httpA.close()
+            httpB.close()
+            observerHttp.close()
+            dbA.close()
+            dbB.close()
+            observerDb.close()
+        }
+    }
+
+    private suspend fun assertUpdatedAtConflictResolution(
+        serverName: String,
+        serverUpdatedAt: String,
+        localName: String,
+        localUpdatedAt: String,
+        expectedName: String,
+        expectedUpdatedAt: String,
+    ) {
+        withThreeClientSync(
+            clientBResolver = updatedAtResolver(),
+            createTables = ::createUsersWithUpdatedAtAndPostsTables,
+        ) {
+            dbA.execSQL(
+                """
+                INSERT INTO users(id, name, updated_at)
+                VALUES('u1', 'Original', '2026-03-24T00:00:00Z')
+                """.trimIndent(),
+            )
+            clientA.pushPending().getOrThrow()
+            clientB.pullToStable().getOrThrow()
+            observer.pullToStable().getOrThrow()
+
+            dbA.execSQL("UPDATE users SET name = '$serverName', updated_at = '$serverUpdatedAt' WHERE id = 'u1'")
+            dbB.execSQL("UPDATE users SET name = '$localName', updated_at = '$localUpdatedAt' WHERE id = 'u1'")
+            clientA.pushPending().getOrThrow()
+            clientB.pushPending().getOrThrow()
+            observer.pullToStable().getOrThrow()
+
+            assertEquals(expectedName, scalarText(dbB, "SELECT name FROM users WHERE id = 'u1'"))
+            assertEquals(expectedUpdatedAt, scalarText(dbB, "SELECT updated_at FROM users WHERE id = 'u1'"))
+            assertEquals(expectedName, scalarText(observerDb, "SELECT name FROM users WHERE id = 'u1'"))
+            assertEquals(expectedUpdatedAt, scalarText(observerDb, "SELECT updated_at FROM users WHERE id = 'u1'"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+        }
+    }
+
+    private suspend fun ThreeClientSyncEnv.prepareUserNameConflict(
+        localName: String,
+        beforeServerPush: suspend ThreeClientSyncEnv.() -> Unit = {},
+    ) {
+        insertUser(dbA, "u1", "Original")
+        clientA.pushPending().getOrThrow()
+        clientB.pullToStable().getOrThrow()
+        observer.pullToStable().getOrThrow()
+
+        updateUserName(dbA, "u1", "Server Name")
+        updateUserName(dbB, "u1", localName)
+        beforeServerPush()
+        clientA.pushPending().getOrThrow()
+    }
+
+    private suspend fun ThreeClientSyncEnv.pushClientBAndObserveUser(
+        expectedClientName: String? = null,
+        expectedObserverName: String? = expectedClientName,
+        assertCleanOutbox: Boolean = true,
+    ) {
+        clientB.pushPending().getOrThrow()
+        observer.pullToStable().getOrThrow()
+
+        if (expectedClientName != null) {
+            assertEquals(expectedClientName, scalarText(dbB, "SELECT name FROM users WHERE id = 'u1'"))
+        }
+        if (expectedObserverName != null) {
+            assertEquals(expectedObserverName, scalarText(observerDb, "SELECT name FROM users WHERE id = 'u1'"))
+        }
+        assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+        if (assertCleanOutbox) {
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
         }
     }
 
@@ -336,330 +457,76 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
 
     @Test
     fun conflictingPush_keepLocalResolverAutoRetriesAndWins() = runTest {
-        val server = MockSyncServer()
-        val dbA = newDb()
-        val dbB = newDb()
-        val observerDb = newDb()
-        val httpA = server.newHttpClient()
-        val httpB = server.newHttpClient()
-        val observerHttp = server.newHttpClient()
-        try {
-            createUsersAndPostsTables(dbA)
-            createUsersAndPostsTables(dbB)
-            createUsersAndPostsTables(observerDb)
+        withThreeClientSync(clientBResolver = Resolver { MergeResult.KeepLocal }) {
+            prepareUserNameConflict(localName = "Local Name")
 
-            val clientA = newClient(dbA, httpA)
-            val clientB = newClient(dbB, httpB, resolver = Resolver { MergeResult.KeepLocal })
-            val observer = newClient(observerDb, observerHttp)
-
-            clientA.openAndConnect(userId = "user-1").getOrThrow()
-            clientB.openAndConnect(userId = "user-1").getOrThrow()
-            observer.openAndConnect(userId = "user-1").getOrThrow()
-            clientA.rebuild().getOrThrow()
-            clientB.rebuild().getOrThrow()
-            observer.rebuild().getOrThrow()
-
-            insertUser(dbA, "u1", "Original")
-            clientA.pushPending().getOrThrow()
-            clientB.pullToStable().getOrThrow()
-            observer.pullToStable().getOrThrow()
-
-            updateUserName(dbA, "u1", "Server Name")
-            updateUserName(dbB, "u1", "Local Name")
-            clientA.pushPending().getOrThrow()
-
-            clientB.pushPending().getOrThrow()
-
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            pushClientBAndObserveUser(expectedObserverName = null)
             assertEquals("Local Name", scalarText(dbB, "SELECT name FROM users WHERE id = 'u1'"))
             clientB.pullToStable().getOrThrow()
 
             observer.pullToStable().getOrThrow()
             assertEquals("Local Name", scalarText(observerDb, "SELECT name FROM users WHERE id = 'u1'"))
-        } finally {
-            httpA.close()
-            httpB.close()
-            observerHttp.close()
-            dbA.close()
-            dbB.close()
-            observerDb.close()
         }
     }
 
     @Test
     fun conflictingPush_updatedAtResolverKeepsNewerLocalIntent() = runTest {
-        val server = MockSyncServer()
-        val dbA = newDb()
-        val dbB = newDb()
-        val observerDb = newDb()
-        val httpA = server.newHttpClient()
-        val httpB = server.newHttpClient()
-        val observerHttp = server.newHttpClient()
-        try {
-            createUsersWithUpdatedAtAndPostsTables(dbA)
-            createUsersWithUpdatedAtAndPostsTables(dbB)
-            createUsersWithUpdatedAtAndPostsTables(observerDb)
-
-            val clientA = newClient(dbA, httpA)
-            val clientB = newClient(dbB, httpB, resolver = updatedAtResolver())
-            val observer = newClient(observerDb, observerHttp)
-
-            clientA.openAndConnect(userId = "user-1").getOrThrow()
-            clientB.openAndConnect(userId = "user-1").getOrThrow()
-            observer.openAndConnect(userId = "user-1").getOrThrow()
-            clientA.rebuild().getOrThrow()
-            clientB.rebuild().getOrThrow()
-            observer.rebuild().getOrThrow()
-
-            dbA.execSQL(
-                """
-                INSERT INTO users(id, name, updated_at)
-                VALUES('u1', 'Original', '2026-03-24T00:00:00Z')
-                """.trimIndent(),
-            )
-            clientA.pushPending().getOrThrow()
-            clientB.pullToStable().getOrThrow()
-            observer.pullToStable().getOrThrow()
-
-            dbA.execSQL("UPDATE users SET name = 'Server Older', updated_at = '2026-03-24T00:00:10Z' WHERE id = 'u1'")
-            dbB.execSQL("UPDATE users SET name = 'Local Newer', updated_at = '2026-03-24T00:00:20Z' WHERE id = 'u1'")
-            clientA.pushPending().getOrThrow()
-            clientB.pushPending().getOrThrow()
-            observer.pullToStable().getOrThrow()
-
-            assertEquals("Local Newer", scalarText(dbB, "SELECT name FROM users WHERE id = 'u1'"))
-            assertEquals("2026-03-24T00:00:20Z", scalarText(dbB, "SELECT updated_at FROM users WHERE id = 'u1'"))
-            assertEquals("Local Newer", scalarText(observerDb, "SELECT name FROM users WHERE id = 'u1'"))
-            assertEquals("2026-03-24T00:00:20Z", scalarText(observerDb, "SELECT updated_at FROM users WHERE id = 'u1'"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
-        } finally {
-            httpA.close()
-            httpB.close()
-            observerHttp.close()
-            dbA.close()
-            dbB.close()
-            observerDb.close()
-        }
+        assertUpdatedAtConflictResolution(
+            serverName = "Server Older",
+            serverUpdatedAt = "2026-03-24T00:00:10Z",
+            localName = "Local Newer",
+            localUpdatedAt = "2026-03-24T00:00:20Z",
+            expectedName = "Local Newer",
+            expectedUpdatedAt = "2026-03-24T00:00:20Z",
+        )
     }
 
     @Test
     fun conflictingPush_updatedAtResolverAcceptsNewerServerState() = runTest {
-        val server = MockSyncServer()
-        val dbA = newDb()
-        val dbB = newDb()
-        val observerDb = newDb()
-        val httpA = server.newHttpClient()
-        val httpB = server.newHttpClient()
-        val observerHttp = server.newHttpClient()
-        try {
-            createUsersWithUpdatedAtAndPostsTables(dbA)
-            createUsersWithUpdatedAtAndPostsTables(dbB)
-            createUsersWithUpdatedAtAndPostsTables(observerDb)
-
-            val clientA = newClient(dbA, httpA)
-            val clientB = newClient(dbB, httpB, resolver = updatedAtResolver())
-            val observer = newClient(observerDb, observerHttp)
-
-            clientA.openAndConnect(userId = "user-1").getOrThrow()
-            clientB.openAndConnect(userId = "user-1").getOrThrow()
-            observer.openAndConnect(userId = "user-1").getOrThrow()
-            clientA.rebuild().getOrThrow()
-            clientB.rebuild().getOrThrow()
-            observer.rebuild().getOrThrow()
-
-            dbA.execSQL(
-                """
-                INSERT INTO users(id, name, updated_at)
-                VALUES('u1', 'Original', '2026-03-24T00:00:00Z')
-                """.trimIndent(),
-            )
-            clientA.pushPending().getOrThrow()
-            clientB.pullToStable().getOrThrow()
-            observer.pullToStable().getOrThrow()
-
-            dbA.execSQL("UPDATE users SET name = 'Server Newer', updated_at = '2026-03-24T00:00:20Z' WHERE id = 'u1'")
-            dbB.execSQL("UPDATE users SET name = 'Local Older', updated_at = '2026-03-24T00:00:10Z' WHERE id = 'u1'")
-            clientA.pushPending().getOrThrow()
-            clientB.pushPending().getOrThrow()
-            observer.pullToStable().getOrThrow()
-
-            assertEquals("Server Newer", scalarText(dbB, "SELECT name FROM users WHERE id = 'u1'"))
-            assertEquals("2026-03-24T00:00:20Z", scalarText(dbB, "SELECT updated_at FROM users WHERE id = 'u1'"))
-            assertEquals("Server Newer", scalarText(observerDb, "SELECT name FROM users WHERE id = 'u1'"))
-            assertEquals("2026-03-24T00:00:20Z", scalarText(observerDb, "SELECT updated_at FROM users WHERE id = 'u1'"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
-        } finally {
-            httpA.close()
-            httpB.close()
-            observerHttp.close()
-            dbA.close()
-            dbB.close()
-            observerDb.close()
-        }
+        assertUpdatedAtConflictResolution(
+            serverName = "Server Newer",
+            serverUpdatedAt = "2026-03-24T00:00:20Z",
+            localName = "Local Older",
+            localUpdatedAt = "2026-03-24T00:00:10Z",
+            expectedName = "Server Newer",
+            expectedUpdatedAt = "2026-03-24T00:00:20Z",
+        )
     }
 
     @Test
     fun conflictingPush_clientWinsResolverAutoRetriesAndWins() = runTest {
-        val server = MockSyncServer()
-        val dbA = newDb()
-        val dbB = newDb()
-        val observerDb = newDb()
-        val httpA = server.newHttpClient()
-        val httpB = server.newHttpClient()
-        val observerHttp = server.newHttpClient()
-        try {
-            createUsersAndPostsTables(dbA)
-            createUsersAndPostsTables(dbB)
-            createUsersAndPostsTables(observerDb)
-
-            val clientA = newClient(dbA, httpA)
-            val clientB = newClient(dbB, httpB, resolver = ClientWinsResolver)
-            val observer = newClient(observerDb, observerHttp)
-
-            clientA.openAndConnect(userId = "user-1").getOrThrow()
-            clientB.openAndConnect(userId = "user-1").getOrThrow()
-            observer.openAndConnect(userId = "user-1").getOrThrow()
-            clientA.rebuild().getOrThrow()
-            clientB.rebuild().getOrThrow()
-            observer.rebuild().getOrThrow()
-
-            insertUser(dbA, "u1", "Original")
-            clientA.pushPending().getOrThrow()
-            clientB.pullToStable().getOrThrow()
-            observer.pullToStable().getOrThrow()
-
-            updateUserName(dbA, "u1", "Server Name")
-            updateUserName(dbB, "u1", "Client Wins")
-            clientA.pushPending().getOrThrow()
-            clientB.pushPending().getOrThrow()
-            observer.pullToStable().getOrThrow()
-
-            assertEquals("Client Wins", scalarText(dbB, "SELECT name FROM users WHERE id = 'u1'"))
-            assertEquals("Client Wins", scalarText(observerDb, "SELECT name FROM users WHERE id = 'u1'"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
-        } finally {
-            httpA.close()
-            httpB.close()
-            observerHttp.close()
-            dbA.close()
-            dbB.close()
-            observerDb.close()
+        withThreeClientSync(clientBResolver = ClientWinsResolver) {
+            prepareUserNameConflict(localName = "Client Wins")
+            pushClientBAndObserveUser(expectedClientName = "Client Wins")
         }
     }
 
     @Test
     fun conflictingPush_keepMergedResolverCommitsMergedPayload() = runTest {
-        val server = MockSyncServer()
-        val dbA = newDb()
-        val dbB = newDb()
-        val observerDb = newDb()
-        val httpA = server.newHttpClient()
-        val httpB = server.newHttpClient()
-        val observerHttp = server.newHttpClient()
-        try {
-            createUsersAndPostsTables(dbA)
-            createUsersAndPostsTables(dbB)
-            createUsersAndPostsTables(observerDb)
-
-            val clientA = newClient(dbA, httpA)
-            val clientB = newClient(
-                dbB,
-                httpB,
-                resolver = Resolver { conflict ->
-                    MergeResult.KeepMerged(
-                        buildJsonObject {
-                            put("id", JsonPrimitive("u1"))
-                            put("name", JsonPrimitive("Merged Name"))
-                        },
-                    )
-                },
-            )
-            val observer = newClient(observerDb, observerHttp)
-
-            clientA.openAndConnect(userId = "user-1").getOrThrow()
-            clientB.openAndConnect(userId = "user-1").getOrThrow()
-            observer.openAndConnect(userId = "user-1").getOrThrow()
-            clientA.rebuild().getOrThrow()
-            clientB.rebuild().getOrThrow()
-            observer.rebuild().getOrThrow()
-
-            insertUser(dbA, "u1", "Original")
-            clientA.pushPending().getOrThrow()
-            clientB.pullToStable().getOrThrow()
-            observer.pullToStable().getOrThrow()
-
-            updateUserName(dbA, "u1", "Server Name")
-            updateUserName(dbB, "u1", "Local Name")
-            clientA.pushPending().getOrThrow()
-            clientB.pushPending().getOrThrow()
-            observer.pullToStable().getOrThrow()
-
-            assertEquals("Merged Name", scalarText(dbB, "SELECT name FROM users WHERE id = 'u1'"))
-            assertEquals("Merged Name", scalarText(observerDb, "SELECT name FROM users WHERE id = 'u1'"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-        } finally {
-            httpA.close()
-            httpB.close()
-            observerHttp.close()
-            dbA.close()
-            dbB.close()
-            observerDb.close()
+        withThreeClientSync(
+            clientBResolver = Resolver {
+                MergeResult.KeepMerged(
+                    buildJsonObject {
+                        put("id", JsonPrimitive("u1"))
+                        put("name", JsonPrimitive("Merged Name"))
+                    },
+                )
+            },
+        ) {
+            prepareUserNameConflict(localName = "Local Name")
+            pushClientBAndObserveUser(expectedClientName = "Merged Name", assertCleanOutbox = false)
         }
     }
 
     @Test
     fun conflictingPush_preservesSiblingRowsFromRejectedBundle() = runTest {
-        val server = MockSyncServer()
-        val dbA = newDb()
-        val dbB = newDb()
-        val observerDb = newDb()
-        val httpA = server.newHttpClient()
-        val httpB = server.newHttpClient()
-        val observerHttp = server.newHttpClient()
-        try {
-            createUsersAndPostsTables(dbA)
-            createUsersAndPostsTables(dbB)
-            createUsersAndPostsTables(observerDb)
+        withThreeClientSync(clientBResolver = ClientWinsResolver) {
+            prepareUserNameConflict(localName = "Client Name") {
+                insertPost(dbB, "p1", "u1", "Sibling Post")
+            }
 
-            val clientA = newClient(dbA, httpA)
-            val clientB = newClient(dbB, httpB, resolver = ClientWinsResolver)
-            val observer = newClient(observerDb, observerHttp)
-
-            clientA.openAndConnect(userId = "user-1").getOrThrow()
-            clientB.openAndConnect(userId = "user-1").getOrThrow()
-            observer.openAndConnect(userId = "user-1").getOrThrow()
-            clientA.rebuild().getOrThrow()
-            clientB.rebuild().getOrThrow()
-            observer.rebuild().getOrThrow()
-
-            insertUser(dbA, "u1", "Original")
-            clientA.pushPending().getOrThrow()
-            clientB.pullToStable().getOrThrow()
-            observer.pullToStable().getOrThrow()
-
-            updateUserName(dbA, "u1", "Server Name")
-            updateUserName(dbB, "u1", "Client Name")
-            insertPost(dbB, "p1", "u1", "Sibling Post")
-            clientA.pushPending().getOrThrow()
-
-            clientB.pushPending().getOrThrow()
-            observer.pullToStable().getOrThrow()
-
-            assertEquals("Client Name", scalarText(observerDb, "SELECT name FROM users WHERE id = 'u1'"))
+            pushClientBAndObserveUser(expectedObserverName = "Client Name")
             assertEquals("Sibling Post", scalarText(observerDb, "SELECT title FROM posts WHERE id = 'p1'"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))
-        } finally {
-            httpA.close()
-            httpB.close()
-            observerHttp.close()
-            dbA.close()
-            dbB.close()
-            observerDb.close()
         }
     }
 

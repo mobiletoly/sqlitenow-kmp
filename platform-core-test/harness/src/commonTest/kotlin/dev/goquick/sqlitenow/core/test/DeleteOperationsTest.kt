@@ -27,209 +27,101 @@ class DeleteOperationsTest {
         }
     }
 
+    private data class DeleteByIdsScenario(
+        val people: List<String>,
+        val idsToDelete: (List<PersonAddResult>) -> List<Long>,
+        val expectedRemaining: List<String>,
+        val selectLimit: Int = 10,
+    )
+
+    private suspend fun runDeleteByIdsScenario(scenario: DeleteByIdsScenario) {
+        database.open()
+
+        val insertedPersons = scenario.people.mapIndexed { index, firstName ->
+            insertPerson(firstName = firstName, index = index)
+        }
+
+        val personsBefore = selectAllPersons(scenario.selectLimit)
+        assertEquals(scenario.people.size, personsBefore.size, "Should have ${scenario.people.size} persons before delete")
+
+        database.person.deleteByIds(
+            PersonQuery.DeleteByIds.Params(ids = scenario.idsToDelete(insertedPersons))
+        )
+
+        val personsAfter = selectAllPersons(scenario.selectLimit)
+        assertEquals(scenario.expectedRemaining.size, personsAfter.size, "Unexpected remaining person count")
+
+        val expectedIds = scenario.expectedRemaining.map { expectedName ->
+            insertedPersons[scenario.people.indexOf(expectedName)].id
+        }.toSet()
+        assertEquals(expectedIds, personsAfter.map { it.id }.toSet(), "Remaining IDs should match")
+        assertEquals(scenario.expectedRemaining.toSet(), personsAfter.map { it.myFirstName }.toSet(), "Remaining names should match")
+    }
+
+    private suspend fun insertPerson(firstName: String, index: Int): PersonAddResult =
+        database.person.add.one(PersonQuery.Add.Params(
+            email = "${firstName.lowercase()}-$index@example.com",
+            firstName = firstName,
+            lastName = "Test",
+            phone = "+${(1000000000L + index).toString()}",
+            birthDate = LocalDate(1980 + index, (index % 12) + 1, (index % 28) + 1)
+        ))
+
+    private suspend fun selectAllPersons(limit: Int) =
+        database.person.selectAll(PersonQuery.SelectAll.Params(limit = limit.toLong(), offset = 0)).asList()
+
     @Test
     fun testBasicDeleteOperation() = runDatabaseTest {
-            database.open()
-            
-            // Insert persons to delete
-            val person1 = database.person.add.one(PersonQuery.Add.Params(
-                email = "delete1@example.com",
-                firstName = "Delete1",
-                lastName = "Test",
-                phone = "+1111111111",
-                birthDate = LocalDate(1990, 1, 1)
+            runDeleteByIdsScenario(DeleteByIdsScenario(
+                people = listOf("Delete1", "Delete2", "Keep"),
+                idsToDelete = { people -> listOf(people[0].id, people[1].id) },
+                expectedRemaining = listOf("Keep"),
             ))
-            
-            val person2 = database.person.add.one(PersonQuery.Add.Params(
-                email = "delete2@example.com",
-                firstName = "Delete2",
-                lastName = "Test",
-                phone = "+2222222222",
-                birthDate = LocalDate(1991, 2, 2)
-            ))
-            
-            val person3 = database.person.add.one(PersonQuery.Add.Params(
-                email = "keep@example.com",
-                firstName = "Keep",
-                lastName = "Test",
-                phone = "+3333333333",
-                birthDate = LocalDate(1992, 3, 3)
-            ))
-            
-            // Verify all persons exist
-            val allPersonsBefore = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0)).asList()
-            assertEquals(3, allPersonsBefore.size, "Should have 3 persons before delete")
-            
-            // Delete specific persons by IDs
-            val deleteParams = PersonQuery.DeleteByIds.Params(
-                ids = listOf(person1.id, person2.id)
-            )
-            
-            database.person.deleteByIds(deleteParams)
-            
-            // Verify deletion
-            val allPersonsAfter = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0)).asList()
-            assertEquals(1, allPersonsAfter.size, "Should have 1 person after delete")
-            assertEquals("Keep", allPersonsAfter[0].myFirstName, "Remaining person should be 'Keep'")
-            assertEquals(person3.id, allPersonsAfter[0].id, "Remaining person ID should match")
     }
 
     @Test
     fun testDeleteSingleRecord() = runDatabaseTest {
-            database.open()
-            
-            // Insert single person
-            val person = database.person.add.one(PersonQuery.Add.Params(
-                email = "single-delete@example.com",
-                firstName = "Single",
-                lastName = "Delete",
-                phone = "+4444444444",
-                birthDate = LocalDate(1985, 5, 15)
+            runDeleteByIdsScenario(DeleteByIdsScenario(
+                people = listOf("Single"),
+                idsToDelete = { people -> listOf(people[0].id) },
+                expectedRemaining = emptyList(),
             ))
-            
-            // Verify person exists
-            val personsBefore = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0)).asList()
-            assertEquals(1, personsBefore.size, "Should have 1 person before delete")
-            
-            // Delete single person
-            val deleteParams = PersonQuery.DeleteByIds.Params(
-                ids = listOf(person.id)
-            )
-            
-            database.person.deleteByIds(deleteParams)
-            
-            // Verify deletion
-            val personsAfter = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0)).asList()
-            assertEquals(0, personsAfter.size, "Should have 0 persons after delete")
     }
 
     @Test
     fun testDeleteNonExistentRecords() = runDatabaseTest {
-            database.open()
-            
-            // Insert one person
-            val person = database.person.add.one(PersonQuery.Add.Params(
-                email = "existing@example.com",
-                firstName = "Existing",
-                lastName = "Person",
-                phone = "+5555555555",
-                birthDate = LocalDate(1988, 8, 20)
+            runDeleteByIdsScenario(DeleteByIdsScenario(
+                people = listOf("Existing"),
+                idsToDelete = { listOf(99999L, 88888L, 77777L) },
+                expectedRemaining = listOf("Existing"),
             ))
-            
-            // Try to delete non-existent IDs
-            val deleteParams = PersonQuery.DeleteByIds.Params(
-                ids = listOf(99999L, 88888L, 77777L) // Non-existent IDs
-            )
-            
-            database.person.deleteByIds(deleteParams)
-            
-            // Verify existing person was not affected
-            val personsAfter = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0)).asList()
-            assertEquals(1, personsAfter.size, "Should still have 1 person")
-            assertEquals(person.id, personsAfter[0].id, "Existing person should remain")
-            assertEquals("Existing", personsAfter[0].myFirstName, "Existing person name should remain")
     }
 
     @Test
     fun testDeleteMixedExistentAndNonExistentRecords() = runDatabaseTest {
-            database.open()
-            
-            // Insert multiple persons
-            val person1 = database.person.add.one(PersonQuery.Add.Params(
-                email = "mixed1@example.com",
-                firstName = "Mixed1",
-                lastName = "Test",
-                phone = "+6666666666",
-                birthDate = LocalDate(1989, 9, 25)
+            runDeleteByIdsScenario(DeleteByIdsScenario(
+                people = listOf("Mixed1", "Mixed2", "Mixed3"),
+                idsToDelete = { people -> listOf(people[0].id, 99999L, people[2].id, 88888L) },
+                expectedRemaining = listOf("Mixed2"),
             ))
-            
-            val person2 = database.person.add.one(PersonQuery.Add.Params(
-                email = "mixed2@example.com",
-                firstName = "Mixed2",
-                lastName = "Test",
-                phone = "+7777777777",
-                birthDate = LocalDate(1990, 10, 26)
-            ))
-            
-            val person3 = database.person.add.one(PersonQuery.Add.Params(
-                email = "mixed3@example.com",
-                firstName = "Mixed3",
-                lastName = "Test",
-                phone = "+8888888888",
-                birthDate = LocalDate(1991, 11, 27)
-            ))
-            
-            // Delete mix of existent and non-existent IDs
-            val deleteParams = PersonQuery.DeleteByIds.Params(
-                ids = listOf(person1.id, 99999L, person3.id, 88888L) // Mix of real and fake IDs
-            )
-            
-            database.person.deleteByIds(deleteParams)
-            
-            // Verify only existing records were deleted
-            val personsAfter = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0)).asList()
-            assertEquals(1, personsAfter.size, "Should have 1 person remaining")
-            assertEquals(person2.id, personsAfter[0].id, "Remaining person should be Mixed2")
-            assertEquals("Mixed2", personsAfter[0].myFirstName, "Remaining person name should be Mixed2")
     }
 
     @Test
     fun testDeleteEmptyIdsList() = runDatabaseTest {
-            database.open()
-            
-            // Insert person
-            val person = database.person.add.one(PersonQuery.Add.Params(
-                email = "empty-list@example.com",
-                firstName = "EmptyList",
-                lastName = "Test",
-                phone = "+9999999999",
-                birthDate = LocalDate(1987, 7, 18)
+            runDeleteByIdsScenario(DeleteByIdsScenario(
+                people = listOf("EmptyList"),
+                idsToDelete = { emptyList() },
+                expectedRemaining = listOf("EmptyList"),
             ))
-            
-            // Try to delete with empty IDs list
-            val deleteParams = PersonQuery.DeleteByIds.Params(
-                ids = emptyList()
-            )
-            
-            database.person.deleteByIds(deleteParams)
-            
-            // Verify person was not affected
-            val personsAfter = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0)).asList()
-            assertEquals(1, personsAfter.size, "Should still have 1 person")
-            assertEquals(person.id, personsAfter[0].id, "Person should remain unchanged")
     }
 
     @Test
     fun testDeleteWithDuplicateIds() = runDatabaseTest {
-            database.open()
-            
-            // Insert persons
-            val person1 = database.person.add.one(PersonQuery.Add.Params(
-                email = "duplicate1@example.com",
-                firstName = "Duplicate1",
-                lastName = "Test",
-                phone = "+1010101010",
-                birthDate = LocalDate(1986, 6, 12)
+            runDeleteByIdsScenario(DeleteByIdsScenario(
+                people = listOf("Duplicate1", "Duplicate2"),
+                idsToDelete = { people -> listOf(people[0].id, people[0].id, people[1].id, people[0].id) },
+                expectedRemaining = emptyList(),
             ))
-            
-            val person2 = database.person.add.one(PersonQuery.Add.Params(
-                email = "duplicate2@example.com",
-                firstName = "Duplicate2",
-                lastName = "Test",
-                phone = "+2020202020",
-                birthDate = LocalDate(1987, 7, 13)
-            ))
-            
-            // Delete with duplicate IDs in the list
-            val deleteParams = PersonQuery.DeleteByIds.Params(
-                ids = listOf(person1.id, person1.id, person2.id, person1.id) // Duplicates
-            )
-            
-            database.person.deleteByIds(deleteParams)
-            
-            // Verify both persons were deleted (duplicates should not cause issues)
-            val personsAfter = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0)).asList()
-            assertEquals(0, personsAfter.size, "Should have 0 persons after delete")
     }
 
     @Test
@@ -322,45 +214,11 @@ class DeleteOperationsTest {
 
     @Test
     fun testDeleteOrderIndependence() = runDatabaseTest {
-            database.open()
-            
-            // Insert persons in specific order
-            val person1 = database.person.add.one(PersonQuery.Add.Params(
-                email = "order1@example.com",
-                firstName = "Order1",
-                lastName = "Test",
-                phone = "+3030303030",
-                birthDate = LocalDate(1984, 2, 14)
+            runDeleteByIdsScenario(DeleteByIdsScenario(
+                people = listOf("Order1", "Order2", "Order3"),
+                idsToDelete = { people -> listOf(people[2].id, people[0].id) },
+                expectedRemaining = listOf("Order2"),
             ))
-            
-            val person2 = database.person.add.one(PersonQuery.Add.Params(
-                email = "order2@example.com",
-                firstName = "Order2",
-                lastName = "Test",
-                phone = "+4040404040",
-                birthDate = LocalDate(1985, 3, 15)
-            ))
-            
-            val person3 = database.person.add.one(PersonQuery.Add.Params(
-                email = "order3@example.com",
-                firstName = "Order3",
-                lastName = "Test",
-                phone = "+5050505050",
-                birthDate = LocalDate(1986, 4, 16)
-            ))
-            
-            // Delete in different order than insertion
-            val deleteParams = PersonQuery.DeleteByIds.Params(
-                ids = listOf(person3.id, person1.id) // Delete 3rd and 1st, keep 2nd
-            )
-            
-            database.person.deleteByIds(deleteParams)
-            
-            // Verify correct person remains
-            val personsAfter = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0)).asList()
-            assertEquals(1, personsAfter.size, "Should have 1 person remaining")
-            assertEquals(person2.id, personsAfter[0].id, "Remaining person should be Order2")
-            assertEquals("Order2", personsAfter[0].myFirstName, "Remaining person name should be Order2")
     }
 
     @Test

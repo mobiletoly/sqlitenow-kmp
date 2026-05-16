@@ -5,6 +5,7 @@ import dev.goquick.sqlitenow.core.test.db.LibraryTestDatabase
 import dev.goquick.sqlitenow.core.test.db.PersonAddResult
 import dev.goquick.sqlitenow.core.test.db.PersonAddressQuery
 import dev.goquick.sqlitenow.core.test.db.PersonQuery
+import dev.goquick.sqlitenow.core.test.db.PersonRow
 import kotlinx.datetime.LocalDate
 import kotlin.test.*
 
@@ -25,158 +26,191 @@ class UpdateOperationsTest {
         }
     }
 
-    @Test
-    fun testBasicUpdateOperation() = runDatabaseTest {
-            database.open()
-            
-            // First insert a person to update
-            val originalPerson = database.person.add.one(PersonQuery.Add.Params(
-                email = "basic-update@example.com",
-                firstName = "Original",
-                lastName = "Name",
-                phone = "+1111111111",
-                birthDate = LocalDate(1990, 1, 1)
-            ))
-            
-            // Update the person
-            val updateParams = PersonQuery.UpdateById.Params(
-                firstName = "Updated",
-                lastName = "NewName",
-                email = "updated-basic@example.com",
-                phone = "+2222222222",
-                birthDate = LocalDate(1991, 2, 2),
-                id = originalPerson.id
-            )
-            
-            database.person.updateById(updateParams)
-            
-            // Verify the update
-            val updatedPerson = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0))
-                .asList()
-                .find { it.id == originalPerson.id }
-            
-            assertNotNull(updatedPerson, "Updated person should be found")
-            assertEquals(originalPerson.id, updatedPerson.id, "ID should remain the same")
-            assertEquals("Updated", updatedPerson.myFirstName, "First name should be updated")
-            assertEquals("NewName", updatedPerson.myLastName, "Last name should be updated")
-            assertEquals("updated-basic@example.com", updatedPerson.email, "Email should be updated")
-            assertEquals("+2222222222", updatedPerson.phone, "Phone should be updated")
-            assertEquals(LocalDate(1991, 2, 2), updatedPerson.birthDate, "Birth date should be updated")
-            assertEquals(originalPerson.createdAt, updatedPerson.createdAt, "Created at should remain unchanged")
+    private suspend fun findPersonById(id: Long): PersonRow? =
+        database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0))
+            .asList()
+            .find { it.id == id }
+
+    private suspend fun insertUpdateAndFindPerson(
+        originalParams: PersonQuery.Add.Params,
+        scenarioName: String = "person update",
+        updateParams: (PersonAddResult) -> PersonQuery.UpdateById.Params,
+    ): Pair<PersonAddResult, PersonRow> {
+        val originalPerson = database.person.add.one(originalParams)
+
+        database.person.updateById(updateParams(originalPerson))
+
+        val updatedPerson = findPersonById(originalPerson.id)
+        assertNotNull(updatedPerson, "Updated person should be found for $scenarioName")
+        return originalPerson to updatedPerson
+    }
+
+    private data class PersonUpdateScenario(
+        val name: String,
+        val originalParams: PersonQuery.Add.Params,
+        val updateParams: (PersonAddResult) -> PersonQuery.UpdateById.Params,
+        val verify: (PersonAddResult, PersonRow) -> Unit,
+    )
+
+    private fun personUpdateScenarios(): List<PersonUpdateScenario> {
+        val longEmail = "very-long-updated-email-address-that-exceeds-normal-length-limits@very-long-updated-domain.example.com"
+        val longFirstName = "VeryLongUpdatedFirstNameThatExceedsNormalLengthLimitsForTestingUpdateOperations"
+        val longLastName = "VeryLongUpdatedLastNameThatExceedsNormalLengthLimitsForTestingUpdateOperationsToo"
+        val longPhone = "+1-800-555-9999-ext-8888-updated-department-customer-service-international"
+
+        return listOf(
+            PersonUpdateScenario(
+                name = "basic update operation",
+                originalParams = PersonQuery.Add.Params(
+                    email = "basic-update@example.com",
+                    firstName = "Original",
+                    lastName = "Name",
+                    phone = "+1111111111",
+                    birthDate = LocalDate(1990, 1, 1)
+                ),
+                updateParams = { person ->
+                    PersonQuery.UpdateById.Params(
+                        firstName = "Updated",
+                        lastName = "NewName",
+                        email = "updated-basic@example.com",
+                        phone = "+2222222222",
+                        birthDate = LocalDate(1991, 2, 2),
+                        id = person.id
+                    )
+                },
+                verify = { originalPerson, updatedPerson ->
+                    assertEquals(originalPerson.id, updatedPerson.id, "ID should remain the same")
+                    assertEquals("Updated", updatedPerson.myFirstName, "First name should be updated")
+                    assertEquals("NewName", updatedPerson.myLastName, "Last name should be updated")
+                    assertEquals("updated-basic@example.com", updatedPerson.email, "Email should be updated")
+                    assertEquals("+2222222222", updatedPerson.phone, "Phone should be updated")
+                    assertEquals(LocalDate(1991, 2, 2), updatedPerson.birthDate, "Birth date should be updated")
+                    assertEquals(originalPerson.createdAt, updatedPerson.createdAt, "Created at should remain unchanged")
+                },
+            ),
+            PersonUpdateScenario(
+                name = "update with null values",
+                originalParams = PersonQuery.Add.Params(
+                    email = "null-update@example.com",
+                    firstName = "Original",
+                    lastName = "WithValues",
+                    phone = "+3333333333",
+                    birthDate = LocalDate(1985, 5, 15)
+                ),
+                updateParams = { person ->
+                    PersonQuery.UpdateById.Params(
+                        firstName = "Updated",
+                        lastName = "ToNull",
+                        email = "updated-to-null@example.com",
+                        phone = null, // Set to null
+                        birthDate = null, // Set to null
+                        id = person.id
+                    )
+                },
+                verify = { _, updatedPerson ->
+                    assertEquals("Updated", updatedPerson.myFirstName, "First name should be updated")
+                    assertEquals("ToNull", updatedPerson.myLastName, "Last name should be updated")
+                    assertEquals("updated-to-null@example.com", updatedPerson.email, "Email should be updated")
+                    assertNull(updatedPerson.phone, "Phone should be null")
+                    assertNull(updatedPerson.birthDate, "Birth date should be null")
+                },
+            ),
+            PersonUpdateScenario(
+                name = "update from null to values",
+                originalParams = PersonQuery.Add.Params(
+                    email = "from-null-update@example.com",
+                    firstName = "Original",
+                    lastName = "WithNulls",
+                    phone = null,
+                    birthDate = null
+                ),
+                updateParams = { person ->
+                    PersonQuery.UpdateById.Params(
+                        firstName = "Updated",
+                        lastName = "FromNull",
+                        email = "updated-from-null@example.com",
+                        phone = "+4444444444", // From null to value
+                        birthDate = LocalDate(1992, 8, 20), // From null to value
+                        id = person.id
+                    )
+                },
+                verify = { _, updatedPerson ->
+                    assertEquals("Updated", updatedPerson.myFirstName, "First name should be updated")
+                    assertEquals("FromNull", updatedPerson.myLastName, "Last name should be updated")
+                    assertEquals("updated-from-null@example.com", updatedPerson.email, "Email should be updated")
+                    assertEquals("+4444444444", updatedPerson.phone, "Phone should be updated from null")
+                    assertEquals(LocalDate(1992, 8, 20), updatedPerson.birthDate, "Birth date should be updated from null")
+                },
+            ),
+            PersonUpdateScenario(
+                name = "partial field updates",
+                originalParams = PersonQuery.Add.Params(
+                    email = "partial-update@example.com",
+                    firstName = "Original",
+                    lastName = "Partial",
+                    phone = "+5555555555",
+                    birthDate = LocalDate(1988, 3, 12)
+                ),
+                updateParams = { person ->
+                    PersonQuery.UpdateById.Params(
+                        firstName = "PartiallyUpdated", // Changed
+                        lastName = "Partial", // Same as original
+                        email = "partial-update@example.com", // Same as original
+                        phone = "+5555555555", // Same as original
+                        birthDate = LocalDate(1989, 4, 13), // Changed
+                        id = person.id
+                    )
+                },
+                verify = { _, updatedPerson ->
+                    assertEquals("PartiallyUpdated", updatedPerson.myFirstName, "First name should be updated")
+                    assertEquals("Partial", updatedPerson.myLastName, "Last name should remain same")
+                    assertEquals("partial-update@example.com", updatedPerson.email, "Email should remain same")
+                    assertEquals("+5555555555", updatedPerson.phone, "Phone should remain same")
+                    assertEquals(LocalDate(1989, 4, 13), updatedPerson.birthDate, "Birth date should be updated")
+                },
+            ),
+            PersonUpdateScenario(
+                name = "update with long strings",
+                originalParams = PersonQuery.Add.Params(
+                    email = "short@example.com",
+                    firstName = "Short",
+                    lastName = "Name",
+                    phone = "+1234567890",
+                    birthDate = LocalDate(1985, 4, 10)
+                ),
+                updateParams = { person ->
+                    PersonQuery.UpdateById.Params(
+                        firstName = longFirstName,
+                        lastName = longLastName,
+                        email = longEmail,
+                        phone = longPhone,
+                        birthDate = LocalDate(1986, 5, 11),
+                        id = person.id
+                    )
+                },
+                verify = { _, updatedPerson ->
+                    assertEquals(longEmail, updatedPerson.email, "Long email should be updated")
+                    assertEquals(longFirstName, updatedPerson.myFirstName, "Long first name should be updated")
+                    assertEquals(longLastName, updatedPerson.myLastName, "Long last name should be updated")
+                    assertEquals(longPhone, updatedPerson.phone, "Long phone should be updated")
+                },
+            ),
+        )
     }
 
     @Test
-    fun testUpdateWithNullValues() = runDatabaseTest {
-            database.open()
-            
-            // Insert person with all fields populated
-            val originalPerson = database.person.add.one(PersonQuery.Add.Params(
-                email = "null-update@example.com",
-                firstName = "Original",
-                lastName = "WithValues",
-                phone = "+3333333333",
-                birthDate = LocalDate(1985, 5, 15)
-            ))
-            
-            // Update to null values
-            val updateParams = PersonQuery.UpdateById.Params(
-                firstName = "Updated",
-                lastName = "ToNull",
-                email = "updated-to-null@example.com",
-                phone = null, // Set to null
-                birthDate = null, // Set to null
-                id = originalPerson.id
-            )
-            
-            database.person.updateById(updateParams)
-            
-            // Verify null update
-            val updatedPerson = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0))
-                .asList()
-                .find { it.id == originalPerson.id }
-            
-            assertNotNull(updatedPerson, "Updated person should be found")
-            assertEquals("Updated", updatedPerson.myFirstName, "First name should be updated")
-            assertEquals("ToNull", updatedPerson.myLastName, "Last name should be updated")
-            assertEquals("updated-to-null@example.com", updatedPerson.email, "Email should be updated")
-            assertNull(updatedPerson.phone, "Phone should be null")
-            assertNull(updatedPerson.birthDate, "Birth date should be null")
-    }
+    fun testPersonUpdateScenarios() = runDatabaseTest {
+        database.open()
 
-    @Test
-    fun testUpdateFromNullToValues() = runDatabaseTest {
-            database.open()
-            
-            // Insert person with null values
-            val originalPerson = database.person.add.one(PersonQuery.Add.Params(
-                email = "from-null-update@example.com",
-                firstName = "Original",
-                lastName = "WithNulls",
-                phone = null,
-                birthDate = null
-            ))
-            
-            // Update from null to actual values
-            val updateParams = PersonQuery.UpdateById.Params(
-                firstName = "Updated",
-                lastName = "FromNull",
-                email = "updated-from-null@example.com",
-                phone = "+4444444444", // From null to value
-                birthDate = LocalDate(1992, 8, 20), // From null to value
-                id = originalPerson.id
+        personUpdateScenarios().forEach { scenario ->
+            val (originalPerson, updatedPerson) = insertUpdateAndFindPerson(
+                originalParams = scenario.originalParams,
+                scenarioName = scenario.name,
+                updateParams = scenario.updateParams,
             )
-            
-            database.person.updateById(updateParams)
-            
-            // Verify update from null
-            val updatedPerson = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0))
-                .asList()
-                .find { it.id == originalPerson.id }
-            
-            assertNotNull(updatedPerson, "Updated person should be found")
-            assertEquals("Updated", updatedPerson.myFirstName, "First name should be updated")
-            assertEquals("FromNull", updatedPerson.myLastName, "Last name should be updated")
-            assertEquals("updated-from-null@example.com", updatedPerson.email, "Email should be updated")
-            assertEquals("+4444444444", updatedPerson.phone, "Phone should be updated from null")
-            assertEquals(LocalDate(1992, 8, 20), updatedPerson.birthDate, "Birth date should be updated from null")
-    }
 
-    @Test
-    fun testPartialFieldUpdates() = runDatabaseTest {
-            database.open()
-            
-            // Insert person with all fields
-            val originalPerson = database.person.add.one(PersonQuery.Add.Params(
-                email = "partial-update@example.com",
-                firstName = "Original",
-                lastName = "Partial",
-                phone = "+5555555555",
-                birthDate = LocalDate(1988, 3, 12)
-            ))
-            
-            // Update only some fields (SQLiteNow requires all fields in UpdateById, but we can test the effect)
-            val updateParams = PersonQuery.UpdateById.Params(
-                firstName = "PartiallyUpdated", // Changed
-                lastName = "Partial", // Same as original
-                email = "partial-update@example.com", // Same as original
-                phone = "+5555555555", // Same as original
-                birthDate = LocalDate(1989, 4, 13), // Changed
-                id = originalPerson.id
-            )
-            
-            database.person.updateById(updateParams)
-            
-            // Verify partial update
-            val updatedPerson = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0))
-                .asList()
-                .find { it.id == originalPerson.id }
-            
-            assertNotNull(updatedPerson, "Updated person should be found")
-            assertEquals("PartiallyUpdated", updatedPerson.myFirstName, "First name should be updated")
-            assertEquals("Partial", updatedPerson.myLastName, "Last name should remain same")
-            assertEquals("partial-update@example.com", updatedPerson.email, "Email should remain same")
-            assertEquals("+5555555555", updatedPerson.phone, "Phone should remain same")
-            assertEquals(LocalDate(1989, 4, 13), updatedPerson.birthDate, "Birth date should be updated")
+            scenario.verify(originalPerson, updatedPerson)
+        }
     }
 
     @Test
@@ -343,48 +377,6 @@ class UpdateOperationsTest {
                 assertEquals(edgeDate, updatedPerson.birthDate, "Birth date should match edge case $index")
                 assertEquals("EdgeCase$index", updatedPerson.myFirstName, "First name should be updated for edge case $index")
             }
-    }
-
-    @Test
-    fun testUpdateWithLongStrings() = runDatabaseTest {
-            database.open()
-            
-            // Insert person with short strings
-            val person = database.person.add.one(PersonQuery.Add.Params(
-                email = "short@example.com",
-                firstName = "Short",
-                lastName = "Name",
-                phone = "+1234567890",
-                birthDate = LocalDate(1985, 4, 10)
-            ))
-            
-            // Update with very long strings
-            val longEmail = "very-long-updated-email-address-that-exceeds-normal-length-limits@very-long-updated-domain.example.com"
-            val longFirstName = "VeryLongUpdatedFirstNameThatExceedsNormalLengthLimitsForTestingUpdateOperations"
-            val longLastName = "VeryLongUpdatedLastNameThatExceedsNormalLengthLimitsForTestingUpdateOperationsToo"
-            val longPhone = "+1-800-555-9999-ext-8888-updated-department-customer-service-international"
-            
-            val updateParams = PersonQuery.UpdateById.Params(
-                firstName = longFirstName,
-                lastName = longLastName,
-                email = longEmail,
-                phone = longPhone,
-                birthDate = LocalDate(1986, 5, 11),
-                id = person.id
-            )
-            
-            database.person.updateById(updateParams)
-            
-            // Verify long string updates
-            val updatedPerson = database.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0))
-                .asList()
-                .find { it.id == person.id }
-            
-            assertNotNull(updatedPerson, "Updated person should be found")
-            assertEquals(longEmail, updatedPerson.email, "Long email should be updated")
-            assertEquals(longFirstName, updatedPerson.myFirstName, "Long first name should be updated")
-            assertEquals(longLastName, updatedPerson.myLastName, "Long last name should be updated")
-            assertEquals(longPhone, updatedPerson.phone, "Long phone should be updated")
     }
 
     @Test

@@ -516,9 +516,9 @@ internal class SyncRuntimeInitializer(
     private suspend fun ensureInitialBindStateClear(
         db: SafeSQLiteConnection,
     ) {
-        val rowStateCount = scalarCount(db, "SELECT COUNT(*) FROM _sync_row_state")
-        val dirtyCount = scalarCount(db, "SELECT COUNT(*) FROM _sync_dirty_rows")
-        val outboxRowCount = scalarCount(db, "SELECT COUNT(*) FROM _sync_outbox_rows")
+        val rowStateCount = db.scalarLong("SELECT COUNT(*) FROM _sync_row_state")
+        val dirtyCount = db.scalarLong("SELECT COUNT(*) FROM _sync_dirty_rows")
+        val outboxRowCount = db.scalarLong("SELECT COUNT(*) FROM _sync_outbox_rows")
         val incompatibilities = buildList {
             if (rowStateCount > 0) add("_sync_row_state=$rowStateCount")
             if (dirtyCount > 0) add("_sync_dirty_rows=$dirtyCount")
@@ -613,18 +613,6 @@ internal class SyncRuntimeInitializer(
             st.bindText(4, payload)
             st.bindLong(5, dirtyOrdinal)
             st.step()
-        }
-    }
-
-    private suspend fun scalarCount(
-        db: SafeSQLiteConnection,
-        sql: String,
-    ): Long {
-        return db.withExclusiveAccess {
-            db.prepare(sql).use { st ->
-                check(st.step())
-                st.getLong(0)
-            }
         }
     }
 
@@ -749,24 +737,14 @@ private data class TriggerData(
 )
 
 private val collapseWhitespaceRegex = Regex("\\s+")
-private val createTriggerIfNotExistsRegex = Regex(
-    pattern = "^CREATE\\s+TRIGGER\\s+IF\\s+NOT\\s+EXISTS\\s+",
-    options = setOf(RegexOption.IGNORE_CASE),
-)
-private val createTriggerRegex = Regex(
-    pattern = "^CREATE\\s+TRIGGER\\s+",
+private val createTriggerPrefixRegex = Regex(
+    pattern = "^CREATE\\s+TRIGGER\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?",
     options = setOf(RegexOption.IGNORE_CASE),
 )
 
 private fun normalizeTriggerSql(sql: String): String {
     val collapsed = collapseWhitespaceRegex.replace(sql.trim(), " ")
-    return when {
-        createTriggerIfNotExistsRegex.containsMatchIn(collapsed) ->
-            createTriggerIfNotExistsRegex.replace(collapsed, "CREATE TRIGGER ")
-        createTriggerRegex.containsMatchIn(collapsed) ->
-            createTriggerRegex.replace(collapsed, "CREATE TRIGGER ")
-        else -> collapsed
-    }
+    return createTriggerPrefixRegex.replace(collapsed, "CREATE TRIGGER ")
 }
 
 private fun insertTriggerSql(data: TriggerData): String = """
@@ -774,81 +752,26 @@ CREATE TRIGGER IF NOT EXISTS trg_${data.tableName}_ai
 AFTER INSERT ON ${quoteIdent(data.tableName)}
 WHEN COALESCE((SELECT apply_mode FROM _sync_apply_state WHERE singleton_key = 1), 0) = 0
 BEGIN
-  INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at)
-  VALUES (
-    '${data.schemaName}',
-    '${data.tableName}',
-    ${data.newKeyJson},
-    CASE
-      WHEN EXISTS (
-        SELECT 1
-        FROM _sync_row_state
-        WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.newKeyJson} AND deleted=0
-      ) THEN 'UPDATE'
-      ELSE 'INSERT'
-    END,
-    COALESCE(
-      (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.newKeyJson}),
-      (SELECT row_version FROM _sync_row_state WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.newKeyJson}),
-      0
-    ),
-    ${data.newRowJson},
-    COALESCE(
-      (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.newKeyJson}),
-      (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows)
-    ),
-    strftime('%Y-%m-%dT%H:%M:%fZ','now')
-  )
-  ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET
-    op=excluded.op,
-    payload=excluded.payload,
-    updated_at=excluded.updated_at;
+${dirtyRowCurrentPayloadUpsertSql(data, keyJson = data.newKeyJson, payloadJson = data.newRowJson)}
 END
 """.trimIndent()
 
-private fun guardInsertTriggerSql(tableName: String): String = """
-CREATE TRIGGER IF NOT EXISTS trg_${tableName}_bi_guard
-BEFORE INSERT ON ${quoteIdent(tableName)}
-WHEN EXISTS (
-  SELECT 1
-  FROM _sync_operation_state
-  WHERE singleton_key = 1
-    AND kind != 'none'
-)
-  AND NOT EXISTS (
-    SELECT 1
-    FROM _sync_apply_state
-    WHERE singleton_key = 1
-      AND apply_mode = 1
-  )
-BEGIN
-  SELECT RAISE(ABORT, 'SYNC_TRANSITION_PENDING');
-END
-""".trimIndent()
+private fun guardInsertTriggerSql(tableName: String): String =
+    guardTriggerSql(tableName, suffix = "bi", operation = "INSERT")
 
-private fun guardUpdateTriggerSql(tableName: String): String = """
-CREATE TRIGGER IF NOT EXISTS trg_${tableName}_bu_guard
-BEFORE UPDATE ON ${quoteIdent(tableName)}
-WHEN EXISTS (
-  SELECT 1
-  FROM _sync_operation_state
-  WHERE singleton_key = 1
-    AND kind != 'none'
-)
-  AND NOT EXISTS (
-    SELECT 1
-    FROM _sync_apply_state
-    WHERE singleton_key = 1
-      AND apply_mode = 1
-  )
-BEGIN
-  SELECT RAISE(ABORT, 'SYNC_TRANSITION_PENDING');
-END
-""".trimIndent()
+private fun guardUpdateTriggerSql(tableName: String): String =
+    guardTriggerSql(tableName, suffix = "bu", operation = "UPDATE")
 
-private fun guardDeleteTriggerSql(tableName: String): String = """
-CREATE TRIGGER IF NOT EXISTS trg_${tableName}_bd_guard
-BEFORE DELETE ON ${quoteIdent(tableName)}
+private fun guardDeleteTriggerSql(tableName: String): String =
+    guardTriggerSql(tableName, suffix = "bd", operation = "DELETE")
+
+private fun guardTriggerSql(
+    tableName: String,
+    suffix: String,
+    operation: String,
+): String = """
+CREATE TRIGGER IF NOT EXISTS trg_${tableName}_${suffix}_guard
+BEFORE $operation ON ${quoteIdent(tableName)}
 WHEN EXISTS (
   SELECT 1
   FROM _sync_operation_state
@@ -871,58 +794,13 @@ CREATE TRIGGER IF NOT EXISTS trg_${data.tableName}_au
 AFTER UPDATE ON ${quoteIdent(data.tableName)}
 WHEN COALESCE((SELECT apply_mode FROM _sync_apply_state WHERE singleton_key = 1), 0) = 0
 BEGIN
-  INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at)
-  SELECT
-    '${data.schemaName}',
-    '${data.tableName}',
-    ${data.oldKeyJson},
-    'DELETE',
-    COALESCE(
-      (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.oldKeyJson}),
-      (SELECT row_version FROM _sync_row_state WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.oldKeyJson}),
-      0
-    ),
-    NULL,
-    COALESCE(
-      (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.oldKeyJson}),
-      (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows)
-    ),
-    strftime('%Y-%m-%dT%H:%M:%fZ','now')
-  WHERE ${data.oldKeyJson} != ${data.newKeyJson}
-  ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET
-    op='DELETE',
-    payload=NULL,
-    updated_at=excluded.updated_at;
+${dirtyRowDeleteMarkerSelectSql(
+    data,
+    keyJson = data.oldKeyJson,
+    whereClause = "${data.oldKeyJson} != ${data.newKeyJson}",
+)}
 
-  INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at)
-  VALUES (
-    '${data.schemaName}',
-    '${data.tableName}',
-    ${data.newKeyJson},
-    CASE
-      WHEN EXISTS (
-        SELECT 1
-        FROM _sync_row_state
-        WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.newKeyJson} AND deleted=0
-      ) THEN 'UPDATE'
-      ELSE 'INSERT'
-    END,
-    COALESCE(
-      (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.newKeyJson}),
-      (SELECT row_version FROM _sync_row_state WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.newKeyJson}),
-      0
-    ),
-    ${data.newRowJson},
-    COALESCE(
-      (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.newKeyJson}),
-      (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows)
-    ),
-    strftime('%Y-%m-%dT%H:%M:%fZ','now')
-  )
-  ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET
-    op=excluded.op,
-    payload=excluded.payload,
-    updated_at=excluded.updated_at;
+${dirtyRowCurrentPayloadUpsertSql(data, keyJson = data.newKeyJson, payloadJson = data.newRowJson)}
 END
 """.trimIndent()
 
@@ -931,20 +809,93 @@ CREATE TRIGGER IF NOT EXISTS trg_${data.tableName}_ad
 AFTER DELETE ON ${quoteIdent(data.tableName)}
 WHEN COALESCE((SELECT apply_mode FROM _sync_apply_state WHERE singleton_key = 1), 0) = 0
 BEGIN
+${dirtyRowDeleteMarkerValuesSql(data, keyJson = data.oldKeyJson)}
+END
+""".trimIndent()
+
+private fun dirtyRowCurrentPayloadUpsertSql(
+    data: TriggerData,
+    keyJson: String,
+    payloadJson: String,
+): String = """
   INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at)
   VALUES (
     '${data.schemaName}',
     '${data.tableName}',
-    ${data.oldKeyJson},
+    $keyJson,
+    CASE
+      WHEN EXISTS (
+        SELECT 1
+        FROM _sync_row_state
+        WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=$keyJson AND deleted=0
+      ) THEN 'UPDATE'
+      ELSE 'INSERT'
+    END,
+    COALESCE(
+      (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=$keyJson),
+      (SELECT row_version FROM _sync_row_state WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=$keyJson),
+      0
+    ),
+    $payloadJson,
+    COALESCE(
+      (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=$keyJson),
+      (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows)
+    ),
+    strftime('%Y-%m-%dT%H:%M:%fZ','now')
+  )
+  ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET
+    op=excluded.op,
+    payload=excluded.payload,
+    updated_at=excluded.updated_at;
+""".trim('\n')
+
+private fun dirtyRowDeleteMarkerSelectSql(
+    data: TriggerData,
+    keyJson: String,
+    whereClause: String,
+): String = """
+  INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at)
+  SELECT
+    '${data.schemaName}',
+    '${data.tableName}',
+    $keyJson,
     'DELETE',
     COALESCE(
-      (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.oldKeyJson}),
-      (SELECT row_version FROM _sync_row_state WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.oldKeyJson}),
+      (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=$keyJson),
+      (SELECT row_version FROM _sync_row_state WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=$keyJson),
       0
     ),
     NULL,
     COALESCE(
-      (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=${data.oldKeyJson}),
+      (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=$keyJson),
+      (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows)
+    ),
+    strftime('%Y-%m-%dT%H:%M:%fZ','now')
+  WHERE $whereClause
+  ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET
+    op='DELETE',
+    payload=NULL,
+    updated_at=excluded.updated_at;
+""".trim('\n')
+
+private fun dirtyRowDeleteMarkerValuesSql(
+    data: TriggerData,
+    keyJson: String,
+): String = """
+  INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at)
+  VALUES (
+    '${data.schemaName}',
+    '${data.tableName}',
+    $keyJson,
+    'DELETE',
+    COALESCE(
+      (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=$keyJson),
+      (SELECT row_version FROM _sync_row_state WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=$keyJson),
+      0
+    ),
+    NULL,
+    COALESCE(
+      (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='${data.schemaName}' AND table_name='${data.tableName}' AND key_json=$keyJson),
       (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows)
     ),
     strftime('%Y-%m-%dT%H:%M:%fZ','now')
@@ -953,8 +904,7 @@ BEGIN
     op='DELETE',
     payload=NULL,
     updated_at=excluded.updated_at;
-END
-""".trimIndent()
+""".trim('\n')
 
 internal fun buildJsonObjectExprHexAware(
     tableInfo: TableInfo,

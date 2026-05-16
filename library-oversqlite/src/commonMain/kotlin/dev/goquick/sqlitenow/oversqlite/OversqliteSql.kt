@@ -17,6 +17,7 @@ package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
+import dev.goquick.sqlitenow.core.sqlite.use
 
 internal suspend inline fun <T> SafeSQLiteConnection.withPreparedStatement(
     sql: String,
@@ -42,6 +43,45 @@ internal suspend inline fun <T> SafeSQLiteConnection.withPreparedStatement(
             } catch (closeError: Throwable) {
                 if (failure == null) {
                     throw closeError
+                }
+            }
+        }
+    }
+}
+
+internal suspend fun SafeSQLiteConnection.scalarLong(sql: String): Long {
+    return withExclusiveAccess {
+        prepare(sql).use { st ->
+            check(st.step())
+            st.getLong(0)
+        }
+    }
+}
+
+internal suspend inline fun <T> SafeSQLiteConnection.queryRequiredSingle(
+    sql: String,
+    missingMessage: String,
+    crossinline map: (SqliteStatement) -> T,
+): T {
+    return withExclusiveAccess {
+        prepare(sql).use { st ->
+            check(st.step()) { missingMessage }
+            map(st)
+        }
+    }
+}
+
+internal suspend inline fun <T> SafeSQLiteConnection.queryList(
+    sql: String,
+    crossinline bind: (SqliteStatement) -> Unit = {},
+    crossinline map: suspend (SqliteStatement) -> T,
+): List<T> {
+    return withExclusiveAccess {
+        prepare(sql).use { st ->
+            bind(st)
+            buildList {
+                while (st.step()) {
+                    add(map(st))
                 }
             }
         }

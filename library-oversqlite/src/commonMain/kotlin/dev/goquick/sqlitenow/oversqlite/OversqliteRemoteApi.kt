@@ -230,23 +230,12 @@ internal class OversqliteRemoteApi(
     }
 
     suspend fun deletePushSessionBestEffort(pushId: String, sourceId: String) {
-        if (pushId.isBlank()) return
-        runCatching {
-            executeLoggedCall(
-                operation = "delete push session",
-                method = "DELETE",
-                path = "/sync/push-sessions/$pushId",
-            ) {
-                http.delete("sync/push-sessions/$pushId") {
-                    header(sourceIdHeaderName, sourceId)
-                }
-            }
-        }.onFailure { error ->
-            log {
-                "oversqlite http best-effort failure op=delete push session method=DELETE " +
-                    "path=/sync/push-sessions/$pushId error=${error.logSummary()}"
-            }
-        }
+        deleteSessionBestEffort(
+            sessionId = pushId,
+            sourceId = sourceId,
+            operation = "delete push session",
+            pathPrefix = "sync/push-sessions",
+        )
     }
 
     suspend fun createSnapshotSession(
@@ -318,21 +307,37 @@ internal class OversqliteRemoteApi(
     }
 
     suspend fun deleteSnapshotSessionBestEffort(snapshotId: String, sourceId: String) {
-        if (snapshotId.isBlank()) return
+        deleteSessionBestEffort(
+            sessionId = snapshotId,
+            sourceId = sourceId,
+            operation = "delete snapshot session",
+            pathPrefix = "sync/snapshot-sessions",
+        )
+    }
+
+    private suspend fun deleteSessionBestEffort(
+        sessionId: String,
+        sourceId: String,
+        operation: String,
+        pathPrefix: String,
+    ) {
+        if (sessionId.isBlank()) return
+        val relativePath = "$pathPrefix/$sessionId"
+        val loggedPath = "/$relativePath"
         runCatching {
             executeLoggedCall(
-                operation = "delete snapshot session",
+                operation = operation,
                 method = "DELETE",
-                path = "/sync/snapshot-sessions/$snapshotId",
+                path = loggedPath,
             ) {
-                http.delete("sync/snapshot-sessions/$snapshotId") {
+                http.delete(relativePath) {
                     header(sourceIdHeaderName, sourceId)
                 }
             }
         }.onFailure { error ->
             log {
-                "oversqlite http best-effort failure op=delete snapshot session method=DELETE " +
-                    "path=/sync/snapshot-sessions/$snapshotId error=${error.logSummary()}"
+                "oversqlite http best-effort failure op=$operation method=DELETE " +
+                    "path=$loggedPath error=${error.logSummary()}"
             }
         }
     }

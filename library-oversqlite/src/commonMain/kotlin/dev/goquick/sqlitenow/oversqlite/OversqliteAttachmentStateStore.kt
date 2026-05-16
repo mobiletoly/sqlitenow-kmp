@@ -16,7 +16,6 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
-import dev.goquick.sqlitenow.core.sqlite.use
 
 internal const val attachmentBindingAnonymous = "anonymous"
 internal const val attachmentBindingAttached = "attached"
@@ -35,26 +34,24 @@ internal class OversqliteAttachmentStateStore(
     internal val db: SafeSQLiteConnection,
 ) {
     suspend fun loadState(): OversqliteAttachmentState {
-        return db.withExclusiveAccess {
-            db.prepare(
-                """
+        return db.queryRequiredSingle(
+            sql = """
                 SELECT current_source_id, binding_state, attached_user_id, schema_name,
                        last_bundle_seq_seen, rebuild_required, pending_initialization_id
                 FROM _sync_attachment_state
                 WHERE singleton_key = 1
-                """.trimIndent(),
-            ).use { st ->
-                check(st.step()) { "_sync_attachment_state singleton row is missing" }
-                OversqliteAttachmentState(
-                    currentSourceId = st.getText(0),
-                    bindingState = st.getText(1),
-                    attachedUserId = st.getText(2),
-                    schemaName = st.getText(3),
-                    lastBundleSeqSeen = st.getLong(4),
-                    rebuildRequired = st.getLong(5) == 1L,
-                    pendingInitializationId = st.getText(6),
-                )
-            }
+            """.trimIndent(),
+            missingMessage = "_sync_attachment_state singleton row is missing",
+        ) { st ->
+            OversqliteAttachmentState(
+                currentSourceId = st.getText(0),
+                bindingState = st.getText(1),
+                attachedUserId = st.getText(2),
+                schemaName = st.getText(3),
+                lastBundleSeqSeen = st.getLong(4),
+                rebuildRequired = st.getLong(5) == 1L,
+                pendingInitializationId = st.getText(6),
+            )
         }
     }
 

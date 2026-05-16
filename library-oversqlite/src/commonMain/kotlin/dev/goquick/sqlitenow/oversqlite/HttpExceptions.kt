@@ -66,11 +66,12 @@ class PushConflictException(
 }
 
 internal fun DownloadHttpException.toHistoryPrunedOrNull(): HistoryPrunedException? {
-    if (status != HttpStatusCode.Conflict) return null
-    val error = runCatching {
-        httpErrorJson.decodeFromString<ErrorResponse>(rawBody)
-    }.getOrNull() ?: return null
-    if (error.error != "history_pruned") return null
+    val error = decodeErrorResponseOrNull(
+        status = status,
+        rawBody = rawBody,
+        expectedStatus = HttpStatusCode.Conflict,
+        expectedError = "history_pruned",
+    ) ?: return null
     return HistoryPrunedException(error.message)
 }
 
@@ -91,11 +92,12 @@ internal fun decodeCommittedBundleNotFoundExceptionOrNull(
     status: HttpStatusCode,
     rawBody: String,
 ): CommittedBundleNotFoundException? {
-    if (status != HttpStatusCode.NotFound) return null
-    val error = runCatching {
-        httpErrorJson.decodeFromString<ErrorResponse>(rawBody)
-    }.getOrNull() ?: return null
-    if (error.error != "committed_bundle_not_found") return null
+    decodeErrorResponseOrNull(
+        status = status,
+        rawBody = rawBody,
+        expectedStatus = HttpStatusCode.NotFound,
+        expectedError = "committed_bundle_not_found",
+    ) ?: return null
     return CommittedBundleNotFoundException(rawBody = rawBody)
 }
 
@@ -103,11 +105,12 @@ internal fun decodeCommittedReplayPrunedExceptionOrNull(
     status: HttpStatusCode,
     rawBody: String,
 ): CommittedReplayPrunedException? {
-    if (status != HttpStatusCode.Conflict) return null
-    val error = runCatching {
-        httpErrorJson.decodeFromString<ErrorResponse>(rawBody)
-    }.getOrNull() ?: return null
-    if (error.error != "history_pruned") return null
+    decodeErrorResponseOrNull(
+        status = status,
+        rawBody = rawBody,
+        expectedStatus = HttpStatusCode.Conflict,
+        expectedError = "history_pruned",
+    ) ?: return null
     return CommittedReplayPrunedException(rawBody = rawBody)
 }
 
@@ -127,9 +130,11 @@ internal fun decodeSourceRecoveryRequiredExceptionOrNull(
             replacementSourceId = retired.replacedBySourceId?.takeIf { it.isNotBlank() },
         )
     }
-    val error = runCatching {
-        httpErrorJson.decodeFromString<ErrorResponse>(rawBody)
-    }.getOrNull() ?: return null
+    val error = decodeErrorResponseOrNull(
+        status = status,
+        rawBody = rawBody,
+        expectedStatus = HttpStatusCode.Conflict,
+    ) ?: return null
     val reason = when (error.error) {
         "history_pruned" -> SourceRecoveryReason.HISTORY_PRUNED
         "source_sequence_out_of_order" -> SourceRecoveryReason.SOURCE_SEQUENCE_OUT_OF_ORDER
@@ -147,14 +152,41 @@ internal fun decodeSourceReplacementInvalidExceptionOrNull(
     status: HttpStatusCode,
     rawBody: String,
 ): SourceReplacementInvalidHttpException? {
-    if (status != HttpStatusCode.Conflict) return null
-    val error = runCatching {
-        httpErrorJson.decodeFromString<ErrorResponse>(rawBody)
-    }.getOrNull() ?: return null
-    if (error.error != "source_replacement_invalid") return null
+    val error = decodeErrorResponseOrNull(
+        status = status,
+        rawBody = rawBody,
+        expectedStatus = HttpStatusCode.Conflict,
+        expectedError = "source_replacement_invalid",
+    ) ?: return null
     return SourceReplacementInvalidHttpException(
         status = status,
         rawBody = rawBody,
         errorMessage = error.message,
     )
+}
+
+private fun decodeErrorResponseOrNull(
+    status: HttpStatusCode,
+    rawBody: String,
+    expectedStatus: HttpStatusCode,
+): ErrorResponse? {
+    if (status != expectedStatus) return null
+    return runCatching {
+        httpErrorJson.decodeFromString<ErrorResponse>(rawBody)
+    }.getOrNull()
+}
+
+private fun decodeErrorResponseOrNull(
+    status: HttpStatusCode,
+    rawBody: String,
+    expectedStatus: HttpStatusCode,
+    expectedError: String,
+): ErrorResponse? {
+    val error = decodeErrorResponseOrNull(
+        status = status,
+        rawBody = rawBody,
+        expectedStatus = expectedStatus,
+    ) ?: return null
+    if (error.error != expectedError) return null
+    return error
 }

@@ -16,6 +16,7 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
 import dev.goquick.sqlitenow.core.sqlite.use
 
 internal class OversqliteSyncStateStore(
@@ -27,26 +28,23 @@ internal class OversqliteSyncStateStore(
         keyJson: String,
         statementCache: StatementCache? = null,
     ): StructuredRowState {
-        return db.withPreparedStatement(
+        return loadBySchemaTableKey(
             sql = """
                 SELECT row_version, deleted
                 FROM _sync_row_state
                 WHERE schema_name = ? AND table_name = ? AND key_json = ?
             """.trimIndent(),
+            schemaName = schemaName,
+            tableName = tableName,
+            keyJson = keyJson,
             statementCache = statementCache,
+            missing = ::StructuredRowState,
         ) { st ->
-            st.bindText(1, schemaName)
-            st.bindText(2, tableName)
-            st.bindText(3, keyJson)
-            if (!st.step()) {
-                StructuredRowState()
-            } else {
-                StructuredRowState(
-                    exists = true,
-                    rowVersion = st.getLong(0),
-                    deleted = st.getLong(1) == 1L,
-                )
-            }
+            StructuredRowState(
+                exists = true,
+                rowVersion = st.getLong(0),
+                deleted = st.getLong(1) == 1L,
+            )
         }
     }
 
@@ -56,8 +54,39 @@ internal class OversqliteSyncStateStore(
         keyJson: String,
         statementCache: StatementCache? = null,
     ) {
-        db.withPreparedStatement(
+        deleteBySchemaTableKey(
             sql = "DELETE FROM _sync_dirty_rows WHERE schema_name = ? AND table_name = ? AND key_json = ?",
+            schemaName = schemaName,
+            tableName = tableName,
+            keyJson = keyJson,
+            statementCache = statementCache,
+        )
+    }
+
+    suspend fun deleteStructuredRowState(
+        schemaName: String,
+        tableName: String,
+        keyJson: String,
+        statementCache: StatementCache? = null,
+    ) {
+        deleteBySchemaTableKey(
+            sql = "DELETE FROM _sync_row_state WHERE schema_name = ? AND table_name = ? AND key_json = ?",
+            schemaName = schemaName,
+            tableName = tableName,
+            keyJson = keyJson,
+            statementCache = statementCache,
+        )
+    }
+
+    private suspend fun deleteBySchemaTableKey(
+        sql: String,
+        schemaName: String,
+        tableName: String,
+        keyJson: String,
+        statementCache: StatementCache?,
+    ) {
+        db.withPreparedStatement(
+            sql = sql,
             statementCache = statementCache,
         ) { st ->
             st.bindText(1, schemaName)
@@ -67,20 +96,23 @@ internal class OversqliteSyncStateStore(
         }
     }
 
-    suspend fun deleteStructuredRowState(
+    private suspend fun <T> loadBySchemaTableKey(
+        sql: String,
         schemaName: String,
         tableName: String,
         keyJson: String,
-        statementCache: StatementCache? = null,
-    ) {
-        db.withPreparedStatement(
-            sql = "DELETE FROM _sync_row_state WHERE schema_name = ? AND table_name = ? AND key_json = ?",
+        statementCache: StatementCache?,
+        missing: () -> T,
+        found: (SqliteStatement) -> T,
+    ): T {
+        return db.withPreparedStatement(
+            sql = sql,
             statementCache = statementCache,
         ) { st ->
             st.bindText(1, schemaName)
             st.bindText(2, tableName)
             st.bindText(3, keyJson)
-            st.step()
+            if (!st.step()) missing() else found(st)
         }
     }
 
@@ -115,12 +147,7 @@ internal class OversqliteSyncStateStore(
     }
 
     suspend fun countDirtyRows(): Int {
-        return db.withExclusiveAccess {
-            db.prepare("SELECT COUNT(*) FROM _sync_dirty_rows").use { st ->
-                check(st.step())
-                st.getLong(0).toInt()
-            }
-        }
+        return db.scalarLong("SELECT COUNT(*) FROM _sync_dirty_rows").toInt()
     }
 
     suspend fun loadDirtyUploadState(
@@ -129,28 +156,25 @@ internal class OversqliteSyncStateStore(
         keyJson: String,
         statementCache: StatementCache? = null,
     ): DirtyUploadState {
-        return db.withPreparedStatement(
+        return loadBySchemaTableKey(
             sql = """
                 SELECT op, payload, base_row_version, dirty_ordinal
                 FROM _sync_dirty_rows
                 WHERE schema_name = ? AND table_name = ? AND key_json = ?
             """.trimIndent(),
+            schemaName = schemaName,
+            tableName = tableName,
+            keyJson = keyJson,
             statementCache = statementCache,
+            missing = ::DirtyUploadState,
         ) { st ->
-            st.bindText(1, schemaName)
-            st.bindText(2, tableName)
-            st.bindText(3, keyJson)
-            if (!st.step()) {
-                DirtyUploadState()
-            } else {
-                DirtyUploadState(
-                    exists = true,
-                    op = st.getText(0),
-                    payload = if (st.isNull(1)) null else st.getText(1),
-                    baseRowVersion = st.getLong(2),
-                    currentOrdinal = st.getLong(3),
-                )
-            }
+            DirtyUploadState(
+                exists = true,
+                op = st.getText(0),
+                payload = if (st.isNull(1)) null else st.getText(1),
+                baseRowVersion = st.getLong(2),
+                currentOrdinal = st.getLong(3),
+            )
         }
     }
 

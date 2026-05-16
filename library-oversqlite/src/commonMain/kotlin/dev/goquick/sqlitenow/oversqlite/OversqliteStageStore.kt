@@ -17,7 +17,6 @@ package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.TransactionMode
-import dev.goquick.sqlitenow.core.sqlite.use
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -130,34 +129,28 @@ internal class OversqliteStageStore(
         state: RuntimeState,
         snapshotId: String,
     ): List<StagedSnapshotRow> {
-        return db.withExclusiveAccess {
-            val rows = mutableListOf<StagedSnapshotRow>()
-            db.prepare(
-                """
+        return db.queryList(
+            sql = """
                 SELECT schema_name, table_name, key_json, row_version, payload
                 FROM _sync_snapshot_stage
                 WHERE snapshot_id = ?
                 ORDER BY row_ordinal
-                """.trimIndent()
-            ).use { st ->
-                st.bindText(1, snapshotId)
-                while (st.step()) {
-                    val schemaName = st.getText(0)
-                    val tableName = st.getText(1)
-                    val keyJson = st.getText(2)
-                    val (localPk, wireKey) = localStore.decodeDirtyKeyForPush(state, tableName, keyJson)
-                    rows += StagedSnapshotRow(
-                        schemaName = schemaName,
-                        tableName = tableName,
-                        keyJson = keyJson,
-                        localPk = localPk,
-                        wireKey = wireKey,
-                        rowVersion = st.getLong(3),
-                        payload = st.getText(4),
-                    )
-                }
-            }
-            rows
+            """.trimIndent(),
+            bind = { st -> st.bindText(1, snapshotId) },
+        ) { st ->
+            val schemaName = st.getText(0)
+            val tableName = st.getText(1)
+            val keyJson = st.getText(2)
+            val (localPk, wireKey) = localStore.decodeDirtyKeyForPush(state, tableName, keyJson)
+            StagedSnapshotRow(
+                schemaName = schemaName,
+                tableName = tableName,
+                keyJson = keyJson,
+                localPk = localPk,
+                wireKey = wireKey,
+                rowVersion = st.getLong(3),
+                payload = st.getText(4),
+            )
         }
     }
 
@@ -186,10 +179,8 @@ internal class OversqliteStageStore(
     }
 
     private suspend fun loadDirtySnapshotRows(): List<DirtySnapshotRow> {
-        return db.withExclusiveAccess {
-            val rows = mutableListOf<DirtySnapshotRow>()
-            db.prepare(
-                """
+        return db.queryList(
+            sql = """
                 SELECT
                   d.schema_name,
                   d.table_name,
@@ -205,22 +196,18 @@ internal class OversqliteStageStore(
                  AND rs.table_name = d.table_name
                  AND rs.key_json = d.key_json
                 ORDER BY d.dirty_ordinal, d.table_name, d.key_json
-                """.trimIndent()
-            ).use { st ->
-                while (st.step()) {
-                    rows += DirtySnapshotRow(
-                        schemaName = st.getText(0),
-                        tableName = st.getText(1),
-                        keyJson = st.getText(2),
-                        baseRowVersion = st.getLong(3),
-                        payload = if (st.isNull(4)) null else st.getText(4),
-                        dirtyOrdinal = st.getLong(5),
-                        stateExists = st.getLong(6) == 1L,
-                        stateDeleted = st.getLong(7) == 1L,
-                    )
-                }
-            }
-            rows
+            """.trimIndent(),
+        ) { st ->
+            DirtySnapshotRow(
+                schemaName = st.getText(0),
+                tableName = st.getText(1),
+                keyJson = st.getText(2),
+                baseRowVersion = st.getLong(3),
+                payload = if (st.isNull(4)) null else st.getText(4),
+                dirtyOrdinal = st.getLong(5),
+                stateExists = st.getLong(6) == 1L,
+                stateDeleted = st.getLong(7) == 1L,
+            )
         }
     }
 }

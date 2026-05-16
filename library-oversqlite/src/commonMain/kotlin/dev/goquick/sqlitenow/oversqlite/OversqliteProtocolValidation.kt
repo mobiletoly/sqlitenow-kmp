@@ -59,13 +59,7 @@ internal fun validateBundle(bundle: Bundle) {
     require(bundle.bundleSeq > 0) { "bundle_seq ${bundle.bundleSeq} must be positive" }
     require(bundle.sourceId.isNotBlank()) { "bundle source_id must be non-empty" }
     require(bundle.sourceBundleId > 0) { "bundle source_bundle_id ${bundle.sourceBundleId} must be positive" }
-    bundle.rows.forEachIndexed { index, row ->
-        try {
-            validateBundleRow(row)
-        } catch (e: Throwable) {
-            throw IllegalArgumentException("invalid bundle row $index: ${e.message}", e)
-        }
-    }
+    validateIndexedRows(bundle.rows, "bundle", ::validateBundleRow)
 }
 
 internal fun validateBundleRow(row: BundleRow) {
@@ -125,13 +119,7 @@ internal fun validateSnapshotChunkResponse(
     require(!chunk.hasMore || chunk.rows.isNotEmpty()) {
         "snapshot chunk response with has_more=true must include at least one row"
     }
-    chunk.rows.forEachIndexed { index, row ->
-        try {
-            validateSnapshotRow(row)
-        } catch (e: Throwable) {
-            throw IllegalArgumentException("invalid snapshot row $index: ${e.message}", e)
-        }
-    }
+    validateIndexedRows(chunk.rows, "snapshot", ::validateSnapshotRow)
 }
 
 internal fun validatePushSessionCreateResponse(
@@ -260,11 +248,19 @@ internal fun validateCommittedBundleRowsResponse(
     require(!response.hasMore || response.rows.isNotEmpty()) {
         "committed bundle chunk response with has_more=true must include at least one row"
     }
-    response.rows.forEachIndexed { index, row ->
+    validateIndexedRows(response.rows, "committed bundle", ::validateBundleRow)
+}
+
+private inline fun <T> validateIndexedRows(
+    rows: List<T>,
+    label: String,
+    validate: (T) -> Unit,
+) {
+    rows.forEachIndexed { index, row ->
         try {
-            validateBundleRow(row)
+            validate(row)
         } catch (e: Throwable) {
-            throw IllegalArgumentException("invalid committed bundle row $index: ${e.message}", e)
+            throw IllegalArgumentException("invalid $label row $index: ${e.message}", e)
         }
     }
 }

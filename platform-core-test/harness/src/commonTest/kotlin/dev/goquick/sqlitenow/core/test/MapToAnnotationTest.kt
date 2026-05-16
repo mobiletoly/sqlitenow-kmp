@@ -22,42 +22,37 @@ class MapToAnnotationTest {
 
     @Test
     fun selectAllMapToSummaryReturnsMappedData() = runDatabaseTest {
-            database.open()
-
-            val params = PersonQuery.Add.Params(
-                email = "map-to@example.com",
-                firstName = "Map",
-                lastName = "Target",
-                phone = null,
-                birthDate = LocalDate(1992, 4, 20),
-            )
-            val inserted = database.person.add.one(params)
-
-            val summaries = database.person.selectAllAsc.asList()
-
-            assertTrue(summaries.isNotEmpty(), "Expected at least one summary")
-            val summary = summaries.first { it.id == inserted.id }
-            assertEquals(PersonSummary(inserted.id, "Map Target"), summary)
+        assertPersonSummarySelectMapsData {
+            person.selectAllAsc.asList()
+        }
     }
 
     @Test
     fun selectAllDescReturnsMappedData() = runDatabaseTest {
-            database.open()
+        assertPersonSummarySelectMapsData {
+            person.selectAllDesc.asList()
+        }
+    }
 
-            val params = PersonQuery.Add.Params(
-                email = "map-to-desc@example.com",
-                firstName = "Desc",
-                lastName = "Target",
-                phone = null,
-                birthDate = LocalDate(1993, 5, 15),
-            )
-            val inserted = database.person.add.one(params)
+    private suspend fun assertPersonSummarySelectMapsData(
+        selectSummaries: suspend LibraryTestDatabase.() -> List<PersonSummary>,
+    ) {
+        database.open()
 
-            val summaries = database.person.selectAllDesc.asList()
+        val params = PersonQuery.Add.Params(
+            email = "map-to@example.com",
+            firstName = "Map",
+            lastName = "Target",
+            phone = null,
+            birthDate = LocalDate(1992, 4, 20),
+        )
+        val inserted = database.person.add.one(params)
 
-            assertTrue(summaries.isNotEmpty(), "Expected at least one summary from view")
-            val summary = summaries.first { it.id == inserted.id }
-            assertEquals(PersonSummary(inserted.id, "Desc Target"), summary)
+        val summaries = database.selectSummaries()
+
+        assertTrue(summaries.isNotEmpty(), "Expected at least one summary")
+        val summary = summaries.first { it.id == inserted.id }
+        assertEquals(PersonSummary(inserted.id, "Map Target"), summary)
     }
 
     @Test
