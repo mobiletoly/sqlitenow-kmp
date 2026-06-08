@@ -30,6 +30,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlin.time.Clock
 
 private const val expectedSampleSyncServerAppName = "samplesync-server"
 
@@ -47,6 +48,11 @@ private data class SigninResponse(
 private data class ServerStatusResponse(
     @SerialName("app_name")
     val appName: String,
+)
+
+data class SampleAuthToken(
+    val token: String,
+    val expiresAtEpochMillis: Long,
 )
 
 suspend fun ensureSampleSyncServer(baseUrl: String) {
@@ -73,23 +79,32 @@ private suspend fun requestJwtToken(
     user: String,
     sourceId: String,
     password: String,
-): String {
+): SampleAuthToken {
     val http = HttpClient {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
     }
     return try {
-        val resp: SigninResponse = http.post("$baseUrl/dummy-signin") {
+        val response = http.post("$baseUrl/dummy-signin") {
             contentType(ContentType.Application.Json)
             setBody(SigninRequest(user, password, sourceId))
-        }.body()
-        resp.token
+        }
+        check(response.status == HttpStatusCode.OK) {
+            "Sample auth token request failed: HTTP ${response.status} from $baseUrl/dummy-signin. " +
+                "Start examples/samplesync_server."
+        }
+        val resp: SigninResponse = response.body()
+        val expiresInMillis = resp.expiresIn.coerceAtLeast(0L) * 1_000L
+        SampleAuthToken(
+            token = resp.token,
+            expiresAtEpochMillis = Clock.System.now().toEpochMilliseconds() + expiresInMillis,
+        )
     } finally {
         http.close()
     }
 }
 
 // Fetches JWT from the example server's /dummy-signin endpoint.
-suspend fun fetchJwt(baseUrl: String, user: String, sourceId: String, password: String = "demo"): String {
+suspend fun fetchJwt(baseUrl: String, user: String, sourceId: String, password: String = "demo"): SampleAuthToken {
     ensureSampleSyncServer(baseUrl)
     return requestJwtToken(
         baseUrl = baseUrl,
@@ -101,7 +116,7 @@ suspend fun fetchJwt(baseUrl: String, user: String, sourceId: String, password: 
 
 // Refresh needs to outlive the failed request scope; otherwise nested network calls can inherit
 // a completed parent job from the original 401 response path.
-suspend fun refreshJwt(baseUrl: String, user: String, sourceId: String, password: String = "demo"): String {
+suspend fun refreshJwt(baseUrl: String, user: String, sourceId: String, password: String = "demo"): SampleAuthToken {
     return withContext(NonCancellable) {
         requestJwtToken(
             baseUrl = baseUrl,

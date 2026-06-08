@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+
 /*
  * Copyright 2025 Toly Pochkin
  *
@@ -13,10 +15,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package dev.goquick.sqlitenow.samplesynckmp
+package dev.goquick.sqlitenow.common
 
-class JVMPlatform: Platform {
-    override val name: String = "Java ${System.getProperty("java.version")}"
+import kotlinx.cinterop.convert
+import platform.posix.EEXIST
+import platform.posix.errno
+import platform.posix.mkdir
+
+internal actual fun nativeCreateDirectory(path: String) {
+    if (mkdir(path, 0x1FF.convert()) != 0 && errno != EEXIST) {
+        error("Failed to create directory at $path (errno=$errno)")
+    }
 }
-
-actual fun getPlatform(): Platform = JVMPlatform()

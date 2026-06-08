@@ -26,7 +26,29 @@ abstract interface class OversqliteHttpClient {
   });
 }
 
-final class IoOversqliteHttpClient implements OversqliteHttpClient {
+final class OversqliteBundleChangeWatchResponse {
+  const OversqliteBundleChangeWatchResponse({
+    required this.statusCode,
+    required this.lines,
+    required this.close,
+    this.body = '',
+  });
+
+  final int statusCode;
+  final Stream<String> lines;
+  final Future<void> Function() close;
+  final String body;
+}
+
+abstract interface class OversqliteBundleChangeWatchTransport {
+  Future<OversqliteBundleChangeWatchResponse> watchBundleChanges({
+    required String sourceId,
+    required int afterBundleSeq,
+  });
+}
+
+final class IoOversqliteHttpClient
+    implements OversqliteHttpClient, OversqliteBundleChangeWatchTransport {
   IoOversqliteHttpClient({
     required Uri baseUri,
     HttpClient? httpClient,
@@ -61,6 +83,33 @@ final class IoOversqliteHttpClient implements OversqliteHttpClient {
     required String sourceId,
   }) {
     return _send(method: 'DELETE', path: path, sourceId: sourceId);
+  }
+
+  @override
+  Future<OversqliteBundleChangeWatchResponse> watchBundleChanges({
+    required String sourceId,
+    required int afterBundleSeq,
+  }) async {
+    final uri = _resolve('sync/watch?after_bundle_seq=$afterBundleSeq');
+    final request = await _httpClient.openUrl('GET', uri);
+    for (final entry in _defaultHeaders.entries) {
+      request.headers.set(entry.key, entry.value);
+    }
+    request.headers.set(oversyncSourceIdHeaderName, sourceId);
+    final response = await request.close();
+    if (response.statusCode != 200) {
+      return OversqliteBundleChangeWatchResponse(
+        statusCode: response.statusCode,
+        body: await utf8.decoder.bind(response).join(),
+        lines: const Stream<String>.empty(),
+        close: () async {},
+      );
+    }
+    return OversqliteBundleChangeWatchResponse(
+      statusCode: response.statusCode,
+      lines: response.transform(utf8.decoder).transform(const LineSplitter()),
+      close: () async {},
+    );
   }
 
   void close({bool force = false}) {
@@ -173,6 +222,15 @@ final class RebuildRequiredException implements Exception {
   @override
   String toString() =>
       'client rebuild is required; run rebuild() before syncing';
+}
+
+final class SourceSequenceMismatchException implements Exception {
+  const SourceSequenceMismatchException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }
 
 final class SourceRecoveryRequiredException implements Exception {
@@ -361,6 +419,9 @@ final class CapabilitiesResponse {
 
   bool get connectLifecycleSupported => features['connect_lifecycle'] ?? false;
 
+  bool get bundleChangeWatchSupported =>
+      features['bundle_change_watch'] ?? false;
+
   factory CapabilitiesResponse.fromJson(Map<String, Object?> json) {
     final rawFeatures = json['features'];
     return CapabilitiesResponse(
@@ -378,6 +439,121 @@ final class CapabilitiesResponse {
             )
           : null,
     );
+  }
+}
+
+final class BundleChangeEvent {
+  const BundleChangeEvent({
+    required this.bundleSeq,
+    this.sourceId = '',
+    this.sourceBundleId = 0,
+  });
+
+  final int bundleSeq;
+  final String sourceId;
+  final int sourceBundleId;
+
+  factory BundleChangeEvent.fromJson(Map<String, Object?> json) {
+    final bundleSeq = json['bundle_seq'];
+    if (bundleSeq is! int) {
+      throw const OversqliteProtocolException(
+        'bundle change event is missing bundle_seq',
+      );
+    }
+    if (bundleSeq <= 0) {
+      throw OversqliteProtocolException(
+        'bundle change event bundle_seq $bundleSeq must be positive',
+      );
+    }
+    return BundleChangeEvent(
+      bundleSeq: bundleSeq,
+      sourceId: (json['source_id'] as String?) ?? '',
+      sourceBundleId: (json['source_bundle_id'] as int?) ?? 0,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is BundleChangeEvent &&
+        other.bundleSeq == bundleSeq &&
+        other.sourceId == sourceId &&
+        other.sourceBundleId == sourceBundleId;
+  }
+
+  @override
+  int get hashCode => Object.hash(bundleSeq, sourceId, sourceBundleId);
+}
+
+Stream<BundleChangeEvent> parseBundleChangeEventStream(Stream<String> lines) {
+  final parser = _BundleChangeWatchSseParser();
+  return lines.expand(parser.accept);
+}
+
+List<BundleChangeEvent> parseBundleChangeEventLines(Iterable<String> lines) {
+  final parser = _BundleChangeWatchSseParser();
+  final events = <BundleChangeEvent>[];
+  for (final line in lines) {
+    events.addAll(parser.accept(line));
+  }
+  parser.finish();
+  return events;
+}
+
+final class _BundleChangeWatchSseParser {
+  String _eventName = '';
+  final List<String> _dataLines = [];
+
+  Iterable<BundleChangeEvent> accept(String line) sync* {
+    if (line.isEmpty) {
+      final event = _dispatch();
+      if (event != null) {
+        yield event;
+      }
+      return;
+    }
+    if (line.startsWith(':')) {
+      return;
+    }
+
+    final separator = line.indexOf(':');
+    final field = separator < 0 ? line : line.substring(0, separator);
+    var value = separator < 0 ? '' : line.substring(separator + 1);
+    if (value.startsWith(' ')) {
+      value = value.substring(1);
+    }
+
+    switch (field) {
+      case 'event':
+        _eventName = value;
+      case 'data':
+        _dataLines.add(value);
+    }
+  }
+
+  void finish() {
+    _eventName = '';
+    _dataLines.clear();
+  }
+
+  BundleChangeEvent? _dispatch() {
+    final shouldEmit = _eventName == 'bundle';
+    final data = _dataLines.join('\n');
+    finish();
+    if (!shouldEmit) {
+      return null;
+    }
+    if (data.isEmpty) {
+      throw const OversqliteProtocolException(
+        'bundle change event is missing data',
+      );
+    }
+    final decoded = jsonDecode(data);
+    if (decoded is! Map) {
+      throw const OversqliteProtocolException(
+        'bundle change event data must be a JSON object',
+      );
+    }
+    return BundleChangeEvent.fromJson(decoded.cast<String, Object?>());
   }
 }
 

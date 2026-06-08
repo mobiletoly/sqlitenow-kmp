@@ -1,7 +1,23 @@
+import org.gradle.api.tasks.JavaExec
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 import org.jetbrains.kotlin.gradle.targets.js.webpack.KotlinWebpack
 import org.jetbrains.kotlin.gradle.targets.js.webpack.KotlinWebpackConfig
+import org.jetbrains.kotlin.gradle.targets.jvm.KotlinJvmTarget
 import org.gradle.language.jvm.tasks.ProcessResources
+
+val composeDesktopCurrentOsDependency = run {
+    val os = System.getProperty("os.name").lowercase()
+    val arch = System.getProperty("os.arch").lowercase()
+    val targetId = when {
+        os.contains("mac") || os.contains("darwin") ->
+            if (arch.contains("aarch64") || arch.contains("arm64")) "macos-arm64" else "macos-x64"
+        os.contains("win") ->
+            if (arch.contains("aarch64") || arch.contains("arm64")) "windows-arm64" else "windows-x64"
+        else ->
+            if (arch.contains("aarch64") || arch.contains("arm64")) "linux-arm64" else "linux-x64"
+    }
+    "org.jetbrains.compose.desktop:desktop-jvm-$targetId:${libs.versions.compose.plugin.get()}"
+}
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -29,6 +45,8 @@ kotlin {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
         }
     }
+
+    jvm("desktop")
 
     compilerOptions {
         languageVersion.set(KotlinVersion.KOTLIN_2_3)
@@ -98,6 +116,11 @@ kotlin {
             implementation(libs.ktor.client.darwin)
         }
 
+        getByName("desktopMain").dependencies {
+            implementation(composeDesktopCurrentOsDependency)
+            implementation("io.ktor:ktor-client-cio:${libs.versions.ktor.get()}")
+        }
+
         jsMain.dependencies {
             implementation(libs.jetbrains.compose.runtime)
             implementation(libs.jetbrains.compose.foundation)
@@ -116,6 +139,25 @@ kotlin {
             implementation(npm("sql.js", "1.13.0"))
         }
     }
+}
+
+compose.desktop {
+    application {
+        mainClass = "dev.goquick.sqlitenow.samplesynckmp.MainKt"
+        buildTypes.release.proguard.isEnabled = false
+    }
+}
+
+val desktopTarget = kotlin.targets.getByName("desktop") as KotlinJvmTarget
+val desktopMainCompilation = desktopTarget.compilations.getByName("main")
+
+tasks.register<JavaExec>("runDesktop") {
+    group = "application"
+    description = "Runs the samplesync app on the desktop JVM target."
+    mainClass.set("dev.goquick.sqlitenow.samplesynckmp.MainKt")
+    classpath = desktopMainCompilation.runtimeDependencyFiles
+    classpath(desktopMainCompilation.output.allOutputs)
+    dependsOn(desktopMainCompilation.compileTaskProvider)
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEach {

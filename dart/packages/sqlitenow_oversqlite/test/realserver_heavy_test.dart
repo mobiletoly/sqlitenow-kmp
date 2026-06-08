@@ -337,6 +337,7 @@ void main() {
           );
           expect((await clientB.pushPending()).outcome, PushOutcome.committed);
           await clientA.pullToStable();
+          await clientB.pullToStable();
           await observer.pullToStable();
 
           for (final db in [dbA, dbB, observerDb]) {

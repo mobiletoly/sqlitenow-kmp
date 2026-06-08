@@ -57,6 +57,10 @@ final class SyncDartDb {
     int uploadLimit = 200,
     int downloadLimit = 1000,
     bool verboseLogs = false,
+    Duration automaticDownloadInterval = const Duration(seconds: 60),
+    BundleChangeWatchMode bundleChangeWatchMode = BundleChangeWatchMode.off,
+    Duration bundleChangeWatchReconnectMin = const Duration(seconds: 1),
+    Duration bundleChangeWatchReconnectMax = const Duration(seconds: 60),
   }) {
     return OversqliteConfig(
       schema: schema,
@@ -64,6 +68,10 @@ final class SyncDartDb {
       uploadLimit: uploadLimit,
       downloadLimit: downloadLimit,
       verboseLogs: verboseLogs,
+      automaticDownloadInterval: automaticDownloadInterval,
+      bundleChangeWatchMode: bundleChangeWatchMode,
+      bundleChangeWatchReconnectMin: bundleChangeWatchReconnectMin,
+      bundleChangeWatchReconnectMax: bundleChangeWatchReconnectMax,
     );
   }
 
@@ -73,12 +81,20 @@ final class SyncDartDb {
     int uploadLimit = 200,
     int downloadLimit = 1000,
     bool verboseLogs = false,
+    Duration automaticDownloadInterval = const Duration(seconds: 60),
+    BundleChangeWatchMode bundleChangeWatchMode = BundleChangeWatchMode.off,
+    Duration bundleChangeWatchReconnectMin = const Duration(seconds: 1),
+    Duration bundleChangeWatchReconnectMax = const Duration(seconds: 60),
   }) {
     final config = buildOversqliteConfig(
       schema: schema,
       uploadLimit: uploadLimit,
       downloadLimit: downloadLimit,
       verboseLogs: verboseLogs,
+      automaticDownloadInterval: automaticDownloadInterval,
+      bundleChangeWatchMode: bundleChangeWatchMode,
+      bundleChangeWatchReconnectMin: bundleChangeWatchReconnectMin,
+      bundleChangeWatchReconnectMax: bundleChangeWatchReconnectMax,
     );
     return DefaultOversqliteClient(
       database: _database,

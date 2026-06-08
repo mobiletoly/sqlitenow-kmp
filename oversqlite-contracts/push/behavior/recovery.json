@@ -1,0 +1,160 @@
+{
+  "formatVersion": 1,
+  "cases": [
+    {
+      "name": "already-committed-mismatch-preserves-source-sequence-error",
+      "description": "A strict already_committed replay whose committed rows do not match the local prepared bundle remains a source sequence mismatch and keeps the prepared outbox replayable.",
+      "localSetupSql": [
+        "INSERT INTO users(id, name) VALUES('user-1', 'Local Ada')"
+      ],
+      "serverScript": {
+        "kind": "already_committed_mismatch",
+        "committedPayload": {
+          "id": "user-1",
+          "name": "Server Ada"
+        }
+      },
+      "steps": [
+        {
+          "action": "pushPending",
+          "expectedException": "source_sequence_mismatch",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "prepared",
+            "outboxRowCount": 1,
+            "dirtyRowCount": 0,
+            "nextSourceBundleId": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "committed-remote-mismatch-requires-rebuild",
+      "description": "A committed_remote replay whose committed rows differ from the local frozen outbox marks rebuild required and preserves the committed outbox for rebuild.",
+      "localSetupSql": [
+        "INSERT INTO users(id, name) VALUES('user-1', 'Ada')",
+        "INSERT INTO users(id, name) VALUES('user-2', 'Grace')"
+      ],
+      "serverScript": {
+        "kind": "committed_remote_mismatch",
+        "commitResponse": {
+          "bundle_seq": 1,
+          "source_id": "source-fixture",
+          "source_bundle_id": 1,
+          "row_count": 2,
+          "bundle_hash": "fixture-committed-remote-mismatch"
+        },
+        "committedRowsResponse": {
+          "bundle_seq": 1,
+          "source_id": "source-fixture",
+          "source_bundle_id": 1,
+          "row_count": 2,
+          "bundle_hash": "fixture-committed-remote-mismatch",
+          "rows": [
+            {
+              "schema": "main",
+              "table": "users",
+              "key": {
+                "id": "user-2"
+              },
+              "op": "INSERT",
+              "row_version": 1,
+              "payload": {
+                "id": "user-2",
+                "name": "Grace"
+              }
+            },
+            {
+              "schema": "main",
+              "table": "users",
+              "key": {
+                "id": "user-1"
+              },
+              "op": "INSERT",
+              "row_version": 1,
+              "payload": {
+                "id": "user-1",
+                "name": "Ada"
+              }
+            }
+          ],
+          "next_row_ordinal": 1,
+          "has_more": false
+        }
+      },
+      "steps": [
+        {
+          "action": "pushPending",
+          "expectedException": "rebuild_required",
+          "expectedState": {
+            "rebuildRequired": true,
+            "outboxState": "committed_remote",
+            "outboxRowCount": 2,
+            "dirtyRowCount": 0,
+            "nextSourceBundleId": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "committed-replay-pruned-requires-rebuild",
+      "description": "A committed_remote replay pruned by the server marks rebuild required and keeps the committed outbox until rebuild applies a snapshot.",
+      "localSetupSql": [
+        "INSERT INTO users(id, name) VALUES('user-1', 'Ada')"
+      ],
+      "serverScript": {
+        "kind": "committed_replay_pruned"
+      },
+      "steps": [
+        {
+          "action": "pushPending",
+          "expectedException": "rebuild_required",
+          "expectedState": {
+            "rebuildRequired": true,
+            "outboxState": "committed_remote",
+            "outboxRowCount": 1,
+            "dirtyRowCount": 0,
+            "nextSourceBundleId": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "prepared-precommit-retry-remains-replayable",
+      "description": "A pre-commit transient failure leaves the prepared outbox replayable, and the next push drains it without losing the local write.",
+      "localSetupSql": [
+        "INSERT INTO users(id, name) VALUES('user-1', 'Ada')"
+      ],
+      "serverScript": {
+        "kind": "precommit_retry"
+      },
+      "steps": [
+        {
+          "action": "pushPending",
+          "expectedException": "http_error",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "prepared",
+            "outboxRowCount": 1,
+            "dirtyRowCount": 0,
+            "nextSourceBundleId": 1
+          }
+        },
+        {
+          "action": "pushPending",
+          "expectedException": "none",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "none",
+            "outboxRowCount": 0,
+            "dirtyRowCount": 0,
+            "nextSourceBundleId": 2
+          },
+          "expectedServerState": {
+            "createRequestCount": 2
+          }
+        }
+      ]
+    }
+  ]
+}

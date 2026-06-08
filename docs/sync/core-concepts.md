@@ -71,6 +71,15 @@ It never talks to the server and never attaches an account.
 
 Call it whenever an authenticated session exists, not only on the first sign-in gesture.
 
+### Automatic Downloads
+
+Automatic downloads are an optional attached-session worker. They are not part of `open()` or
+`attach(userId)` and must be started explicitly by app code.
+
+The worker only downloads. It may poll `pullToStable()` or, when the server supports
+`features.bundle_change_watch`, use `/sync/watch` as a metadata-only wake-up stream. The watch
+payload is never applied directly; `pullToStable()` remains the authoritative remote-data path.
+
 ### `detach()`
 
 `detach()` safely removes the current attached account scope from the local database.

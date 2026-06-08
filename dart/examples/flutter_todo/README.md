@@ -30,6 +30,17 @@ flutter test
 flutter test integration_test -d <android-or-ios-device-id>
 ```
 
+The app remains a core SQLiteNow example. It also carries an opt-in
+generated-oversqlite integration fixture for Flutter runtime validation. After
+starting `go-oversync/examples/nethttp_server`, run it on an Android emulator
+with:
+
+```shell
+flutter test integration_test/realserver_smoke_test.dart -d emulator-5554 \
+  --dart-define=OVERSQLITE_REALSERVER_TESTS=true \
+  --dart-define=OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL=http://10.0.2.2:8080
+```
+
 There is no separate `sqlitenow_flutter` package yet. The runtime remains a
 Dart package; Flutter apps add their own app storage choice, such as
 `path_provider`, around the generated database path.

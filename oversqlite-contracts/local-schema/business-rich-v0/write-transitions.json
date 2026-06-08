@@ -1,0 +1,43 @@
+{
+  "formatVersion": 1,
+  "applicationTables": [
+    "users",
+    "posts",
+    "categories",
+    "teams",
+    "team_members",
+    "files",
+    "file_reviews",
+    "typed_rows"
+  ],
+  "cases": [
+    {
+      "name": "insert-rich-graph",
+      "setupSql": [],
+      "actionSql": [
+        "INSERT INTO users(id, name, email) VALUES('user-1', 'User 1', 'user-1@example.com')",
+        "INSERT INTO posts(id, title, content, author_id) VALUES('post-1', 'Post 1', 'Content 1', 'user-1')",
+        "INSERT INTO categories(id, name, parent_id) VALUES('category-root', 'Root', NULL)",
+        "INSERT INTO categories(id, name, parent_id) VALUES('category-child', 'Child', 'category-root')",
+        "BEGIN",
+        "INSERT INTO teams(id, name, captain_member_id) VALUES('team-1', 'Team 1', 'member-captain')",
+        "INSERT INTO team_members(id, name, team_id) VALUES('member-captain', 'Captain', 'team-1')",
+        "INSERT INTO team_members(id, name, team_id) VALUES('member-2', 'Member 2', 'team-1')",
+        "COMMIT",
+        "INSERT INTO files(id, name, data) VALUES(x'00112233445566778899aabbccddeeff', 'File 1', x'deadbeef')",
+        "INSERT INTO file_reviews(id, review, file_id) VALUES(x'10112233445566778899aabbccddeeff', 'Review 1', x'00112233445566778899aabbccddeeff')",
+        "INSERT INTO typed_rows(id, name, note, count_value, enabled_flag, rating, data, created_at) VALUES('typed-1', 'Typed 1', NULL, 42, 1, 1.25, x'cafebabe', '2026-03-24T18:42:11Z')"
+      ]
+    },
+    {
+      "name": "delete-file-cascades-review",
+      "setupSql": [
+        "INSERT INTO files(id, name, data) VALUES(x'20112233445566778899aabbccddeeff', 'Cascade File', x'0011')",
+        "INSERT INTO file_reviews(id, review, file_id) VALUES(x'21112233445566778899aabbccddeeff', 'Cascade Review', x'20112233445566778899aabbccddeeff')"
+      ],
+      "actionSql": [
+        "DELETE FROM files WHERE id = x'20112233445566778899aabbccddeeff'"
+      ]
+    }
+  ]
+}

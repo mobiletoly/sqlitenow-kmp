@@ -1,0 +1,37 @@
+{
+  "schema": "business",
+  "syncTables": [
+    {
+      "tableName": "users",
+      "syncKeyColumnName": "id"
+    },
+    {
+      "tableName": "posts",
+      "syncKeyColumnName": "id"
+    },
+    {
+      "tableName": "categories",
+      "syncKeyColumnName": "id"
+    },
+    {
+      "tableName": "teams",
+      "syncKeyColumnName": "id"
+    },
+    {
+      "tableName": "team_members",
+      "syncKeyColumnName": "id"
+    },
+    {
+      "tableName": "files",
+      "syncKeyColumnName": "id"
+    },
+    {
+      "tableName": "file_reviews",
+      "syncKeyColumnName": "id"
+    },
+    {
+      "tableName": "typed_rows",
+      "syncKeyColumnName": "id"
+    }
+  ]
+}

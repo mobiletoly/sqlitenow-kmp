@@ -94,11 +94,39 @@ class SqliteNowDartEmitterTest {
         assertTrue(!syncTablesBlock.contains("regular_table"))
         assertTrue(code.contains("OversqliteConfig buildOversqliteConfig({"))
         assertTrue(code.contains("syncTables: syncTables,"))
+        assertTrue(code.contains("Duration automaticDownloadInterval = const Duration(seconds: 60),"))
+        assertTrue(code.contains("BundleChangeWatchMode bundleChangeWatchMode = BundleChangeWatchMode.off,"))
+        assertTrue(code.contains("automaticDownloadInterval: automaticDownloadInterval,"))
+        assertTrue(code.contains("bundleChangeWatchMode: bundleChangeWatchMode,"))
         assertTrue(code.contains("DefaultOversqliteClient newOversqliteClient({"))
         assertTrue(code.contains("required OversqliteHttpClient httpClient,"))
         assertTrue(code.contains("return DefaultOversqliteClient("))
         assertTrue(code.contains("database: _database,"))
         assertTrue(code.contains("httpClient: httpClient,"))
+    }
+
+    @Test
+    fun compilerOmitsDartOversqliteHelpersWhenOversqliteFalse() {
+        val sqlDir = createDartFixtureSql(tempDir)
+        val outputDir = tempDir.resolve("generated-no-oversqlite-helpers")
+
+        val result = compileSqliteNowDatabase(
+            SqliteNowCompilerInput(
+                databaseName = "DartDb",
+                sqlDirectory = sqlDir,
+                packageName = "ignored.for.dart",
+                outputDirectory = outputDir,
+                oversqlite = false,
+                backend = SqliteNowCompilerBackend.DART,
+            )
+        )
+
+        assertEquals(listOf("dart_db.dart"), result.generatedFiles.map { it.name })
+        val code = outputDir.resolve("dart_db.dart").readText()
+        assertTrue(!code.contains("sqlitenow_oversqlite"))
+        assertTrue(!code.contains("buildOversqliteConfig"))
+        assertTrue(!code.contains("newOversqliteClient"))
+        assertTrue(!code.contains("BundleChangeWatchMode"))
     }
 
     @Test

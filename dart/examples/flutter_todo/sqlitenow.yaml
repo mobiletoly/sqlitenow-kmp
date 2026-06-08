@@ -5,3 +5,10 @@ databases:
     package: app.db
     runtime: dart
     oversqlite: false
+  RichRealServerDb:
+    input: ../../fixtures/oversqlite/RichRealServerDb
+    output: integration_test/generated
+    package: app.db
+    runtime: dart
+    oversqlite: true
+    schemaDatabaseFile: build/sqlitenow/rich-realserver-schema.db

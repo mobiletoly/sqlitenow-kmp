@@ -31,7 +31,11 @@ class SharedPushFixtureTest {
                     PushSessionCreateResponse.serializer(),
                     it.toString(),
                 )
-                assertEquals("staging", response.status, case.name)
+                assertEquals(
+                    it["status"].toString().trim('"'),
+                    response.status,
+                    case.name,
+                )
             }
             case.pushChunkRequest?.let {
                 val request = contractJson.decodeFromString(
@@ -70,6 +74,15 @@ class SharedPushFixtureTest {
                 )
                 assertEquals("push_conflict", response.error, case.name)
                 assertEquals(2L, response.conflict?.serverRowVersion, case.name)
+            }
+            case.expectedFinalState["error"]?.let {
+                val error = it.toString().trim('"')
+                val outboxState = case.expectedFinalState["outboxState"].toString().trim('"')
+                when (error) {
+                    "source_sequence_mismatch" -> assertEquals("prepared", outboxState, case.name)
+                    "rebuild_required" -> assertEquals("committed_remote", outboxState, case.name)
+                    else -> error("unexpected fixture error $error in ${case.name}")
+                }
             }
         }
     }

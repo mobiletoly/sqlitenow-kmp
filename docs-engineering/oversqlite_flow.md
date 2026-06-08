@@ -154,7 +154,35 @@ The interactive happy path:
 1. `pushPending()`
 2. `pullToStable()`
 
-### 5.4 `rebuild()`
+### 5.4 Automatic Downloads
+
+Automatic downloads are explicit and default-off. They never start from `open()` or
+`attach(userId)`.
+
+When started, the worker performs download work only:
+
+- polling mode calls `pullToStable()` on the configured interval
+- watch mode first checks `GET /sync/capabilities` for `features.bundle_change_watch == true`
+- watch mode opens `GET /sync/watch?after_bundle_seq=<last_bundle_seq_seen>` with the current
+  `Oversync-Source-ID`
+- bundle events are metadata-only wake-up hints; the event payload is not applied directly
+- every remote data change still flows through `pullToStable()`
+- active watch streams also keep a fallback polling interval, so watch failures do not permanently
+  stall downloads
+
+Pause behavior is split deliberately:
+
+- `pauseDownloads()` suppresses automatic polling, watch opens, watch-event pulls, and fallback
+  pulls
+- explicit `pullToStable()` still runs while automatic downloads are paused
+
+Cancellation behavior:
+
+- KMP callers own the coroutine running `runAutomaticDownloads(...)`
+- Dart callers own the returned `AutomaticDownloadsHandle`
+- cancellation/stop must release open watch streams and reconnect sleeps promptly
+
+### 5.5 `rebuild()`
 
 `rebuild()` is the explicit recovery entry point.
 
@@ -166,7 +194,7 @@ Oversqlite chooses the internal mode:
 - create-time stale/out-of-order source failures and commit-time source-sequence changes use
   rebuild-plus-rotate recovery
 
-### 5.5 `detach()` / `syncThenDetach()`
+### 5.6 `detach()` / `syncThenDetach()`
 
 Successful destructive detach:
 
@@ -196,6 +224,13 @@ The current client talks to these endpoints:
 ### Pull
 
 - `GET /sync/pull`
+
+### Watch
+
+- `GET /sync/watch`
+
+Watch is optional server support. It is a latency optimization for waking the automatic download
+worker; `/sync/pull` remains the authoritative data path.
 
 ### Snapshot rebuild
 

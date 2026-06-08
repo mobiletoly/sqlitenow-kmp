@@ -1,0 +1,198 @@
+{
+  "formatVersion": 1,
+  "capabilitiesCases": [
+    {
+      "name": "watch-enabled",
+      "response": {
+        "status": 200,
+        "body": {
+          "protocol_version": "v1",
+          "schema_version": 1,
+          "features": {
+            "connect_lifecycle": true,
+            "bundle_change_watch": true
+          }
+        }
+      },
+      "expectedBundleChangeWatchSupported": true
+    },
+    {
+      "name": "watch-disabled",
+      "response": {
+        "status": 200,
+        "body": {
+          "protocol_version": "v1",
+          "schema_version": 1,
+          "features": {
+            "connect_lifecycle": true,
+            "bundle_change_watch": false
+          }
+        }
+      },
+      "expectedBundleChangeWatchSupported": false
+    },
+    {
+      "name": "watch-omitted",
+      "response": {
+        "status": 200,
+        "body": {
+          "protocol_version": "v1",
+          "schema_version": 1,
+          "features": {
+            "connect_lifecycle": true
+          }
+        }
+      },
+      "expectedBundleChangeWatchSupported": false
+    }
+  ],
+  "sseCases": [
+    {
+      "name": "canonical-bundle-event",
+      "lines": [
+        "event: bundle",
+        "data: {\"bundle_seq\":124,\"source_id\":\"device-a\",\"source_bundle_id\":7,\"ignored\":true}",
+        ""
+      ],
+      "expectedEvents": [
+        {
+          "bundle_seq": 124,
+          "source_id": "device-a",
+          "source_bundle_id": 7
+        }
+      ]
+    },
+    {
+      "name": "heartbeat-comment",
+      "lines": [
+        ": heartbeat",
+        ""
+      ],
+      "expectedEvents": []
+    },
+    {
+      "name": "unknown-event-ignored",
+      "lines": [
+        "event: diagnostic",
+        "data: {not-json",
+        ""
+      ],
+      "expectedEvents": []
+    },
+    {
+      "name": "multi-line-data",
+      "lines": [
+        "event: bundle",
+        "data: {\"bundle_seq\":",
+        "data: 125,\"source_id\":\"device-b\",\"source_bundle_id\":8}",
+        ""
+      ],
+      "expectedEvents": [
+        {
+          "bundle_seq": 125,
+          "source_id": "device-b",
+          "source_bundle_id": 8
+        }
+      ]
+    },
+    {
+      "name": "missing-bundle-seq",
+      "lines": [
+        "event: bundle",
+        "data: {\"source_id\":\"device-a\",\"source_bundle_id\":7}",
+        ""
+      ],
+      "expectError": true
+    },
+    {
+      "name": "non-positive-bundle-seq",
+      "lines": [
+        "event: bundle",
+        "data: {\"bundle_seq\":0,\"source_id\":\"device-a\",\"source_bundle_id\":7}",
+        ""
+      ],
+      "expectError": true
+    },
+    {
+      "name": "malformed-json",
+      "lines": [
+        "event: bundle",
+        "data: {\"bundle_seq\":",
+        ""
+      ],
+      "expectError": true
+    }
+  ],
+  "setupErrorResponses": [
+    {
+      "status": 400,
+      "body": {
+        "error": "invalid_request",
+        "message": "after_bundle_seq must be a non-negative integer"
+      },
+      "expectedError": "invalid_request"
+    },
+    {
+      "status": 401,
+      "body": {
+        "error": "authentication_failed",
+        "message": "authentication failed"
+      },
+      "expectedError": "authentication_failed"
+    },
+    {
+      "status": 403,
+      "body": {
+        "error": "bundle_change_watch_forbidden",
+        "message": "bundle change watch is forbidden for this actor"
+      },
+      "expectedError": "bundle_change_watch_forbidden"
+    },
+    {
+      "status": 409,
+      "body": {
+        "error": "scope_uninitialized",
+        "message": "scope is not initialized"
+      },
+      "expectedError": "scope_uninitialized"
+    },
+    {
+      "status": 409,
+      "body": {
+        "error": "scope_initializing",
+        "message": "scope initialization is in progress"
+      },
+      "expectedError": "scope_initializing"
+    },
+    {
+      "status": 503,
+      "body": {
+        "error": "bundle_change_watch_disabled",
+        "message": "bundle change watch is disabled"
+      },
+      "expectedError": "bundle_change_watch_disabled"
+    },
+    {
+      "status": 500,
+      "body": {
+        "error": "bundle_change_watch_failed",
+        "message": "bundle change watch setup failed"
+      },
+      "expectedError": "bundle_change_watch_failed"
+    }
+  ],
+  "runtimeCases": [
+    {
+      "name": "non-ok-watch-response-closes-before-fallback",
+      "response": {
+        "status": 503,
+        "body": {
+          "error": "bundle_change_watch_disabled",
+          "message": "bundle change watch is disabled"
+        }
+      },
+      "expectedCloseCount": 1,
+      "expectedFallbackPullsAtLeast": 1
+    }
+  ]
+}

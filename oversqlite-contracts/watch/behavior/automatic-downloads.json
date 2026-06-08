@@ -1,0 +1,148 @@
+{
+  "formatVersion": 1,
+  "cases": [
+    {
+      "name": "non-ok-watch-response-closes-before-fallback",
+      "description": "A non-OK watch setup response is closed and automatic downloads falls back to pull.",
+      "serverScript": {
+        "kind": "non_ok_watch_response",
+        "response": {
+          "status": 503,
+          "body": {
+            "error": "bundle_change_watch_disabled",
+            "message": "bundle change watch is disabled"
+          }
+        },
+        "remoteBundles": [
+          {
+            "rows": [
+              {
+                "schema": "main",
+                "table": "users",
+                "key": {
+                  "id": "u1"
+                },
+                "op": "INSERT",
+                "payload": {
+                  "id": "u1",
+                  "name": "Ada"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expectedState": {
+        "watchCloseCount": 1,
+        "fallbackPullsAtLeast": 1,
+        "watchAttemptsAtLeast": 1,
+        "users": [
+          {
+            "id": "u1",
+            "name": "Ada"
+          }
+        ]
+      }
+    },
+    {
+      "name": "malformed-stream-reconnects-and-pulls",
+      "description": "A malformed event stream reconnects and does not stall fallback pulls.",
+      "serverScript": {
+        "kind": "watch_lines",
+        "lines": [
+          "event: bundle",
+          "data: {\"bundle_seq\":",
+          ""
+        ],
+        "remoteBundles": [
+          {
+            "rows": [
+              {
+                "schema": "main",
+                "table": "users",
+                "key": {
+                  "id": "u1"
+                },
+                "op": "INSERT",
+                "payload": {
+                  "id": "u1",
+                  "name": "Ada"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expectedState": {
+        "watchCloseCount": 1,
+        "fallbackPullsAtLeast": 1,
+        "watchAttemptsAtLeast": 2,
+        "users": [
+          {
+            "id": "u1",
+            "name": "Ada"
+          }
+        ]
+      }
+    },
+    {
+      "name": "eof-reconnects-and-pulls",
+      "description": "A clean stream EOF reconnects and does not stall fallback pulls.",
+      "serverScript": {
+        "kind": "watch_lines",
+        "lines": [
+          ": stream ended",
+          ""
+        ],
+        "remoteBundles": [
+          {
+            "rows": [
+              {
+                "schema": "main",
+                "table": "users",
+                "key": {
+                  "id": "u1"
+                },
+                "op": "INSERT",
+                "payload": {
+                  "id": "u1",
+                  "name": "Ada"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expectedState": {
+        "watchCloseCount": 1,
+        "fallbackPullsAtLeast": 1,
+        "watchAttemptsAtLeast": 2,
+        "users": [
+          {
+            "id": "u1",
+            "name": "Ada"
+          }
+        ]
+      }
+    },
+    {
+      "name": "heartbeat-does-not-trigger-extra-pull",
+      "description": "Heartbeat-only watch traffic keeps the watch open and does not trigger bundle pulls by itself.",
+      "serverScript": {
+        "kind": "watch_lines",
+        "lines": [
+          ": heartbeat",
+          "",
+          ": heartbeat",
+          "",
+          ": heartbeat",
+          ""
+        ]
+      },
+      "expectedState": {
+        "fallbackPullsExactly": 1,
+        "watchAttemptsExactly": 1
+      }
+    }
+  ]
+}

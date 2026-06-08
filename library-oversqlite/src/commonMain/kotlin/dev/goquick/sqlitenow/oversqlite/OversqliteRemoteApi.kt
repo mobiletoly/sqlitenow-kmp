@@ -17,16 +17,21 @@ package dev.goquick.sqlitenow.oversqlite
 
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.plugins.HttpTimeoutConfig
+import io.ktor.client.plugins.timeout
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
+import io.ktor.client.request.prepareGet
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.utils.io.readLine
 import kotlinx.serialization.json.Json
 
 internal class OversqliteRemoteApi(
@@ -53,6 +58,55 @@ internal class OversqliteRemoteApi(
                 }
             },
         )
+    }
+
+    suspend fun watchBundleChanges(
+        sourceId: String,
+        afterBundleSeq: Long,
+        onEvent: suspend (BundleChangeEvent) -> Unit,
+    ) {
+        val normalizedAfterBundleSeq = afterBundleSeq.coerceAtLeast(0L)
+        val path = "/sync/watch?after_bundle_seq=$normalizedAfterBundleSeq"
+        log { "oversqlite http start op=bundle change watch method=GET path=$path" }
+        try {
+            http.prepareGet("sync/watch") {
+                header(sourceIdHeaderName, sourceId)
+                timeout {
+                    requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
+                }
+                url {
+                    parameters.append("after_bundle_seq", normalizedAfterBundleSeq.toString())
+                }
+            }.execute { response ->
+                log {
+                    "oversqlite http response op=bundle change watch method=GET path=$path " +
+                        "status=${response.status.value}"
+                }
+                if (response.status != HttpStatusCode.OK) {
+                    val raw = runCatching { response.bodyAsText() }.getOrDefault("")
+                    log {
+                        "oversqlite http non-ok op=bundle change watch method=GET path=$path " +
+                            "status=${response.status.value} body=${raw.logExcerpt()}"
+                    }
+                    throw RuntimeException("bundle change watch failed: HTTP ${response.status} - $raw")
+                }
+                val parser = BundleChangeWatchSseParser(json)
+                val channel = response.bodyAsChannel()
+                while (!channel.isClosedForRead) {
+                    val line = channel.readLine() ?: break
+                    for (event in parser.accept(line)) {
+                        onEvent(event)
+                    }
+                }
+                parser.finish()
+            }
+        } catch (error: Throwable) {
+            log {
+                "oversqlite http failure op=bundle change watch method=GET path=$path " +
+                    "error=${error.logSummary()}"
+            }
+            throw error
+        }
     }
 
     suspend fun connect(

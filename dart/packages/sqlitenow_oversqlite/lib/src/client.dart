@@ -147,6 +147,12 @@ final class SyncThenDetachResult {
   bool get isSuccess => detach == DetachOutcome.detached;
 }
 
+abstract interface class AutomaticDownloadsHandle {
+  Future<void> stop();
+
+  Future<void> get done;
+}
+
 final class SourceInfo {
   const SourceInfo({
     required this.currentSourceId,
@@ -252,12 +258,16 @@ final class DefaultOversqliteClient implements OversqliteClient {
        _config = config,
        _runtime = OversqliteLocalRuntime(database: database, config: config),
        _remoteApi = httpClient == null ? null : OversqliteRemoteApi(httpClient),
+       _watchTransport = httpClient is OversqliteBundleChangeWatchTransport
+           ? httpClient as OversqliteBundleChangeWatchTransport
+           : null,
        _resolver = resolver;
 
   final SqliteNowDatabase _database;
   final OversqliteConfig _config;
   final OversqliteLocalRuntime _runtime;
   final OversqliteRemoteApi? _remoteApi;
+  final OversqliteBundleChangeWatchTransport? _watchTransport;
   final Resolver _resolver;
   final _progressController = StreamController<OversqliteProgress>.broadcast();
 
@@ -269,6 +279,7 @@ final class DefaultOversqliteClient implements OversqliteClient {
   bool _uploadsPaused = false;
   bool _downloadsPaused = false;
   OversqliteProgress _progress = const OversqliteIdle();
+  _DefaultAutomaticDownloadsHandle? _automaticDownloads;
 
   @override
   OversqliteProgress get progress => _progress;
@@ -349,6 +360,31 @@ final class DefaultOversqliteClient implements OversqliteClient {
   @override
   Future<void> resumeDownloads() async {
     _downloadsPaused = false;
+  }
+
+  AutomaticDownloadsHandle startAutomaticDownloads() {
+    _validateAutomaticDownloadConfig(_config);
+    final active = _automaticDownloads;
+    if (active != null && !active.isStopped) {
+      return active;
+    }
+    final handle = _DefaultAutomaticDownloadsHandle();
+    _automaticDownloads = handle;
+    unawaited(
+      _runAutomaticDownloads(handle)
+          .then(
+            (_) => handle.completeDone(),
+            onError: (Object error, StackTrace stackTrace) {
+              handle.completeDoneError(error, stackTrace);
+            },
+          )
+          .whenComplete(() {
+            if (identical(_automaticDownloads, handle)) {
+              _automaticDownloads = null;
+            }
+          }),
+    );
+    return handle;
   }
 
   @override
@@ -647,7 +683,155 @@ final class DefaultOversqliteClient implements OversqliteClient {
 
   @override
   Future<void> close() async {
+    await _automaticDownloads?.stop();
     await _progressController.close();
+  }
+
+  Future<void> _runAutomaticDownloads(
+    _DefaultAutomaticDownloadsHandle handle,
+  ) async {
+    final backoff = _AutomaticDownloadBackoff(
+      minDelay: _config.bundleChangeWatchReconnectMin,
+      maxDelay: _config.bundleChangeWatchReconnectMax,
+    );
+    while (!handle.isStopped) {
+      if (_downloadsPaused) {
+        await _automaticDownloadDelay(
+          handle,
+          _config.automaticDownloadInterval,
+        );
+        continue;
+      }
+      try {
+        if (await _shouldUseBundleChangeWatch(handle)) {
+          await _runBundleChangeWatchIteration(handle);
+          await backoff.delayNext(handle);
+        } else {
+          await _runAutomaticPollingIteration(handle);
+          backoff.reset();
+        }
+      } catch (_) {
+        await _runAutomaticPullToStable('automatic downloads fallback');
+        await backoff.delayNext(handle);
+      }
+    }
+  }
+
+  Future<bool> _shouldUseBundleChangeWatch(
+    _DefaultAutomaticDownloadsHandle handle,
+  ) async {
+    if (_config.bundleChangeWatchMode != BundleChangeWatchMode.auto ||
+        _watchTransport == null ||
+        handle.isStopped) {
+      return false;
+    }
+    try {
+      final state = await _automaticDownloadState(
+        'automatic downloads capability check',
+      );
+      final capabilities = await _runExclusive(
+        operation: OversqliteOperation.fetchCapabilities,
+        phase: OversqlitePhase.fetchingCapabilities,
+        block: () => _fetchCapabilitiesInternal(state.sourceId),
+      );
+      return capabilities.bundleChangeWatchSupported;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _runAutomaticPollingIteration(
+    _DefaultAutomaticDownloadsHandle handle,
+  ) async {
+    if (!_downloadsPaused) {
+      await _runAutomaticPullToStable('automatic downloads polling');
+    }
+    await _automaticDownloadDelay(handle, _config.automaticDownloadInterval);
+  }
+
+  Future<void> _runBundleChangeWatchIteration(
+    _DefaultAutomaticDownloadsHandle handle,
+  ) async {
+    final transport = _watchTransport;
+    if (transport == null) {
+      return;
+    }
+    final state = await _automaticDownloadState('bundle change watch');
+    final response = await transport.watchBundleChanges(
+      sourceId: state.sourceId,
+      afterBundleSeq: state.lastBundleSeqSeen,
+    );
+    if (response.statusCode != 200) {
+      final statusCode = response.statusCode;
+      final body = response.body;
+      await response.close();
+      throw OversqliteHttpException(
+        operation: 'bundle change watch',
+        method: 'GET',
+        path: 'sync/watch',
+        statusCode: statusCode,
+        body: body,
+      );
+    }
+    final iterator = StreamIterator(
+      parseBundleChangeEventStream(response.lines),
+    );
+    handle.setActiveCancel(() async {
+      await iterator.cancel();
+      await response.close();
+    });
+    try {
+      while (!handle.isStopped && await iterator.moveNext()) {
+        final event = iterator.current;
+        if (event.bundleSeq > 0 && !_downloadsPaused) {
+          await _runAutomaticPullToStable('bundle change watch event');
+        }
+      }
+    } finally {
+      await iterator.cancel();
+      await response.close();
+      handle.clearActiveCancel();
+    }
+    if (!handle.isStopped && !_downloadsPaused) {
+      await _runAutomaticPullToStable('bundle change watch reconnect');
+    }
+  }
+
+  Future<_AutomaticDownloadState> _automaticDownloadState(
+    String operation,
+  ) async {
+    _ensureConnected(operation);
+    final attachment = await _loadAttachmentState();
+    return _AutomaticDownloadState(
+      sourceId: attachment.currentSourceId,
+      lastBundleSeqSeen: attachment.lastBundleSeqSeen,
+    );
+  }
+
+  Future<bool> _runAutomaticPullToStable(String operation) async {
+    try {
+      await pullToStable();
+      return true;
+    } catch (error) {
+      if (error is SyncOperationInProgressException ||
+          error is ConnectRequiredException ||
+          error is OpenRequiredException ||
+          error is RemoteAttachDeferredException) {
+        return false;
+      }
+      return false;
+    }
+  }
+
+  Future<bool> _automaticDownloadDelay(
+    _DefaultAutomaticDownloadsHandle handle,
+    Duration duration,
+  ) async {
+    if (handle.isStopped) {
+      return false;
+    }
+    await Future.any([Future<void>.delayed(duration), handle.stopSignal]);
+    return !handle.isStopped;
   }
 
   Future<PushReport> _executePush(_AttachmentState attachment) async {
@@ -683,6 +867,18 @@ final class DefaultOversqliteClient implements OversqliteClient {
         'UPDATE _sync_attachment_state SET rebuild_required = 1 WHERE singleton_key = 1',
       );
       throw const RebuildRequiredException();
+    } on SourceSequenceMismatchException {
+      final rows = await _database.connection.select(
+        'SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1',
+        (row) => row.readString(0),
+      );
+      if (rows.single == 'committed_remote') {
+        await _database.connection.execute(
+          'UPDATE _sync_attachment_state SET rebuild_required = 1 WHERE singleton_key = 1',
+        );
+        throw const RebuildRequiredException();
+      }
+      rethrow;
     }
   }
 
@@ -1204,6 +1400,122 @@ final class _OperationState {
   final int snapshotRowCount;
   final String reason;
   final String replacementSourceId;
+}
+
+final class _AutomaticDownloadState {
+  const _AutomaticDownloadState({
+    required this.sourceId,
+    required this.lastBundleSeqSeen,
+  });
+
+  final String sourceId;
+  final int lastBundleSeqSeen;
+}
+
+final class _DefaultAutomaticDownloadsHandle
+    implements AutomaticDownloadsHandle {
+  final _stopCompleter = Completer<void>();
+  final _doneCompleter = Completer<void>();
+  Future<void> Function()? _activeCancel;
+
+  bool get isStopped => _stopCompleter.isCompleted;
+
+  Future<void> get stopSignal => _stopCompleter.future;
+
+  @override
+  Future<void> get done => _doneCompleter.future;
+
+  @override
+  Future<void> stop() async {
+    if (!_stopCompleter.isCompleted) {
+      _stopCompleter.complete();
+    }
+    final activeCancel = _activeCancel;
+    if (activeCancel != null) {
+      await activeCancel();
+    }
+    await done;
+  }
+
+  void setActiveCancel(Future<void> Function() cancel) {
+    if (isStopped) {
+      unawaited(cancel());
+      return;
+    }
+    _activeCancel = cancel;
+  }
+
+  void clearActiveCancel() {
+    _activeCancel = null;
+  }
+
+  void completeDone() {
+    if (!_doneCompleter.isCompleted) {
+      _doneCompleter.complete();
+    }
+  }
+
+  void completeDoneError(Object error, StackTrace stackTrace) {
+    if (!_doneCompleter.isCompleted) {
+      _doneCompleter.completeError(error, stackTrace);
+    }
+  }
+}
+
+final class _AutomaticDownloadBackoff {
+  _AutomaticDownloadBackoff({required this.minDelay, required this.maxDelay});
+
+  final Duration minDelay;
+  final Duration maxDelay;
+  Duration _next = Duration.zero;
+
+  void reset() {
+    _next = Duration.zero;
+  }
+
+  Future<void> delayNext(_DefaultAutomaticDownloadsHandle handle) async {
+    _next = _next == Duration.zero
+        ? minDelay
+        : Duration(
+            microseconds: min(
+              maxDelay.inMicroseconds,
+              _next.inMicroseconds * 2,
+            ),
+          );
+    await Future.any([Future<void>.delayed(_next), handle.stopSignal]);
+  }
+}
+
+void _validateAutomaticDownloadConfig(OversqliteConfig config) {
+  if (config.automaticDownloadInterval <= Duration.zero) {
+    throw ArgumentError.value(
+      config.automaticDownloadInterval,
+      'automaticDownloadInterval',
+      'must be positive',
+    );
+  }
+  if (config.bundleChangeWatchReconnectMin <= Duration.zero) {
+    throw ArgumentError.value(
+      config.bundleChangeWatchReconnectMin,
+      'bundleChangeWatchReconnectMin',
+      'must be positive',
+    );
+  }
+  if (config.bundleChangeWatchReconnectMax <= Duration.zero) {
+    throw ArgumentError.value(
+      config.bundleChangeWatchReconnectMax,
+      'bundleChangeWatchReconnectMax',
+      'must be positive',
+    );
+  }
+  if (config.bundleChangeWatchReconnectMax <
+      config.bundleChangeWatchReconnectMin) {
+    throw ArgumentError.value(
+      config.bundleChangeWatchReconnectMax,
+      'bundleChangeWatchReconnectMax',
+      'must be greater than or equal to bundleChangeWatchReconnectMin',
+    );
+  }
 }
 
 String _quoteIdent(String identifier) =>

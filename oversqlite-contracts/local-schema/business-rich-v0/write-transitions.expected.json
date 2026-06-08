@@ -1,0 +1,144 @@
+{
+  "formatVersion": 1,
+  "fixture": "business-rich-v0",
+  "cases": [
+    {
+      "name": "insert-rich-graph",
+      "dirtyRows": [
+        {
+          "schemaName": "business",
+          "tableName": "users",
+          "keyJson": "{\"id\":\"user-1\"}",
+          "op": "INSERT",
+          "baseRowVersion": 0,
+          "payload": "{\"id\":\"user-1\",\"name\":\"User 1\",\"email\":\"user-1@example.com\",\"created_at\":\"2026-06-09 10:13:08\",\"updated_at\":\"2026-06-09 10:13:08\"}",
+          "dirtyOrdinal": 1
+        },
+        {
+          "schemaName": "business",
+          "tableName": "posts",
+          "keyJson": "{\"id\":\"post-1\"}",
+          "op": "INSERT",
+          "baseRowVersion": 0,
+          "payload": "{\"id\":\"post-1\",\"title\":\"Post 1\",\"content\":\"Content 1\",\"author_id\":\"user-1\",\"created_at\":\"2026-06-09 10:13:08\",\"updated_at\":\"2026-06-09 10:13:08\"}",
+          "dirtyOrdinal": 2
+        },
+        {
+          "schemaName": "business",
+          "tableName": "categories",
+          "keyJson": "{\"id\":\"category-root\"}",
+          "op": "INSERT",
+          "baseRowVersion": 0,
+          "payload": "{\"id\":\"category-root\",\"name\":\"Root\",\"parent_id\":null}",
+          "dirtyOrdinal": 3
+        },
+        {
+          "schemaName": "business",
+          "tableName": "categories",
+          "keyJson": "{\"id\":\"category-child\"}",
+          "op": "INSERT",
+          "baseRowVersion": 0,
+          "payload": "{\"id\":\"category-child\",\"name\":\"Child\",\"parent_id\":\"category-root\"}",
+          "dirtyOrdinal": 4
+        },
+        {
+          "schemaName": "business",
+          "tableName": "teams",
+          "keyJson": "{\"id\":\"team-1\"}",
+          "op": "INSERT",
+          "baseRowVersion": 0,
+          "payload": "{\"id\":\"team-1\",\"name\":\"Team 1\",\"captain_member_id\":\"member-captain\"}",
+          "dirtyOrdinal": 5
+        },
+        {
+          "schemaName": "business",
+          "tableName": "team_members",
+          "keyJson": "{\"id\":\"member-captain\"}",
+          "op": "INSERT",
+          "baseRowVersion": 0,
+          "payload": "{\"id\":\"member-captain\",\"name\":\"Captain\",\"team_id\":\"team-1\"}",
+          "dirtyOrdinal": 6
+        },
+        {
+          "schemaName": "business",
+          "tableName": "team_members",
+          "keyJson": "{\"id\":\"member-2\"}",
+          "op": "INSERT",
+          "baseRowVersion": 0,
+          "payload": "{\"id\":\"member-2\",\"name\":\"Member 2\",\"team_id\":\"team-1\"}",
+          "dirtyOrdinal": 7
+        },
+        {
+          "schemaName": "business",
+          "tableName": "files",
+          "keyJson": "{\"id\":\"00112233445566778899aabbccddeeff\"}",
+          "op": "INSERT",
+          "baseRowVersion": 0,
+          "payload": "{\"id\":\"00112233445566778899aabbccddeeff\",\"name\":\"File 1\",\"data\":\"deadbeef\"}",
+          "dirtyOrdinal": 8
+        },
+        {
+          "schemaName": "business",
+          "tableName": "file_reviews",
+          "keyJson": "{\"id\":\"10112233445566778899aabbccddeeff\"}",
+          "op": "INSERT",
+          "baseRowVersion": 0,
+          "payload": "{\"id\":\"10112233445566778899aabbccddeeff\",\"review\":\"Review 1\",\"file_id\":\"00112233445566778899aabbccddeeff\"}",
+          "dirtyOrdinal": 9
+        },
+        {
+          "schemaName": "business",
+          "tableName": "typed_rows",
+          "keyJson": "{\"id\":\"typed-1\"}",
+          "op": "INSERT",
+          "baseRowVersion": 0,
+          "payload": "{\"id\":\"typed-1\",\"name\":\"Typed 1\",\"note\":null,\"count_value\":42,\"enabled_flag\":1,\"rating\":1.25,\"data\":\"cafebabe\",\"created_at\":\"2026-03-24T18:42:11Z\"}",
+          "dirtyOrdinal": 10
+        }
+      ],
+      "applicationRowCounts": {
+        "categories": 2,
+        "file_reviews": 1,
+        "files": 1,
+        "posts": 1,
+        "team_members": 2,
+        "teams": 1,
+        "typed_rows": 1,
+        "users": 1
+      }
+    },
+    {
+      "name": "delete-file-cascades-review",
+      "dirtyRows": [
+        {
+          "schemaName": "business",
+          "tableName": "files",
+          "keyJson": "{\"id\":\"20112233445566778899aabbccddeeff\"}",
+          "op": "DELETE",
+          "baseRowVersion": 0,
+          "payload": null,
+          "dirtyOrdinal": 1
+        },
+        {
+          "schemaName": "business",
+          "tableName": "file_reviews",
+          "keyJson": "{\"id\":\"21112233445566778899aabbccddeeff\"}",
+          "op": "DELETE",
+          "baseRowVersion": 0,
+          "payload": null,
+          "dirtyOrdinal": 2
+        }
+      ],
+      "applicationRowCounts": {
+        "categories": 0,
+        "file_reviews": 0,
+        "files": 0,
+        "posts": 0,
+        "team_members": 0,
+        "teams": 0,
+        "typed_rows": 0,
+        "users": 0
+      }
+    }
+  ]
+}

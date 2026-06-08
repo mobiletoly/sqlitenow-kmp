@@ -17,20 +17,18 @@
  */
 package dev.goquick.sqlitenow.common
 
-import kotlinx.cinterop.convert
 import kotlinx.cinterop.toKString
-import platform.posix.EEXIST
 import platform.posix.F_OK
 import platform.posix.access
-import platform.posix.errno
 import platform.posix.getenv
-import platform.posix.mkdir
 
 internal fun nativeUserHome(): String {
     return getenv("HOME")?.toKString()?.takeIf { it.isNotBlank() } ?: "."
 }
 
 internal fun nativeFileExists(path: String): Boolean = access(path, F_OK) == 0
+
+internal expect fun nativeCreateDirectory(path: String)
 
 internal fun resolveNativeDesktopDatabasePath(
     dbName: String,
@@ -59,9 +57,7 @@ private fun ensureDirectoryExists(path: String) {
         }
 
         if (nativeFileExists(currentPath)) continue
-        if (mkdir(currentPath, 0x1FF.convert()) != 0 && errno != EEXIST) {
-            error("Failed to create directory at $currentPath (errno=$errno)")
-        }
+        nativeCreateDirectory(currentPath)
     }
 }
 

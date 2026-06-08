@@ -356,7 +356,7 @@ internal suspend fun createBusinessRichSchemaTables(db: SafeSQLiteConnection) {
     db.execSQL(
         """
         CREATE TABLE files (
-            id TEXT PRIMARY KEY NOT NULL,
+            id BLOB PRIMARY KEY NOT NULL,
             name TEXT NOT NULL,
             data BLOB NOT NULL
         )
@@ -365,9 +365,9 @@ internal suspend fun createBusinessRichSchemaTables(db: SafeSQLiteConnection) {
     db.execSQL(
         """
         CREATE TABLE file_reviews (
-            id TEXT PRIMARY KEY NOT NULL,
+            id BLOB PRIMARY KEY NOT NULL,
             review TEXT NOT NULL,
-            file_id TEXT NOT NULL REFERENCES files(id) DEFERRABLE INITIALLY DEFERRED
+            file_id BLOB NOT NULL REFERENCES files(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED
         )
         """.trimIndent()
     )
@@ -402,7 +402,7 @@ internal suspend fun createBusinessBlobKeyTables(db: SafeSQLiteConnection) {
         CREATE TABLE file_reviews (
             id BLOB PRIMARY KEY NOT NULL,
             review TEXT NOT NULL,
-            file_id BLOB NOT NULL REFERENCES files(id) DEFERRABLE INITIALLY DEFERRED
+            file_id BLOB NOT NULL REFERENCES files(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED
         )
         """.trimIndent()
     )
@@ -512,34 +512,34 @@ internal suspend fun insertRichSchemaBatch(
     )
     db.execSQL("COMMIT")
 
-    val fileAId = randomRowId()
-    val fileBId = randomRowId()
-    val reviewAId = randomRowId()
-    val reviewBId = randomRowId()
+    val fileAIdHex = uuidTextToBlobHex(randomRowId())
+    val fileBIdHex = uuidTextToBlobHex(randomRowId())
+    val reviewAIdHex = uuidTextToBlobHex(randomRowId())
+    val reviewBIdHex = uuidTextToBlobHex(randomRowId())
     val fileADataHex = randomRowId().replace("-", "")
     val fileBDataHex = randomRowId().replace("-", "")
     db.execSQL(
         """
         INSERT INTO files(id, name, data)
-        VALUES('$fileAId', 'File A $batchPrefix', x'$fileADataHex')
+        VALUES(x'$fileAIdHex', 'File A $batchPrefix', x'$fileADataHex')
         """.trimIndent()
     )
     db.execSQL(
         """
         INSERT INTO files(id, name, data)
-        VALUES('$fileBId', 'File B $batchPrefix', x'$fileBDataHex')
+        VALUES(x'$fileBIdHex', 'File B $batchPrefix', x'$fileBDataHex')
         """.trimIndent()
     )
     db.execSQL(
         """
         INSERT INTO file_reviews(id, review, file_id)
-        VALUES('$reviewAId', 'Review A $batchPrefix', '$fileAId')
+        VALUES(x'$reviewAIdHex', 'Review A $batchPrefix', x'$fileAIdHex')
         """.trimIndent()
     )
     db.execSQL(
         """
         INSERT INTO file_reviews(id, review, file_id)
-        VALUES('$reviewBId', 'Review B $batchPrefix', '$fileBId')
+        VALUES(x'$reviewBIdHex', 'Review B $batchPrefix', x'$fileBIdHex')
         """.trimIndent()
     )
 }
@@ -752,13 +752,13 @@ internal suspend fun insertHotGraph(
     db.execSQL(
         """
         INSERT INTO files(id, name, data)
-        VALUES('${ids.fileId}', 'Hot File 0', x'00112233445566778899aabbccddeeff')
+        VALUES(x'${uuidTextToBlobHex(ids.fileId)}', 'Hot File 0', x'00112233445566778899aabbccddeeff')
         """.trimIndent()
     )
     db.execSQL(
         """
         INSERT INTO file_reviews(id, review, file_id)
-        VALUES('${ids.reviewId}', 'Hot Review 0', '${ids.fileId}')
+        VALUES(x'${uuidTextToBlobHex(ids.reviewId)}', 'Hot Review 0', x'${uuidTextToBlobHex(ids.fileId)}')
         """.trimIndent()
     )
 
@@ -824,14 +824,14 @@ internal suspend fun mutateHotGraph(
         """
         UPDATE files
         SET name = 'Hot File $round', data = x'$blobHex'
-        WHERE id = '${ids.fileId}'
+        WHERE lower(hex(id)) = '${uuidTextToBlobHex(ids.fileId)}'
         """.trimIndent()
     )
     db.execSQL(
         """
         UPDATE file_reviews
         SET review = 'Hot Review $round'
-        WHERE id = '${ids.reviewId}'
+        WHERE lower(hex(id)) = '${uuidTextToBlobHex(ids.reviewId)}'
         """.trimIndent()
     )
 }
@@ -865,9 +865,11 @@ internal suspend fun assertHotGraphState(
     assertEquals("Hot Team $finalRound", scalarText(db, "SELECT name FROM teams WHERE id = '${ids.teamId}'"))
     assertEquals("Hot Captain $finalRound", scalarText(db, "SELECT name FROM team_members WHERE id = '${ids.captainId}'"))
     assertEquals("Hot Member $finalRound", scalarText(db, "SELECT name FROM team_members WHERE id = '${ids.memberId}'"))
-    assertEquals("Hot File $finalRound", scalarText(db, "SELECT name FROM files WHERE id = '${ids.fileId}'"))
-    assertEquals("Hot Review $finalRound", scalarText(db, "SELECT review FROM file_reviews WHERE id = '${ids.reviewId}'"))
-    assertEquals(16L, scalarLong(db, "SELECT length(data) FROM files WHERE id = '${ids.fileId}'"))
+    val fileIdHex = uuidTextToBlobHex(ids.fileId)
+    val reviewIdHex = uuidTextToBlobHex(ids.reviewId)
+    assertEquals("Hot File $finalRound", scalarText(db, "SELECT name FROM files WHERE lower(hex(id)) = '$fileIdHex'"))
+    assertEquals("Hot Review $finalRound", scalarText(db, "SELECT review FROM file_reviews WHERE lower(hex(id)) = '$reviewIdHex'"))
+    assertEquals(16L, scalarLong(db, "SELECT length(data) FROM files WHERE lower(hex(id)) = '$fileIdHex'"))
 }
 
 internal suspend fun assertRoundPresence(

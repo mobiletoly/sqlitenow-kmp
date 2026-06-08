@@ -41,6 +41,8 @@ automatically.
 - **Offline-First** - Works seamlessly offline, syncs when connection is available
 - **Secure Authentication** - JWT-based authentication with automatic token refresh
 - **Bundle Replay** - Efficient incremental sync with authoritative bundle ordering
+- **Optional Watch Wake-Ups** - Use `/sync/watch` as a default-off latency optimization while
+  keeping `/sync/pull` authoritative
 - **Chunked Snapshot Rebuilds** - Full-device hydrate and recover flows use staged snapshots
 - **Selective Sync** - Choose which tables to sync with `enableSync=true` annotation
 

@@ -34,6 +34,7 @@ import androidx.compose.material.Card
 import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.OutlinedTextField
+import androidx.compose.material.RadioButton
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.runtime.Composable
@@ -62,13 +63,16 @@ import dev.goquick.sqlitenow.core.util.jsonEncodeToSqlite
 import dev.goquick.sqlitenow.core.util.toSqliteDate
 import dev.goquick.sqlitenow.core.util.toRfc3339String
 import dev.goquick.sqlitenow.oversqlite.AttachResult
+import dev.goquick.sqlitenow.oversqlite.BundleChangeWatchMode
 import dev.goquick.sqlitenow.oversqlite.MergeResult
 import dev.goquick.sqlitenow.oversqlite.ConnectBindingConflictException
 import dev.goquick.sqlitenow.oversqlite.ConnectLocalStateConflictException
 import dev.goquick.sqlitenow.oversqlite.OversqliteClient
+import dev.goquick.sqlitenow.oversqlite.RebuildRequiredException
 import dev.goquick.sqlitenow.oversqlite.Resolver
 import dev.goquick.sqlitenow.oversqlite.SyncReport
 import dev.goquick.sqlitenow.oversqlite.SyncThenDetachResult
+import dev.goquick.sqlitenow.oversqlite.runAutomaticDownloads
 import dev.goquick.sqlitenow.samplesynckmp.db.AddressType
 import dev.goquick.sqlitenow.samplesynckmp.db.CommentQuery
 import dev.goquick.sqlitenow.samplesynckmp.db.CommentRow
@@ -79,12 +83,15 @@ import dev.goquick.sqlitenow.samplesynckmp.db.PersonRow
 import dev.goquick.sqlitenow.samplesynckmp.db.VersionBasedDatabaseMigrations
 import dev.goquick.sqlitenow.samplesynckmp.model.PersonNote
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.auth.Auth
+import io.ktor.client.plugins.auth.providers.BearerTokens
+import io.ktor.client.plugins.auth.providers.bearer
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
-import io.ktor.client.request.header
 import io.ktor.serialization.kotlinx.json.json
-import io.ktor.http.HttpHeaders
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.SupervisorJob
@@ -94,7 +101,6 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.LocalDate
@@ -110,9 +116,37 @@ import kotlin.time.Instant
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
-private const val periodicSyncEnabled = false
-private const val periodicSyncIntervalMs = 10_000L
 private const val sampleAttachMaxAttempts = 3
+private const val automaticPollingIntervalMs = 10_000L
+private const val automaticWatchFallbackIntervalMs = 60_000L
+private const val authTokenRefreshLeadMillis = 60_000L
+private const val authTokenRefreshMinimumDelayMillis = 5_000L
+private const val authTokenRefreshRetryMillis = 30_000L
+
+private enum class SampleSyncMode(
+    val storageValue: String,
+    val label: String,
+    val watchMode: BundleChangeWatchMode,
+    val automaticDownloadIntervalMillis: Long,
+) {
+    Polling(
+        storageValue = "polling",
+        label = "Polling",
+        watchMode = BundleChangeWatchMode.OFF,
+        automaticDownloadIntervalMillis = automaticPollingIntervalMs,
+    ),
+    Watch(
+        storageValue = "watch",
+        label = "Watch",
+        watchMode = BundleChangeWatchMode.AUTO,
+        automaticDownloadIntervalMillis = automaticWatchFallbackIntervalMs,
+    );
+
+    companion object {
+        fun fromStorageValue(value: String?): SampleSyncMode =
+            values().firstOrNull { it.storageValue == value } ?: Watch
+    }
+}
 
 private val firstNames = listOf(
     // Traditional English names
@@ -295,7 +329,46 @@ private fun JsonElement?.updatedAtOrNull(): Instant? {
 private data class SampleSyncSession(
     val client: OversqliteClient,
     val httpClient: HttpClient,
+    val authTokenState: SampleAuthTokenState,
 )
+
+private class SampleAuthTokenState(
+    initialToken: SampleAuthToken,
+    private val baseUrl: String,
+    private val user: String,
+    private val sourceId: String,
+    private val password: String,
+) {
+    private var currentToken = initialToken
+
+    fun bearerTokens(): BearerTokens = BearerTokens(currentToken.token, null)
+
+    fun refreshDelayMillis(): Long {
+        val millisUntilExpiry = currentToken.expiresAtEpochMillis - Clock.System.now().toEpochMilliseconds()
+        if (millisUntilExpiry <= authTokenRefreshMinimumDelayMillis) {
+            return 0L
+        }
+        val leadMillis = minOf(authTokenRefreshLeadMillis, millisUntilExpiry / 2)
+        return (millisUntilExpiry - leadMillis).coerceAtLeast(authTokenRefreshMinimumDelayMillis)
+    }
+
+    suspend fun refresh(): BearerTokens {
+        val nextToken = refreshJwt(
+            baseUrl = baseUrl,
+            user = user,
+            sourceId = sourceId,
+            password = password,
+        )
+        update(nextToken)
+        return bearerTokens()
+    }
+
+    private fun update(token: SampleAuthToken) {
+        currentToken = token
+        AuthPrefs.set(AuthKeys.Token, token.token)
+        AuthPrefs.set(AuthKeys.TokenExpiresAt, token.expiresAtEpochMillis.toString())
+    }
+}
 
 private suspend fun attachUntilConnected(
     client: OversqliteClient,
@@ -356,8 +429,12 @@ private fun buildDetachReportMessage(result: SyncThenDetachResult): String = bui
 
 private fun clearSavedAuth() {
     AuthPrefs.remove(AuthKeys.Token)
+    AuthPrefs.remove(AuthKeys.TokenExpiresAt)
     AuthPrefs.remove(AuthKeys.Username)
 }
+
+private fun loadSyncMode(): SampleSyncMode =
+    SampleSyncMode.fromStorageValue(AuthPrefs.get(AuthKeys.SyncMode))
 
 private fun loadOrCreateSourceId(): String {
     val existing = AuthPrefs.get(AuthKeys.SourceId)
@@ -373,13 +450,21 @@ private suspend fun setupSyncClient(
     baseUrl: String,
     user: String,
     sourceId: String,
-    token: String,
+    password: String,
+    token: SampleAuthToken,
     resourceScope: CoroutineScope,
     onSuccess: (SampleSyncSession) -> Unit,
     onError: (Exception) -> Unit
 ) {
     var httpClient: HttpClient? = null
     var client: OversqliteClient? = null
+    val authTokenState = SampleAuthTokenState(
+        initialToken = token,
+        baseUrl = baseUrl,
+        user = user,
+        sourceId = sourceId,
+        password = password,
+    )
     try {
         ensureSampleSyncServer(baseUrl)
 
@@ -388,7 +473,7 @@ private suspend fun setupSyncClient(
         withContext(resourceScope.coroutineContext) {
             httpClient = createAuthenticatedHttpClient(
                 baseUrl = baseUrl,
-                token = token,
+                authTokenState = authTokenState,
             )
 
             client = db.newOversqliteClient(
@@ -421,14 +506,27 @@ private suspend fun setupSyncClient(
         appLog.i { "Attach complete for user=$user outcome=${attach.outcome}" }
         logLocalSyncState("after attach")
 
-        val initialSync = sessionClient.sync().getOrThrow()
+        val initialSync = sessionClient.sync().getOrElse { error ->
+            if (error !is RebuildRequiredException) {
+                throw error
+            }
+            appLog.i { "Initial sync requires rebuild; rebuilding local snapshot" }
+            sessionClient.rebuild().getOrThrow()
+            sessionClient.sync().getOrThrow()
+        }
         appLog.i {
             "Initial sync complete for user=$user " +
                 "push=${initialSync.pushOutcome} pull=${initialSync.remoteOutcome}"
         }
         logLocalSyncState("after initial sync")
 
-        onSuccess(SampleSyncSession(client = sessionClient, httpClient = sessionHttpClient))
+        onSuccess(
+            SampleSyncSession(
+                client = sessionClient,
+                httpClient = sessionHttpClient,
+                authTokenState = authTokenState,
+            )
+        )
     } catch (e: Exception) {
         client?.close()
         httpClient?.close()
@@ -459,10 +557,15 @@ fun App() {
     var sourceId by remember { mutableStateOf("") }
     var reportMessage by remember { mutableStateOf<String?>(null) }
     var isDatabaseOpen by remember { mutableStateOf(false) }
+    var syncMode by remember { mutableStateOf(loadSyncMode()) }
     val syncTrigger = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
     val commentsRefreshTrigger = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
+    fun updateSyncMode(mode: SampleSyncMode) {
+        syncMode = mode
+        AuthPrefs.set(AuthKeys.SyncMode, mode.storageValue)
+    }
     fun requestAutoSync() {
-        if (periodicSyncEnabled) {
+        if (signedIn && lifecycleReady) {
             syncTrigger.tryEmit(Unit)
         }
     }
@@ -532,11 +635,13 @@ fun App() {
                     sourceId = persistedSourceId,
                     password = "demo",
                 )
-                AuthPrefs.set(AuthKeys.Token, token)
+                AuthPrefs.set(AuthKeys.Token, token.token)
+                AuthPrefs.set(AuthKeys.TokenExpiresAt, token.expiresAtEpochMillis.toString())
                 setupSyncClient(
                     baseUrl = baseUrl,
                     user = savedUser,
                     sourceId = persistedSourceId,
+                    password = "demo",
                     token = token,
                     resourceScope = sessionResourceScope,
                     onSuccess = { session ->
@@ -590,17 +695,42 @@ fun App() {
             }
     }
 
-    // Periodic nudge (e.g., every 60s) only when signed in
-    LaunchedEffect(signedIn, lifecycleReady) {
-        if (signedIn && lifecycleReady) {
-            if (!periodicSyncEnabled) {
-                appLog.i { "Periodic sync disabled" }
-                return@LaunchedEffect
-            }
-            appLog.i { "Scheduling periodic sync every ${periodicSyncIntervalMs / 1000}s" }
-            while (isActive) {
-                delay(periodicSyncIntervalMs)
-                syncTrigger.tryEmit(Unit)
+    LaunchedEffect(syncSession, signedIn, lifecycleReady, syncMode) {
+        val client = syncSession?.client ?: return@LaunchedEffect
+        if (!signedIn || !lifecycleReady) {
+            return@LaunchedEffect
+        }
+        val automaticConfig = db.buildOversqliteAutomaticDownloadConfig(
+            automaticDownloadIntervalMillis = syncMode.automaticDownloadIntervalMillis,
+            bundleChangeWatchMode = syncMode.watchMode,
+        )
+        appLog.i { "Automatic downloads active mode=${syncMode.label}" }
+        try {
+            client.runAutomaticDownloads(automaticConfig)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            appLog.e(e) { "Automatic downloads stopped" }
+            errorMessage = "Automatic downloads stopped: ${e.message ?: "unknown"}"
+        }
+    }
+
+    LaunchedEffect(syncSession, signedIn, lifecycleReady) {
+        val authTokenState = syncSession?.authTokenState ?: return@LaunchedEffect
+        if (!signedIn || !lifecycleReady) {
+            return@LaunchedEffect
+        }
+        while (true) {
+            delay(authTokenState.refreshDelayMillis())
+            try {
+                authTokenState.refresh()
+                appLog.i { "Sample auth token refreshed" }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                appLog.e(e) { "Sample auth token refresh failed" }
+                errorMessage = "Auth refresh failed: ${e.message ?: "unknown"}"
+                delay(authTokenRefreshRetryMillis)
             }
         }
     }
@@ -621,6 +751,7 @@ fun App() {
                 skippedSignin = skippedSignin,
                 username = username,
                 signingOut = signingOut,
+                syncMode = syncMode,
                 onSignInClick = { showSigninDialog = true },
                 onSignOutClick = {
                     if (signingOut) {
@@ -655,7 +786,8 @@ fun App() {
                             signingOut = false
                         }
                     }
-                }
+                },
+                onSyncModeChange = ::updateSyncMode,
             )
 
             // Actions row: Add Person + Sync
@@ -782,8 +914,10 @@ fun App() {
             username = username,
             password = password,
             signingIn = signingIn,
+            syncMode = syncMode,
             onUsernameChange = { username = it },
             onPasswordChange = { password = it },
+            onSyncModeChange = ::updateSyncMode,
             onConfirm = {
                 if (!signingIn) {
                     signingIn = true
@@ -800,13 +934,15 @@ fun App() {
                                 password = password.ifBlank { "demo" })
 
                             // Save token first so the HttpClient can use it
-                            AuthPrefs.set(AuthKeys.Token, token)
+                            AuthPrefs.set(AuthKeys.Token, token.token)
+                            AuthPrefs.set(AuthKeys.TokenExpiresAt, token.expiresAtEpochMillis.toString())
 
                             val finalUser = username.ifBlank { "user-sample" }
                             setupSyncClient(
                                 baseUrl = baseUrl,
                                 user = finalUser,
                                 sourceId = installSourceId,
+                                password = password.ifBlank { "demo" },
                                 token = token,
                                 resourceScope = sessionResourceScope,
                                 onSuccess = { session ->
@@ -1027,21 +1163,37 @@ fun PersonCard(
 /**
  * Creates a simple authenticated HttpClient for the sample.
  *
- * The sample uses the same direct Authorization-header pattern as the real-server smoke tests.
- * That path is reliable across repeated attach/sync cycles and avoids the extra auth-plugin
- * request pipeline that was cancelling later sample sync requests before they reached the server.
+ * The sample keeps token state outside the Ktor plugin so proactive refresh and 401 retry share
+ * the same current token without rebuilding the sync client.
  */
 private fun createAuthenticatedHttpClient(
     baseUrl: String,
-    token: String,
+    authTokenState: SampleAuthTokenState,
 ): HttpClient {
     return HttpClient {
+        install(HttpTimeout) {
+            requestTimeoutMillis = 30_000L
+            connectTimeoutMillis = 10_000L
+            socketTimeoutMillis = 90_000L
+        }
         install(ContentNegotiation) {
             json(Json { ignoreUnknownKeys = true })
         }
+        install(Auth) {
+            bearer {
+                loadTokens {
+                    authTokenState.bearerTokens()
+                }
+                refreshTokens {
+                    authTokenState.refresh()
+                }
+                sendWithoutRequest { true }
+                cacheTokens = false
+                nonCancellableRefresh = true
+            }
+        }
         defaultRequest {
             url(baseUrl)
-            header(HttpHeaders.Authorization, "Bearer $token")
         }
     }
 }
@@ -1381,8 +1533,10 @@ private fun SignInSection(
     skippedSignin: Boolean,
     username: String,
     signingOut: Boolean,
+    syncMode: SampleSyncMode,
     onSignInClick: () -> Unit,
     onSignOutClick: () -> Unit,
+    onSyncModeChange: (SampleSyncMode) -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -1406,6 +1560,11 @@ private fun SignInSection(
                     Text(if (signingOut) "Signing Out..." else "Sign Out")
                 }
             }
+            SyncModeSelector(
+                syncMode = syncMode,
+                enabled = !signingOut,
+                onSyncModeChange = onSyncModeChange,
+            )
         } else if (skippedSignin) {
             Button(onClick = onSignInClick) { Text("Sign In") }
         } else {
@@ -1414,6 +1573,41 @@ private fun SignInSection(
                 fontSize = 14.sp,
                 color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f)
             )
+        }
+    }
+}
+
+@Composable
+private fun SyncModeSelector(
+    syncMode: SampleSyncMode,
+    enabled: Boolean,
+    onSyncModeChange: (SampleSyncMode) -> Unit,
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "Downloads",
+            fontSize = 13.sp,
+            color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f)
+        )
+        SampleSyncMode.values().forEach { mode ->
+            Row(
+                modifier = Modifier.clickable(enabled = enabled) { onSyncModeChange(mode) },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(
+                    selected = syncMode == mode,
+                    onClick = { onSyncModeChange(mode) },
+                    enabled = enabled,
+                )
+                Text(
+                    text = mode.label,
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colors.onSurface.copy(alpha = if (enabled) 0.8f else 0.4f)
+                )
+            }
         }
     }
 }
@@ -1526,8 +1720,10 @@ private fun SignInDialog(
     username: String,
     password: String,
     signingIn: Boolean,
+    syncMode: SampleSyncMode,
     onUsernameChange: (String) -> Unit,
     onPasswordChange: (String) -> Unit,
+    onSyncModeChange: (SampleSyncMode) -> Unit,
     onConfirm: () -> Unit,
     onSkip: () -> Unit,
 ) {
@@ -1548,6 +1744,11 @@ private fun SignInDialog(
                     onValueChange = onPasswordChange,
                     label = { Text("Password") },
                     singleLine = true
+                )
+                SyncModeSelector(
+                    syncMode = syncMode,
+                    enabled = !signingIn,
+                    onSyncModeChange = onSyncModeChange,
                 )
             }
         },

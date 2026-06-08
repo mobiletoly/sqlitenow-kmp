@@ -194,7 +194,11 @@ internal class OversqlitePushWorkflow(
             initializationId = state.pendingInitializationId.takeIf { it.isNotBlank() },
         )
         return when (createResponse.status) {
-            "already_committed" -> committedPushBundleFromCreateResponse(createResponse, state.sourceId, snapshot.sourceBundleId)
+            "already_committed" -> committedPushBundleFromCreateResponse(
+                createResponse,
+                state.sourceId,
+                snapshot.sourceBundleId,
+            )
             "staging" -> {
                 val pushId = createResponse.pushId.trim()
                 require(pushId.isNotEmpty()) { "push session response missing push_id" }

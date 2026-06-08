@@ -61,6 +61,24 @@ specification.
 The sync protocol uses standard HTTP/JSON and is designed to be simple to implement while remaining
 powerful and scalable.
 
+## Bundle-Change Watch
+
+Bundle-change watch is optional server support for lower-latency automatic downloads. It does not
+replace the normal pull/download endpoints.
+
+A compatible server should:
+
+- advertise support from `GET /sync/capabilities` with `features.bundle_change_watch = true`
+- accept `GET /sync/watch?after_bundle_seq=...` for an authenticated, connected source
+- keep the watch response open as a server-sent events stream
+- emit bundle metadata events when newer committed bundles are available for the client
+- optionally send heartbeat comments to keep intermediaries from closing an idle stream
+
+Watch events are wake-up hints only. They do not include authoritative row payloads, and clients do
+not apply watch event bodies to SQLite. After a watch event, clients still download and apply remote
+data through the ordinary `pullToStable()` path. If watch is unsupported, disconnected, malformed,
+or unavailable, SQLiteNow clients fall back to polling.
+
 If your server emits absolute timestamps in sync payloads, use RFC3339/ISO-8601 strings with an
 explicit zone such as `2026-03-24T18:42:11Z` or `2026-03-24T20:42:11+02:00`. Do not rely on naive
 local timestamp text such as `2026-03-24 18:42:11` if the value represents a real instant. On the

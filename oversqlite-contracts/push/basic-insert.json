@@ -113,6 +113,99 @@
           "deleted": false
         }
       }
+    },
+    {
+      "name": "already-committed-mismatch-preserves-source-sequence-error",
+      "localWrite": {
+        "sql": "INSERT INTO users(id, name) VALUES('user-1', 'Local Ada')"
+      },
+      "pushSessionCreateRequest": {
+        "source_bundle_id": 1,
+        "planned_row_count": 1
+      },
+      "pushSessionCreateResponse": {
+        "status": "already_committed",
+        "bundle_seq": 1,
+        "source_id": "source-fixture",
+        "source_bundle_id": 1,
+        "row_count": 1,
+        "bundle_hash": "fixture-already-committed-mismatch"
+      },
+      "committedBundleRowsResponse": {
+        "bundle_seq": 1,
+        "source_id": "source-fixture",
+        "source_bundle_id": 1,
+        "row_count": 1,
+        "bundle_hash": "fixture-already-committed-mismatch",
+        "rows": [
+          {
+            "schema": "main",
+            "table": "users",
+            "key": {
+              "id": "user-1"
+            },
+            "op": "INSERT",
+            "row_version": 1,
+            "payload": {
+              "id": "user-1",
+              "name": "Server Ada"
+            }
+          }
+        ],
+        "next_row_ordinal": 0,
+        "has_more": false
+      },
+      "expectedFinalState": {
+        "error": "source_sequence_mismatch",
+        "rebuildRequired": false,
+        "outboxState": "prepared",
+        "outboxRowCount": 1,
+        "nextSourceBundleId": 1
+      }
+    },
+    {
+      "name": "committed-remote-mismatch-requires-rebuild",
+      "localWrite": {
+        "sql": "INSERT INTO users(id, name) VALUES('user-1', 'Local Ada')"
+      },
+      "pushCommitResponse": {
+        "bundle_seq": 1,
+        "source_id": "source-fixture",
+        "source_bundle_id": 1,
+        "row_count": 1,
+        "bundle_hash": "fixture-committed-remote-mismatch"
+      },
+      "committedBundleRowsResponse": {
+        "bundle_seq": 1,
+        "source_id": "source-fixture",
+        "source_bundle_id": 1,
+        "row_count": 1,
+        "bundle_hash": "fixture-committed-remote-mismatch",
+        "rows": [
+          {
+            "schema": "main",
+            "table": "users",
+            "key": {
+              "id": "user-1"
+            },
+            "op": "INSERT",
+            "row_version": 1,
+            "payload": {
+              "id": "user-1",
+              "name": "Server Ada"
+            }
+          }
+        ],
+        "next_row_ordinal": 0,
+        "has_more": false
+      },
+      "expectedFinalState": {
+        "error": "rebuild_required",
+        "rebuildRequired": true,
+        "outboxState": "committed_remote",
+        "outboxRowCount": 1,
+        "nextSourceBundleId": 1
+      }
     }
   ]
 }

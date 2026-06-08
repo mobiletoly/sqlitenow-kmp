@@ -153,11 +153,11 @@ class DatabaseCodeGenerator(
         val providerNamespace: String?
     ) {
         fun toParameterSpec(): ParameterSpec {
-            val lambdaType = LambdaTypeName.Companion.get(
+            val lambdaType = LambdaTypeName.get(
                 parameters = arrayOf(inputType),
                 returnType = outputType
             )
-            return ParameterSpec.Companion.builder(functionName, lambdaType).build()
+            return ParameterSpec.builder(functionName, lambdaType).build()
         }
 
         /** Create a signature key for deduplication that considers the actual TypeName structure */
@@ -328,11 +328,11 @@ class DatabaseCodeGenerator(
      * Generates the main database class file.
      */
     fun generateDatabaseClass() {
-        val fileBuilder = FileSpec.Companion.builder(packageName, databaseClassName)
+        val fileBuilder = FileSpec.builder(packageName, databaseClassName)
             .addFileComment("Generated database class with unified adapter management")
             .addFileComment("Do not modify this file manually")
             .addAnnotation(
-                AnnotationSpec.Companion.builder(ClassName("kotlin", "OptIn"))
+                AnnotationSpec.builder(ClassName("kotlin", "OptIn"))
                     .addMember("%T::class", ClassName("kotlin.uuid", "ExperimentalUuidApi"))
                     .build()
             )
@@ -354,7 +354,7 @@ class DatabaseCodeGenerator(
 
     /** Generates the main database class with constructor and router properties. */
     private fun generateMainDatabaseClass(): TypeSpec {
-        val classBuilder = TypeSpec.Companion.classBuilder(databaseClassName)
+        val classBuilder = TypeSpec.classBuilder(databaseClassName)
             .addModifiers(KModifier.PUBLIC)
             .superclass(ClassName("dev.goquick.sqlitenow.core", "SqliteNowDatabase"))
 
@@ -412,9 +412,9 @@ class DatabaseCodeGenerator(
             }
 
             val listInitializer = syncTableInitializers.joinToString(", ")
-            val companion = TypeSpec.Companion.companionObjectBuilder()
+            val companion = TypeSpec.companionObjectBuilder()
                 .addProperty(
-                    PropertySpec.Companion.builder(
+                    PropertySpec.builder(
                         "syncTables",
                         ClassName(
                             "kotlin.collections",
@@ -441,18 +441,18 @@ class DatabaseCodeGenerator(
 
             // fun buildOversqliteConfig(schema: String, uploadLimit: Int = 200, downloadLimit: Int = 1000): OversqliteConfig
             classBuilder.addFunction(
-                FunSpec.Companion.builder("buildOversqliteConfig")
+                FunSpec.builder("buildOversqliteConfig")
                     .addKdoc("Builds oversqlite config using enableSync tables.")
                     .addParameter("schema", String::class)
                     .addParameter(
-                        ParameterSpec.Companion.builder("uploadLimit", Int::class).defaultValue("200").build()
+                        ParameterSpec.builder("uploadLimit", Int::class).defaultValue("200").build()
                     )
                     .addParameter(
-                        ParameterSpec.Companion.builder("downloadLimit", Int::class).defaultValue("1000")
+                        ParameterSpec.builder("downloadLimit", Int::class).defaultValue("1000")
                             .build()
                     )
                     .addParameter(
-                        ParameterSpec.Companion.builder("verboseLogs", Boolean::class).defaultValue("false")
+                        ParameterSpec.builder("verboseLogs", Boolean::class).defaultValue("false")
                             .build()
                     )
                     .returns(ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteConfig"))
@@ -463,14 +463,50 @@ class DatabaseCodeGenerator(
                     .build()
             )
 
+            // fun buildOversqliteAutomaticDownloadConfig(...): OversqliteAutomaticDownloadConfig
+            classBuilder.addFunction(
+                FunSpec.builder("buildOversqliteAutomaticDownloadConfig")
+                    .addKdoc("Builds optional automatic download config for the generated oversqlite client.")
+                    .addParameter(
+                        ParameterSpec.builder("automaticDownloadIntervalMillis", Long::class)
+                            .defaultValue("60_000")
+                            .build()
+                    )
+                    .addParameter(
+                        ParameterSpec.builder(
+                            "bundleChangeWatchMode",
+                            ClassName("dev.goquick.sqlitenow.oversqlite", "BundleChangeWatchMode")
+                        ).defaultValue(
+                            "%T.OFF",
+                            ClassName("dev.goquick.sqlitenow.oversqlite", "BundleChangeWatchMode")
+                        ).build()
+                    )
+                    .addParameter(
+                        ParameterSpec.builder("bundleChangeWatchReconnectMinMillis", Long::class)
+                            .defaultValue("1_000")
+                            .build()
+                    )
+                    .addParameter(
+                        ParameterSpec.builder("bundleChangeWatchReconnectMaxMillis", Long::class)
+                            .defaultValue("60_000")
+                            .build()
+                    )
+                    .returns(ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteAutomaticDownloadConfig"))
+                    .addStatement(
+                        "return %T(automaticDownloadIntervalMillis = automaticDownloadIntervalMillis, bundleChangeWatchMode = bundleChangeWatchMode, bundleChangeWatchReconnectMinMillis = bundleChangeWatchReconnectMinMillis, bundleChangeWatchReconnectMaxMillis = bundleChangeWatchReconnectMaxMillis)",
+                        ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteAutomaticDownloadConfig")
+                    )
+                    .build()
+            )
+
             // fun newOversqliteClient(schema: String, httpClient: HttpClient, resolver: Resolver = ServerWinsResolver,...)
             classBuilder.addFunction(
-                FunSpec.Companion.builder("newOversqliteClient")
+                FunSpec.builder("newOversqliteClient")
                     .addKdoc("Creates a DefaultOversqliteClient bound to this DB using a pre-configured HttpClient with authentication and base URL.")
                     .addParameter("schema", String::class)
                     .addParameter("httpClient", ClassName("io.ktor.client", "HttpClient"))
                     .addParameter(
-                        ParameterSpec.Companion.builder(
+                        ParameterSpec.builder(
                             "resolver",
                             ClassName("dev.goquick.sqlitenow.oversqlite", "Resolver")
                         ).defaultValue(
@@ -479,14 +515,14 @@ class DatabaseCodeGenerator(
                         ).build()
                     )
                     .addParameter(
-                        ParameterSpec.Companion.builder("uploadLimit", Int::class).defaultValue("200").build()
+                        ParameterSpec.builder("uploadLimit", Int::class).defaultValue("200").build()
                     )
                     .addParameter(
-                        ParameterSpec.Companion.builder("downloadLimit", Int::class).defaultValue("1000")
+                        ParameterSpec.builder("downloadLimit", Int::class).defaultValue("1000")
                             .build()
                     )
                     .addParameter(
-                        ParameterSpec.Companion.builder("verboseLogs", Boolean::class).defaultValue("false")
+                        ParameterSpec.builder("verboseLogs", Boolean::class).defaultValue("false")
                             .build()
                     )
                     .returns(ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteClient"))
@@ -508,14 +544,14 @@ class DatabaseCodeGenerator(
     private fun buildConstructorWithAdapters(
         namespacesWithAdapters: Map<String, List<UniqueAdapter>>
     ): FunSpec {
-        val b = FunSpec.Companion.constructorBuilder()
+        val b = FunSpec.constructorBuilder()
             .addParameter("dbName", String::class)
             .addParameter(
                 "migration",
                 ClassName("dev.goquick.sqlitenow.core", "DatabaseMigrations")
             )
             .addParameter(
-                ParameterSpec.Companion.builder("debug", Boolean::class).defaultValue("%L", debug).build()
+                ParameterSpec.builder("debug", Boolean::class).defaultValue("%L", debug).build()
             )
         namespacesWithAdapters.keys.forEach { ns ->
             val adapterClassName = adapterClassNameFor(ns)
@@ -533,7 +569,7 @@ class DatabaseCodeGenerator(
             val adapterClassName = adapterClassNameFor(ns)
             val adapterPropName = adapterPropertyNameFor(ns)
             classBuilder.addProperty(
-                PropertySpec.Companion.builder(adapterPropName, ClassName("", adapterClassName))
+                PropertySpec.builder(adapterPropName, ClassName("", adapterClassName))
                     .addModifiers(KModifier.PRIVATE)
                     .initializer(adapterPropName)
                     .build()
@@ -546,7 +582,7 @@ class DatabaseCodeGenerator(
             val routerClassName = routerClassNameFor(namespace)
             val routerPropName = routerPropertyNameFor(namespace)
             classBuilder.addProperty(
-                PropertySpec.Companion.builder(routerPropName, ClassName("", routerClassName))
+                PropertySpec.builder(routerPropName, ClassName("", routerClassName))
                     .initializer("$routerClassName(ref = this)")
                     .build()
             )
@@ -615,11 +651,11 @@ class DatabaseCodeGenerator(
     /** Generates an adapter wrapper class for a specific namespace. */
     private fun generateAdapterClass(namespace: String, adapters: List<UniqueAdapter>): TypeSpec {
         val adapterClassName = adapterClassNameFor(namespace)
-        val classBuilder = TypeSpec.Companion.classBuilder(adapterClassName)
+        val classBuilder = TypeSpec.classBuilder(adapterClassName)
             .addModifiers(KModifier.PUBLIC, KModifier.DATA)
 
         // Add constructor with adapter parameters
-        val constructorBuilder = FunSpec.Companion.constructorBuilder()
+        val constructorBuilder = FunSpec.constructorBuilder()
 
         adapters.forEach { adapter ->
             val paramSpec = adapter.toParameterSpec()
@@ -627,7 +663,7 @@ class DatabaseCodeGenerator(
 
             // Add as property
             val propertySpec =
-                PropertySpec.Companion.builder(adapter.functionName, adapter.toParameterSpec().type)
+                PropertySpec.builder(adapter.functionName, adapter.toParameterSpec().type)
                     .initializer(adapter.functionName)
                     .build()
             classBuilder.addProperty(propertySpec)
@@ -644,16 +680,16 @@ class DatabaseCodeGenerator(
         adaptersByNamespace: Map<String, List<UniqueAdapter>>
     ): TypeSpec {
         val routerClassName = routerClassNameFor(namespace)
-        val classBuilder = TypeSpec.Companion.classBuilder(routerClassName)
+        val classBuilder = TypeSpec.classBuilder(routerClassName)
             .addModifiers(KModifier.PUBLIC)
 
         // Add constructor with database reference
-        val constructorBuilder = FunSpec.Companion.constructorBuilder()
+        val constructorBuilder = FunSpec.constructorBuilder()
             .addParameter("ref", ClassName("", databaseClassName))
         classBuilder.primaryConstructor(constructorBuilder.build())
 
         // Add ref property
-        val refProperty = PropertySpec.Companion.builder("ref", ClassName("", databaseClassName))
+        val refProperty = PropertySpec.builder("ref", ClassName("", databaseClassName))
             .initializer("ref")
             .addModifiers(KModifier.PRIVATE)
             .build()
@@ -747,7 +783,7 @@ class DatabaseCodeGenerator(
                 .nestedClass("Params")
             val selectRunnersType = ClassName("dev.goquick.sqlitenow.core", "SelectRunners")
                 .parameterizedBy(resultType)
-            LambdaTypeName.Companion.get(parameters = arrayOf(paramsType), returnType = selectRunnersType)
+            LambdaTypeName.get(parameters = arrayOf(paramsType), returnType = selectRunnersType)
         } else {
             // Direct SelectRunners<ResultType> type
             ClassName("dev.goquick.sqlitenow.core", "SelectRunners")
@@ -763,7 +799,7 @@ class DatabaseCodeGenerator(
             adaptersByNamespace
         )
 
-        return PropertySpec.Companion.builder(propertyName, propertyType)
+        return PropertySpec.builder(propertyName, propertyType)
             .initializer(objectExpression)
             .build()
     }

@@ -19,6 +19,7 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.json.Json
+import kotlin.test.assertEquals
 import kotlin.random.Random
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
@@ -33,6 +34,16 @@ internal data class RealServerConfig(
 internal open class RealServerSupport : CrossTargetSyncTestSupport() {
     private val realServerJson = Json { ignoreUnknownKeys = true }
     private val expectedRealServerAppName = "nethttp-server-example"
+    protected val businessRichSyncTables = listOf(
+        SyncTable("users", syncKeyColumnName = "id"),
+        SyncTable("posts", syncKeyColumnName = "id"),
+        SyncTable("categories", syncKeyColumnName = "id"),
+        SyncTable("teams", syncKeyColumnName = "id"),
+        SyncTable("team_members", syncKeyColumnName = "id"),
+        SyncTable("files", syncKeyColumnName = "id"),
+        SyncTable("file_reviews", syncKeyColumnName = "id"),
+        SyncTable("typed_rows", syncKeyColumnName = "id"),
+    )
 
     protected suspend fun requireRealServerConfig(): RealServerConfig? {
         initializePlatformTestContext()
@@ -146,12 +157,79 @@ internal open class RealServerSupport : CrossTargetSyncTestSupport() {
         )
     }
 
+    protected suspend fun createBusinessRichSchemaTables(db: SafeSQLiteConnection) {
+        createBusinessSubsetTables(db)
+        db.execSQL(
+            """
+            CREATE TABLE categories (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                parent_id TEXT REFERENCES categories(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE TABLE teams (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                captain_member_id TEXT REFERENCES team_members(id) DEFERRABLE INITIALLY DEFERRED
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE TABLE team_members (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE TABLE files (
+                id BLOB PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                data BLOB NOT NULL
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE TABLE file_reviews (
+                id BLOB PRIMARY KEY NOT NULL,
+                review TEXT NOT NULL,
+                file_id BLOB NOT NULL REFERENCES files(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE TABLE typed_rows (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                note TEXT NULL,
+                count_value INTEGER NULL,
+                enabled_flag INTEGER NOT NULL,
+                rating REAL NULL,
+                data BLOB NULL,
+                created_at TEXT NULL
+            )
+            """.trimIndent(),
+        )
+    }
+
     protected suspend fun bootstrapManagedSourceId(
         db: SafeSQLiteConnection,
         baseUrl: String,
+        syncTables: List<SyncTable> = listOf(
+            SyncTable("users", syncKeyColumnName = "id"),
+            SyncTable("posts", syncKeyColumnName = "id"),
+        ),
     ): String {
         val http = newRealServerHttpClient(baseUrl)
-        val client = newRealServerClient(db, http)
+        val client = newRealServerClient(db, http, syncTables = syncTables)
         return try {
             client.open().getOrThrow()
             client.sourceInfo().getOrThrow().currentSourceId
@@ -181,9 +259,114 @@ internal open class RealServerSupport : CrossTargetSyncTestSupport() {
         )
     }
 
+    protected suspend fun insertBusinessRichGraph(db: SafeSQLiteConnection, suffix: String): BusinessRichFixture {
+        val fixture = BusinessRichFixture(
+            userId = randomRealServerUuid(),
+            postId = randomRealServerUuid(),
+            categoryRootId = randomRealServerUuid(),
+            categoryChildId = randomRealServerUuid(),
+            teamId = randomRealServerUuid(),
+            captainId = randomRealServerUuid(),
+            memberId = randomRealServerUuid(),
+            fileId = randomRealServerUuid(),
+            reviewId = randomRealServerUuid(),
+            typedRowId = randomRealServerUuid(),
+            fileDataHex = "00112233445566778899aabbccddeeff",
+            typedDataHex = "cafebabe",
+        )
+        insertBusinessUserAndPost(db, fixture.userId, fixture.postId, suffix)
+        db.execSQL(
+            """
+            INSERT INTO categories(id, name, parent_id)
+            VALUES('${fixture.categoryRootId}', 'Category root $suffix', NULL)
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            INSERT INTO categories(id, name, parent_id)
+            VALUES('${fixture.categoryChildId}', 'Category child $suffix', '${fixture.categoryRootId}')
+            """.trimIndent(),
+        )
+        db.execSQL("BEGIN")
+        db.execSQL(
+            """
+            INSERT INTO teams(id, name, captain_member_id)
+            VALUES('${fixture.teamId}', 'Team $suffix', '${fixture.captainId}')
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            INSERT INTO team_members(id, name, team_id)
+            VALUES('${fixture.captainId}', 'Captain $suffix', '${fixture.teamId}')
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            INSERT INTO team_members(id, name, team_id)
+            VALUES('${fixture.memberId}', 'Member $suffix', '${fixture.teamId}')
+            """.trimIndent(),
+        )
+        db.execSQL("COMMIT")
+        val fileIdHex = uuidTextToBlobHex(fixture.fileId)
+        val reviewIdHex = uuidTextToBlobHex(fixture.reviewId)
+        db.execSQL(
+            """
+            INSERT INTO files(id, name, data)
+            VALUES(x'$fileIdHex', 'File $suffix', x'${fixture.fileDataHex}')
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            INSERT INTO file_reviews(id, review, file_id)
+            VALUES(x'$reviewIdHex', 'Review $suffix', x'$fileIdHex')
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            INSERT INTO typed_rows(id, name, note, count_value, enabled_flag, rating, data, created_at)
+            VALUES('${fixture.typedRowId}', 'Typed $suffix', NULL, 42, 1, 1.25, x'${fixture.typedDataHex}', '2026-03-24T18:42:11Z')
+            """.trimIndent(),
+        )
+        return fixture
+    }
+
+    protected suspend fun assertBusinessRichGraph(db: SafeSQLiteConnection, fixture: BusinessRichFixture, suffix: String) {
+        val fileIdHex = uuidTextToBlobHex(fixture.fileId)
+        val reviewIdHex = uuidTextToBlobHex(fixture.reviewId)
+        assertEquals("User $suffix", scalarText(db, "SELECT name FROM users WHERE id = '${fixture.userId}'"))
+        assertEquals("Title $suffix", scalarText(db, "SELECT title FROM posts WHERE id = '${fixture.postId}'"))
+        assertEquals(
+            1L,
+            scalarLong(
+                db,
+                """
+                SELECT COUNT(*)
+                FROM categories c
+                JOIN categories p ON p.id = c.parent_id
+                WHERE c.id = '${fixture.categoryChildId}'
+                  AND p.id = '${fixture.categoryRootId}'
+                """.trimIndent(),
+            ),
+        )
+        assertEquals("Team $suffix", scalarText(db, "SELECT name FROM teams WHERE id = '${fixture.teamId}'"))
+        assertEquals("Captain $suffix", scalarText(db, "SELECT name FROM team_members WHERE id = '${fixture.captainId}'"))
+        assertEquals("File $suffix", scalarText(db, "SELECT name FROM files WHERE lower(hex(id)) = '$fileIdHex'"))
+        assertEquals(fixture.fileDataHex, scalarText(db, "SELECT lower(hex(data)) FROM files WHERE lower(hex(id)) = '$fileIdHex'"))
+        assertEquals("Review $suffix", scalarText(db, "SELECT review FROM file_reviews WHERE lower(hex(id)) = '$reviewIdHex'"))
+        assertEquals(fileIdHex, scalarText(db, "SELECT lower(hex(file_id)) FROM file_reviews WHERE lower(hex(id)) = '$reviewIdHex'"))
+        assertEquals("Typed $suffix", scalarText(db, "SELECT name FROM typed_rows WHERE id = '${fixture.typedRowId}'"))
+        assertEquals(42L, scalarLong(db, "SELECT count_value FROM typed_rows WHERE id = '${fixture.typedRowId}'"))
+        assertEquals("1.25", scalarText(db, "SELECT CAST(rating AS TEXT) FROM typed_rows WHERE id = '${fixture.typedRowId}'"))
+        assertEquals(fixture.typedDataHex, scalarText(db, "SELECT lower(hex(data)) FROM typed_rows WHERE id = '${fixture.typedRowId}'"))
+    }
+
     protected fun newRealServerClient(
         db: SafeSQLiteConnection,
         http: HttpClient,
+        syncTables: List<SyncTable> = listOf(
+            SyncTable("users", syncKeyColumnName = "id"),
+            SyncTable("posts", syncKeyColumnName = "id"),
+        ),
         uploadLimit: Int = 8,
         downloadLimit: Int = 8,
         snapshotChunkRows: Int = 1000,
@@ -193,10 +376,7 @@ internal open class RealServerSupport : CrossTargetSyncTestSupport() {
             db = db,
             config = OversqliteConfig(
                 schema = "business",
-                syncTables = listOf(
-                    SyncTable("users", syncKeyColumnName = "id"),
-                    SyncTable("posts", syncKeyColumnName = "id"),
-                ),
+                syncTables = syncTables,
                 uploadLimit = uploadLimit,
                 downloadLimit = downloadLimit,
                 snapshotChunkRows = snapshotChunkRows,
@@ -214,6 +394,9 @@ internal open class RealServerSupport : CrossTargetSyncTestSupport() {
 
     @OptIn(ExperimentalUuidApi::class)
     protected fun randomRealServerUuid(): String = Uuid.random().toString()
+
+    protected fun uuidTextToBlobHex(uuidText: String): String =
+        uuidText.replace("-", "").lowercase()
 
     private suspend fun serverHealthAvailable(baseUrl: String): Boolean {
         val http = newRealServerHttpClient(baseUrl)
@@ -249,6 +432,21 @@ internal open class RealServerSupport : CrossTargetSyncTestSupport() {
         }
     }
 }
+
+internal data class BusinessRichFixture(
+    val userId: String,
+    val postId: String,
+    val categoryRootId: String,
+    val categoryChildId: String,
+    val teamId: String,
+    val captainId: String,
+    val memberId: String,
+    val fileId: String,
+    val reviewId: String,
+    val typedRowId: String,
+    val fileDataHex: String,
+    val typedDataHex: String,
+)
 
 @Serializable
 private data class DummySigninRequest(

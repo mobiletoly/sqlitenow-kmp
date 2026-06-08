@@ -60,6 +60,10 @@ internal class DartOversqliteEmitter(
             line("int uploadLimit = 200,")
             line("int downloadLimit = 1000,")
             line("bool verboseLogs = false,")
+            line("Duration automaticDownloadInterval = const Duration(seconds: 60),")
+            line("BundleChangeWatchMode bundleChangeWatchMode = BundleChangeWatchMode.off,")
+            line("Duration bundleChangeWatchReconnectMin = const Duration(seconds: 1),")
+            line("Duration bundleChangeWatchReconnectMax = const Duration(seconds: 60),")
         }
         writer.line("}) {")
         writer.indent {
@@ -70,6 +74,10 @@ internal class DartOversqliteEmitter(
                 line("uploadLimit: uploadLimit,")
                 line("downloadLimit: downloadLimit,")
                 line("verboseLogs: verboseLogs,")
+                line("automaticDownloadInterval: automaticDownloadInterval,")
+                line("bundleChangeWatchMode: bundleChangeWatchMode,")
+                line("bundleChangeWatchReconnectMin: bundleChangeWatchReconnectMin,")
+                line("bundleChangeWatchReconnectMax: bundleChangeWatchReconnectMax,")
             }
             line(");")
         }
@@ -82,6 +90,10 @@ internal class DartOversqliteEmitter(
             line("int uploadLimit = 200,")
             line("int downloadLimit = 1000,")
             line("bool verboseLogs = false,")
+            line("Duration automaticDownloadInterval = const Duration(seconds: 60),")
+            line("BundleChangeWatchMode bundleChangeWatchMode = BundleChangeWatchMode.off,")
+            line("Duration bundleChangeWatchReconnectMin = const Duration(seconds: 1),")
+            line("Duration bundleChangeWatchReconnectMax = const Duration(seconds: 60),")
         }
         writer.line("}) {")
         writer.indent {
@@ -91,6 +103,10 @@ internal class DartOversqliteEmitter(
                 line("uploadLimit: uploadLimit,")
                 line("downloadLimit: downloadLimit,")
                 line("verboseLogs: verboseLogs,")
+                line("automaticDownloadInterval: automaticDownloadInterval,")
+                line("bundleChangeWatchMode: bundleChangeWatchMode,")
+                line("bundleChangeWatchReconnectMin: bundleChangeWatchReconnectMin,")
+                line("bundleChangeWatchReconnectMax: bundleChangeWatchReconnectMax,")
             }
             line(");")
             line("return DefaultOversqliteClient(")

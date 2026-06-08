@@ -1,6 +1,6 @@
 name: sqlitenow_oversqlite
 description: Dart Oversqlite sync runtime for SQLiteNow generated sync metadata.
-version: 0.9.0
+version: 0.10.0
 homepage: https://github.com/mobiletoly/sqlitenow-kmp
 repository: https://github.com/mobiletoly/sqlitenow-kmp
 resolution: workspace
@@ -10,7 +10,7 @@ environment:
 
 dependencies:
   crypto: ^3.0.7
-  sqlitenow_runtime: ^0.9.0
+  sqlitenow_runtime: ^0.10.0
 
 dev_dependencies:
   lints: ^6.1.0

@@ -29,5 +29,7 @@ object AuthPrefs {
 object AuthKeys {
     const val Username = "username"
     const val Token = "token"
+    const val TokenExpiresAt = "token_expires_at"
     const val SourceId = "source_id"
+    const val SyncMode = "sync_mode"
 }

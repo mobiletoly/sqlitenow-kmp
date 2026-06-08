@@ -64,10 +64,10 @@ accompanying [sample project](https://github.com/mobiletoly/moodtracker-sample-k
 
 ```yaml
 dependencies:
-  sqlitenow_runtime: ^0.9.0
+  sqlitenow_runtime: ^0.10.0
 
 dev_dependencies:
-  sqlitenow_cli: ^0.9.0
+  sqlitenow_cli: ^0.10.0
 ```
 
 ```shell
@@ -282,6 +282,17 @@ syncClient.attach(userId = "user123").getOrThrow()
 
 // Perform full sync (upload local changes, download remote changes)
 syncClient.sync().getOrThrow()
+
+// Optional: start default-off automatic downloads.
+// Bundle-change watch is only a wake-up hint; pullToStable() remains authoritative.
+val automaticDownloads = coroutineScope.launch {
+    syncClient.runAutomaticDownloads(
+        db.buildOversqliteAutomaticDownloadConfig(
+            bundleChangeWatchMode = BundleChangeWatchMode.AUTO,
+        ),
+    )
+}
+automaticDownloads.cancelAndJoin()
 ```
 
 KMP sync example: [`/samplesync-kmp`](./samplesync-kmp).
@@ -293,11 +304,11 @@ Add the Dart runtime packages and enable Oversqlite in `sqlitenow.yaml`:
 
 ```yaml
 dependencies:
-  sqlitenow_runtime: ^0.9.0
-  sqlitenow_oversqlite: ^0.9.0
+  sqlitenow_runtime: ^0.10.0
+  sqlitenow_oversqlite: ^0.10.0
 
 dev_dependencies:
-  sqlitenow_cli: ^0.9.0
+  sqlitenow_cli: ^0.10.0
 ```
 
 ```yaml
@@ -328,6 +339,11 @@ final syncClient = db.newOversqliteClient(
 await syncClient.open();
 await syncClient.attach('user123');
 await syncClient.sync();
+
+// Optional: start default-off automatic downloads.
+// Bundle-change watch is only a wake-up hint; pullToStable() remains authoritative.
+final automaticDownloads = syncClient.startAutomaticDownloads();
+await automaticDownloads.stop();
 ```
 
 Dart sync package and realserver coverage: [`/dart/packages/sqlitenow_oversqlite`](./dart/packages/sqlitenow_oversqlite).

@@ -6,3 +6,10 @@ databases:
     runtime: dart
     oversqlite: true
     schemaDatabaseFile: build/sqlitenow/test-schema.db
+  RichRealServerDb:
+    input: ../../fixtures/oversqlite/RichRealServerDb
+    output: test/generated
+    package: test.db
+    runtime: dart
+    oversqlite: true
+    schemaDatabaseFile: build/sqlitenow/rich-realserver-schema.db

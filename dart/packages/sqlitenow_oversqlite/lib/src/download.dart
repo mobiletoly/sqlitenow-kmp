@@ -213,6 +213,7 @@ final class OversqliteDownloadRuntime {
   }) async {
     final updatedTables = <String>{};
     await _connection.transaction(() async {
+      await _connection.execute('PRAGMA defer_foreign_keys = ON');
       await _beginApplyMode();
       try {
         for (final row in bundle.rows) {
@@ -616,14 +617,33 @@ ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET
   }
 
   Future<_TableInfo> _tableInfo(String tableName) async {
-    final rows = await _connection.select(
+    final rawColumns = await _connection.select(
       'PRAGMA table_info(${_quoteIdent(tableName)})',
-      (row) => _ColumnInfo(
+      (row) => _RawColumnInfo(
         name: row.readString(1),
-        kind: _columnKind(row.readString(2), row.readInt(5) > 0),
+        declaredType: row.readString(2),
         primaryKey: row.readInt(5) > 0,
       ),
     );
+    final foreignKeyColumnsLower = await _connection.select(
+      'PRAGMA foreign_key_list(${_quoteIdent(tableName)})',
+      (row) => row.readString(3).toLowerCase(),
+    );
+    final foreignKeyColumnSet = foreignKeyColumnsLower.toSet();
+    final rows = [
+      for (final column in rawColumns)
+        _ColumnInfo(
+          name: column.name,
+          kind: _columnKind(
+            column.declaredType,
+            primaryKey: column.primaryKey,
+            blobReference: foreignKeyColumnSet.contains(
+              column.name.toLowerCase(),
+            ),
+          ),
+          primaryKey: column.primaryKey,
+        ),
+    ];
     final pk = rows.singleWhere((column) => column.primaryKey);
     return _TableInfo(name: tableName, columns: rows, primaryKey: pk);
   }
@@ -785,15 +805,33 @@ final class _ColumnInfo {
   final bool primaryKey;
 }
 
+final class _RawColumnInfo {
+  const _RawColumnInfo({
+    required this.name,
+    required this.declaredType,
+    required this.primaryKey,
+  });
+
+  final String name;
+  final String declaredType;
+  final bool primaryKey;
+}
+
 enum _ColumnKind { text, integer, real, blob, uuidBlob }
 
 const _outboxStateNone = 'none';
 const _outboxStateCommittedRemote = 'committed_remote';
 
-_ColumnKind _columnKind(String type, bool primaryKey) {
+_ColumnKind _columnKind(
+  String type, {
+  required bool primaryKey,
+  required bool blobReference,
+}) {
   final upper = type.trim().toUpperCase();
   if (upper.contains('BLOB')) {
-    return primaryKey ? _ColumnKind.uuidBlob : _ColumnKind.blob;
+    return primaryKey || blobReference
+        ? _ColumnKind.uuidBlob
+        : _ColumnKind.blob;
   }
   if (upper.contains('INT')) {
     return _ColumnKind.integer;

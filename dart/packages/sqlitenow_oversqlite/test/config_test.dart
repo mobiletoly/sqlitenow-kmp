@@ -18,5 +18,9 @@ void main() {
     expect(config.uploadLimit, 200);
     expect(config.downloadLimit, 1000);
     expect(config.verboseLogs, isFalse);
+    expect(config.automaticDownloadInterval, const Duration(seconds: 60));
+    expect(config.bundleChangeWatchMode, BundleChangeWatchMode.off);
+    expect(config.bundleChangeWatchReconnectMin, const Duration(seconds: 1));
+    expect(config.bundleChangeWatchReconnectMax, const Duration(seconds: 60));
   });
 }

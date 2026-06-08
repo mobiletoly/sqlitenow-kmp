@@ -81,6 +81,32 @@ Runs the standard interactive flow:
 
 Returns `SyncReport`.
 
+## Automatic Downloads And Watch
+
+Automatic downloads are optional and default-off. Starting the worker is explicit; `open()` and
+`attach(userId)` never start background network work.
+
+The worker downloads only. It never uploads local changes, clears dirty state, rebuilds
+automatically, or bypasses sync recovery gates.
+
+Polling and bundle-change watch both wake the same authoritative download path:
+
+| Mode | What Triggers A Download | What Carries Row Data | Failure Behavior |
+| --- | --- | --- | --- |
+| Polling | The configured interval expires. | `pullToStable()` responses. | The next interval tries again. |
+| Bundle-change watch | The server emits a `/sync/watch` bundle event. | `pullToStable()` responses. | The worker falls back to polling and later retries watch. |
+
+When bundle-change watch is enabled and the server advertises `features.bundle_change_watch`, the
+worker opens `/sync/watch` as a metadata-only wake-up stream. Watch events do not contain
+authoritative row data for the client to apply. Every remote mutation still reaches SQLite through
+the ordinary `pullToStable()` path.
+
+If watch is unavailable, disabled, disconnected, or malformed, the worker falls back to polling
+`pullToStable()` on its configured interval.
+
+`pauseDownloads()` suppresses automatic polling, watch requests, watch-event pulls, and fallback
+pulls. Explicit `pullToStable()` still runs while automatic downloads are paused.
+
 ## Recovery Operation
 
 ### `rebuild()`

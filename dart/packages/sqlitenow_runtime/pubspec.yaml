@@ -1,6 +1,6 @@
 name: sqlitenow_runtime
 description: Dart runtime contracts for SQLiteNow generated code.
-version: 0.9.0
+version: 0.10.0
 homepage: https://github.com/mobiletoly/sqlitenow-kmp
 repository: https://github.com/mobiletoly/sqlitenow-kmp
 resolution: workspace

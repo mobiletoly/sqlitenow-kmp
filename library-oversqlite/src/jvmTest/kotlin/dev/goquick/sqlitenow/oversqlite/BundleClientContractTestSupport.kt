@@ -970,6 +970,7 @@ open class BundleClientContractTestSupport {
         var commitError: ((Long, Int) -> Pair<Int, String>?)? = null
         var committedBundleChunkError: ((Long, Long?) -> Pair<Int, String>?)? = null
         var bundleChunkOverride: ((StoredBundle, Long?, Int) -> CommittedBundleRowsResponse)? = null
+        var committedRowsTransform: ((List<BundleRow>) -> List<BundleRow>)? = null
         var beforeCreateSessionResponse: (() -> Unit)? = null
         var beforeCommitResponse: ((Long, Int) -> Unit)? = null
         var beforeCommittedBundleChunkResponse: ((Long, Long?) -> Unit)? = null
@@ -1109,7 +1110,7 @@ open class BundleClientContractTestSupport {
                                 rowVersion = bundleSeq,
                                 payload = row.payload,
                             )
-                        }
+                        }.let { committedRowsTransform?.invoke(it) ?: it }
                         val stored = StoredBundle(
                             bundleSeq = bundleSeq,
                             sourceId = session.sourceId,

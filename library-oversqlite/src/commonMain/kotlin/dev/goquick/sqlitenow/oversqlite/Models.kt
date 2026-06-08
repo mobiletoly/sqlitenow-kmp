@@ -40,6 +40,13 @@ data class Bundle(
 )
 
 @Serializable
+data class BundleChangeEvent(
+    @SerialName("bundle_seq") val bundleSeq: Long,
+    @SerialName("source_id") val sourceId: String = "",
+    @SerialName("source_bundle_id") val sourceBundleId: Long = 0,
+)
+
+@Serializable
 data class PushRequestRow(
     val schema: String,
     val table: String,
@@ -129,6 +136,9 @@ data class CapabilitiesResponse(
     val features: Map<String, Boolean> = emptyMap(),
     @SerialName("bundle_limits") val bundleLimits: BundleCapabilitiesLimits? = null,
 )
+
+val CapabilitiesResponse.bundleChangeWatchSupported: Boolean
+    get() = features["bundle_change_watch"] == true
 
 @Serializable
 data class BundleCapabilitiesLimits(
@@ -235,6 +245,39 @@ data class OversqliteConfig(
     val verboseLogs: Boolean = false,
     val transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy(),
 )
+
+enum class BundleChangeWatchMode {
+    OFF,
+    AUTO,
+}
+
+/**
+ * Opt-in automatic download worker configuration.
+ *
+ * This is separate from [OversqliteConfig] so existing constructor, copy, and component call sites
+ * remain source and binary compatible.
+ */
+data class OversqliteAutomaticDownloadConfig(
+    val automaticDownloadIntervalMillis: Long = 60_000,
+    val bundleChangeWatchMode: BundleChangeWatchMode = BundleChangeWatchMode.OFF,
+    val bundleChangeWatchReconnectMinMillis: Long = 1_000,
+    val bundleChangeWatchReconnectMaxMillis: Long = 60_000,
+) {
+    init {
+        require(automaticDownloadIntervalMillis > 0) {
+            "automaticDownloadIntervalMillis must be positive"
+        }
+        require(bundleChangeWatchReconnectMinMillis > 0) {
+            "bundleChangeWatchReconnectMinMillis must be positive"
+        }
+        require(bundleChangeWatchReconnectMaxMillis > 0) {
+            "bundleChangeWatchReconnectMaxMillis must be positive"
+        }
+        require(bundleChangeWatchReconnectMaxMillis >= bundleChangeWatchReconnectMinMillis) {
+            "bundleChangeWatchReconnectMaxMillis must be greater than or equal to bundleChangeWatchReconnectMinMillis"
+        }
+    }
+}
 
 /**
  * Declares one sync-managed local table.

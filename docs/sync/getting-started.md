@@ -202,7 +202,30 @@ Pull-only:
 client.pullToStable().getOrThrow()
 ```
 
-## Step 10: Detach Safely
+## Step 10: Optional Automatic Downloads
+
+Automatic downloads are default-off. Start the worker only after `open()` and `attach(userId)` have
+completed.
+
+```kotlin
+val automaticDownloads = coroutineScope.launch {
+    client.runAutomaticDownloads(
+        db.buildOversqliteAutomaticDownloadConfig(
+            bundleChangeWatchMode = BundleChangeWatchMode.AUTO,
+        ),
+    )
+}
+
+// Later, when this client/session should stop background downloads:
+automaticDownloads.cancelAndJoin()
+```
+
+Watch support is an optional latency optimization. When the server advertises
+`features.bundle_change_watch`, the worker uses `/sync/watch` only as a wake-up hint and still
+downloads authoritative data through `pullToStable()`. If watch is unavailable, the worker falls
+back to polling.
+
+## Step 11: Detach Safely
 
 Direct detach:
 
@@ -230,7 +253,7 @@ if (!result.isSuccess()) {
 On successful destructive detach, the next attach starts from a fresh oversqlite source stream even
 on the same install.
 
-## Step 11: Rebuild Explicitly When Recovery Requires It
+## Step 12: Rebuild Explicitly When Recovery Requires It
 
 ```kotlin
 client.rebuild().getOrThrow()
@@ -239,7 +262,7 @@ client.rebuild().getOrThrow()
 `rebuild()` is the explicit recovery entry point. Oversqlite decides internally whether that
 rebuild keeps the current source or performs rebuild-plus-rotate recovery.
 
-## Step 12: Inspect Debug Diagnostics When Needed
+## Step 13: Inspect Debug Diagnostics When Needed
 
 ```kotlin
 val info = client.sourceInfo().getOrThrow()

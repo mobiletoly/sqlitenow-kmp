@@ -16,6 +16,7 @@ import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
+import io.ktor.utils.io.ByteChannel
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -169,7 +170,16 @@ internal open class CrossTargetSyncTestSupport {
         var sourceRetiredOnPushCommit: SourceRetiredResponse? = null
         var sourceRetiredOnSnapshotCreate: SourceRetiredResponse? = null
         var sourceReplacementInvalidOnSnapshotCreate: ErrorResponse? = null
+        var bundleChangeWatchSupported: Boolean = false
+        var pullRequestCount: Int = 0
+        var watchCloseCount: Int = 0
+        val capabilitySourceIds = mutableListOf<String>()
+        val watchSourceIds = mutableListOf<String>()
+        val watchAfterBundleSeqs = mutableListOf<Long>()
         val requestedSnapshotSourceReplacements = mutableListOf<SnapshotSourceReplacement>()
+        private val watchResponseOverrides = mutableListOf<WatchResponseOverride>()
+        private var holdNextWatchResponseOpen: Boolean = false
+        private val heldWatchResponseChannels = mutableListOf<ByteChannel>()
 
         private var nextBundleSeq = 1L
         private var nextPushId = 1L
@@ -189,18 +199,66 @@ internal open class CrossTargetSyncTestSupport {
             }
         }
 
+        fun enqueueWatchResponse(
+            status: HttpStatusCode = HttpStatusCode.OK,
+            body: String,
+        ) {
+            watchResponseOverrides += WatchResponseOverride(status = status, body = body)
+        }
+
+        fun holdNextWatchResponseOpen() {
+            holdNextWatchResponseOpen = true
+        }
+
+        fun closeHeldWatchResponses() {
+            heldWatchResponseChannels.forEach { it.close() }
+            watchCloseCount += heldWatchResponseChannels.size
+            heldWatchResponseChannels.clear()
+        }
+
+        fun addRemoteBundleForTest(rows: List<BundleRow>) {
+            val bundleSeq = nextBundleSeq++
+            rows.forEach { row ->
+                val key = liveKey(row.table, row.key)
+                if (row.op == "DELETE") {
+                    liveRows.remove(key)
+                } else {
+                    liveRows[key] = LiveRow(
+                        table = row.table,
+                        key = row.key,
+                        rowVersion = row.rowVersion,
+                        payload = row.payload ?: error("payload required for ${row.op}"),
+                    )
+                }
+            }
+            bundles += StoredBundle(
+                bundleSeq = bundleSeq,
+                sourceId = "remote-source",
+                sourceBundleId = bundleSeq,
+                rows = rows,
+                bundleHash = computeCommittedBundleHash(rows),
+            )
+            scopeInitialized = true
+        }
+
         private suspend fun MockRequestHandleScope.handle(request: HttpRequestData) = when {
             request.method.value == "GET" && request.url.encodedPath == "/sync/capabilities" ->
-                jsonResponse(
-                    json.encodeToString(
-                        CapabilitiesResponse.serializer(),
-                        CapabilitiesResponse(
-                            protocolVersion = "v1",
-                            schemaVersion = 1,
-                            features = mapOf("connect_lifecycle" to true),
+                run {
+                    capabilitySourceIds += request.headers[sourceIdHeaderName].orEmpty()
+                    jsonResponse(
+                        json.encodeToString(
+                            CapabilitiesResponse.serializer(),
+                            CapabilitiesResponse(
+                                protocolVersion = "v1",
+                                schemaVersion = 1,
+                                features = mapOf(
+                                    "connect_lifecycle" to true,
+                                    "bundle_change_watch" to bundleChangeWatchSupported,
+                                ),
+                            ),
                         ),
-                    ),
-                )
+                    )
+                }
 
             request.method.value == "POST" && request.url.encodedPath == "/sync/connect" ->
                 handleConnect(request)
@@ -246,6 +304,9 @@ internal open class CrossTargetSyncTestSupport {
 
             request.method.value == "GET" && request.url.encodedPath == "/sync/pull" ->
                 handlePull(request)
+
+            request.method.value == "GET" && request.url.encodedPath == "/sync/watch" ->
+                handleWatch(request)
 
             else -> jsonResponse(
                 body = json.encodeToString(ErrorResponse("not_found", request.url.encodedPath)),
@@ -645,6 +706,7 @@ internal open class CrossTargetSyncTestSupport {
 
         private suspend fun MockRequestHandleScope.handlePull(request: HttpRequestData) : io.ktor.client.request.HttpResponseData {
             return try {
+                pullRequestCount++
                 val afterBundleSeq = request.url.parameters["after_bundle_seq"]?.toLongOrNull() ?: 0L
                 val maxBundles = request.url.parameters["max_bundles"]?.toIntOrNull() ?: 1000
                 val targetBundleSeq = request.url.parameters["target_bundle_seq"]?.toLongOrNull() ?: 0L
@@ -685,6 +747,68 @@ internal open class CrossTargetSyncTestSupport {
             } catch (t: Throwable) {
                 errorResponse("invalid_request", t.message ?: "pull failed")
             }
+        }
+
+        private fun MockRequestHandleScope.handleWatch(
+            request: HttpRequestData,
+        ): io.ktor.client.request.HttpResponseData {
+            if (!bundleChangeWatchSupported) {
+                return errorResponse(
+                    error = "bundle_change_watch_disabled",
+                    message = "bundle change watch is disabled",
+                    status = HttpStatusCode.ServiceUnavailable,
+                )
+            }
+            val afterBundleSeq = request.url.parameters["after_bundle_seq"]?.toLongOrNull() ?: 0L
+            watchSourceIds += request.headers[sourceIdHeaderName].orEmpty()
+            watchAfterBundleSeqs += afterBundleSeq
+            if (holdNextWatchResponseOpen) {
+                holdNextWatchResponseOpen = false
+                val channel = ByteChannel()
+                heldWatchResponseChannels += channel
+                return respond(
+                    content = channel,
+                    status = HttpStatusCode.OK,
+                    headers = Headers.build {
+                        append(HttpHeaders.ContentType, "text/event-stream")
+                    },
+                )
+            }
+            watchResponseOverrides.removeFirstOrNull()?.let { override ->
+                watchCloseCount++
+                return respond(
+                    content = override.body,
+                    status = override.status,
+                    headers = Headers.build {
+                        append(
+                            HttpHeaders.ContentType,
+                            if (override.status == HttpStatusCode.OK) {
+                                "text/event-stream"
+                            } else {
+                                ContentType.Application.Json.toString()
+                            },
+                        )
+                    },
+                )
+            }
+            val changedBundles = bundles.filter { it.bundleSeq > afterBundleSeq }
+            val body = if (changedBundles.isEmpty()) {
+                ": heartbeat\n\n"
+            } else {
+                changedBundles.joinToString(separator = "\n\n", postfix = "\n\n") { bundle ->
+                    """
+                    event: bundle
+                    data: {"bundle_seq":${bundle.bundleSeq},"source_id":"${bundle.sourceId}","source_bundle_id":${bundle.sourceBundleId}}
+                    """.trimIndent()
+                }
+            }
+            return respond(
+                content = body,
+                status = HttpStatusCode.OK,
+                headers = Headers.build {
+                    append(HttpHeaders.ContentType, "text/event-stream")
+                },
+            )
         }
 
         private fun currentSnapshotRows(): List<SnapshotRow> {
@@ -776,6 +900,11 @@ internal open class CrossTargetSyncTestSupport {
             val snapshotId: String,
             val snapshotBundleSeq: Long,
             val rows: List<SnapshotRow>,
+        )
+
+        private data class WatchResponseOverride(
+            val status: HttpStatusCode,
+            val body: String,
         )
     }
 }

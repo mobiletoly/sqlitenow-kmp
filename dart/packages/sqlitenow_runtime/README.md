@@ -10,7 +10,7 @@ driver can be evaluated later without changing generated query APIs.
 
 ```yaml
 dependencies:
-  sqlitenow_runtime: ^0.9.0
+  sqlitenow_runtime: ^0.10.0
 ```
 
 Use this package with generated Dart code from `sqlitenow_cli`.

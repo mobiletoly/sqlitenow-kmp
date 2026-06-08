@@ -1717,6 +1717,55 @@ $indentedCommittedRowsJson
     }
 
     @Test
+    fun pushPending_committedRemoteMismatch_marksRebuildRequired_andRebuildAdvancesSourceFloor() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer()
+        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
+        pushServer.install(server)
+        server.snapshotRoutes(
+            snapshotId = "snapshot-committed-mismatch",
+            snapshotBundleSeq = 2,
+            rows = emptyList(),
+        )
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.openAndConnect("user-1").getOrThrow()
+            val sourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1")
+            db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
+            db.execSQL("INSERT INTO users(id, name) VALUES('user-2', 'Grace')")
+            client.pushPending().getOrThrow()
+
+            pushServer.committedRowsTransform = { rows -> rows.reversed() }
+            db.execSQL("DELETE FROM users WHERE id = 'user-1'")
+            db.execSQL("DELETE FROM users WHERE id = 'user-2'")
+
+            val firstError = client.pushPending().exceptionOrNull()
+
+            assertTrue(firstError is RebuildRequiredException)
+            assertEquals(1L, scalarLong(db, "SELECT rebuild_required FROM _sync_attachment_state WHERE singleton_key = 1"))
+            assertEquals("committed_remote", scalarText(db, "SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1"))
+            assertEquals(2L, scalarLong(db, "SELECT source_bundle_id FROM _sync_outbox_bundle WHERE singleton_key = 1"))
+            assertEquals(2L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+
+            client.rebuild().getOrThrow()
+
+            assertEquals(sourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1"))
+            assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_attachment_state WHERE singleton_key = 1"))
+            assertEquals("none", scalarText(db, "SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            assertEquals(3L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$sourceId'"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
     fun pushPending_alreadyCommittedWithDifferentCommittedRows_throwsSourceSequenceMismatch() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
@@ -1744,6 +1793,7 @@ $indentedCommittedRowsJson
                 error is SourceSequenceMismatchException,
                 "expected SourceSequenceMismatchException, got ${error::class.qualifiedName}: ${error.message}",
             )
+            assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_attachment_state WHERE singleton_key = 1"))
             assertEquals("prepared", scalarText(db, "SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1"))
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
             assertEquals(

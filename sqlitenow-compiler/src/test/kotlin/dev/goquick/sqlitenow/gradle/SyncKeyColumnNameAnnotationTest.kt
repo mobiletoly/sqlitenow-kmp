@@ -71,6 +71,18 @@ class SyncKeyColumnNameAnnotationTest {
             "buildOversqliteConfig should use syncTables parameter"
         )
         assertTrue(
+            generatedContent.contains("fun buildOversqliteAutomaticDownloadConfig"),
+            "Should generate automatic download config helper"
+        )
+        assertTrue(
+            generatedContent.contains("bundleChangeWatchMode: BundleChangeWatchMode = BundleChangeWatchMode.OFF"),
+            "Automatic download helper should default watch mode to OFF"
+        )
+        assertTrue(
+            generatedContent.contains("OversqliteAutomaticDownloadConfig("),
+            "Automatic download helper should build OversqliteAutomaticDownloadConfig"
+        )
+        assertTrue(
             generatedContent.contains("fun newOversqliteClient("),
             "Should generate newOversqliteClient helper for sync-enabled databases"
         )
@@ -196,6 +208,7 @@ class SyncKeyColumnNameAnnotationTest {
         val generatedContent = generatedDatabaseContent(oversqlite = false)
         assertTrue(!generatedContent.contains("syncTables: List<SyncTable>"))
         assertTrue(!generatedContent.contains("fun buildOversqliteConfig"))
+        assertTrue(!generatedContent.contains("fun buildOversqliteAutomaticDownloadConfig"))
         assertTrue(!generatedContent.contains("fun newOversqliteClient("))
     }
 

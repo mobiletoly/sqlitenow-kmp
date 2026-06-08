@@ -36,10 +36,10 @@ dependencies:
 
 ```yaml
 dependencies:
-  sqlitenow_runtime: ^0.9.0
+  sqlitenow_runtime: ^0.10.0
 
 dev_dependencies:
-  sqlitenow_cli: ^0.9.0
+  sqlitenow_cli: ^0.10.0
 ```
 
 SQLiteNow does not require the Gradle plugin for Flutter or Dart projects.

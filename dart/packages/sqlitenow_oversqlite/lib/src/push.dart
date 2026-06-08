@@ -60,6 +60,7 @@ final class OversqlitePushRuntime {
               sourceBundleId: snapshot.sourceBundleId,
               rowCount: snapshot.rows.length,
               bundleHash: snapshot.remoteBundleHash,
+              requiresStrictOutboxMatch: false,
             )
           : await _commitSnapshot(
               snapshot: snapshot,
@@ -102,7 +103,7 @@ final class OversqlitePushRuntime {
       );
     }
 
-    final committedRows = await _fetchCommittedRows(committed);
+    final committedRows = await _fetchCommittedRows(snapshot, committed);
     final updatedTables = await _applyCommittedRows(
       validated: validated,
       committed: committed,
@@ -209,13 +210,15 @@ final class OversqlitePushRuntime {
     );
     switch (create.status) {
       case 'already_committed':
-        return _CommittedPush(
+        final committed = _CommittedPush(
           bundleSeq: create.bundleSeq,
           sourceId: sourceId,
           sourceBundleId: snapshot.sourceBundleId,
           rowCount: create.rowCount,
           bundleHash: create.bundleHash,
+          requiresStrictOutboxMatch: true,
         );
+        return committed;
       case 'staging':
         final pushId = create.pushId;
         final chunkSize = _config.uploadLimit <= 0 ? 1000 : _config.uploadLimit;
@@ -249,14 +252,16 @@ final class OversqlitePushRuntime {
             sourceId: sourceId,
             sourceBundleId: snapshot.sourceBundleId,
           );
-          await _persistCommittedRemote(snapshot, committed);
-          return _CommittedPush(
+          final committedPush = _CommittedPush(
             bundleSeq: committed.bundleSeq,
             sourceId: sourceId,
             sourceBundleId: snapshot.sourceBundleId,
             rowCount: committed.rowCount,
             bundleHash: committed.bundleHash,
+            requiresStrictOutboxMatch: false,
           );
+          await _persistCommittedRemote(snapshot, committedPush);
+          return committedPush;
         } catch (_) {
           await _remoteApi.deletePushSessionBestEffort(
             pushId: pushId,
@@ -271,7 +276,10 @@ final class OversqlitePushRuntime {
     }
   }
 
-  Future<List<BundleRow>> _fetchCommittedRows(_CommittedPush committed) async {
+  Future<List<BundleRow>> _fetchCommittedRows(
+    _PushSnapshot snapshot,
+    _CommittedPush committed,
+  ) async {
     var afterRowOrdinal = null as int?;
     final rows = <BundleRow>[];
     while (true) {
@@ -297,6 +305,7 @@ final class OversqlitePushRuntime {
         'committed bundle row count ${rows.length} does not match expected ${committed.rowCount}',
       );
     }
+    _assertCommittedRowsMatchOutbox(snapshot, committed, rows);
     return rows;
   }
 
@@ -336,10 +345,13 @@ WHERE source_id = ?''',
         );
         await _connection.execute(
           '''UPDATE _sync_attachment_state
-SET last_bundle_seq_seen = ?,
+SET last_bundle_seq_seen = CASE
+      WHEN last_bundle_seq_seen + 1 = ? THEN ?
+      ELSE last_bundle_seq_seen
+    END,
     pending_initialization_id = ''
 WHERE singleton_key = 1''',
-          parameters: [committed.bundleSeq],
+          parameters: [committed.bundleSeq, committed.bundleSeq],
         );
         await _clearOutbox();
       } finally {
@@ -349,6 +361,75 @@ WHERE singleton_key = 1''',
       }
     }, mode: TransactionMode.immediate);
     return updatedTables;
+  }
+
+  void _assertCommittedRowsMatchOutbox(
+    _PushSnapshot snapshot,
+    _CommittedPush committed,
+    List<BundleRow> committedRows,
+  ) {
+    final requirePayloadMatch =
+        snapshot.state == _outboxStateCommittedRemote ||
+        committed.requiresStrictOutboxMatch;
+    int? mismatchIndex;
+    if (committedRows.length != snapshot.rows.length) {
+      mismatchIndex = committedRows.length < snapshot.rows.length
+          ? committedRows.length
+          : snapshot.rows.length;
+    } else {
+      for (var i = 0; i < committedRows.length; i++) {
+        if (!_equivalentCommittedRow(
+          expected: snapshot.rows[i],
+          actual: committedRows[i],
+          actualRowOrdinal: i,
+          requirePayloadMatch: requirePayloadMatch,
+        )) {
+          mismatchIndex = i;
+          break;
+        }
+      }
+    }
+    if (mismatchIndex != null) {
+      final expected = mismatchIndex < snapshot.rows.length
+          ? _ComparableCommittedRow.fromOutbox(snapshot.rows[mismatchIndex])
+          : null;
+      final actual = mismatchIndex < committedRows.length
+          ? _ComparableCommittedRow.fromBundleRow(
+              committedRows[mismatchIndex],
+              mismatchIndex,
+            )
+          : null;
+      throw SourceSequenceMismatchException(
+        'committed bundle for source ${committed.sourceId} source_bundle_id ${committed.sourceBundleId} '
+        'does not match the canonical prepared outbox rows at index $mismatchIndex; '
+        'expected=$expected actual=$actual',
+      );
+    }
+  }
+
+  bool _equivalentCommittedRow({
+    required _OutboxRow expected,
+    required BundleRow actual,
+    required int actualRowOrdinal,
+    required bool requirePayloadMatch,
+  }) {
+    if (expected.rowOrdinal != actualRowOrdinal ||
+        expected.schemaName != actual.schema ||
+        expected.tableName != actual.table ||
+        !_syncKeysEqual(_syncKeyFromJson(expected.wireKeyJson), actual.key) ||
+        expected.op != actual.op) {
+      return false;
+    }
+    if (!requirePayloadMatch) {
+      return true;
+    }
+    final expectedPayload = expected.wirePayload == null
+        ? null
+        : _canonicalizeJson(jsonDecode(expected.wirePayload!));
+    final actualPayload = actual.payload == null
+        ? null
+        : _canonicalizeJson(actual.payload);
+    return expectedPayload == actualPayload;
   }
 
   Future<void> _resolveConflict({
@@ -616,14 +697,33 @@ ORDER BY d.dirty_ordinal, d.table_name, d.key_json''',
   }
 
   Future<_TableInfo> _tableInfo(String tableName) async {
-    final rows = await _connection.select(
+    final rawColumns = await _connection.select(
       'PRAGMA table_info(${_quoteIdent(tableName)})',
-      (row) => _ColumnInfo(
+      (row) => _RawColumnInfo(
         name: row.readString(1),
-        kind: _columnKind(row.readString(2), row.readInt(5) > 0),
+        declaredType: row.readString(2),
         primaryKey: row.readInt(5) > 0,
       ),
     );
+    final foreignKeyColumnsLower = await _connection.select(
+      'PRAGMA foreign_key_list(${_quoteIdent(tableName)})',
+      (row) => row.readString(3).toLowerCase(),
+    );
+    final foreignKeyColumnSet = foreignKeyColumnsLower.toSet();
+    final rows = [
+      for (final column in rawColumns)
+        _ColumnInfo(
+          name: column.name,
+          kind: _columnKind(
+            column.declaredType,
+            primaryKey: column.primaryKey,
+            blobReference: foreignKeyColumnSet.contains(
+              column.name.toLowerCase(),
+            ),
+          ),
+          primaryKey: column.primaryKey,
+        ),
+    ];
     final pk = rows.singleWhere((column) => column.primaryKey);
     return _TableInfo(name: tableName, columns: rows, primaryKey: pk);
   }
@@ -863,7 +963,7 @@ WHERE singleton_key = 1''',
 
   Future<void> _persistCommittedRemote(
     _PushSnapshot snapshot,
-    PushSessionCommitResponse committed,
+    _CommittedPush committed,
   ) {
     return _persistOutboxBundle(
       _OutboxBundle(
@@ -1009,6 +1109,7 @@ final class _CommittedPush {
     required this.sourceBundleId,
     required this.rowCount,
     required this.bundleHash,
+    required this.requiresStrictOutboxMatch,
   });
 
   final int bundleSeq;
@@ -1016,6 +1117,7 @@ final class _CommittedPush {
   final int sourceBundleId;
   final int rowCount;
   final String bundleHash;
+  final bool requiresStrictOutboxMatch;
 }
 
 final class _OutboxBundle {
@@ -1111,6 +1213,55 @@ final class _DirtySnapshot {
   final bool stateDeleted;
 }
 
+final class _ComparableCommittedRow {
+  const _ComparableCommittedRow({
+    required this.rowOrdinal,
+    required this.schemaName,
+    required this.tableName,
+    required this.wireKey,
+    required this.op,
+    required this.wirePayload,
+  });
+
+  factory _ComparableCommittedRow.fromOutbox(_OutboxRow row) {
+    return _ComparableCommittedRow(
+      rowOrdinal: row.rowOrdinal,
+      schemaName: row.schemaName,
+      tableName: row.tableName,
+      wireKey: _syncKeyFromJson(row.wireKeyJson),
+      op: row.op,
+      wirePayload: row.wirePayload == null
+          ? null
+          : _canonicalizeJson(jsonDecode(row.wirePayload!)),
+    );
+  }
+
+  factory _ComparableCommittedRow.fromBundleRow(BundleRow row, int rowOrdinal) {
+    return _ComparableCommittedRow(
+      rowOrdinal: rowOrdinal,
+      schemaName: row.schema,
+      tableName: row.table,
+      wireKey: row.key,
+      op: row.op,
+      wirePayload: row.payload == null ? null : _canonicalizeJson(row.payload),
+    );
+  }
+
+  final int rowOrdinal;
+  final String schemaName;
+  final String tableName;
+  final SyncKey wireKey;
+  final String op;
+  final String? wirePayload;
+
+  @override
+  String toString() {
+    return 'CanonicalOutboxComparableRow(rowOrdinal=$rowOrdinal, '
+        'schemaName=$schemaName, tableName=$tableName, wireKey=$wireKey, '
+        'op=$op, wirePayload=$wirePayload)';
+  }
+}
+
 final class _DirtyCapture {
   const _DirtyCapture({
     required this.schemaName,
@@ -1169,12 +1320,30 @@ final class _ColumnInfo {
   final bool primaryKey;
 }
 
+final class _RawColumnInfo {
+  const _RawColumnInfo({
+    required this.name,
+    required this.declaredType,
+    required this.primaryKey,
+  });
+
+  final String name;
+  final String declaredType;
+  final bool primaryKey;
+}
+
 enum _ColumnKind { text, integer, real, blob, uuidBlob }
 
-_ColumnKind _columnKind(String type, bool primaryKey) {
+_ColumnKind _columnKind(
+  String type, {
+  required bool primaryKey,
+  required bool blobReference,
+}) {
   final upper = type.trim().toUpperCase();
   if (upper.contains('BLOB')) {
-    return primaryKey ? _ColumnKind.uuidBlob : _ColumnKind.blob;
+    return primaryKey || blobReference
+        ? _ColumnKind.uuidBlob
+        : _ColumnKind.blob;
   }
   if (upper.contains('INT')) {
     return _ColumnKind.integer;

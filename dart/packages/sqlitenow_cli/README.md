@@ -6,7 +6,7 @@ Add it as a dev dependency:
 
 ```yaml
 dev_dependencies:
-  sqlitenow_cli: ^0.9.0
+  sqlitenow_cli: ^0.10.0
 ```
 
 For pure Dart packages:
@@ -49,7 +49,7 @@ During local repository development, `--compiler-jar` remains available as an
 explicit override:
 
 ```shell
-dart run sqlitenow_cli generate --compiler-jar ../../sqlitenow-compiler/build/libs/sqlitenow-compiler-0.9.0-compiler.jar
+dart run sqlitenow_cli generate --compiler-jar ../../sqlitenow-compiler/build/libs/sqlitenow-compiler-0.10.0-compiler.jar
 ```
 
 Documentation: https://mobiletoly.github.io/sqlitenow-kmp/flutter/

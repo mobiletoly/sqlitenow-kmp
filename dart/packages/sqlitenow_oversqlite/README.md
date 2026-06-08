@@ -20,6 +20,7 @@ Run live realserver conformance after starting
 
 ```shell
 OVERSQLITE_REALSERVER_TESTS=true flutter test packages/sqlitenow_oversqlite/test/realserver_conformance_test.dart
+OVERSQLITE_REALSERVER_TESTS=true flutter test packages/sqlitenow_oversqlite/test/realserver_rich_schema_test.dart
 ```
 
 Run the opt-in heavy realserver stress suite with:
@@ -46,4 +47,15 @@ wrappers, not a one-to-one copy of every KMP platform wrapper.
 | Source recovery or source retirement | Covered after several committed bundles, including old-source rejection and follow-up sync through the replacement source. |
 | Same-user multi-device convergence | Covered by two Dart writers plus an observer converging through the same user scope. |
 | Shared connection or concurrent local usage stress | Covered by concurrent reads while a shared Dart database catches up through live pulls. Dart does not expose the KMP alias-star generated query surface, so that exact generated-query shape is not applicable. |
-| Rich schema, typed rows, BLOB, cascade, and FK topology stress | Follow-up gap for Dart generated rich-schema realserver fixtures. The current Dart heavy suite uses the manual business subset schema already used by normal Dart realserver conformance. |
+| Rich schema, typed rows, BLOB, cascade, and FK topology stress | Covered by `realserver_rich_schema_test.dart` using generated Dart oversqlite metadata. It exercises FK topology, typed nullable rows, BLOB payloads, and BLOB primary-key sync tables. |
+
+Flutter runtime coverage lives in the `flutter_todo` example as an opt-in
+integration fixture. After starting the real server and an Android emulator,
+run:
+
+```shell
+cd examples/flutter_todo
+flutter test integration_test/realserver_smoke_test.dart -d emulator-5554 \
+  --dart-define=OVERSQLITE_REALSERVER_TESTS=true \
+  --dart-define=OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL=http://10.0.2.2:8080
+```
