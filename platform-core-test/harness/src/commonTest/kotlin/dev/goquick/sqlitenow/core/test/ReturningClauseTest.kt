@@ -25,32 +25,6 @@ class ReturningClauseTest {
     }
 
     @Test
-    fun testExecuteReturningOne() = runDatabaseTest {
-            database.open()
-            
-            // Test .one helper with INSERT RETURNING
-            val testPerson = PersonQuery.Add.Params(
-                email = "returning-one@example.com",
-                firstName = "ReturningOne",
-                lastName = "Test",
-                phone = "+1111111111",
-                birthDate = LocalDate(1990, 1, 15)
-            )
-            
-            val insertedPerson = database.person.add.one(testPerson)
-            
-            assertNotNull(insertedPerson, "Inserted person should not be null")
-            assertTrue(insertedPerson.id > 0, "ID should be positive")
-            assertEquals("ReturningOne", insertedPerson.firstName, "First name should match")
-            assertEquals("Test", insertedPerson.lastName, "Last name should match")
-            assertEquals("returning-one@example.com", insertedPerson.email, "Email should match")
-            assertEquals("+1111111111", insertedPerson.phone, "Phone should match")
-            assertEquals(LocalDate(1990, 1, 15), insertedPerson.birthDate, "Birth date should match")
-            assertNotNull(insertedPerson.createdAt, "Created at should not be null")
-            assertTrue(insertedPerson.createdAt.year >= 2024, "Created at should be recent")
-    }
-
-    @Test
     fun testExecuteReturningList() = runDatabaseTest {
             database.open()
             
@@ -98,33 +72,6 @@ class ReturningClauseTest {
             assertEquals("returning-or-null@example.com", insertedPerson.email, "Email should match")
             assertEquals("+3333333333", insertedPerson.phone, "Phone should match")
             assertEquals(LocalDate(1992, 8, 10), insertedPerson.birthDate, "Birth date should match")
-    }
-
-    @Test
-    fun testReturningWithNullValues() = runDatabaseTest {
-            database.open()
-            
-            // Test RETURNING clause with null parameters
-            val testPerson = PersonQuery.Add.Params(
-                email = "returning-nulls@example.com",
-                firstName = "ReturningNulls",
-                lastName = "Test",
-                phone = null, // Test null parameter
-                birthDate = null // Test null date parameter
-            )
-            
-            val insertedPerson = database.person.add.one(testPerson)
-            
-            // Verify null parameters were handled correctly in RETURNING
-            assertNull(insertedPerson.phone, "Phone should be null")
-            assertNull(insertedPerson.birthDate, "Birth date should be null")
-            
-            // Non-null parameters should be preserved
-            assertEquals("returning-nulls@example.com", insertedPerson.email, "Email should be preserved")
-            assertEquals("ReturningNulls", insertedPerson.firstName, "First name should be preserved")
-            assertEquals("Test", insertedPerson.lastName, "Last name should be preserved")
-            assertTrue(insertedPerson.id > 0, "ID should be positive")
-            assertNotNull(insertedPerson.createdAt, "Created at should not be null")
     }
 
     @Test

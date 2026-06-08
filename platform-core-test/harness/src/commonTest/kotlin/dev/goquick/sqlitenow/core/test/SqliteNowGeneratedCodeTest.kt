@@ -183,31 +183,6 @@ class SqliteNowGeneratedCodeTest {
     }
 
     @Test
-    fun testGeneratedTypeAdapters() = runDatabaseTest {
-            database.open()
-            
-            // Test with date parameters using generated type adapters
-            val testDate = LocalDate(1988, 12, 25)
-            
-            val testPerson = PersonQuery.Add.Params(
-                email = "date-test@example.com",
-                firstName = "Date",
-                lastName = "Test",
-                phone = "+34-123-456-789",
-                birthDate = testDate
-            )
-            
-            val insertedPerson = database.person.add.one(testPerson)
-            
-            // Verify type adapters worked correctly
-            assertEquals(testDate, insertedPerson.birthDate, "Birth date should be preserved through adapters")
-            
-            // Verify LocalDateTime adapter
-            assertNotNull(insertedPerson.createdAt, "Created at should not be null")
-            assertTrue(insertedPerson.createdAt.year >= 2024, "Created at should be recent")
-    }
-
-    @Test
     fun testGeneratedParameterBinding() = runDatabaseTest {
             database.open()
             

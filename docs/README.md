@@ -8,8 +8,7 @@ To run the documentation site locally:
 
 ```bash
 cd docs
-bundle install
-bundle exec jekyll serve
+./run-local.sh
 ```
 
 The site will be available at `http://localhost:4000/sqlitenow-kmp/`

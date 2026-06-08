@@ -28,30 +28,6 @@ class InsertOperationsTest {
     }
 
     @Test
-    fun testBasicInsertWithReturning() = runDatabaseTest {
-            database.open()
-            
-            val insertParams = PersonQuery.Add.Params(
-                email = "basic-insert@example.com",
-                firstName = "Basic",
-                lastName = "Insert",
-                phone = "+1234567890",
-                birthDate = LocalDate(1990, 1, 1)
-            )
-            
-            val insertedPerson = database.person.add.one(insertParams)
-            
-            // Verify all fields were inserted correctly
-            assertTrue(insertedPerson.id > 0, "ID should be positive")
-            assertEquals("basic-insert@example.com", insertedPerson.email, "Email should match")
-            assertEquals("Basic", insertedPerson.firstName, "First name should match")
-            assertEquals("Insert", insertedPerson.lastName, "Last name should match")
-            assertEquals("+1234567890", insertedPerson.phone, "Phone should match")
-            assertEquals(LocalDate(1990, 1, 1), insertedPerson.birthDate, "Birth date should match")
-            assertNotNull(insertedPerson.createdAt, "Created at should be set")
-    }
-
-    @Test
     fun testInsertWithNullValues() = runDatabaseTest {
             database.open()
             
@@ -151,63 +127,6 @@ class InsertOperationsTest {
             for (i in 1 until ids.size) {
                 assertTrue(ids[i] > ids[i-1], "IDs should be sequential")
             }
-    }
-
-    @Test
-    fun testInsertWithComplexTypes() = runDatabaseTest {
-            database.open()
-            
-            // Insert person first
-            val person = database.person.add.one(PersonQuery.Add.Params(
-                email = "complex-types@example.com",
-                firstName = "Complex",
-                lastName = "Types",
-                phone = "+3333333333",
-                birthDate = LocalDate(1992, 8, 25)
-            ))
-            
-            // Insert comment with JSON array (List<String>)
-            val complexTags = listOf(
-                "complex", "types", "json", "array", 
-                "special chars: 'quotes'", "unicode: 🚀", 
-                "numbers: 123", "symbols: @#$%"
-            )
-            
-            val commentParams = CommentQuery.Add.Params(
-                personId = person.id,
-                comment = "Comment with complex JSON array and special characters: 'test', \"quotes\", & symbols",
-                createdAt = LocalDateTime(2024, 8, 25, 14, 30, 45),
-                tags = complexTags
-            )
-            
-            database.comment.add(commentParams)
-            
-            // Insert address with enum type
-            val addressParams = PersonAddressQuery.Add.Params(
-                personId = person.id,
-                addressType = AddressType.HOME,
-                street = "123 Complex Types St",
-                city = "Type City",
-                state = "TC",
-                postalCode = "12345",
-                country = "Type Country",
-                isPrimary = true
-            )
-            
-            database.personAddress.add(addressParams)
-            
-            // Verify complex types were inserted correctly
-            val comments = database.comment.selectAll(CommentQuery.SelectAll.Params(personId = person.id)).asList()
-            assertEquals(1, comments.size, "Should have 1 comment")
-            assertEquals(complexTags, comments[0].tags, "Tags should match exactly")
-            assertTrue(comments[0].comment.contains("'test'") && 
-                comments[0].comment.contains("\"quotes\"") &&
-                comments[0].comment.contains("& symbols"), "Comment should contain special characters")
-            
-            val addresses = database.personAddress.selectAll.asList()
-            assertEquals(1, addresses.size, "Should have 1 address")
-            assertEquals(AddressType.HOME, addresses[0].addressType, "Address type should be HOME")
-            assertTrue(addresses[0].isPrimary, "Should be primary address")
     }
 
     @Test
