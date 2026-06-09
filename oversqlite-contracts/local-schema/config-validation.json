@@ -1,0 +1,298 @@
+{
+  "formatVersion": 1,
+  "cases": [
+    {
+      "name": "composite-primary-key-rejected",
+      "description": "Composite local primary keys are rejected because Oversqlite currently exposes exactly one sync key column.",
+      "schemaSql": [
+        "CREATE TABLE pairs (id_a TEXT NOT NULL, id_b TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY (id_a, id_b))"
+      ],
+      "config": {
+        "schema": "main",
+        "syncTables": [
+          {
+            "tableName": "pairs",
+            "syncKeyColumns": [
+              "id_a",
+              "id_b"
+            ]
+          }
+        ]
+      },
+      "expectedError": {
+        "kind": "configuration",
+        "messageContains": [
+          "must declare exactly one sync key column"
+        ]
+      }
+    },
+    {
+      "name": "composite-foreign-key-rejected",
+      "description": "Managed tables with composite foreign keys are rejected explicitly instead of installing partial dependency ordering.",
+      "schemaSql": [
+        "CREATE TABLE parent_pairs (id TEXT PRIMARY KEY NOT NULL, parent_a TEXT NOT NULL, parent_b TEXT NOT NULL, UNIQUE (parent_a, parent_b))",
+        "CREATE TABLE child_pairs (id TEXT PRIMARY KEY NOT NULL, parent_a TEXT NOT NULL, parent_b TEXT NOT NULL, FOREIGN KEY (parent_a, parent_b) REFERENCES parent_pairs(parent_a, parent_b))"
+      ],
+      "config": {
+        "schema": "main",
+        "syncTables": [
+          {
+            "tableName": "parent_pairs",
+            "syncKeyColumnName": "id"
+          },
+          {
+            "tableName": "child_pairs",
+            "syncKeyColumnName": "id"
+          }
+        ]
+      },
+      "expectedError": {
+        "kind": "configuration",
+        "messageContains": [
+          "unsupported composite foreign keys",
+          "child_pairs -> parent_pairs"
+        ]
+      }
+    },
+    {
+      "name": "integer-primary-key-rejected",
+      "description": "INTEGER sync keys are rejected; only TEXT and BLOB primary keys are protocol-safe.",
+      "schemaSql": [
+        "CREATE TABLE users (id INTEGER PRIMARY KEY NOT NULL, name TEXT NOT NULL)"
+      ],
+      "config": {
+        "schema": "main",
+        "syncTables": [
+          {
+            "tableName": "users",
+            "syncKeyColumnName": "id"
+          }
+        ]
+      },
+      "expectedError": {
+        "kind": "configuration",
+        "messageContains": [
+          "TEXT PRIMARY KEY or BLOB PRIMARY KEY"
+        ]
+      }
+    },
+    {
+      "name": "bigint-primary-key-rejected",
+      "description": "BIGINT sync keys are rejected for the same wire-compatibility reason as INTEGER keys.",
+      "schemaSql": [
+        "CREATE TABLE users (id BIGINT PRIMARY KEY NOT NULL, name TEXT NOT NULL)"
+      ],
+      "config": {
+        "schema": "main",
+        "syncTables": [
+          {
+            "tableName": "users",
+            "syncKeyColumnName": "id"
+          }
+        ]
+      },
+      "expectedError": {
+        "kind": "configuration",
+        "messageContains": [
+          "TEXT PRIMARY KEY or BLOB PRIMARY KEY"
+        ]
+      }
+    },
+    {
+      "name": "blob-primary-key-accepted",
+      "description": "BLOB primary keys are accepted and use the normal runtime metadata path.",
+      "schemaSql": [
+        "CREATE TABLE users (id BLOB PRIMARY KEY NOT NULL, name TEXT NOT NULL)"
+      ],
+      "config": {
+        "schema": "main",
+        "syncTables": [
+          {
+            "tableName": "users",
+            "syncKeyColumnName": "id"
+          }
+        ]
+      },
+      "expectedError": null,
+      "expectedQueries": [
+        {
+          "name": "apply-state-installed",
+          "sql": "SELECT COUNT(*) FROM sqlite_master WHERE name = '_sync_apply_state'",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "name": "unknown-sync-prefixed-application-table-preserved",
+      "description": "Application-owned tables whose names start with _sync_ are preserved and are not mistaken for old runtime metadata.",
+      "schemaSql": [
+        "CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)",
+        "CREATE TABLE _sync_audit_log (id INTEGER PRIMARY KEY NOT NULL, message TEXT NOT NULL)",
+        "INSERT INTO _sync_audit_log(id, message) VALUES(1, 'keep me')"
+      ],
+      "config": {
+        "schema": "main",
+        "syncTables": [
+          {
+            "tableName": "users",
+            "syncKeyColumnName": "id"
+          }
+        ]
+      },
+      "expectedError": null,
+      "expectedQueries": [
+        {
+          "name": "audit-row-preserved",
+          "sql": "SELECT message FROM _sync_audit_log WHERE id = 1",
+          "value": "keep me"
+        }
+      ]
+    },
+    {
+      "name": "anonymous-apply-mode-suppresses-dirty-capture",
+      "description": "Apply mode suppresses local dirty-row capture before an attached user scope exists, then capture resumes after apply mode is cleared.",
+      "schemaSql": [
+        "CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)"
+      ],
+      "config": {
+        "schema": "main",
+        "syncTables": [
+          {
+            "tableName": "users",
+            "syncKeyColumnName": "id"
+          }
+        ]
+      },
+      "afterOpenSql": [
+        "UPDATE _sync_apply_state SET apply_mode = 1 WHERE singleton_key = 1",
+        "INSERT INTO users(id, name) VALUES('user-apply', 'Remote Apply')",
+        "UPDATE _sync_apply_state SET apply_mode = 0 WHERE singleton_key = 1",
+        "INSERT INTO users(id, name) VALUES('user-local', 'Local Write')"
+      ],
+      "expectedError": null,
+      "expectedQueries": [
+        {
+          "name": "only-local-write-captured",
+          "sql": "SELECT COUNT(*) FROM _sync_dirty_rows",
+          "value": 1
+        },
+        {
+          "name": "local-write-key",
+          "sql": "SELECT key_json FROM _sync_dirty_rows LIMIT 1",
+          "value": "{\"id\":\"user-local\"}"
+        }
+      ]
+    },
+    {
+      "name": "omitted-sync-key-rejected",
+      "description": "Managed table registrations must spell out the sync key.",
+      "schemaSql": [
+        "CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)"
+      ],
+      "config": {
+        "schema": "main",
+        "syncTables": [
+          {
+            "tableName": "users"
+          }
+        ]
+      },
+      "expectedError": {
+        "kind": "configuration",
+        "messageContains": [
+          "syncKeyColumnName or syncKeyColumns explicitly"
+        ]
+      }
+    },
+    {
+      "name": "missing-sync-key-column-rejected",
+      "description": "A configured key column must exist on the managed table.",
+      "schemaSql": [
+        "CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)"
+      ],
+      "config": {
+        "schema": "main",
+        "syncTables": [
+          {
+            "tableName": "users",
+            "syncKeyColumnName": "missing_id"
+          }
+        ]
+      },
+      "expectedError": {
+        "kind": "configuration",
+        "messageContains": [
+          "does not contain configured primary key column missing_id"
+        ]
+      }
+    },
+    {
+      "name": "reserved-scope-column-rejected",
+      "description": "Local schemas must not declare the server-only hidden scope column.",
+      "schemaSql": [
+        "CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, _sync_scope_id TEXT NOT NULL, name TEXT NOT NULL)"
+      ],
+      "config": {
+        "schema": "main",
+        "syncTables": [
+          {
+            "tableName": "users",
+            "syncKeyColumnName": "id"
+          }
+        ]
+      },
+      "expectedError": {
+        "kind": "configuration",
+        "messageContains": [
+          "reserved server column _sync_scope_id"
+        ]
+      }
+    },
+    {
+      "name": "fk-open-registration-rejected",
+      "description": "Managed table registrations must include referenced managed parents.",
+      "schemaSql": [
+        "CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)",
+        "CREATE TABLE posts (id TEXT PRIMARY KEY NOT NULL, user_id TEXT NOT NULL REFERENCES users(id), title TEXT NOT NULL)"
+      ],
+      "config": {
+        "schema": "main",
+        "syncTables": [
+          {
+            "tableName": "posts",
+            "syncKeyColumnName": "id"
+          }
+        ]
+      },
+      "expectedError": {
+        "kind": "configuration",
+        "messageContains": [
+          "managed tables are not FK-closed",
+          "posts.user_id -> users.id"
+        ]
+      }
+    },
+    {
+      "name": "schema-qualified-registration-rejected",
+      "description": "SyncTable.tableName is local to config.schema and must not include a schema qualifier.",
+      "schemaSql": [
+        "CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)"
+      ],
+      "config": {
+        "schema": "main",
+        "syncTables": [
+          {
+            "tableName": "main.users",
+            "syncKeyColumnName": "id"
+          }
+        ]
+      },
+      "expectedError": {
+        "kind": "configuration",
+        "messageContains": [
+          "must not include a schema qualifier"
+        ]
+      }
+    }
+  ]
+}

@@ -219,6 +219,8 @@ tasks.register<Test>("oversqliteRealserverJvm") {
 
     filter {
         includeTestsMatching("dev.goquick.sqlitenow.oversqlite.RealServerComprehensiveTest")
+        includeTestsMatching("dev.goquick.sqlitenow.oversqlite.RealServerBundleChangeWatchTest")
+        includeTestsMatching("dev.goquick.sqlitenow.oversqlite.RealServerRichSchemaTest")
     }
 
     environment("OVERSQLITE_REALSERVER_TESTS", "true")

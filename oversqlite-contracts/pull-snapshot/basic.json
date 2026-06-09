@@ -128,6 +128,241 @@
       }
     },
     {
+      "name": "pull-rejects-row-version-zero",
+      "afterBundleSeq": 0,
+      "pullResponse": {
+        "stable_bundle_seq": 1,
+        "bundles": [
+          {
+            "bundle_seq": 1,
+            "source_id": "remote-source",
+            "source_bundle_id": 1,
+            "rows": [
+              {
+                "schema": "main",
+                "table": "users",
+                "key": {
+                  "id": "user-1"
+                },
+                "op": "INSERT",
+                "row_version": 0,
+                "payload": {
+                  "id": "user-1",
+                  "name": "Ada"
+                }
+              }
+            ]
+          }
+        ],
+        "has_more": false
+      },
+      "expectedPullErrorContains": "bundle row row_version 0 must be positive"
+    },
+    {
+      "name": "pull-rejects-hidden-scope-payload",
+      "afterBundleSeq": 0,
+      "pullResponse": {
+        "stable_bundle_seq": 1,
+        "bundles": [
+          {
+            "bundle_seq": 1,
+            "source_id": "remote-source",
+            "source_bundle_id": 1,
+            "rows": [
+              {
+                "schema": "main",
+                "table": "users",
+                "key": {
+                  "id": "user-1"
+                },
+                "op": "INSERT",
+                "row_version": 1,
+                "payload": {
+                  "id": "user-1",
+                  "_sync_scope_id": "hidden",
+                  "name": "Ada"
+                }
+              }
+            ]
+          }
+        ],
+        "has_more": false
+      },
+      "expectedPullErrorContains": "_sync_scope_id"
+    },
+    {
+      "name": "pull-rejects-stable-behind-request",
+      "afterBundleSeq": 3,
+      "pullResponse": {
+        "stable_bundle_seq": 2,
+        "bundles": [],
+        "has_more": false
+      },
+      "expectedPullErrorContains": "is behind requested after_bundle_seq 3"
+    },
+    {
+      "name": "pull-rejects-non-empty-response-without-stable-ceiling",
+      "afterBundleSeq": 0,
+      "pullResponse": {
+        "stable_bundle_seq": 0,
+        "bundles": [
+          {
+            "bundle_seq": 1,
+            "source_id": "remote-source",
+            "source_bundle_id": 1,
+            "rows": []
+          }
+        ],
+        "has_more": false
+      },
+      "expectedPullErrorContains": "missing stable_bundle_seq for non-empty bundle list"
+    },
+    {
+      "name": "snapshot-rejects-malformed-expiry",
+      "snapshotSession": {
+        "snapshot_id": "snapshot-invalid-expiry",
+        "snapshot_bundle_seq": 9,
+        "row_count": 0,
+        "byte_count": 32,
+        "expires_at": "not-a-timestamp"
+      },
+      "expectedSnapshotSessionErrorContains": "RFC3339/ISO-8601 instant"
+    },
+    {
+      "name": "snapshot-rejects-negative-row-count",
+      "snapshotSession": {
+        "snapshot_id": "snapshot-negative-row-count",
+        "snapshot_bundle_seq": 9,
+        "row_count": -1,
+        "byte_count": 32,
+        "expires_at": "2099-01-01T00:00:00Z"
+      },
+      "expectedSnapshotSessionErrorContains": "row_count -1 must be non-negative"
+    },
+    {
+      "name": "snapshot-rejects-non-empty-session-without-bundle-seq",
+      "snapshotSession": {
+        "snapshot_id": "snapshot-missing-bundle-seq",
+        "snapshot_bundle_seq": 0,
+        "row_count": 1,
+        "byte_count": 32,
+        "expires_at": "2099-01-01T00:00:00Z"
+      },
+      "expectedSnapshotSessionErrorContains": "missing snapshot_bundle_seq for non-empty row set"
+    },
+    {
+      "name": "snapshot-rejects-hidden-scope-payload",
+      "snapshotSession": {
+        "snapshot_id": "snapshot-hidden-scope",
+        "snapshot_bundle_seq": 9,
+        "row_count": 1,
+        "byte_count": 32,
+        "expires_at": "2099-01-01T00:00:00Z"
+      },
+      "snapshotChunkResponse": {
+        "snapshot_id": "snapshot-hidden-scope",
+        "snapshot_bundle_seq": 9,
+        "rows": [
+          {
+            "schema": "main",
+            "table": "users",
+            "key": {
+              "id": "user-1"
+            },
+            "row_version": 1,
+            "payload": {
+              "id": "user-1",
+              "_sync_scope_id": "hidden",
+              "name": "Ada"
+            }
+          }
+        ],
+        "next_row_ordinal": 1,
+        "has_more": false
+      },
+      "expectedSnapshotChunkErrorContains": "_sync_scope_id"
+    },
+    {
+      "name": "snapshot-rejects-has-more-with-empty-rows",
+      "snapshotSession": {
+        "snapshot_id": "snapshot-empty-has-more",
+        "snapshot_bundle_seq": 9,
+        "row_count": 1,
+        "byte_count": 32,
+        "expires_at": "2099-01-01T00:00:00Z"
+      },
+      "snapshotChunkResponse": {
+        "snapshot_id": "snapshot-empty-has-more",
+        "snapshot_bundle_seq": 9,
+        "rows": [],
+        "next_row_ordinal": 0,
+        "has_more": true
+      },
+      "expectedSnapshotChunkErrorContains": "has_more=true must include at least one row"
+    },
+    {
+      "name": "snapshot-rejects-next-row-ordinal-mismatch",
+      "snapshotSession": {
+        "snapshot_id": "snapshot-bad-next-row",
+        "snapshot_bundle_seq": 9,
+        "row_count": 1,
+        "byte_count": 32,
+        "expires_at": "2099-01-01T00:00:00Z"
+      },
+      "snapshotChunkResponse": {
+        "snapshot_id": "snapshot-bad-next-row",
+        "snapshot_bundle_seq": 9,
+        "rows": [
+          {
+            "schema": "main",
+            "table": "users",
+            "key": {
+              "id": "user-1"
+            },
+            "row_version": 1,
+            "payload": {
+              "id": "user-1",
+              "name": "Ada"
+            }
+          }
+        ],
+        "next_row_ordinal": 2,
+        "has_more": false
+      },
+      "expectedSnapshotChunkErrorContains": "next_row_ordinal 2 does not match expected 1"
+    },
+    {
+      "name": "snapshot-rejects-non-empty-chunk-without-bundle-seq",
+      "snapshotSession": {
+        "snapshot_id": "snapshot-chunk-missing-bundle-seq",
+        "snapshot_bundle_seq": 0,
+        "row_count": 0,
+        "byte_count": 32,
+        "expires_at": "2099-01-01T00:00:00Z"
+      },
+      "snapshotChunkResponse": {
+        "snapshot_id": "snapshot-chunk-missing-bundle-seq",
+        "snapshot_bundle_seq": 0,
+        "rows": [
+          {
+            "schema": "main",
+            "table": "users",
+            "key": {
+              "id": "user-1"
+            },
+            "row_version": 1,
+            "payload": {
+              "id": "user-1",
+              "name": "Ada"
+            }
+          }
+        ],
+        "next_row_ordinal": 1,
+        "has_more": false
+      },
+      "expectedSnapshotChunkErrorContains": "missing snapshot_bundle_seq for non-empty row set"
+    },
+    {
       "name": "source-replacement-invalid",
       "sourceReplacementInvalidResponse": {
         "status": 409,

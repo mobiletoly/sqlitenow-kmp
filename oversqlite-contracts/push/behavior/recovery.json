@@ -2,6 +2,192 @@
   "formatVersion": 1,
   "cases": [
     {
+      "name": "hidden-scope-conflict-row-is-rejected",
+      "description": "Conflict responses must not leak the hidden server scope column into client-visible authoritative rows.",
+      "resolver": "client_wins",
+      "localSetupSql": [
+        "INSERT INTO users(id, name) VALUES('user-1', 'Client')"
+      ],
+      "serverScript": {
+        "kind": "conflict_once",
+        "conflict": {
+          "schema": "main",
+          "table": "users",
+          "key": {
+            "id": "user-1"
+          },
+          "op": "INSERT",
+          "base_row_version": 0,
+          "server_row_version": 7,
+          "server_row_deleted": false,
+          "server_row": {
+            "id": "user-1",
+            "name": "Server",
+            "_sync_scope_id": "hidden"
+          }
+        }
+      },
+      "steps": [
+        {
+          "action": "pushPending",
+          "expectedException": "protocol_error",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "prepared",
+            "outboxRowCount": 1,
+            "dirtyRowCount": 0,
+            "nextSourceBundleId": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "deleted-authoritative-invalid-resolver-restores-dirty-rows",
+      "description": "KeepLocal is invalid for an UPDATE conflict whose authoritative row is deleted, and the rejected outbound snapshot is restored as dirty state.",
+      "resolver": "keep_local",
+      "localSetupSql": [
+        "UPDATE _sync_apply_state SET apply_mode = 1 WHERE singleton_key = 1",
+        "INSERT INTO users(id, name) VALUES('user-1', 'Seed')",
+        "UPDATE _sync_apply_state SET apply_mode = 0 WHERE singleton_key = 1",
+        "INSERT INTO _sync_row_state(schema_name, table_name, key_json, row_version, deleted) VALUES('main', 'users', '{\"id\":\"user-1\"}', 1, 0)",
+        "UPDATE users SET name = 'Local Name' WHERE id = 'user-1'"
+      ],
+      "serverScript": {
+        "kind": "conflict_once",
+        "conflict": {
+          "schema": "main",
+          "table": "users",
+          "key": {
+            "id": "user-1"
+          },
+          "op": "UPDATE",
+          "base_row_version": 1,
+          "server_row_version": 7,
+          "server_row_deleted": true,
+          "server_row": null
+        }
+      },
+      "steps": [
+        {
+          "action": "pushPending",
+          "expectedException": "protocol_error",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "none",
+            "outboxRowCount": 0,
+            "dirtyRowCount": 1,
+            "nextSourceBundleId": 1
+          },
+          "expectedAppState": {
+            "users": [
+              {
+                "id": "user-1",
+                "name": "Local Name"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "structured-conflict-preserves-sibling-rows-from-rejected-bundle",
+      "description": "When a bundle-level conflict rewrites one row, sibling rows from the rejected bundle remain part of the retry.",
+      "schema": "users-posts",
+      "resolver": "client_wins",
+      "syncTables": [
+        {
+          "tableName": "users",
+          "syncKeyColumnName": "id"
+        },
+        {
+          "tableName": "posts",
+          "syncKeyColumnName": "id"
+        }
+      ],
+      "localSetupSql": [
+        "INSERT INTO users(id, name) VALUES('user-1', 'Seed')"
+      ],
+      "serverScript": {
+        "kind": "conflict_once_on_row_count",
+        "rowCount": 2,
+        "conflict": {
+          "schema": "main",
+          "table": "users",
+          "key": {
+            "id": "user-1"
+          },
+          "op": "UPDATE",
+          "base_row_version": 1,
+          "server_row_version": 7,
+          "server_row_deleted": false,
+          "server_row": {
+            "id": "user-1",
+            "name": "Server"
+          }
+        }
+      },
+      "steps": [
+        {
+          "action": "pushPending",
+          "expectedException": "none",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "none",
+            "outboxRowCount": 0,
+            "dirtyRowCount": 0,
+            "nextSourceBundleId": 2
+          }
+        },
+        {
+          "action": "localSql",
+          "sql": [
+            "UPDATE users SET name = 'Local Name' WHERE id = 'user-1'",
+            "INSERT INTO posts(id, user_id, title) VALUES('post-1', 'user-1', 'Sibling Post')"
+          ],
+          "expectedException": "none",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "none",
+            "outboxRowCount": 0,
+            "dirtyRowCount": 2,
+            "nextSourceBundleId": 2
+          }
+        },
+        {
+          "action": "pushPending",
+          "expectedException": "none",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "none",
+            "outboxRowCount": 0,
+            "dirtyRowCount": 0,
+            "nextSourceBundleId": 3
+          },
+          "expectedAppState": {
+            "users": [
+              {
+                "id": "user-1",
+                "name": "Local Name"
+              }
+            ],
+            "posts": [
+              {
+                "id": "post-1",
+                "user_id": "user-1",
+                "title": "Sibling Post"
+              }
+            ]
+          },
+          "expectedServerState": {
+            "uploadedRows": [
+              "users:UPDATE:user-1",
+              "posts:INSERT:post-1"
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "already-committed-mismatch-preserves-source-sequence-error",
       "description": "A strict already_committed replay whose committed rows do not match the local prepared bundle remains a source sequence mismatch and keeps the prepared outbox replayable.",
       "localSetupSql": [
@@ -115,6 +301,53 @@
             "outboxRowCount": 1,
             "dirtyRowCount": 0,
             "nextSourceBundleId": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "committed-replay-bad-bundle-hash-preserves-committed-outbox",
+      "description": "A committed replay whose rows do not match the advertised bundle_hash fails before clearing the committed outbox, so the same committed bundle can be retried.",
+      "localSetupSql": [
+        "INSERT INTO users(id, name) VALUES('user-1', 'Ada')"
+      ],
+      "serverScript": {
+        "kind": "committed_replay_bad_bundle_hash"
+      },
+      "steps": [
+        {
+          "action": "pushPending",
+          "expectedException": "protocol_error",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "committed_remote",
+            "outboxRowCount": 1,
+            "dirtyRowCount": 0,
+            "nextSourceBundleId": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "committed-bundle-not-found-retries-then-succeeds",
+      "description": "A transient committed_bundle_not_found response means the committed bundle is not visible yet; the client retries the committed replay and clears the outbox after the bundle appears.",
+      "localSetupSql": [
+        "INSERT INTO users(id, name) VALUES('user-1', 'Ada')"
+      ],
+      "serverScript": {
+        "kind": "committed_bundle_not_found_then_success",
+        "notFoundCount": 2
+      },
+      "steps": [
+        {
+          "action": "pushPending",
+          "expectedException": "none",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "none",
+            "outboxRowCount": 0,
+            "dirtyRowCount": 0,
+            "nextSourceBundleId": 2
           }
         }
       ]

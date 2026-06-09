@@ -17,17 +17,30 @@ void main() {
 
 Future<void> _runWatchCase(Map<String, Object?> fixture) async {
   final expected = (fixture['expectedState']! as Map).cast<String, Object?>();
+  final script = (fixture['serverScript']! as Map).cast<String, Object?>();
   final config = expected.containsKey('watchAttemptsExactly')
       ? heartbeatWatchConfig
       : usersConfig;
-  final env = await newWatchFixtureEnv(config: config);
+  final env = await newWatchFixtureEnv(
+    config: config,
+    bundleChangeWatchSupported:
+        script['bundleChangeWatchSupported'] as bool? ?? true,
+  );
   try {
     _configureServer(env.server, fixture);
     final handle = env.client.startAutomaticDownloads();
     try {
+      await _deliverWakeBundlesAfterWatchStart(env, script);
       await eventually(() async {
         return await _expectedReached(env, expected);
       });
+      final observeForMillis = expected['observeForMillis'] as int?;
+      if (observeForMillis != null) {
+        await Future<void>.delayed(Duration(milliseconds: observeForMillis));
+      }
+      if (expected['stopActiveWatchBeforeAssert'] == true) {
+        await handle.stop();
+      }
       await _assertWatchState(env, fixture['name']! as String, expected);
     } finally {
       await handle.stop();
@@ -45,7 +58,17 @@ void _configureServer(WatchFixtureServer server, Map<String, Object?> fixture) {
         .cast<Map<String, Object?>>();
     server.addRemoteBundle(rows);
   }
+  for (final bundle
+      in ((script['startBundles'] as List<Object?>?) ?? const [])) {
+    final rows = ((bundle! as Map)['rows']! as List<Object?>)
+        .cast<Map<String, Object?>>();
+    server.addRemoteBundle(rows);
+  }
   switch (script['kind']) {
+    case 'hold_watch_open':
+      break;
+    case 'unsupported_capability':
+      break;
     case 'non_ok_watch_response':
       final response = (script['response']! as Map).cast<String, Object?>();
       server.enqueueWatchResponse(
@@ -58,6 +81,22 @@ void _configureServer(WatchFixtureServer server, Map<String, Object?> fixture) {
       );
     default:
       fail('${fixture['name']}: unknown server script ${script['kind']}');
+  }
+}
+
+Future<void> _deliverWakeBundlesAfterWatchStart(
+  WatchFixtureEnv env,
+  Map<String, Object?> script,
+) async {
+  final wakeBundles = ((script['wakeBundles'] as List<Object?>?) ?? const []);
+  if (wakeBundles.isEmpty) {
+    return;
+  }
+  await eventually(() async => env.server.watchAfterBundleSeqs.isNotEmpty);
+  for (final bundle in wakeBundles) {
+    final rows = ((bundle! as Map)['rows']! as List<Object?>)
+        .cast<Map<String, Object?>>();
+    env.server.addRemoteBundle(rows);
   }
 }
 
@@ -84,6 +123,14 @@ Future<bool> _expectedReached(
   if (attemptsExactly != null &&
       env.server.watchAfterBundleSeqs.length != attemptsExactly) {
     return false;
+  }
+  final afterSeqContains =
+      ((expected['watchAfterBundleSeqsContains'] as List<Object?>?) ?? const [])
+          .cast<int>();
+  for (final afterSeq in afterSeqContains) {
+    if (!env.server.watchAfterBundleSeqs.contains(afterSeq)) {
+      return false;
+    }
   }
   final pullsAtLeast = expected['fallbackPullsAtLeast'] as int?;
   if (pullsAtLeast != null && env.server.pullRequestCount < pullsAtLeast) {
@@ -135,6 +182,12 @@ Future<void> _assertWatchState(
       expected['watchAttemptsExactly'],
       reason: name,
     );
+  }
+  final afterSeqContains =
+      ((expected['watchAfterBundleSeqsContains'] as List<Object?>?) ?? const [])
+          .cast<int>();
+  for (final afterSeq in afterSeqContains) {
+    expect(env.server.watchAfterBundleSeqs, contains(afterSeq), reason: name);
   }
 }
 

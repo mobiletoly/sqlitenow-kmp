@@ -6,6 +6,7 @@ import 'package:sqlitenow_runtime/sqlitenow_runtime.dart';
 import 'config.dart';
 import 'local_runtime.dart';
 import 'protocol.dart';
+import 'runtime_state_store.dart';
 
 enum RemoteSyncOutcome { alreadyAtTarget, appliedIncremental, appliedSnapshot }
 
@@ -70,6 +71,11 @@ final class OversqliteDownloadRuntime {
   final OversqliteRemoteApi _remoteApi;
 
   SqliteNowConnection get _connection => _database.connection;
+  OversqliteApplyRunner get _applyRunner => OversqliteApplyRunner(_connection);
+  OversqliteAttachmentStateStore get _attachmentStore =>
+      OversqliteAttachmentStateStore(_connection);
+  OversqliteSourceStateStore get _sourceStore =>
+      OversqliteSourceStateStore(_connection);
 
   Future<DownloadResult> pullToStable({
     required OversqliteValidatedConfig validated,
@@ -100,9 +106,47 @@ final class OversqliteDownloadRuntime {
     String? rotatedSourceId,
     String? sourceReplacementReason,
     SnapshotRebuildOutboxMode outboxMode = SnapshotRebuildOutboxMode.clearAll,
+    bool persistRemoteReplaceOperation = false,
   }) async {
     await _requireSnapshotRebuildState(outboxMode);
-    await _connection.execute('DELETE FROM _sync_snapshot_stage');
+    if (persistRemoteReplaceOperation) {
+      final operation = await _operationState();
+      if (operation.kind != 'remote_replace') {
+        throw StateError(
+          'cannot finalize durable operation ${operation.kind} as remote_replace',
+        );
+      }
+      if (operation.stagedSnapshotId.isNotEmpty) {
+        final stagedCount = await _countSnapshotStageRows(
+          operation.stagedSnapshotId,
+        );
+        if (stagedCount == operation.snapshotRowCount) {
+          return _applyStagedSnapshot(
+            validated: validated,
+            sourceId: sourceId,
+            userId: userId,
+            session: SnapshotSession(
+              snapshotId: operation.stagedSnapshotId,
+              snapshotBundleSeq: operation.snapshotBundleSeq,
+              rowCount: operation.snapshotRowCount,
+              byteCount: 0,
+              expiresAt: '2099-01-01T00:00:00Z',
+            ),
+            rotatedSourceId: rotatedSourceId,
+            outboxMode: outboxMode,
+          );
+        }
+      }
+      await _connection.execute('DELETE FROM _sync_snapshot_stage');
+      await _persistRemoteReplaceOperation(
+        targetUserId: userId,
+        stagedSnapshotId: '',
+        snapshotBundleSeq: 0,
+        snapshotRowCount: 0,
+      );
+    } else {
+      await _connection.execute('DELETE FROM _sync_snapshot_stage');
+    }
 
     final session = await _remoteApi.createSnapshotSession(
       sourceId: sourceId,
@@ -117,6 +161,14 @@ final class OversqliteDownloadRuntime {
             ),
     );
     try {
+      if (persistRemoteReplaceOperation) {
+        await _persistRemoteReplaceOperation(
+          targetUserId: userId,
+          stagedSnapshotId: session.snapshotId,
+          snapshotBundleSeq: session.snapshotBundleSeq,
+          snapshotRowCount: session.rowCount,
+        );
+      }
       var afterRowOrdinal = 0;
       while (true) {
         final chunk = await _remoteApi.fetchSnapshotChunk(
@@ -212,44 +264,35 @@ final class OversqliteDownloadRuntime {
     required Bundle bundle,
   }) async {
     final updatedTables = <String>{};
-    await _connection.transaction(() async {
-      await _connection.execute('PRAGMA defer_foreign_keys = ON');
-      await _beginApplyMode();
-      try {
-        for (final row in bundle.rows) {
-          if (row.schema != validated.schema) {
-            throw OversqliteProtocolException(
-              'bundle row schema ${row.schema} does not match ${validated.schema}',
-            );
-          }
-          final key = await _localKeyFromWire(row.table, row.key);
-          final currentVersion = await _currentRowVersion(
-            schema: row.schema,
-            table: row.table,
-            keyJson: key.keyJson,
+    await _applyRunner.inApplyModeTransaction(() async {
+      for (final row in bundle.rows) {
+        if (row.schema != validated.schema) {
+          throw OversqliteProtocolException(
+            'bundle row schema ${row.schema} does not match ${validated.schema}',
           );
-          if (currentVersion != null && currentVersion >= row.rowVersion) {
-            continue;
-          }
-          await _applyAuthoritativeRow(
-            row,
-            keyJson: key.keyJson,
-            localPk: key.localPk,
-          );
-          await _connection.execute(
-            'DELETE FROM _sync_dirty_rows WHERE schema_name = ? AND table_name = ? AND key_json = ?',
-            parameters: [row.schema, row.table, key.keyJson],
-          );
-          updatedTables.add(row.table.toLowerCase());
         }
-        await _connection.execute(
-          'UPDATE _sync_attachment_state SET last_bundle_seq_seen = ? WHERE singleton_key = 1',
-          parameters: [bundle.bundleSeq],
+        final key = await _localKeyFromWire(row.table, row.key);
+        final currentVersion = await _currentRowVersion(
+          schema: row.schema,
+          table: row.table,
+          keyJson: key.keyJson,
         );
-      } finally {
-        await _endApplyMode();
+        if (currentVersion != null && currentVersion >= row.rowVersion) {
+          continue;
+        }
+        await _applyAuthoritativeRow(
+          row,
+          keyJson: key.keyJson,
+          localPk: key.localPk,
+        );
+        await _connection.execute(
+          'DELETE FROM _sync_dirty_rows WHERE schema_name = ? AND table_name = ? AND key_json = ?',
+          parameters: [row.schema, row.table, key.keyJson],
+        );
+        updatedTables.add(row.table.toLowerCase());
       }
-    }, mode: TransactionMode.immediate);
+      await _attachmentStore.markBundleSeen(bundle.bundleSeq);
+    });
     return updatedTables;
   }
 
@@ -295,102 +338,94 @@ final class OversqliteDownloadRuntime {
     required String? rotatedSourceId,
     required SnapshotRebuildOutboxMode outboxMode,
   }) async {
+    if (rotatedSourceId != null) {
+      await _requireFreshRotatedSourceState(rotatedSourceId);
+    }
     final currentSourceId = rotatedSourceId ?? sourceId;
     final updatedTables = {
       for (final table in validated.tables) table.tableName.toLowerCase(),
     };
-    await _connection.transaction(() async {
-      await _connection.execute('PRAGMA defer_foreign_keys = ON');
-      await _beginApplyMode();
-      try {
-        final preservedOutbox = await _loadOutboxBundle();
-        await _clearManagedTables(
-          validated,
-          clearOutbox: outboxMode == SnapshotRebuildOutboxMode.clearAll,
-        );
-        var stagedRowCount = 0;
-        final rows = await _connection.select(
-          '''SELECT table_name, key_json, row_version, payload
+    await _applyRunner.inApplyModeTransaction(() async {
+      final preservedOutbox = await _loadOutboxBundle();
+      await _clearManagedTables(
+        validated,
+        clearOutbox: outboxMode == SnapshotRebuildOutboxMode.clearAll,
+      );
+      var stagedRowCount = 0;
+      final rows = await _connection.select(
+        '''SELECT table_name, key_json, row_version, payload
 FROM _sync_snapshot_stage
 WHERE snapshot_id = ?
 ORDER BY row_ordinal''',
-          (row) => _StagedSnapshotRow(
-            tableName: row.readString(0),
-            keyJson: row.readString(1),
-            rowVersion: row.readInt(2),
-            payload: row.readString(3),
+        (row) => _StagedSnapshotRow(
+          tableName: row.readString(0),
+          keyJson: row.readString(1),
+          rowVersion: row.readInt(2),
+          payload: row.readString(3),
+        ),
+        parameters: [session.snapshotId],
+      );
+      for (final staged in rows) {
+        final table = await _tableInfo(staged.tableName);
+        final localPk = _localPkFromKeyJson(table, staged.keyJson);
+        final wireKey = _wireKeyFromLocalKey(table, localPk);
+        await _applyAuthoritativeRow(
+          BundleRow(
+            schema: validated.schema,
+            table: staged.tableName,
+            key: wireKey,
+            op: 'INSERT',
+            rowVersion: staged.rowVersion,
+            payload: jsonDecode(staged.payload),
           ),
-          parameters: [session.snapshotId],
+          keyJson: staged.keyJson,
+          localPk: localPk,
         );
-        for (final staged in rows) {
-          final table = await _tableInfo(staged.tableName);
-          final localPk = _localPkFromKeyJson(table, staged.keyJson);
-          final wireKey = _wireKeyFromLocalKey(table, localPk);
-          await _applyAuthoritativeRow(
-            BundleRow(
-              schema: validated.schema,
-              table: staged.tableName,
-              key: wireKey,
-              op: 'INSERT',
-              rowVersion: staged.rowVersion,
-              payload: jsonDecode(staged.payload),
-            ),
-            keyJson: staged.keyJson,
-            localPk: localPk,
-          );
-          stagedRowCount++;
-        }
-        if (stagedRowCount != session.rowCount) {
-          throw OversqliteProtocolException(
-            'staged snapshot row count $stagedRowCount does not match expected row_count ${session.rowCount}',
-          );
-        }
-        if (rotatedSourceId != null && sourceId != rotatedSourceId) {
-          await _ensureSource(rotatedSourceId);
-          await _connection.execute(
-            'UPDATE _sync_source_state SET replaced_by_source_id = ? WHERE source_id = ?',
-            parameters: [rotatedSourceId, sourceId],
-          );
-        }
-        switch (outboxMode) {
-          case SnapshotRebuildOutboxMode.clearAll:
-            break;
-          case SnapshotRebuildOutboxMode.preserveCommittedRemote:
-            if (preservedOutbox.state == _outboxStateCommittedRemote &&
-                preservedOutbox.rowCount > 0) {
-              await _advanceSourceAfterCommittedPush(
-                sourceId: sourceId,
-                sourceBundleId: preservedOutbox.sourceBundleId,
-              );
-              await _clearOutbox();
-            }
-          case SnapshotRebuildOutboxMode.preserveSourceRecovery:
-            if (preservedOutbox.state != _outboxStateNone &&
-                preservedOutbox.rowCount > 0) {
-              await _ensureSource(currentSourceId);
-              await _connection.execute(
-                '''UPDATE _sync_source_state
-SET next_source_bundle_id = CASE
-  WHEN next_source_bundle_id < 2 THEN 2
-  ELSE next_source_bundle_id
-END
-WHERE source_id = ?''',
-                parameters: [currentSourceId],
-              );
-              await _connection.execute(
-                '''UPDATE _sync_outbox_bundle
+        stagedRowCount++;
+      }
+      if (stagedRowCount != session.rowCount) {
+        throw OversqliteProtocolException(
+          'staged snapshot row count $stagedRowCount does not match expected row_count ${session.rowCount}',
+        );
+      }
+      if (rotatedSourceId != null && sourceId != rotatedSourceId) {
+        await _sourceStore.ensureSource(rotatedSourceId);
+        await _sourceStore.markSourceReplaced(
+          sourceId: sourceId,
+          replacedBySourceId: rotatedSourceId,
+        );
+      }
+      switch (outboxMode) {
+        case SnapshotRebuildOutboxMode.clearAll:
+          break;
+        case SnapshotRebuildOutboxMode.preserveCommittedRemote:
+          if (preservedOutbox.state == _outboxStateCommittedRemote &&
+              preservedOutbox.rowCount > 0) {
+            await _sourceStore.advanceAfterCommittedPush(
+              sourceId: sourceId,
+              sourceBundleId: preservedOutbox.sourceBundleId,
+            );
+            await _clearOutbox();
+          }
+        case SnapshotRebuildOutboxMode.preserveSourceRecovery:
+          if (preservedOutbox.state != _outboxStateNone &&
+              preservedOutbox.rowCount > 0) {
+            await _sourceStore.ensureSource(currentSourceId);
+            await _sourceStore.reserveSourceRecoveryBundle(currentSourceId);
+            await _connection.execute(
+              '''UPDATE _sync_outbox_bundle
 SET source_id = ?,
     source_bundle_id = 1
 WHERE singleton_key = 1''',
-                parameters: [currentSourceId],
-              );
-              await _connection.execute(
-                'UPDATE _sync_outbox_rows SET source_bundle_id = 1',
-              );
-            }
-        }
-        await _connection.execute(
-          '''UPDATE _sync_attachment_state
+              parameters: [currentSourceId],
+            );
+            await _connection.execute(
+              'UPDATE _sync_outbox_rows SET source_bundle_id = 1',
+            );
+          }
+      }
+      await _connection.execute(
+        '''UPDATE _sync_attachment_state
 SET current_source_id = ?,
     binding_state = 'attached',
     attached_user_id = ?,
@@ -399,14 +434,14 @@ SET current_source_id = ?,
     rebuild_required = 0,
     pending_initialization_id = ''
 WHERE singleton_key = 1''',
-          parameters: [
-            currentSourceId,
-            userId,
-            validated.schema,
-            session.snapshotBundleSeq,
-          ],
-        );
-        await _connection.execute('''UPDATE _sync_operation_state
+        parameters: [
+          currentSourceId,
+          userId,
+          validated.schema,
+          session.snapshotBundleSeq,
+        ],
+      );
+      await _connection.execute('''UPDATE _sync_operation_state
 SET kind = 'none',
     target_user_id = '',
     staged_snapshot_id = '',
@@ -415,14 +450,11 @@ SET kind = 'none',
     reason = '',
     replacement_source_id = ''
 WHERE singleton_key = 1''');
-        await _connection.execute(
-          'DELETE FROM _sync_snapshot_stage WHERE snapshot_id = ?',
-          parameters: [session.snapshotId],
-        );
-      } finally {
-        await _endApplyMode();
-      }
-    }, mode: TransactionMode.immediate);
+      await _connection.execute(
+        'DELETE FROM _sync_snapshot_stage WHERE snapshot_id = ?',
+        parameters: [session.snapshotId],
+      );
+    });
 
     return DownloadResult(
       outcome: RemoteSyncOutcome.appliedSnapshot,
@@ -505,6 +537,31 @@ WHERE singleton_key = 1''');
     }
   }
 
+  Future<void> _requireFreshRotatedSourceState(String rotatedSourceId) async {
+    final rows = await _connection.select(
+      '''SELECT next_source_bundle_id, replaced_by_source_id
+FROM _sync_source_state
+WHERE source_id = ?''',
+      (row) => (
+        nextSourceBundleId: row.readInt(0),
+        replacedBySourceId: row.readString(1),
+      ),
+      parameters: [rotatedSourceId],
+    );
+    if (rows.isEmpty) {
+      throw StateError(
+        '_sync_source_state missing for rotated source $rotatedSourceId',
+      );
+    }
+    final state = rows.single;
+    if (state.nextSourceBundleId != 1 ||
+        state.replacedBySourceId.trim().isNotEmpty) {
+      throw StateError(
+        'rotated rebuild requires a fresh replacement source; $rotatedSourceId is already in use',
+      );
+    }
+  }
+
   Future<void> _requireSnapshotRebuildState(
     SnapshotRebuildOutboxMode outboxMode,
   ) async {
@@ -530,18 +587,6 @@ WHERE singleton_key = 1''');
     if (dirtyRows > 0) {
       throw DirtyStateRejectedException(dirtyRows);
     }
-  }
-
-  Future<void> _beginApplyMode() async {
-    await _connection.execute(
-      'UPDATE _sync_apply_state SET apply_mode = 1 WHERE singleton_key = 1',
-    );
-  }
-
-  Future<void> _endApplyMode() async {
-    await _connection.execute(
-      'UPDATE _sync_apply_state SET apply_mode = 0 WHERE singleton_key = 1',
-    );
   }
 
   Future<int> _lastBundleSeqSeen() {
@@ -573,6 +618,7 @@ WHERE schema_name = ? AND table_name = ? AND key_json = ?''',
     final normalized = {
       for (final entry in payload.entries) entry.key.toLowerCase(): entry.value,
     };
+    _validatePayloadColumns(tableName, table, normalized);
     final columns = table.columns.map((column) => column.name).toList();
     final updates = [
       for (final column in table.columns)
@@ -705,37 +751,54 @@ SET state = 'none',
 WHERE singleton_key = 1''');
   }
 
-  Future<void> _advanceSourceAfterCommittedPush({
-    required String sourceId,
-    required int sourceBundleId,
-  }) async {
-    await _connection.execute(
-      '''UPDATE _sync_source_state
-SET next_source_bundle_id = CASE
-  WHEN next_source_bundle_id <= ? THEN ? + 1
-  ELSE next_source_bundle_id
-END
-WHERE source_id = ?''',
-      parameters: [sourceBundleId, sourceBundleId, sourceId],
-    );
-  }
-
-  Future<void> _ensureSource(String sourceId) {
-    return _connection.execute(
-      '''INSERT INTO _sync_source_state(source_id, next_source_bundle_id, replaced_by_source_id)
-VALUES(?, 1, '')
-ON CONFLICT(source_id) DO NOTHING''',
-      parameters: [sourceId],
-    );
-  }
-
   Future<_OperationState> _operationState() async {
     final rows = await _connection.select(
-      'SELECT kind, reason FROM _sync_operation_state WHERE singleton_key = 1',
-      (row) =>
-          _OperationState(kind: row.readString(0), reason: row.readString(1)),
+      '''SELECT kind, target_user_id, staged_snapshot_id, snapshot_bundle_seq,
+       snapshot_row_count, reason FROM _sync_operation_state WHERE singleton_key = 1''',
+      (row) => _OperationState(
+        kind: row.readString(0),
+        targetUserId: row.readString(1),
+        stagedSnapshotId: row.readString(2),
+        snapshotBundleSeq: row.readInt(3),
+        snapshotRowCount: row.readInt(4),
+        reason: row.readString(5),
+      ),
     );
     return rows.single;
+  }
+
+  Future<int> _countSnapshotStageRows(String snapshotId) async {
+    final rows = await _connection.select(
+      'SELECT COUNT(*) FROM _sync_snapshot_stage WHERE snapshot_id = ?',
+      (row) => row.readInt(0),
+      parameters: [snapshotId],
+    );
+    return rows.single;
+  }
+
+  Future<void> _persistRemoteReplaceOperation({
+    required String targetUserId,
+    required String stagedSnapshotId,
+    required int snapshotBundleSeq,
+    required int snapshotRowCount,
+  }) {
+    return _connection.execute(
+      '''UPDATE _sync_operation_state
+SET kind = 'remote_replace',
+    target_user_id = ?,
+    staged_snapshot_id = ?,
+    snapshot_bundle_seq = ?,
+    snapshot_row_count = ?,
+    reason = '',
+    replacement_source_id = ''
+WHERE singleton_key = 1''',
+      parameters: [
+        targetUserId,
+        stagedSnapshotId,
+        snapshotBundleSeq,
+        snapshotRowCount,
+      ],
+    );
   }
 
   Future<int> _scalarInt(String sql) async {
@@ -744,10 +807,40 @@ ON CONFLICT(source_id) DO NOTHING''',
   }
 }
 
+void _validatePayloadColumns(
+  String tableName,
+  _TableInfo table,
+  Map<String, Object?> normalized,
+) {
+  if (normalized.length != table.columns.length) {
+    throw OversqliteProtocolException(
+      'payload for $tableName must contain every table column',
+    );
+  }
+  for (final column in table.columns) {
+    if (!normalized.containsKey(column.name.toLowerCase())) {
+      throw OversqliteProtocolException(
+        'payload for $tableName is missing column ${column.name}',
+      );
+    }
+  }
+}
+
 final class _OperationState {
-  const _OperationState({required this.kind, required this.reason});
+  const _OperationState({
+    required this.kind,
+    required this.targetUserId,
+    required this.stagedSnapshotId,
+    required this.snapshotBundleSeq,
+    required this.snapshotRowCount,
+    required this.reason,
+  });
 
   final String kind;
+  final String targetUserId;
+  final String stagedSnapshotId;
+  final int snapshotBundleSeq;
+  final int snapshotRowCount;
   final String reason;
 }
 
@@ -950,7 +1043,9 @@ SourceRecoveryReason _sourceRecoveryReasonFromPersisted(String value) {
       SourceRecoveryReason.sourceSequenceOutOfOrder,
     'source_sequence_changed' => SourceRecoveryReason.sourceSequenceChanged,
     'source_retired' => SourceRecoveryReason.sourceRetired,
-    _ => SourceRecoveryReason.historyPruned,
+    _ => throw StateError(
+      'source recovery operation state is missing a valid recovery reason',
+    ),
   };
 }
 

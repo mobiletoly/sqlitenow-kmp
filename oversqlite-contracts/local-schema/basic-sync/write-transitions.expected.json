@@ -54,6 +54,32 @@
       }
     },
     {
+      "name": "key-changing-update",
+      "dirtyRows": [
+        {
+          "schemaName": "main",
+          "tableName": "users",
+          "keyJson": "{\"id\":\"user-key-old\"}",
+          "op": "DELETE",
+          "baseRowVersion": 3,
+          "payload": null,
+          "dirtyOrdinal": 1
+        },
+        {
+          "schemaName": "main",
+          "tableName": "users",
+          "keyJson": "{\"id\":\"user-key-new\"}",
+          "op": "INSERT",
+          "baseRowVersion": 0,
+          "payload": "{\"id\":\"user-key-new\",\"name\":\"Move Me\",\"updated_at\":\"2026-01-02T00:00:00Z\"}",
+          "dirtyOrdinal": 2
+        }
+      ],
+      "applicationRowCounts": {
+        "users": 1
+      }
+    },
+    {
       "name": "apply-mode-suppression",
       "dirtyRows": [],
       "applicationRowCounts": {

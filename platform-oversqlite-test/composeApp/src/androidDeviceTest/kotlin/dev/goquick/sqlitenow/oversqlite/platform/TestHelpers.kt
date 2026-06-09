@@ -9,10 +9,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.json.Json
 import org.junit.Assume.assumeTrue
-
-internal val testJson = Json { ignoreUnknownKeys = true }
 
 internal suspend fun newInMemoryDb(debug: Boolean = false): SafeSQLiteConnection =
     BundledSqliteConnectionProvider.openConnection(":memory:", debug)

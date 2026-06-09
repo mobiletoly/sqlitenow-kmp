@@ -15,8 +15,8 @@
       "name": "insert-rich-graph",
       "setupSql": [],
       "actionSql": [
-        "INSERT INTO users(id, name, email) VALUES('user-1', 'User 1', 'user-1@example.com')",
-        "INSERT INTO posts(id, title, content, author_id) VALUES('post-1', 'Post 1', 'Content 1', 'user-1')",
+        "INSERT INTO users(id, name, email, created_at, updated_at) VALUES('user-1', 'User 1', 'user-1@example.com', '2026-06-09 10:13:08', '2026-06-09 10:13:08')",
+        "INSERT INTO posts(id, title, content, author_id, created_at, updated_at) VALUES('post-1', 'Post 1', 'Content 1', 'user-1', '2026-06-09 10:13:08', '2026-06-09 10:13:08')",
         "INSERT INTO categories(id, name, parent_id) VALUES('category-root', 'Root', NULL)",
         "INSERT INTO categories(id, name, parent_id) VALUES('category-child', 'Child', 'category-root')",
         "BEGIN",

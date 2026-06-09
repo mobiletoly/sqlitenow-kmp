@@ -28,8 +28,8 @@ class RealServerGeneratedConfigTest {
         val dbA = newFileBackedDb()
         val dbB = newFileBackedDb()
         try {
-            createBusinessSubsetTables(dbA)
-            createBusinessSubsetTables(dbB)
+            createBusinessRichSchemaTables(dbA)
+            createBusinessRichSchemaTables(dbB)
 
             val clientA = newRealServerClient(
                 db = dbA,

@@ -17,6 +17,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.utils.io.ByteChannel
+import io.ktor.utils.io.writeStringUtf8
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -216,7 +217,7 @@ internal open class CrossTargetSyncTestSupport {
             heldWatchResponseChannels.clear()
         }
 
-        fun addRemoteBundleForTest(rows: List<BundleRow>) {
+        fun addRemoteBundleForTest(rows: List<BundleRow>): Long {
             val bundleSeq = nextBundleSeq++
             rows.forEach { row ->
                 val key = liveKey(row.table, row.key)
@@ -239,6 +240,19 @@ internal open class CrossTargetSyncTestSupport {
                 bundleHash = computeCommittedBundleHash(rows),
             )
             scopeInitialized = true
+            return bundleSeq
+        }
+
+        suspend fun addRemoteBundleAndNotifyForTest(rows: List<BundleRow>) {
+            val bundleSeq = addRemoteBundleForTest(rows)
+            val body =
+                "event: bundle\n" +
+                    "data: {\"bundle_seq\":$bundleSeq,\"source_id\":\"remote-source\",\"source_bundle_id\":$bundleSeq}\n\n"
+            heldWatchResponseChannels
+                .filterNot { it.isClosedForWrite }
+                .forEach { channel ->
+                    channel.writeStringUtf8(body)
+                }
         }
 
         private suspend fun MockRequestHandleScope.handle(request: HttpRequestData) = when {
@@ -764,7 +778,7 @@ internal open class CrossTargetSyncTestSupport {
             watchAfterBundleSeqs += afterBundleSeq
             if (holdNextWatchResponseOpen) {
                 holdNextWatchResponseOpen = false
-                val channel = ByteChannel()
+                val channel = ByteChannel(autoFlush = true)
                 heldWatchResponseChannels += channel
                 return respond(
                     content = channel,

@@ -9,6 +9,7 @@ import 'local_runtime.dart';
 import 'protocol.dart';
 import 'push.dart';
 import 'resolver.dart';
+import 'runtime_state_store.dart';
 
 const _attachmentBindingAttached = 'attached';
 const _operationKindNone = 'none';
@@ -281,6 +282,13 @@ final class DefaultOversqliteClient implements OversqliteClient {
   OversqliteProgress _progress = const OversqliteIdle();
   _DefaultAutomaticDownloadsHandle? _automaticDownloads;
 
+  SqliteNowConnection get _connection => _database.connection;
+  OversqliteApplyRunner get _applyRunner => OversqliteApplyRunner(_connection);
+  OversqliteAttachmentStateStore get _attachmentStore =>
+      OversqliteAttachmentStateStore(_connection);
+  OversqliteSourceStateStore get _sourceStore =>
+      OversqliteSourceStateStore(_connection);
+
   @override
   OversqliteProgress get progress => _progress;
 
@@ -412,6 +420,7 @@ final class DefaultOversqliteClient implements OversqliteClient {
             rotatedSourceId: null,
             sourceReplacementReason: null,
             outboxMode: SnapshotRebuildOutboxMode.clearAll,
+            persistRemoteReplaceOperation: true,
           );
           if (result.updatedTables.isNotEmpty) {
             _runtime.reportManagedTableChanges(result.updatedTables);
@@ -488,6 +497,7 @@ final class DefaultOversqliteClient implements OversqliteClient {
               rotatedSourceId: null,
               sourceReplacementReason: null,
               outboxMode: SnapshotRebuildOutboxMode.clearAll,
+              persistRemoteReplaceOperation: true,
             );
             if (result.updatedTables.isNotEmpty) {
               _runtime.reportManagedTableChanges(result.updatedTables);
@@ -607,6 +617,7 @@ final class DefaultOversqliteClient implements OversqliteClient {
       phase: OversqlitePhase.pushing,
       block: () async {
         _ensureConnected('syncThenDetach()');
+        var previousPendingRowCount = 0x7fffffffffffffff;
         SyncReport? lastReport;
         for (var round = 1; round <= 3; round++) {
           final attachment = await _loadAttachmentState();
@@ -640,6 +651,16 @@ final class DefaultOversqliteClient implements OversqliteClient {
               remainingPendingRowCount: 0,
             );
           }
+          final pending = await _pendingSyncStatus();
+          if (pending.pendingRowCount >= previousPendingRowCount) {
+            return SyncThenDetachResult(
+              lastSync: lastReport,
+              detach: DetachOutcome.blockedUnsyncedData,
+              syncRounds: round,
+              remainingPendingRowCount: pending.pendingRowCount,
+            );
+          }
+          previousPendingRowCount = pending.pendingRowCount;
         }
         final pending = await _pendingSyncStatus();
         return SyncThenDetachResult(
@@ -863,9 +884,7 @@ final class DefaultOversqliteClient implements OversqliteClient {
       );
       throw SourceRecoveryRequiredException(error.reason);
     } on CommittedReplayPrunedException {
-      await _database.connection.execute(
-        'UPDATE _sync_attachment_state SET rebuild_required = 1 WHERE singleton_key = 1',
-      );
+      await _attachmentStore.markRebuildRequired();
       throw const RebuildRequiredException();
     } on SourceSequenceMismatchException {
       final rows = await _database.connection.select(
@@ -873,9 +892,7 @@ final class DefaultOversqliteClient implements OversqliteClient {
         (row) => row.readString(0),
       );
       if (rows.single == 'committed_remote') {
-        await _database.connection.execute(
-          'UPDATE _sync_attachment_state SET rebuild_required = 1 WHERE singleton_key = 1',
-        );
+        await _attachmentStore.markRebuildRequired();
         throw const RebuildRequiredException();
       }
       rethrow;
@@ -947,6 +964,7 @@ final class DefaultOversqliteClient implements OversqliteClient {
     required String? rotatedSourceId,
     required String? sourceReplacementReason,
     required SnapshotRebuildOutboxMode outboxMode,
+    bool persistRemoteReplaceOperation = false,
   }) async {
     try {
       final result =
@@ -961,6 +979,7 @@ final class DefaultOversqliteClient implements OversqliteClient {
             rotatedSourceId: rotatedSourceId,
             sourceReplacementReason: sourceReplacementReason,
             outboxMode: outboxMode,
+            persistRemoteReplaceOperation: persistRemoteReplaceOperation,
           );
       _applyDownloadResult(result);
       _sessionConnected = true;
@@ -981,6 +1000,14 @@ final class DefaultOversqliteClient implements OversqliteClient {
     final attachment = await _loadAttachmentState();
     final operation = await _loadOperationState();
     if (operation.kind == _operationKindRemoteReplace) {
+      if (operation.stagedSnapshotId.isNotEmpty) {
+        await _database.connection.execute(
+          'DELETE FROM _sync_snapshot_stage WHERE snapshot_id = ?',
+          parameters: [operation.stagedSnapshotId],
+        );
+      } else {
+        await _database.connection.execute('DELETE FROM _sync_snapshot_stage');
+      }
       await _persistAnonymousState(attachment.currentSourceId);
       await _persistOperationState(_OperationState());
       _sessionConnected = false;
@@ -997,27 +1024,22 @@ final class DefaultOversqliteClient implements OversqliteClient {
     final managedTables = await _managedTableNames(validated);
     final previousSourceId = attachment.currentSourceId;
     final rotatedSourceId = _generateFreshSourceId();
-    await _database.connection.transaction(() async {
-      await _database.connection.execute('PRAGMA defer_foreign_keys = ON');
-      await _database.connection.execute(
-        'UPDATE _sync_apply_state SET apply_mode = 1 WHERE singleton_key = 1',
-      );
-      try {
-        for (final table in managedTables) {
-          if (await _sqliteTableExists(table)) {
-            await _database.connection.execute(
-              'DELETE FROM ${_quoteIdent(table)}',
-            );
-          }
+    await _applyRunner.inApplyModeTransaction(() async {
+      for (final table in managedTables) {
+        if (await _sqliteTableExists(table)) {
           await _database.connection.execute(
-            'DELETE FROM _sync_row_state WHERE schema_name = ? AND table_name = ?',
-            parameters: [validated.schema, table],
+            'DELETE FROM ${_quoteIdent(table)}',
           );
         }
-        await _database.connection.execute('DELETE FROM _sync_dirty_rows');
-        await _database.connection.execute('DELETE FROM _sync_outbox_rows');
-        await _database.connection.execute('DELETE FROM _sync_snapshot_stage');
-        await _database.connection.execute('''UPDATE _sync_outbox_bundle
+        await _database.connection.execute(
+          'DELETE FROM _sync_row_state WHERE schema_name = ? AND table_name = ?',
+          parameters: [validated.schema, table],
+        );
+      }
+      await _database.connection.execute('DELETE FROM _sync_dirty_rows');
+      await _database.connection.execute('DELETE FROM _sync_outbox_rows');
+      await _database.connection.execute('DELETE FROM _sync_snapshot_stage');
+      await _database.connection.execute('''UPDATE _sync_outbox_bundle
 SET state = 'none',
     source_id = '',
     source_bundle_id = 0,
@@ -1027,21 +1049,16 @@ SET state = 'none',
     remote_bundle_hash = '',
     remote_bundle_seq = 0
 WHERE singleton_key = 1''');
-      } finally {
-        await _database.connection.execute(
-          'UPDATE _sync_apply_state SET apply_mode = 0 WHERE singleton_key = 1',
-        );
-      }
-      await _ensureSource(rotatedSourceId);
+      await _sourceStore.ensureSource(rotatedSourceId);
       if (previousSourceId.isNotEmpty) {
-        await _database.connection.execute(
-          'UPDATE _sync_source_state SET replaced_by_source_id = ? WHERE source_id = ?',
-          parameters: [rotatedSourceId, previousSourceId],
+        await _sourceStore.markSourceReplaced(
+          sourceId: previousSourceId,
+          replacedBySourceId: rotatedSourceId,
         );
       }
       await _persistAnonymousState(rotatedSourceId);
       await _persistOperationState(_OperationState());
-    }, mode: TransactionMode.immediate);
+    });
     _sessionConnected = false;
     _currentUserId = null;
     _runtime.reportManagedTableChanges(managedTables);
@@ -1297,20 +1314,12 @@ WHERE singleton_key = 1''',
     required SourceRecoveryReason reason,
     String? replacementSourceId,
   }) async {
-    final replacement = replacementSourceId?.trim().isNotEmpty == true
-        ? replacementSourceId!.trim()
-        : _generateFreshSourceId();
     await _database.connection.transaction(() async {
-      await _database.connection.execute(
-        'UPDATE _sync_attachment_state SET rebuild_required = 1 WHERE singleton_key = 1',
+      await _attachmentStore.markRebuildRequired();
+      final replacement = await _reserveReplacementSourceId(
+        currentSourceId: currentSourceId,
+        preferredReplacementSourceId: replacementSourceId,
       );
-      await _ensureSource(replacement);
-      if (currentSourceId.isNotEmpty) {
-        await _database.connection.execute(
-          'UPDATE _sync_source_state SET replaced_by_source_id = ? WHERE source_id = ?',
-          parameters: [replacement, currentSourceId],
-        );
-      }
       await _persistOperationState(
         _OperationState(
           kind: _operationKindSourceRecovery,
@@ -1321,13 +1330,74 @@ WHERE singleton_key = 1''',
     }, mode: TransactionMode.immediate);
   }
 
-  Future<void> _ensureSource(String sourceId) {
-    return _database.connection.execute(
-      '''INSERT INTO _sync_source_state(source_id, next_source_bundle_id, replaced_by_source_id)
-VALUES(?, 1, '')
-ON CONFLICT(source_id) DO NOTHING''',
-      parameters: [sourceId],
+  Future<String> _reserveReplacementSourceId({
+    required String currentSourceId,
+    String? preferredReplacementSourceId,
+  }) async {
+    final operation = await _loadOperationState();
+    final existing = operation.replacementSourceId.trim();
+    final preferred = preferredReplacementSourceId?.trim() ?? '';
+    final reserved = switch ((existing, preferred)) {
+      (final local, final remote)
+          when local.isNotEmpty && remote.isNotEmpty && local != remote =>
+        throw SourceReplacementDivergedException(
+          localReplacementSourceId: local,
+          remoteReplacementSourceId: remote,
+        ),
+      (final local, _) when local.isNotEmpty => local,
+      (_, final remote) when remote.isNotEmpty => remote,
+      _ => _generateFreshReplacementSourceId(currentSourceId),
+    };
+    await _ensureFreshReplacementSourceState(
+      currentSourceId: currentSourceId,
+      replacementSourceId: reserved,
     );
+    return reserved;
+  }
+
+  Future<void> _ensureFreshReplacementSourceState({
+    required String currentSourceId,
+    required String replacementSourceId,
+  }) async {
+    if (replacementSourceId.trim().isEmpty) {
+      throw StateError('replacement source id must not be blank');
+    }
+    if (replacementSourceId == currentSourceId) {
+      throw StateError(
+        'replacement source id must differ from current source id',
+      );
+    }
+    await _sourceStore.ensureSource(replacementSourceId);
+    final rows = await _database.connection.select(
+      '''SELECT next_source_bundle_id, replaced_by_source_id
+FROM _sync_source_state
+WHERE source_id = ?''',
+      (row) => (
+        nextSourceBundleId: row.readInt(0),
+        replacedBySourceId: row.readString(1),
+      ),
+      parameters: [replacementSourceId],
+    );
+    if (rows.isEmpty) {
+      throw StateError(
+        '_sync_source_state missing for replacement source $replacementSourceId',
+      );
+    }
+    final state = rows.single;
+    if (state.nextSourceBundleId != 1 ||
+        state.replacedBySourceId.trim().isNotEmpty) {
+      throw StateError(
+        'replacement source $replacementSourceId is not fresh for source recovery',
+      );
+    }
+  }
+
+  String _generateFreshReplacementSourceId(String currentSourceId) {
+    var candidate = _generateFreshSourceId();
+    while (candidate == currentSourceId) {
+      candidate = _generateFreshSourceId();
+    }
+    return candidate;
   }
 
   Future<Set<String>> _managedTableNames(
@@ -1539,6 +1609,8 @@ SourceRecoveryReason _sourceRecoveryReasonFromPersisted(String value) {
       SourceRecoveryReason.sourceSequenceOutOfOrder,
     'source_sequence_changed' => SourceRecoveryReason.sourceSequenceChanged,
     'source_retired' => SourceRecoveryReason.sourceRetired,
-    _ => SourceRecoveryReason.historyPruned,
+    _ => throw StateError(
+      'source recovery operation state is missing a valid recovery reason',
+    ),
   };
 }

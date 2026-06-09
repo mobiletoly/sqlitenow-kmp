@@ -151,9 +151,17 @@ internal open class RealServerHarnessSupport : PlatformCrossTargetTestSupport() 
     protected suspend fun bootstrapManagedSourceId(
         db: SafeSQLiteConnection,
         baseUrl: String,
+    ): String =
+        bootstrapSourceId(baseUrl) { http ->
+            newRealServerClient(db, http)
+        }
+
+    protected suspend fun bootstrapSourceId(
+        baseUrl: String,
+        clientFactory: (HttpClient) -> OversqliteClient,
     ): String {
         val http = newRealServerHttpClient(baseUrl)
-        val client = newRealServerClient(db, http)
+        val client = clientFactory(http)
         return try {
             client.open().getOrThrow()
             client.sourceInfo().getOrThrow().currentSourceId

@@ -143,6 +143,148 @@
         "fallbackPullsExactly": 1,
         "watchAttemptsExactly": 1
       }
+    },
+    {
+      "name": "held-open-healthy-stream-suppresses-timer-fallback",
+      "description": "A healthy watch stream that remains open is authoritative for wakeups and suppresses timer fallback pulls while it is active.",
+      "serverScript": {
+        "kind": "hold_watch_open"
+      },
+      "expectedState": {
+        "fallbackPullsExactly": 0,
+        "watchAttemptsExactly": 1,
+        "observeForMillis": 150
+      }
+    },
+    {
+      "name": "stop-cancel-closes-active-watch-worker",
+      "description": "Stopping automatic downloads while a watch stream is active cancels the watch worker promptly.",
+      "serverScript": {
+        "kind": "hold_watch_open"
+      },
+      "expectedState": {
+        "fallbackPullsExactly": 0,
+        "watchAttemptsExactly": 1,
+        "stopActiveWatchBeforeAssert": true
+      }
+    },
+    {
+      "name": "reconnect-uses-durable-last-bundle-seq",
+      "description": "After a watch event pull advances durable state, the reconnect watches from the persisted last_bundle_seq_seen value.",
+      "serverScript": {
+        "kind": "watch_lines",
+        "lines": [
+          "event: bundle",
+          "data: {\"bundle_seq\":1,\"source_id\":\"remote-source\",\"source_bundle_id\":1}",
+          ""
+        ],
+        "startBundles": [
+          {
+            "rows": [
+              {
+                "schema": "main",
+                "table": "users",
+                "key": {
+                  "id": "u1"
+                },
+                "op": "INSERT",
+                "payload": {
+                  "id": "u1",
+                  "name": "Ada"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expectedState": {
+        "fallbackPullsAtLeast": 1,
+        "watchAttemptsAtLeast": 2,
+        "watchAfterBundleSeqsContains": [
+          0,
+          1
+        ],
+        "users": [
+          {
+            "id": "u1",
+            "name": "Ada"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unsupported-server-falls-back-to-polling",
+      "description": "A server that omits bundle_change_watch capability is polled without opening /sync/watch.",
+      "serverScript": {
+        "kind": "unsupported_capability",
+        "bundleChangeWatchSupported": false,
+        "startBundles": [
+          {
+            "rows": [
+              {
+                "schema": "main",
+                "table": "users",
+                "key": {
+                  "id": "u1"
+                },
+                "op": "INSERT",
+                "payload": {
+                  "id": "u1",
+                  "name": "Ada"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expectedState": {
+        "fallbackPullsAtLeast": 1,
+        "watchAttemptsExactly": 0,
+        "users": [
+          {
+            "id": "u1",
+            "name": "Ada"
+          }
+        ]
+      }
+    },
+    {
+      "name": "server-originated-write-wakeup-pulls-authoritatively",
+      "description": "A remote write that arrives while the watch stream is open emits a wakeup hint and the client pulls the authoritative bundle.",
+      "serverScript": {
+        "kind": "hold_watch_open",
+        "wakeBundles": [
+          {
+            "rows": [
+              {
+                "schema": "main",
+                "table": "users",
+                "key": {
+                  "id": "u1"
+                },
+                "op": "INSERT",
+                "payload": {
+                  "id": "u1",
+                  "name": "Ada"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expectedState": {
+        "fallbackPullsExactly": 1,
+        "watchAttemptsExactly": 1,
+        "watchAfterBundleSeqsContains": [
+          0
+        ],
+        "users": [
+          {
+            "id": "u1",
+            "name": "Ada"
+          }
+        ]
+      }
     }
   ]
 }

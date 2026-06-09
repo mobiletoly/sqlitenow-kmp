@@ -188,7 +188,6 @@ ON CONFLICT(singleton_key) DO NOTHING''');
   replacement_source_id TEXT NOT NULL DEFAULT ''
 )''',
     );
-    await _ensureOperationStateSchema();
     await _connection.execute('''INSERT INTO _sync_operation_state(
   singleton_key,
   kind,
@@ -249,68 +248,6 @@ ON CONFLICT(singleton_key) DO NOTHING''');
     );
     await _connection.execute(
       'UPDATE _sync_apply_state SET apply_mode = 0 WHERE singleton_key = 1',
-    );
-  }
-
-  Future<void> _ensureOperationStateSchema() async {
-    final rows = await _connection.select(
-      'PRAGMA table_info(_sync_operation_state)',
-      (row) => row.readString(1).toLowerCase(),
-    );
-    final columns = rows.toSet();
-    final hasCurrentSchema =
-        columns.contains('reason') &&
-        columns.contains('replacement_source_id') &&
-        !columns.contains('source_recovery_reason') &&
-        !columns.contains('source_recovery_source_id') &&
-        !columns.contains('source_recovery_source_bundle_id') &&
-        !columns.contains('source_recovery_intent_state');
-    if (hasCurrentSchema) return;
-
-    final existingRows = await _connection.select(
-      '''SELECT kind, target_user_id, staged_snapshot_id, snapshot_bundle_seq, snapshot_row_count
-FROM _sync_operation_state
-WHERE singleton_key = 1''',
-      (row) => _OperationState(
-        kind: row.readString(0),
-        targetUserId: row.readString(1),
-        stagedSnapshotId: row.readString(2),
-        snapshotBundleSeq: row.readInt(3),
-        snapshotRowCount: row.readInt(4),
-      ),
-    );
-    await _connection.execute('DROP TABLE _sync_operation_state');
-    await _connection.execute('''CREATE TABLE _sync_operation_state (
-  singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),
-  kind TEXT NOT NULL DEFAULT 'none' CHECK (kind IN ('none', 'remote_replace', 'source_recovery')),
-  target_user_id TEXT NOT NULL DEFAULT '',
-  staged_snapshot_id TEXT NOT NULL DEFAULT '',
-  snapshot_bundle_seq INTEGER NOT NULL DEFAULT 0,
-  snapshot_row_count INTEGER NOT NULL DEFAULT 0,
-  reason TEXT NOT NULL DEFAULT '',
-  replacement_source_id TEXT NOT NULL DEFAULT ''
-)''');
-    if (existingRows.isEmpty) return;
-    final existing = existingRows.single;
-    await _connection.execute(
-      '''INSERT INTO _sync_operation_state(
-  singleton_key,
-  kind,
-  target_user_id,
-  staged_snapshot_id,
-  snapshot_bundle_seq,
-  snapshot_row_count,
-  reason,
-  replacement_source_id
-)
-VALUES(1, ?, ?, ?, ?, ?, '', '')''',
-      parameters: [
-        existing.kind,
-        existing.targetUserId,
-        existing.stagedSnapshotId,
-        existing.snapshotBundleSeq,
-        existing.snapshotRowCount,
-      ],
     );
   }
 

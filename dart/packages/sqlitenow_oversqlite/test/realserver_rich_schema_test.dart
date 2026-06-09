@@ -422,7 +422,7 @@ Future<void> _assertBlobKeyState(
   _BlobKeyFixture rowA, [
   _BlobKeyFixture? rowB,
 ]) async {
-  final expectedRows = [rowA, if (rowB != null) rowB];
+  final expectedRows = [rowA, ?rowB];
   final rows = await database.files.selectAll().asList();
   expect(rows, hasLength(expectedRows.length));
   for (final row in expectedRows) {

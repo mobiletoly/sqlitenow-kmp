@@ -194,41 +194,21 @@ CREATE TABLE posts (
     );
   });
 
-  test(
-    'preserves unknown _sync application tables and repairs operation state table',
-    () async {
-      final database = await _openDatabase('''
+  test('preserves unknown _sync application tables', () async {
+    final database = await _openDatabase('''
 CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL);
 CREATE TABLE _sync_audit_log (id TEXT PRIMARY KEY NOT NULL);
 INSERT INTO _sync_audit_log(id) VALUES('keep-me');
-CREATE TABLE _sync_operation_state (
-  singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),
-  kind TEXT NOT NULL DEFAULT 'none',
-  target_user_id TEXT NOT NULL DEFAULT '',
-  staged_snapshot_id TEXT NOT NULL DEFAULT '',
-  snapshot_bundle_seq INTEGER NOT NULL DEFAULT 0,
-  snapshot_row_count INTEGER NOT NULL DEFAULT 0,
-  source_recovery_reason TEXT NOT NULL DEFAULT ''
-);
-INSERT INTO _sync_operation_state(singleton_key, kind) VALUES(1, 'none');
 ''');
-      addTearDown(database.close);
+    addTearDown(database.close);
 
-      await _initializeUsersRuntime(database);
+    await _initializeUsersRuntime(database);
 
-      expect(
-        await _scalarInt(database, 'SELECT COUNT(*) FROM _sync_audit_log'),
-        1,
-      );
-      final columns = await database.connection.select(
-        'PRAGMA table_info(_sync_operation_state)',
-        (row) => row.readString(1),
-      );
-      expect(columns, contains('reason'));
-      expect(columns, contains('replacement_source_id'));
-      expect(columns, isNot(contains('source_recovery_reason')));
-    },
-  );
+    expect(
+      await _scalarInt(database, 'SELECT COUNT(*) FROM _sync_audit_log'),
+      1,
+    );
+  });
 
   test(
     'write guards block local writes while a sync transition is pending',

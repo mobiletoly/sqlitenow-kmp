@@ -4,6 +4,8 @@ import 'package:sqlitenow_runtime/sqlitenow_runtime.dart';
 import 'package:sqlitenow_oversqlite/sqlitenow_oversqlite.dart';
 import 'package:test/test.dart';
 
+import 'support/behavior_fixture_support.dart';
+
 void main() {
   test('pullToStable applies incremental bundles and tombstones', () async {
     final database = await _openUsersDatabase();
@@ -160,10 +162,14 @@ void main() {
     final report = await client.sync();
 
     expect(report.pushOutcome, PushOutcome.committed);
-    expect(report.remoteOutcome, RemoteSyncOutcome.alreadyAtTarget);
+    expect(report.remoteOutcome, RemoteSyncOutcome.appliedIncremental);
     expect(
       await _scalarText(database, "SELECT name FROM users WHERE id = 'local'"),
       'Local',
+    );
+    expect(
+      await _scalarText(database, "SELECT name FROM users WHERE id = 'remote'"),
+      'Remote',
     );
   });
 
@@ -280,6 +286,48 @@ void main() {
       );
     },
   );
+
+  test('pull applies cyclic foreign keys under apply mode', () async {
+    final database = await _openAuthorProfileDatabase();
+    addTearDown(database.close);
+    final server = _SyncServer(config: _authorProfileConfig);
+    server.addRemoteBundle([
+      _bundleRow(
+        'INSERT',
+        {'id': 'author-1'},
+        {'id': 'author-1', 'profile_id': 'profile-1', 'name': 'Author'},
+        table: 'authors',
+      ),
+      _bundleRow(
+        'INSERT',
+        {'id': 'profile-1'},
+        {'id': 'profile-1', 'author_id': 'author-1', 'bio': 'Cyclic'},
+        table: 'profiles',
+      ),
+    ]);
+    final client = _newClient(database, server, config: _authorProfileConfig);
+    addTearDown(client.close);
+    await client.open();
+    await client.attach('user-1');
+
+    final report = await client.pullToStable();
+
+    expect(report.outcome, RemoteSyncOutcome.appliedIncremental);
+    expect(
+      await _scalarText(
+        database,
+        "SELECT profile_id FROM authors WHERE id = 'author-1'",
+      ),
+      'profile-1',
+    );
+    expect(
+      await _scalarText(
+        database,
+        "SELECT author_id FROM profiles WHERE id = 'profile-1'",
+      ),
+      'author-1',
+    );
+  });
 }
 
 DefaultOversqliteClient _newClient(
@@ -304,6 +352,14 @@ const _nodeConfig = OversqliteConfig(
   syncTables: [SyncTable(tableName: 'nodes', syncKeyColumnName: 'id')],
 );
 
+const _authorProfileConfig = OversqliteConfig(
+  schema: 'main',
+  syncTables: [
+    SyncTable(tableName: 'authors', syncKeyColumnName: 'id'),
+    SyncTable(tableName: 'profiles', syncKeyColumnName: 'id'),
+  ],
+);
+
 Future<SqliteNowDatabase> _openUsersDatabase() async {
   final database = SqliteNowDatabase.inMemory();
   await database.open(
@@ -324,6 +380,25 @@ Future<SqliteNowDatabase> _openNodeDatabase() async {
   id TEXT PRIMARY KEY NOT NULL,
   parent_id TEXT REFERENCES nodes(id) DEFERRABLE INITIALLY DEFERRED,
   name TEXT NOT NULL
+)''');
+    },
+  );
+  return database;
+}
+
+Future<SqliteNowDatabase> _openAuthorProfileDatabase() async {
+  final database = SqliteNowDatabase.inMemory();
+  await database.open(
+    preInit: (connection) async {
+      await connection.execute('''CREATE TABLE authors (
+  id TEXT PRIMARY KEY NOT NULL,
+  profile_id TEXT NOT NULL REFERENCES profiles(id),
+  name TEXT NOT NULL
+)''');
+      await connection.execute('''CREATE TABLE profiles (
+  id TEXT PRIMARY KEY NOT NULL,
+  author_id TEXT NOT NULL REFERENCES authors(id),
+  bio TEXT NOT NULL
 )''');
     },
   );
@@ -454,24 +529,28 @@ final class _SyncServer implements OversqliteHttpClient {
       });
     }
     if (path.startsWith('sync/committed-bundles/')) {
+      final bundleSeq = int.parse(
+        path.substring('sync/committed-bundles/'.length).split('/').first,
+      );
+      final rows = [
+        for (final row in uploadedRows)
+          {
+            'schema': row['schema'],
+            'table': row['table'],
+            'key': row['key'],
+            'op': row['op'],
+            'row_version': bundleSeq,
+            'payload': row['payload'],
+          },
+      ];
       return _json({
-        'bundle_seq': stableBundleSeq,
+        'bundle_seq': bundleSeq,
         'source_id': _sourceId,
         'source_bundle_id': 1,
-        'row_count': uploadedRows.length,
-        'bundle_hash': 'hash',
-        'rows': [
-          for (var i = 0; i < uploadedRows.length; i++)
-            {
-              'schema': uploadedRows[i]['schema'],
-              'table': uploadedRows[i]['table'],
-              'key': uploadedRows[i]['key'],
-              'op': uploadedRows[i]['op'],
-              'row_version': i + 1,
-              'payload': uploadedRows[i]['payload'],
-            },
-        ],
-        'next_row_ordinal': uploadedRows.isEmpty ? -1 : uploadedRows.length - 1,
+        'row_count': rows.length,
+        'bundle_hash': committedBundleHashForFixtureRows(rows),
+        'rows': rows,
+        'next_row_ordinal': rows.isEmpty ? -1 : rows.length - 1,
         'has_more': false,
       });
     }
@@ -528,6 +607,23 @@ final class _SyncServer implements OversqliteHttpClient {
     }
     if (path == 'sync/push-sessions/push-1/commit') {
       stableBundleSeq = stableBundleSeq == 0 ? 1 : stableBundleSeq + 1;
+      final committedRows = [
+        for (final row in uploadedRows)
+          {
+            'schema': row['schema'],
+            'table': row['table'],
+            'key': row['key'],
+            'op': row['op'],
+            'row_version': stableBundleSeq,
+            'payload': row['payload'],
+          },
+      ];
+      bundles.add({
+        'bundle_seq': stableBundleSeq,
+        'source_id': _sourceId,
+        'source_bundle_id': 1,
+        'rows': committedRows,
+      });
       snapshotRows = [
         for (final row in uploadedRows)
           if (row['op'] != 'DELETE')
@@ -544,7 +640,7 @@ final class _SyncServer implements OversqliteHttpClient {
         'source_id': _sourceId,
         'source_bundle_id': 1,
         'row_count': uploadedRows.length,
-        'bundle_hash': 'hash',
+        'bundle_hash': committedBundleHashForFixtureRows(committedRows),
       });
     }
     return _json({'error': 'not_found', 'message': path}, statusCode: 404);

@@ -1,0 +1,292 @@
+{
+  "formatVersion": 1,
+  "fixture": "business-rich-v0",
+  "schema": "business",
+  "tables": [
+    {
+      "name": "categories",
+      "syncKeyColumnName": "id",
+      "primaryKey": [
+        "id"
+      ],
+      "columns": [
+        {
+          "name": "id",
+          "logicalType": "text",
+          "nullable": false
+        },
+        {
+          "name": "name",
+          "logicalType": "text",
+          "nullable": false
+        },
+        {
+          "name": "parent_id",
+          "logicalType": "text",
+          "nullable": true
+        }
+      ],
+      "foreignKeys": [
+        {
+          "from": "parent_id",
+          "toTable": "categories",
+          "toColumn": "id",
+          "onDelete": "CASCADE"
+        }
+      ]
+    },
+    {
+      "name": "file_reviews",
+      "syncKeyColumnName": "id",
+      "primaryKey": [
+        "id"
+      ],
+      "columns": [
+        {
+          "name": "id",
+          "logicalType": "blob",
+          "nullable": false
+        },
+        {
+          "name": "review",
+          "logicalType": "text",
+          "nullable": false
+        },
+        {
+          "name": "file_id",
+          "logicalType": "blob",
+          "nullable": false
+        }
+      ],
+      "foreignKeys": [
+        {
+          "from": "file_id",
+          "toTable": "files",
+          "toColumn": "id",
+          "onDelete": "CASCADE"
+        }
+      ]
+    },
+    {
+      "name": "files",
+      "syncKeyColumnName": "id",
+      "primaryKey": [
+        "id"
+      ],
+      "columns": [
+        {
+          "name": "id",
+          "logicalType": "blob",
+          "nullable": false
+        },
+        {
+          "name": "name",
+          "logicalType": "text",
+          "nullable": false
+        },
+        {
+          "name": "data",
+          "logicalType": "blob",
+          "nullable": false
+        }
+      ],
+      "foreignKeys": []
+    },
+    {
+      "name": "posts",
+      "syncKeyColumnName": "id",
+      "primaryKey": [
+        "id"
+      ],
+      "columns": [
+        {
+          "name": "id",
+          "logicalType": "text",
+          "nullable": false
+        },
+        {
+          "name": "title",
+          "logicalType": "text",
+          "nullable": false
+        },
+        {
+          "name": "content",
+          "logicalType": "text",
+          "nullable": false
+        },
+        {
+          "name": "author_id",
+          "logicalType": "text",
+          "nullable": true
+        },
+        {
+          "name": "created_at",
+          "logicalType": "text",
+          "nullable": false
+        },
+        {
+          "name": "updated_at",
+          "logicalType": "text",
+          "nullable": false
+        }
+      ],
+      "foreignKeys": [
+        {
+          "from": "author_id",
+          "toTable": "users",
+          "toColumn": "id",
+          "onDelete": "NO ACTION"
+        }
+      ]
+    },
+    {
+      "name": "team_members",
+      "syncKeyColumnName": "id",
+      "primaryKey": [
+        "id"
+      ],
+      "columns": [
+        {
+          "name": "id",
+          "logicalType": "text",
+          "nullable": false
+        },
+        {
+          "name": "name",
+          "logicalType": "text",
+          "nullable": false
+        },
+        {
+          "name": "team_id",
+          "logicalType": "text",
+          "nullable": false
+        }
+      ],
+      "foreignKeys": [
+        {
+          "from": "team_id",
+          "toTable": "teams",
+          "toColumn": "id",
+          "onDelete": "CASCADE"
+        }
+      ]
+    },
+    {
+      "name": "teams",
+      "syncKeyColumnName": "id",
+      "primaryKey": [
+        "id"
+      ],
+      "columns": [
+        {
+          "name": "id",
+          "logicalType": "text",
+          "nullable": false
+        },
+        {
+          "name": "name",
+          "logicalType": "text",
+          "nullable": false
+        },
+        {
+          "name": "captain_member_id",
+          "logicalType": "text",
+          "nullable": true
+        }
+      ],
+      "foreignKeys": [
+        {
+          "from": "captain_member_id",
+          "toTable": "team_members",
+          "toColumn": "id",
+          "onDelete": "NO ACTION"
+        }
+      ]
+    },
+    {
+      "name": "typed_rows",
+      "syncKeyColumnName": "id",
+      "primaryKey": [
+        "id"
+      ],
+      "columns": [
+        {
+          "name": "id",
+          "logicalType": "text",
+          "nullable": false
+        },
+        {
+          "name": "name",
+          "logicalType": "text",
+          "nullable": false
+        },
+        {
+          "name": "note",
+          "logicalType": "text",
+          "nullable": true
+        },
+        {
+          "name": "count_value",
+          "logicalType": "integer",
+          "nullable": true
+        },
+        {
+          "name": "enabled_flag",
+          "logicalType": "integer",
+          "nullable": false
+        },
+        {
+          "name": "rating",
+          "logicalType": "real",
+          "nullable": true
+        },
+        {
+          "name": "data",
+          "logicalType": "blob",
+          "nullable": true
+        },
+        {
+          "name": "created_at",
+          "logicalType": "text",
+          "nullable": true
+        }
+      ],
+      "foreignKeys": []
+    },
+    {
+      "name": "users",
+      "syncKeyColumnName": "id",
+      "primaryKey": [
+        "id"
+      ],
+      "columns": [
+        {
+          "name": "id",
+          "logicalType": "text",
+          "nullable": false
+        },
+        {
+          "name": "name",
+          "logicalType": "text",
+          "nullable": false
+        },
+        {
+          "name": "email",
+          "logicalType": "text",
+          "nullable": false
+        },
+        {
+          "name": "created_at",
+          "logicalType": "text",
+          "nullable": false
+        },
+        {
+          "name": "updated_at",
+          "logicalType": "text",
+          "nullable": false
+        }
+      ],
+      "foreignKeys": []
+    }
+  ]
+}

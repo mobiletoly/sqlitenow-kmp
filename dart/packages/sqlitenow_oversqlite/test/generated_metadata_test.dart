@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'generated/rich_real_server_db.dart';
 import 'generated/sync_dart_db.dart';
 import 'package:sqlitenow_oversqlite/sqlitenow_oversqlite.dart';
@@ -52,17 +55,20 @@ void main() {
     expect(client, isA<DefaultOversqliteClient>());
   });
 
-  test('generated rich realserver database exposes full sync metadata', () {
-    expect(RichRealServerDb.syncTables.map((table) => table.tableName), [
-      'categories',
-      'file_reviews',
-      'files',
-      'posts',
-      'team_members',
-      'teams',
-      'typed_rows',
-      'users',
-    ]);
+  test('generated rich realserver database matches shared manifest', () async {
+    final manifest = _readRichSchemaManifest();
+    expect(manifest['formatVersion'], 1);
+    expect(manifest['fixture'], 'business-rich-v0');
+    expect(manifest['schema'], 'business');
+
+    final tables = ((manifest['tables']! as List<Object?>)
+        .cast<Map<String, Object?>>());
+    final expectedSyncTables =
+        tables.map((table) => table['name']! as String).toList()..sort();
+    final actualSyncTables =
+        RichRealServerDb.syncTables.map((table) => table.tableName).toList()
+          ..sort();
+    expect(actualSyncTables, expectedSyncTables);
     expect(
       RichRealServerDb.syncTables.map((table) => table.syncKeyColumnName),
       everyElement('id'),
@@ -79,6 +85,12 @@ void main() {
     expect(config.syncTables, RichRealServerDb.syncTables);
     expect(config.uploadLimit, 8);
     expect(config.downloadLimit, 8);
+
+    await database.open();
+    addTearDown(database.close);
+    for (final table in tables) {
+      await _expectTableMatchesManifest(database, table);
+    }
   });
 }
 
@@ -104,4 +116,142 @@ final class _NoopHttpClient implements OversqliteHttpClient {
   }) {
     throw UnimplementedError();
   }
+}
+
+Future<void> _expectTableMatchesManifest(
+  RichRealServerDb database,
+  Map<String, Object?> table,
+) async {
+  final tableName = table['name']! as String;
+  final columns = await _readColumns(database, tableName);
+  final expectedColumns = ((table['columns']! as List<Object?>)
+      .cast<Map<String, Object?>>()
+      .map(
+        (column) => {
+          'name': column['name'],
+          'logicalType': column['logicalType'],
+          'nullable': column['nullable'],
+        },
+      )
+      .toList());
+  expect(
+    columns.map((column) => column.manifestColumn).toList(),
+    expectedColumns,
+  );
+
+  final expectedPrimaryKey = (table['primaryKey']! as List<Object?>)
+      .cast<String>();
+  final actualPrimaryKey =
+      columns.where((column) => column.primaryKeyIndex > 0).toList()
+        ..sort((a, b) => a.primaryKeyIndex.compareTo(b.primaryKeyIndex));
+  expect(
+    actualPrimaryKey.map((column) => column.name).toList(),
+    expectedPrimaryKey,
+  );
+
+  final expectedForeignKeys =
+      ((table['foreignKeys']! as List<Object?>)
+            .cast<Map<String, Object?>>()
+            .map(
+              (foreignKey) => {
+                'from': foreignKey['from'],
+                'toTable': foreignKey['toTable'],
+                'toColumn': foreignKey['toColumn'],
+                'onDelete': foreignKey['onDelete'],
+              },
+            )
+            .toList())
+        ..sort(_compareForeignKeys);
+  final actualForeignKeys = await _readForeignKeys(database, tableName)
+    ..sort(_compareForeignKeys);
+  expect(actualForeignKeys, expectedForeignKeys);
+}
+
+Future<List<_ActualColumn>> _readColumns(
+  RichRealServerDb database,
+  String tableName,
+) {
+  return database.connection.select('PRAGMA table_info($tableName)', (row) {
+    final name = row.readString(1);
+    return _ActualColumn(
+      name: name,
+      manifestColumn: {
+        'name': name,
+        'logicalType': _sqliteTypeToLogicalType(row.readString(2)),
+        'nullable': row.readInt(3) == 0,
+      },
+      primaryKeyIndex: row.readInt(5),
+    );
+  });
+}
+
+Future<List<Map<String, Object?>>> _readForeignKeys(
+  RichRealServerDb database,
+  String tableName,
+) {
+  return database.connection.select('PRAGMA foreign_key_list($tableName)', (
+    row,
+  ) {
+    return {
+      'from': row.readString(3),
+      'toTable': row.readString(2),
+      'toColumn': row.readString(4),
+      'onDelete': row.readString(6).toUpperCase(),
+    };
+  });
+}
+
+String _sqliteTypeToLogicalType(String type) {
+  return switch (type.trim().toUpperCase()) {
+    'TEXT' => 'text',
+    'BLOB' => 'blob',
+    'INTEGER' => 'integer',
+    'REAL' => 'real',
+    _ => type.trim().toLowerCase(),
+  };
+}
+
+int _compareForeignKeys(Map<String, Object?> a, Map<String, Object?> b) {
+  for (final key in ['from', 'toTable', 'toColumn']) {
+    final comparison = (a[key]! as String).compareTo(b[key]! as String);
+    if (comparison != 0) {
+      return comparison;
+    }
+  }
+  return 0;
+}
+
+Map<String, Object?> _readRichSchemaManifest() {
+  final file = _repoRoot().uri
+      .resolve('oversqlite-contracts/rich-schema/business-rich-v0.json')
+      .toFilePath();
+  return jsonDecode(File(file).readAsStringSync()) as Map<String, Object?>;
+}
+
+Directory _repoRoot() {
+  var current = Directory.current;
+  while (true) {
+    if (File.fromUri(current.uri.resolve('settings.gradle.kts')).existsSync()) {
+      return current;
+    }
+    final parent = current.parent;
+    if (parent.path == current.path) {
+      throw StateError(
+        'Could not locate repository root from ${Directory.current.path}',
+      );
+    }
+    current = parent;
+  }
+}
+
+final class _ActualColumn {
+  const _ActualColumn({
+    required this.name,
+    required this.manifestColumn,
+    required this.primaryKeyIndex,
+  });
+
+  final String name;
+  final Map<String, Object?> manifestColumn;
+  final int primaryKeyIndex;
 }

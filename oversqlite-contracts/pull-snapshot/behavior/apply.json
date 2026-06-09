@@ -1,0 +1,640 @@
+{
+  "formatVersion": 1,
+  "cases": [
+    {
+      "name": "pull-incremental-cyclic-fk-applies-under-apply-mode",
+      "description": "Incremental pull applies authoritative rows under apply mode with deferred foreign keys, so cyclic app-table rows in one bundle do not fail on insertion order.",
+      "schema": "immediate-authors-profiles-cycle",
+      "syncTables": [
+        {
+          "tableName": "authors",
+          "syncKeyColumnName": "id"
+        },
+        {
+          "tableName": "profiles",
+          "syncKeyColumnName": "id"
+        }
+      ],
+      "serverScript": {
+        "kind": "pull_incremental_bundles",
+        "response": {
+          "stable_bundle_seq": 1,
+          "bundles": [
+            {
+              "bundle_seq": 1,
+              "source_id": "remote-source",
+              "source_bundle_id": 1,
+              "rows": [
+                {
+                  "schema": "main",
+                  "table": "authors",
+                  "key": {
+                    "id": "author-1"
+                  },
+                  "op": "INSERT",
+                  "row_version": 1,
+                  "payload": {
+                    "id": "author-1",
+                    "profile_id": "profile-1",
+                    "name": "Author"
+                  }
+                },
+                {
+                  "schema": "main",
+                  "table": "profiles",
+                  "key": {
+                    "id": "profile-1"
+                  },
+                  "op": "INSERT",
+                  "row_version": 1,
+                  "payload": {
+                    "id": "profile-1",
+                    "author_id": "author-1",
+                    "bio": "Cyclic"
+                  }
+                }
+              ]
+            }
+          ],
+          "has_more": false
+        }
+      },
+      "steps": [
+        {
+          "action": "pullToStable",
+          "expectedException": "none",
+          "expectedState": {
+            "lastBundleSeqSeen": 1,
+            "dirtyRowCount": 0
+          },
+          "expectedAppState": {
+            "authors": [
+              {
+                "id": "author-1",
+                "profile_id": "profile-1",
+                "name": "Author"
+              }
+            ],
+            "profiles": [
+              {
+                "id": "profile-1",
+                "author_id": "author-1",
+                "bio": "Cyclic"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "pull-incremental-frozen-ceiling-change-rejected",
+      "description": "Incremental pull rejects a mid-session stable bundle ceiling change after applying only rows below the original ceiling.",
+      "serverScript": {
+        "kind": "pull_sequence",
+        "responses": [
+          {
+            "stable_bundle_seq": 2,
+            "bundles": [
+              {
+                "bundle_seq": 1,
+                "source_id": "remote-source",
+                "source_bundle_id": 1,
+                "rows": [
+                  {
+                    "schema": "main",
+                    "table": "users",
+                    "key": {
+                      "id": "user-1"
+                    },
+                    "op": "INSERT",
+                    "row_version": 1,
+                    "payload": {
+                      "id": "user-1",
+                      "name": "Ada"
+                    }
+                  }
+                ]
+              }
+            ],
+            "has_more": true
+          },
+          {
+            "stable_bundle_seq": 3,
+            "bundles": [
+              {
+                "bundle_seq": 2,
+                "source_id": "remote-source",
+                "source_bundle_id": 2,
+                "rows": [
+                  {
+                    "schema": "main",
+                    "table": "users",
+                    "key": {
+                      "id": "user-2"
+                    },
+                    "op": "INSERT",
+                    "row_version": 1,
+                    "payload": {
+                      "id": "user-2",
+                      "name": "Grace"
+                    }
+                  }
+                ]
+              }
+            ],
+            "has_more": false
+          }
+        ]
+      },
+      "steps": [
+        {
+          "action": "pullToStable",
+          "expectedException": "any_error",
+          "expectedErrorContains": "stable bundle seq changed from 2 to 3",
+          "expectedState": {
+            "lastBundleSeqSeen": 1,
+            "dirtyRowCount": 0
+          },
+          "expectedAppState": {
+            "users": [
+              {
+                "id": "user-1",
+                "name": "Ada"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "snapshot-multi-chunk-staging-invisible-until-final-apply",
+      "description": "Snapshot chunks are staged durably but remain invisible to app tables until final apply succeeds.",
+      "serverScript": {
+        "kind": "snapshot_sequence",
+        "sessions": [
+          {
+            "snapshot_id": "snapshot-multi",
+            "snapshot_bundle_seq": 9,
+            "row_count": 2,
+            "byte_count": 64,
+            "expires_at": "2099-01-01T00:00:00Z"
+          }
+        ],
+        "chunks": {
+          "snapshot-multi": {
+            "0": {
+              "snapshot_id": "snapshot-multi",
+              "snapshot_bundle_seq": 9,
+              "next_row_ordinal": 1,
+              "has_more": true,
+              "rows": [
+                {
+                  "schema": "main",
+                  "table": "users",
+                  "key": {
+                    "id": "user-1"
+                  },
+                  "row_version": 2,
+                  "payload": {
+                    "id": "user-1",
+                    "name": "Ada"
+                  }
+                }
+              ]
+            },
+            "1": {
+              "snapshot_id": "snapshot-multi",
+              "snapshot_bundle_seq": 9,
+              "next_row_ordinal": 2,
+              "has_more": false,
+              "rows": [
+                {
+                  "schema": "main",
+                  "table": "users",
+                  "key": {
+                    "id": "user-2"
+                  },
+                  "row_version": 2,
+                  "payload": {
+                    "id": "user-2"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "action": "rebuild",
+          "expectedException": "any_error",
+          "expectedErrorContains": "payload for users must contain every table column",
+          "expectedState": {
+            "lastBundleSeqSeen": 0,
+            "snapshotStageCount": 2,
+            "dirtyRowCount": 0
+          },
+          "expectedAppState": {
+            "users": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "snapshot-restart-clears-stage-and-restarts-from-zero",
+      "description": "A retry after an incomplete staged snapshot clears stale stage rows and restarts the new snapshot from row ordinal zero.",
+      "serverScript": {
+        "kind": "snapshot_sequence",
+        "sessions": [
+          {
+            "snapshot_id": "snapshot-restart-a",
+            "snapshot_bundle_seq": 9,
+            "row_count": 2,
+            "byte_count": 64,
+            "expires_at": "2099-01-01T00:00:00Z"
+          },
+          {
+            "snapshot_id": "snapshot-restart-b",
+            "snapshot_bundle_seq": 12,
+            "row_count": 1,
+            "byte_count": 32,
+            "expires_at": "2099-01-01T00:00:00Z"
+          }
+        ],
+        "chunks": {
+          "snapshot-restart-a": {
+            "0": {
+              "snapshot_id": "snapshot-restart-a",
+              "snapshot_bundle_seq": 9,
+              "next_row_ordinal": 1,
+              "has_more": true,
+              "rows": [
+                {
+                  "schema": "main",
+                  "table": "users",
+                  "key": {
+                    "id": "user-1"
+                  },
+                  "row_version": 2,
+                  "payload": {
+                    "id": "user-1",
+                    "name": "Ada"
+                  }
+                }
+              ]
+            },
+            "1": {
+              "status": 500,
+              "body": {
+                "error": "temporary",
+                "message": "retry"
+              }
+            }
+          },
+          "snapshot-restart-b": {
+            "0": {
+              "snapshot_id": "snapshot-restart-b",
+              "snapshot_bundle_seq": 12,
+              "next_row_ordinal": 1,
+              "has_more": false,
+              "rows": [
+                {
+                  "schema": "main",
+                  "table": "users",
+                  "key": {
+                    "id": "user-2"
+                  },
+                  "row_version": 3,
+                  "payload": {
+                    "id": "user-2",
+                    "name": "Grace"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "action": "rebuild",
+          "expectedException": "any_error",
+          "expectedState": {
+            "snapshotStageCount": 1,
+            "dirtyRowCount": 0
+          },
+          "expectedAppState": {
+            "users": []
+          }
+        },
+        {
+          "action": "rebuild",
+          "expectedException": "none",
+          "expectedState": {
+            "lastBundleSeqSeen": 12,
+            "snapshotStageCount": 0,
+            "dirtyRowCount": 0
+          },
+          "expectedAppState": {
+            "users": [
+              {
+                "id": "user-2",
+                "name": "Grace"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "snapshot-failed-final-apply-preserves-source",
+      "description": "A source-recovery snapshot that fails during final apply leaves the attached source unchanged.",
+      "serverScript": {
+        "kind": "snapshot_sequence",
+        "sessions": [
+          {
+            "snapshot_id": "snapshot-recover-fail",
+            "snapshot_bundle_seq": 9,
+            "row_count": 1,
+            "byte_count": 32,
+            "expires_at": "2099-01-01T00:00:00Z"
+          }
+        ],
+        "chunks": {
+          "snapshot-recover-fail": {
+            "0": {
+              "snapshot_id": "snapshot-recover-fail",
+              "snapshot_bundle_seq": 9,
+              "next_row_ordinal": 1,
+              "has_more": false,
+              "rows": [
+                {
+                  "schema": "main",
+                  "table": "users",
+                  "key": {
+                    "id": "user-1"
+                  },
+                  "row_version": 2,
+                  "payload": {
+                    "id": "user-1"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "setupSql": [
+            "INSERT OR IGNORE INTO _sync_source_state(source_id, next_source_bundle_id, replaced_by_source_id) VALUES('replacement-fail-source', 1, '')",
+            "UPDATE _sync_attachment_state SET rebuild_required = 1 WHERE singleton_key = 1",
+            "UPDATE _sync_operation_state SET kind = 'source_recovery', reason = 'history_pruned', replacement_source_id = 'replacement-fail-source' WHERE singleton_key = 1"
+          ],
+          "action": "rebuild",
+          "expectedException": "any_error",
+          "expectedErrorContains": "payload for users must contain every table column",
+          "expectedState": {
+            "lastBundleSeqSeen": 0,
+            "snapshotStageCount": 1,
+            "currentSourceChangedFromStepStart": false,
+            "dirtyRowCount": 0
+          },
+          "expectedAppState": {
+            "users": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "snapshot-cyclic-fk-chunk-boundary-applies",
+      "description": "Snapshot final apply uses deferred foreign keys so cyclic app rows split across chunks can be hydrated.",
+      "schema": "immediate-authors-profiles-cycle",
+      "syncTables": [
+        {
+          "tableName": "authors",
+          "syncKeyColumnName": "id"
+        },
+        {
+          "tableName": "profiles",
+          "syncKeyColumnName": "id"
+        }
+      ],
+      "serverScript": {
+        "kind": "snapshot_sequence",
+        "sessions": [
+          {
+            "snapshot_id": "snapshot-cycle",
+            "snapshot_bundle_seq": 6,
+            "row_count": 2,
+            "byte_count": 64,
+            "expires_at": "2099-01-01T00:00:00Z"
+          }
+        ],
+        "chunks": {
+          "snapshot-cycle": {
+            "0": {
+              "snapshot_id": "snapshot-cycle",
+              "snapshot_bundle_seq": 6,
+              "next_row_ordinal": 1,
+              "has_more": true,
+              "rows": [
+                {
+                  "schema": "main",
+                  "table": "authors",
+                  "key": {
+                    "id": "author-1"
+                  },
+                  "row_version": 2,
+                  "payload": {
+                    "id": "author-1",
+                    "profile_id": "profile-1",
+                    "name": "Author"
+                  }
+                }
+              ]
+            },
+            "1": {
+              "snapshot_id": "snapshot-cycle",
+              "snapshot_bundle_seq": 6,
+              "next_row_ordinal": 2,
+              "has_more": false,
+              "rows": [
+                {
+                  "schema": "main",
+                  "table": "profiles",
+                  "key": {
+                    "id": "profile-1"
+                  },
+                  "row_version": 2,
+                  "payload": {
+                    "id": "profile-1",
+                    "author_id": "author-1",
+                    "bio": "Cyclic"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "action": "rebuild",
+          "expectedException": "none",
+          "expectedState": {
+            "lastBundleSeqSeen": 6,
+            "snapshotStageCount": 0,
+            "dirtyRowCount": 0
+          },
+          "expectedAppState": {
+            "authors": [
+              {
+                "id": "author-1",
+                "profile_id": "profile-1",
+                "name": "Author"
+              }
+            ],
+            "profiles": [
+              {
+                "id": "profile-1",
+                "author_id": "author-1",
+                "bio": "Cyclic"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "snapshot-source-rotation-cleans-local-sync-state",
+      "description": "A successful source-recovery snapshot rotates source identity, clears stale managed rows, and leaves only authoritative snapshot state.",
+      "serverScript": {
+        "kind": "snapshot_sequence",
+        "sessions": [
+          {
+            "snapshot_id": "snapshot-recover-reset",
+            "snapshot_bundle_seq": 11,
+            "row_count": 1,
+            "byte_count": 32,
+            "expires_at": "2099-01-01T00:00:00Z"
+          }
+        ],
+        "chunks": {
+          "snapshot-recover-reset": {
+            "0": {
+              "snapshot_id": "snapshot-recover-reset",
+              "snapshot_bundle_seq": 11,
+              "next_row_ordinal": 1,
+              "has_more": false,
+              "rows": [
+                {
+                  "schema": "main",
+                  "table": "users",
+                  "key": {
+                    "id": "user-2"
+                  },
+                  "row_version": 11,
+                  "payload": {
+                    "id": "user-2",
+                    "name": "Grace"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "setupSql": [
+            "UPDATE _sync_apply_state SET apply_mode = 1 WHERE singleton_key = 1",
+            "INSERT INTO users(id, name) VALUES('user-1', 'Ada stale')",
+            "UPDATE _sync_apply_state SET apply_mode = 0 WHERE singleton_key = 1",
+            "INSERT INTO _sync_row_state(schema_name, table_name, key_json, row_version, deleted) VALUES ('main', 'users', '{\"id\":\"user-1\"}', 4, 0)",
+            "INSERT INTO _sync_snapshot_stage(snapshot_id, row_ordinal, schema_name, table_name, key_json, row_version, payload) VALUES ('stale-snapshot', 0, 'main', 'users', '{\"id\":\"user-9\"}', 9, '{\"id\":\"user-9\",\"name\":\"Old snapshot\"}')",
+            "UPDATE _sync_source_state SET next_source_bundle_id = 5 WHERE source_id = (SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1)",
+            "UPDATE _sync_attachment_state SET last_bundle_seq_seen = 4, rebuild_required = 1 WHERE singleton_key = 1",
+            "INSERT OR IGNORE INTO _sync_source_state(source_id, next_source_bundle_id, replaced_by_source_id) VALUES('replacement-cleanup-source', 1, '')",
+            "UPDATE _sync_operation_state SET kind = 'source_recovery', reason = 'history_pruned', replacement_source_id = 'replacement-cleanup-source' WHERE singleton_key = 1"
+          ],
+          "action": "rebuild",
+          "expectedException": "none",
+          "expectedState": {
+            "lastBundleSeqSeen": 11,
+            "rebuildRequired": 0,
+            "snapshotStageCount": 0,
+            "rowStateCount": 1,
+            "dirtyRowCount": 0,
+            "outboxRowCount": 0,
+            "currentSourceChangedFromStepStart": true,
+            "oldSourceReplacedByCurrent": true
+          },
+          "expectedAppState": {
+            "users": [
+              {
+                "id": "user-2",
+                "name": "Grace"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "snapshot-row-count-mismatch-preserves-stage",
+      "description": "Final snapshot apply rejects mismatched staged row count and rolls back app-table visibility.",
+      "serverScript": {
+        "kind": "snapshot_sequence",
+        "sessions": [
+          {
+            "snapshot_id": "snapshot-row-count-mismatch",
+            "snapshot_bundle_seq": 13,
+            "row_count": 2,
+            "byte_count": 32,
+            "expires_at": "2099-01-01T00:00:00Z"
+          }
+        ],
+        "chunks": {
+          "snapshot-row-count-mismatch": {
+            "0": {
+              "snapshot_id": "snapshot-row-count-mismatch",
+              "snapshot_bundle_seq": 13,
+              "next_row_ordinal": 1,
+              "has_more": false,
+              "rows": [
+                {
+                  "schema": "main",
+                  "table": "users",
+                  "key": {
+                    "id": "user-1"
+                  },
+                  "row_version": 13,
+                  "payload": {
+                    "id": "user-1",
+                    "name": "Ada"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "action": "rebuild",
+          "expectedException": "any_error",
+          "expectedErrorContains": "staged snapshot row count 1 does not match expected row_count 2",
+          "expectedState": {
+            "lastBundleSeqSeen": 0,
+            "snapshotStageCount": 1,
+            "dirtyRowCount": 0
+          },
+          "expectedAppState": {
+            "users": []
+          }
+        }
+      ]
+    }
+  ]
+}

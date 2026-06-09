@@ -1,0 +1,3380 @@
+{
+  "formatVersion": 1,
+  "cases": [
+    {
+      "name": "sync-then-detach-clean-one-round",
+      "description": "A clean syncThenDetach uploads the only dirty row, detaches in one round, clears managed state, and rotates the source.",
+      "serverScript": {
+        "kind": "chunked_sync"
+      },
+      "steps": [
+        {
+          "action": "open",
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "anonymous",
+                  "attached_user_id": "",
+                  "schema_name": "",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "localSql",
+          "sql": [
+            "DELETE FROM _sync_source_state",
+            "INSERT INTO _sync_source_state(source_id, next_source_bundle_id, replaced_by_source_id) VALUES('source-before', 1, '')",
+            "UPDATE _sync_attachment_state SET current_source_id = 'source-before' WHERE singleton_key = 1"
+          ],
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "anonymous",
+                  "attached_user_id": "",
+                  "schema_name": "",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "attach",
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "attached",
+                  "attached_user_id": "user-1",
+                  "schema_name": "main",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "localSql",
+          "sql": [
+            "INSERT INTO users(id, name) VALUES('user-1', 'Ada')"
+          ],
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "attached",
+                  "attached_user_id": "user-1",
+                  "schema_name": "main",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users",
+                  "key_json": "{\"id\":\"user-1\"}",
+                  "op": "INSERT",
+                  "base_row_version": 0,
+                  "payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}",
+                  "dirty_ordinal": 1,
+                  "updated_at": "<timestamp>"
+                }
+              ],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "syncThenDetach",
+          "expectedResult": {
+            "kind": "sync_then_detach",
+            "isSuccess": true,
+            "detach": "detached",
+            "syncRounds": 1,
+            "remainingPendingRowCount": 0,
+            "pushOutcome": "committed",
+            "remoteOutcome": "already_at_target"
+          },
+          "expectedServerState": {
+            "createRequestCount": 1,
+            "createSourceBundleIds": [
+              1
+            ]
+          },
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "anonymous",
+                  "attached_user_id": "",
+                  "schema_name": "",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                },
+                {
+                  "source_id": "<source-2>",
+                  "next_source_bundle_id": 2,
+                  "replaced_by_source_id": "<source-1>",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sync-then-detach-late-write-second-round",
+      "description": "A local write that arrives during the first pull blocks the first detach attempt, then drains in a second sync round.",
+      "serverScript": {
+        "kind": "chunked_sync",
+        "lateWritesByPull": [
+          [
+            "INSERT INTO users(id, name) VALUES('late-user-1', 'Late 1')"
+          ]
+        ]
+      },
+      "steps": [
+        {
+          "action": "open",
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "anonymous",
+                  "attached_user_id": "",
+                  "schema_name": "",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "localSql",
+          "sql": [
+            "DELETE FROM _sync_source_state",
+            "INSERT INTO _sync_source_state(source_id, next_source_bundle_id, replaced_by_source_id) VALUES('source-before', 1, '')",
+            "UPDATE _sync_attachment_state SET current_source_id = 'source-before' WHERE singleton_key = 1"
+          ],
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "anonymous",
+                  "attached_user_id": "",
+                  "schema_name": "",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "attach",
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "attached",
+                  "attached_user_id": "user-1",
+                  "schema_name": "main",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "localSql",
+          "sql": [
+            "INSERT INTO users(id, name) VALUES('user-1', 'Ada')"
+          ],
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "attached",
+                  "attached_user_id": "user-1",
+                  "schema_name": "main",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users",
+                  "key_json": "{\"id\":\"user-1\"}",
+                  "op": "INSERT",
+                  "base_row_version": 0,
+                  "payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}",
+                  "dirty_ordinal": 1,
+                  "updated_at": "<timestamp>"
+                }
+              ],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "syncThenDetach",
+          "expectedResult": {
+            "kind": "sync_then_detach",
+            "isSuccess": true,
+            "detach": "detached",
+            "syncRounds": 2,
+            "remainingPendingRowCount": 0,
+            "pushOutcome": "committed",
+            "remoteOutcome": "already_at_target"
+          },
+          "expectedServerState": {
+            "createRequestCount": 2,
+            "createSourceBundleIds": [
+              1,
+              2
+            ]
+          },
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "anonymous",
+                  "attached_user_id": "",
+                  "schema_name": "",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                },
+                {
+                  "source_id": "<source-2>",
+                  "next_source_bundle_id": 3,
+                  "replaced_by_source_id": "<source-1>",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sync-then-detach-no-progress-blocks",
+      "description": "Fresh writes that keep arriving without reducing pending count stop syncThenDetach early and preserve attached dirty state.",
+      "serverScript": {
+        "kind": "chunked_sync",
+        "lateWritesByPull": [
+          [
+            "INSERT INTO users(id, name) VALUES('late-user-1', 'Late 1')"
+          ],
+          [
+            "INSERT INTO users(id, name) VALUES('late-user-2', 'Late 2')"
+          ]
+        ]
+      },
+      "steps": [
+        {
+          "action": "open",
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "anonymous",
+                  "attached_user_id": "",
+                  "schema_name": "",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "localSql",
+          "sql": [
+            "DELETE FROM _sync_source_state",
+            "INSERT INTO _sync_source_state(source_id, next_source_bundle_id, replaced_by_source_id) VALUES('source-before', 1, '')",
+            "UPDATE _sync_attachment_state SET current_source_id = 'source-before' WHERE singleton_key = 1"
+          ],
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "anonymous",
+                  "attached_user_id": "",
+                  "schema_name": "",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "attach",
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "attached",
+                  "attached_user_id": "user-1",
+                  "schema_name": "main",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "localSql",
+          "sql": [
+            "INSERT INTO users(id, name) VALUES('user-1', 'Ada')"
+          ],
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "attached",
+                  "attached_user_id": "user-1",
+                  "schema_name": "main",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users",
+                  "key_json": "{\"id\":\"user-1\"}",
+                  "op": "INSERT",
+                  "base_row_version": 0,
+                  "payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}",
+                  "dirty_ordinal": 1,
+                  "updated_at": "<timestamp>"
+                }
+              ],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "syncThenDetach",
+          "expectedResult": {
+            "kind": "sync_then_detach",
+            "isSuccess": false,
+            "detach": "blocked_unsynced_data",
+            "syncRounds": 2,
+            "remainingPendingRowCount": 1,
+            "pushOutcome": "committed",
+            "remoteOutcome": "already_at_target"
+          },
+          "expectedServerState": {
+            "createRequestCount": 2,
+            "createSourceBundleIds": [
+              1,
+              2
+            ]
+          },
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "attached",
+                  "attached_user_id": "user-1",
+                  "schema_name": "main",
+                  "last_bundle_seq_seen": 2,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 3,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users",
+                  "key_json": "{\"id\":\"late-user-2\"}",
+                  "op": "INSERT",
+                  "base_row_version": 0,
+                  "payload": "{\"id\":\"late-user-2\",\"name\":\"Late 2\"}",
+                  "dirty_ordinal": 1,
+                  "updated_at": "<timestamp>"
+                }
+              ],
+              "row_state": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users",
+                  "key_json": "{\"id\":\"late-user-1\"}",
+                  "row_version": 2,
+                  "deleted": 0,
+                  "updated_at": "<timestamp>"
+                },
+                {
+                  "schema_name": "main",
+                  "table_name": "users",
+                  "key_json": "{\"id\":\"user-1\"}",
+                  "row_version": 1,
+                  "deleted": 0,
+                  "updated_at": "<timestamp>"
+                }
+              ],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "rebuild-required-restart-keep-source",
+      "description": "A generic rebuild-required gate survives restart, blocks normal sync, and resolves through explicit keep-source snapshot rebuild.",
+      "serverScript": {
+        "kind": "snapshot_rebuild",
+        "snapshots": [
+          {
+            "id": "snapshot-generic-rebuild",
+            "bundleSeq": 7,
+            "rows": [
+              {
+                "key": {
+                  "id": "user-1"
+                },
+                "rowVersion": 3,
+                "payload": {
+                  "id": "user-1",
+                  "name": "Generic Rebuild"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "steps": [
+        {
+          "action": "open",
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "anonymous",
+                  "attached_user_id": "",
+                  "schema_name": "",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "localSql",
+          "sql": [
+            "DELETE FROM _sync_source_state",
+            "INSERT INTO _sync_source_state(source_id, next_source_bundle_id, replaced_by_source_id) VALUES('source-before', 1, '')",
+            "UPDATE _sync_attachment_state SET current_source_id = 'source-before' WHERE singleton_key = 1"
+          ],
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "anonymous",
+                  "attached_user_id": "",
+                  "schema_name": "",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "attach",
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "attached",
+                  "attached_user_id": "user-1",
+                  "schema_name": "main",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "localSql",
+          "sql": [
+            "UPDATE _sync_attachment_state SET rebuild_required = 1 WHERE singleton_key = 1"
+          ],
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "attached",
+                  "attached_user_id": "user-1",
+                  "schema_name": "main",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 1,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "reopenOpen",
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "attached",
+                  "attached_user_id": "user-1",
+                  "schema_name": "main",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 1,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "sourceInfo",
+          "expectedResult": {
+            "kind": "source_info",
+            "currentSourceIdPresent": true,
+            "rebuildRequired": true,
+            "sourceRecoveryRequired": false
+          },
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "attached",
+                  "attached_user_id": "user-1",
+                  "schema_name": "main",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 1,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "attach",
+          "expectedResult": {
+            "kind": "attach",
+            "outcome": "resumed_attached_state"
+          },
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "attached",
+                  "attached_user_id": "user-1",
+                  "schema_name": "main",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 1,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "sync",
+          "expectedException": "rebuild_required",
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "attached",
+                  "attached_user_id": "user-1",
+                  "schema_name": "main",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 1,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "rebuild",
+          "expectedResult": {
+            "kind": "remote_sync",
+            "outcome": "applied_snapshot"
+          },
+          "expectedServerState": {
+            "snapshotSessionCreateCount": 1
+          },
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "attached",
+                  "attached_user_id": "user-1",
+                  "schema_name": "main",
+                  "last_bundle_seq_seen": 7,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users",
+                  "key_json": "{\"id\":\"user-1\"}",
+                  "row_version": 3,
+                  "deleted": 0,
+                  "updated_at": "<timestamp>"
+                }
+              ],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "remote-authoritative-partial-replace-restart-restages",
+      "description": "A failed remote-authoritative attach keeps remote_replace staged; restart restages a fresh snapshot and applies only fresh remote state.",
+      "serverScript": {
+        "kind": "remote_authoritative_partial_snapshot",
+        "connectResolution": "remote_authoritative",
+        "snapshots": [
+          {
+            "id": "snapshot-a",
+            "bundleSeq": 9,
+            "failAfterRowOrdinal": 1,
+            "rowsPerChunk": 1,
+            "rows": [
+              {
+                "key": {
+                  "id": "user-a"
+                },
+                "rowVersion": 2,
+                "payload": {
+                  "id": "user-a",
+                  "name": "Ada"
+                }
+              },
+              {
+                "key": {
+                  "id": "unused"
+                },
+                "rowVersion": 3,
+                "payload": {
+                  "id": "unused",
+                  "name": "Unused"
+                }
+              }
+            ]
+          },
+          {
+            "id": "snapshot-b",
+            "bundleSeq": 12,
+            "rows": [
+              {
+                "key": {
+                  "id": "user-b"
+                },
+                "rowVersion": 3,
+                "payload": {
+                  "id": "user-b",
+                  "name": "Grace"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "steps": [
+        {
+          "action": "open",
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "anonymous",
+                  "attached_user_id": "",
+                  "schema_name": "",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "localSql",
+          "sql": [
+            "DELETE FROM _sync_source_state",
+            "INSERT INTO _sync_source_state(source_id, next_source_bundle_id, replaced_by_source_id) VALUES('source-before', 1, '')",
+            "UPDATE _sync_attachment_state SET current_source_id = 'source-before' WHERE singleton_key = 1"
+          ],
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "anonymous",
+                  "attached_user_id": "",
+                  "schema_name": "",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "attach",
+          "expectedException": "http_error",
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "anonymous",
+                  "attached_user_id": "",
+                  "schema_name": "",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "remote_replace",
+                  "target_user_id": "user-1",
+                  "staged_snapshot_id": "snapshot-a",
+                  "snapshot_bundle_seq": 9,
+                  "snapshot_row_count": 2,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [
+                {
+                  "snapshot_id": "snapshot-a",
+                  "row_ordinal": 1,
+                  "schema_name": "main",
+                  "table_name": "users",
+                  "key_json": "{\"id\":\"user-a\"}",
+                  "row_version": 2,
+                  "payload": "{\"id\":\"user-a\",\"name\":\"Ada\"}"
+                }
+              ],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "reopenOpen",
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "anonymous",
+                  "attached_user_id": "",
+                  "schema_name": "",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "remote_replace",
+                  "target_user_id": "user-1",
+                  "staged_snapshot_id": "snapshot-a",
+                  "snapshot_bundle_seq": 9,
+                  "snapshot_row_count": 2,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [
+                {
+                  "snapshot_id": "snapshot-a",
+                  "row_ordinal": 1,
+                  "schema_name": "main",
+                  "table_name": "users",
+                  "key_json": "{\"id\":\"user-a\"}",
+                  "row_version": 2,
+                  "payload": "{\"id\":\"user-a\",\"name\":\"Ada\"}"
+                }
+              ],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "attach",
+          "expectedResult": {
+            "kind": "attach",
+            "outcome": "used_remote_state"
+          },
+          "expectedServerState": {
+            "snapshotSessionCreateCount": 2
+          },
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "attached",
+                  "attached_user_id": "user-1",
+                  "schema_name": "main",
+                  "last_bundle_seq_seen": 12,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users",
+                  "key_json": "{\"id\":\"user-b\"}",
+                  "row_version": 3,
+                  "deleted": 0,
+                  "updated_at": "<timestamp>"
+                }
+              ],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "pending-remote-replace-detach-cancels-stage",
+      "description": "Detaching during a pending remote_replace clears the staged snapshot and returns to anonymous state on the same source.",
+      "steps": [
+        {
+          "action": "open",
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "anonymous",
+                  "attached_user_id": "",
+                  "schema_name": "",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "localSql",
+          "sql": [
+            "DELETE FROM _sync_source_state",
+            "INSERT INTO _sync_source_state(source_id, next_source_bundle_id, replaced_by_source_id) VALUES('source-before', 1, '')",
+            "UPDATE _sync_attachment_state SET current_source_id = 'source-before' WHERE singleton_key = 1"
+          ],
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "anonymous",
+                  "attached_user_id": "",
+                  "schema_name": "",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "localSql",
+          "sql": [
+            "INSERT INTO _sync_snapshot_stage(snapshot_id, row_ordinal, schema_name, table_name, key_json, row_version, payload) VALUES ('snapshot-1', 0, 'main', 'users', '{\"id\":\"user-1\"}', 1, '{\"id\":\"user-1\",\"name\":\"Ada\"}')",
+            "UPDATE _sync_operation_state SET kind = 'remote_replace', target_user_id = 'user-1', staged_snapshot_id = 'snapshot-1', snapshot_bundle_seq = 1, snapshot_row_count = 1 WHERE singleton_key = 1"
+          ],
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "anonymous",
+                  "attached_user_id": "",
+                  "schema_name": "",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "remote_replace",
+                  "target_user_id": "user-1",
+                  "staged_snapshot_id": "snapshot-1",
+                  "snapshot_bundle_seq": 1,
+                  "snapshot_row_count": 1,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [
+                {
+                  "snapshot_id": "snapshot-1",
+                  "row_ordinal": 0,
+                  "schema_name": "main",
+                  "table_name": "users",
+                  "key_json": "{\"id\":\"user-1\"}",
+                  "row_version": 1,
+                  "payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}"
+                }
+              ],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "detach",
+          "expectedResult": {
+            "kind": "detach",
+            "outcome": "detached"
+          },
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "anonymous",
+                  "attached_user_id": "",
+                  "schema_name": "",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "detach-mid-cleanup-failure-rolls-back",
+      "description": "A detach failure during cleanup rolls back local state; after restart and removing the failure, detach succeeds cleanly.",
+      "steps": [
+        {
+          "action": "open",
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "anonymous",
+                  "attached_user_id": "",
+                  "schema_name": "",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "localSql",
+          "sql": [
+            "DELETE FROM _sync_source_state",
+            "INSERT INTO _sync_source_state(source_id, next_source_bundle_id, replaced_by_source_id) VALUES('source-before', 1, '')",
+            "UPDATE _sync_attachment_state SET current_source_id = 'source-before' WHERE singleton_key = 1"
+          ],
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "anonymous",
+                  "attached_user_id": "",
+                  "schema_name": "",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "attach",
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "attached",
+                  "attached_user_id": "user-1",
+                  "schema_name": "main",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "applyModeSql",
+          "sql": [
+            "INSERT INTO users(id, name) VALUES('user-1', 'Ada')"
+          ],
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "attached",
+                  "attached_user_id": "user-1",
+                  "schema_name": "main",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "localSql",
+          "sql": [
+            "CREATE TRIGGER fail_detach_attachment_update BEFORE UPDATE ON _sync_attachment_state BEGIN SELECT RAISE(ABORT, 'simulated detach crash'); END"
+          ],
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "attached",
+                  "attached_user_id": "user-1",
+                  "schema_name": "main",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "detach",
+          "expectedException": "any_error",
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "attached",
+                  "attached_user_id": "user-1",
+                  "schema_name": "main",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "localSql",
+          "sql": [
+            "DROP TRIGGER fail_detach_attachment_update"
+          ],
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "attached",
+                  "attached_user_id": "user-1",
+                  "schema_name": "main",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "reopenOpen",
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "attached",
+                  "attached_user_id": "user-1",
+                  "schema_name": "main",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "attach",
+          "expectedResult": {
+            "kind": "attach",
+            "outcome": "resumed_attached_state"
+          },
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "attached",
+                  "attached_user_id": "user-1",
+                  "schema_name": "main",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "action": "detach",
+          "expectedResult": {
+            "kind": "detach",
+            "outcome": "detached"
+          },
+          "expectedState": {
+            "formatVersion": 1,
+            "state": {
+              "apply_state": [
+                {
+                  "singleton_key": 1,
+                  "apply_mode": 0
+                }
+              ],
+              "attachment_state": [
+                {
+                  "singleton_key": 1,
+                  "current_source_id": "<source-1>",
+                  "binding_state": "anonymous",
+                  "attached_user_id": "",
+                  "schema_name": "",
+                  "last_bundle_seq_seen": 0,
+                  "rebuild_required": 0,
+                  "pending_initialization_id": ""
+                }
+              ],
+              "source_state": [
+                {
+                  "source_id": "<source-1>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "",
+                  "created_at": "<timestamp>"
+                },
+                {
+                  "source_id": "<source-2>",
+                  "next_source_bundle_id": 1,
+                  "replaced_by_source_id": "<source-1>",
+                  "created_at": "<timestamp>"
+                }
+              ],
+              "operation_state": [
+                {
+                  "singleton_key": 1,
+                  "kind": "none",
+                  "target_user_id": "",
+                  "staged_snapshot_id": "",
+                  "snapshot_bundle_seq": 0,
+                  "snapshot_row_count": 0,
+                  "reason": "",
+                  "replacement_source_id": ""
+                }
+              ],
+              "outbox_bundle": [
+                {
+                  "singleton_key": 1,
+                  "state": "none",
+                  "source_id": "",
+                  "source_bundle_id": 0,
+                  "initialization_id": "",
+                  "canonical_request_hash": "",
+                  "row_count": 0,
+                  "remote_bundle_hash": "",
+                  "remote_bundle_seq": 0
+                }
+              ],
+              "outbox_rows": [],
+              "dirty_rows": [],
+              "row_state": [],
+              "snapshot_stage": [],
+              "managed_tables": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

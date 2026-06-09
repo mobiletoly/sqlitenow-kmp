@@ -8,6 +8,7 @@ import 'config.dart';
 import 'local_runtime.dart';
 import 'protocol.dart';
 import 'resolver.dart';
+import 'runtime_state_store.dart';
 
 enum PushOutcome { noChange, committed }
 
@@ -35,6 +36,11 @@ final class OversqlitePushRuntime {
   final Resolver _resolver;
 
   SqliteNowConnection get _connection => _database.connection;
+  OversqliteApplyRunner get _applyRunner => OversqliteApplyRunner(_connection);
+  OversqliteAttachmentStateStore get _attachmentStore =>
+      OversqliteAttachmentStateStore(_connection);
+  OversqliteSourceStateStore get _sourceStore =>
+      OversqliteSourceStateStore(_connection);
 
   Future<PushReport> pushPending({
     required OversqliteValidatedConfig validated,
@@ -106,6 +112,7 @@ final class OversqlitePushRuntime {
     final committedRows = await _fetchCommittedRows(snapshot, committed);
     final updatedTables = await _applyCommittedRows(
       validated: validated,
+      snapshot: snapshot,
       committed: committed,
       rows: committedRows,
       sourceId: sourceId,
@@ -134,7 +141,7 @@ final class OversqlitePushRuntime {
       final wireKey = _wireKeyJson(table, row.localPk);
       final wirePayload = row.op == 'DELETE'
           ? null
-          : _canonicalizeJson(
+          : _canonicalizeProtocolJson(
               _wirePayloadForUpload(table, jsonDecode(row.localPayload!)),
             );
       canonicalRows.add(
@@ -156,7 +163,7 @@ final class OversqlitePushRuntime {
     final canonicalHash = canonicalRows.isEmpty
         ? ''
         : _sha256Hex(
-            _canonicalizeJson([
+            _canonicalizeProtocolJson([
               for (final row in canonicalRows) row.canonicalRequestJson(),
             ]),
           );
@@ -283,11 +290,9 @@ final class OversqlitePushRuntime {
     var afterRowOrdinal = null as int?;
     final rows = <BundleRow>[];
     while (true) {
-      final chunk = await _remoteApi.fetchCommittedBundleChunk(
-        bundleSeq: committed.bundleSeq,
-        sourceId: committed.sourceId,
+      final chunk = await _fetchCommittedChunkWithRetry(
+        committed: committed,
         afterRowOrdinal: afterRowOrdinal,
-        maxRows: _config.downloadLimit <= 0 ? 1000 : _config.downloadLimit,
       );
       _validateCommittedChunk(
         committed: committed,
@@ -305,69 +310,79 @@ final class OversqlitePushRuntime {
         'committed bundle row count ${rows.length} does not match expected ${committed.rowCount}',
       );
     }
-    _assertCommittedRowsMatchOutbox(snapshot, committed, rows);
+    final bundleHash = _computeCommittedBundleHash(rows);
+    if (bundleHash != committed.bundleHash) {
+      throw OversqliteProtocolException(
+        'fetched committed bundle hash $bundleHash does not match expected ${committed.bundleHash}',
+      );
+    }
+    await _assertCommittedRowsMatchOutbox(snapshot, committed, rows);
     return rows;
+  }
+
+  Future<CommittedBundleRowsResponse> _fetchCommittedChunkWithRetry({
+    required _CommittedPush committed,
+    required int? afterRowOrdinal,
+  }) async {
+    var attempt = 1;
+    var backoff = _initialCommittedBundleFetchBackoff;
+    while (true) {
+      try {
+        return await _remoteApi.fetchCommittedBundleChunk(
+          bundleSeq: committed.bundleSeq,
+          sourceId: committed.sourceId,
+          afterRowOrdinal: afterRowOrdinal,
+          maxRows: _config.downloadLimit <= 0 ? 1000 : _config.downloadLimit,
+        );
+      } on CommittedBundleNotFoundException {
+        if (attempt >= _maxCommittedBundleFetchAttempts) {
+          rethrow;
+        }
+        await Future<void>.delayed(backoff);
+        final nextMillis = (backoff.inMilliseconds * 2).clamp(
+          0,
+          _maxCommittedBundleFetchBackoff.inMilliseconds,
+        );
+        backoff = Duration(milliseconds: nextMillis);
+        attempt++;
+      }
+    }
   }
 
   Future<Set<String>> _applyCommittedRows({
     required OversqliteValidatedConfig validated,
+    required _PushSnapshot snapshot,
     required _CommittedPush committed,
     required List<BundleRow> rows,
     required String sourceId,
   }) async {
     final updatedTables = <String>{};
-    await _connection.transaction(() async {
-      await _connection.execute(
-        'UPDATE _sync_apply_state SET apply_mode = 1 WHERE singleton_key = 1',
-      );
-      try {
-        for (final row in rows) {
-          if (row.schema != validated.schema) {
-            throw OversqliteProtocolException(
-              'committed row schema ${row.schema} does not match ${validated.schema}',
-            );
-          }
-          await _applyAuthoritativeRow(row);
-          updatedTables.add(row.table.toLowerCase());
+    await _applyRunner.inApplyModeTransaction(() async {
+      for (var i = 0; i < rows.length; i++) {
+        final row = rows[i];
+        if (row.schema != validated.schema) {
+          throw OversqliteProtocolException(
+            'committed row schema ${row.schema} does not match ${validated.schema}',
+          );
         }
-        await _connection.execute(
-          '''UPDATE _sync_source_state
-SET next_source_bundle_id = CASE
-  WHEN next_source_bundle_id <= ? THEN ? + 1
-  ELSE next_source_bundle_id
-END
-WHERE source_id = ?''',
-          parameters: [
-            committed.sourceBundleId,
-            committed.sourceBundleId,
-            sourceId,
-          ],
-        );
-        await _connection.execute(
-          '''UPDATE _sync_attachment_state
-SET last_bundle_seq_seen = CASE
-      WHEN last_bundle_seq_seen + 1 = ? THEN ?
-      ELSE last_bundle_seq_seen
-    END,
-    pending_initialization_id = ''
-WHERE singleton_key = 1''',
-          parameters: [committed.bundleSeq, committed.bundleSeq],
-        );
-        await _clearOutbox();
-      } finally {
-        await _connection.execute(
-          'UPDATE _sync_apply_state SET apply_mode = 0 WHERE singleton_key = 1',
-        );
+        await _applyCommittedReplayRow(uploaded: snapshot.rows[i], row: row);
+        updatedTables.add(row.table.toLowerCase());
       }
-    }, mode: TransactionMode.immediate);
+      await _sourceStore.advanceAfterCommittedPush(
+        sourceId: sourceId,
+        sourceBundleId: committed.sourceBundleId,
+      );
+      await _attachmentStore.advanceAfterCommittedPush(committed.bundleSeq);
+      await _clearOutbox();
+    });
     return updatedTables;
   }
 
-  void _assertCommittedRowsMatchOutbox(
+  Future<void> _assertCommittedRowsMatchOutbox(
     _PushSnapshot snapshot,
     _CommittedPush committed,
     List<BundleRow> committedRows,
-  ) {
+  ) async {
     final requirePayloadMatch =
         snapshot.state == _outboxStateCommittedRemote ||
         committed.requiresStrictOutboxMatch;
@@ -378,7 +393,7 @@ WHERE singleton_key = 1''',
           : snapshot.rows.length;
     } else {
       for (var i = 0; i < committedRows.length; i++) {
-        if (!_equivalentCommittedRow(
+        if (!await _equivalentCommittedRow(
           expected: snapshot.rows[i],
           actual: committedRows[i],
           actualRowOrdinal: i,
@@ -407,12 +422,12 @@ WHERE singleton_key = 1''',
     }
   }
 
-  bool _equivalentCommittedRow({
+  Future<bool> _equivalentCommittedRow({
     required _OutboxRow expected,
     required BundleRow actual,
     required int actualRowOrdinal,
     required bool requirePayloadMatch,
-  }) {
+  }) async {
     if (expected.rowOrdinal != actualRowOrdinal ||
         expected.schemaName != actual.schema ||
         expected.tableName != actual.table ||
@@ -423,13 +438,37 @@ WHERE singleton_key = 1''',
     if (!requirePayloadMatch) {
       return true;
     }
-    final expectedPayload = expected.wirePayload == null
-        ? null
-        : _canonicalizeJson(jsonDecode(expected.wirePayload!));
-    final actualPayload = actual.payload == null
-        ? null
-        : _canonicalizeJson(actual.payload);
-    return expectedPayload == actualPayload;
+    return _equivalentCommittedPayload(
+      tableName: expected.tableName,
+      expectedPayload: expected.wirePayload,
+      actualPayload: actual.payload,
+    );
+  }
+
+  Future<bool> _equivalentCommittedPayload({
+    required String tableName,
+    required String? expectedPayload,
+    required Object? actualPayload,
+  }) async {
+    if (expectedPayload == null && actualPayload == null) {
+      return true;
+    }
+    if (expectedPayload == null || actualPayload == null) {
+      return false;
+    }
+    final expectedObject = jsonDecode(expectedPayload);
+    if (expectedObject is! Map || actualPayload is! Map) {
+      return false;
+    }
+    final table = await _tableInfo(tableName);
+    return _equivalentPayloadObjects(
+      table,
+      expectedObject.cast<String, Object?>(),
+      actualPayload.cast<String, Object?>(),
+      PayloadSource.authoritativeWire,
+      PayloadSource.authoritativeWire,
+      allowRfc3339InstantEquivalence: true,
+    );
   }
 
   Future<void> _resolveConflict({
@@ -477,131 +516,184 @@ WHERE singleton_key = 1''',
       await _restoreSnapshotToDirtyRows(snapshot);
       throw InvalidConflictResolutionException(invalidReason);
     }
-    await _connection.transaction(() async {
-      await _connection.execute(
-        'UPDATE _sync_apply_state SET apply_mode = 1 WHERE singleton_key = 1',
-      );
-      try {
-        if (resolution is AcceptServer) {
-          if (conflict.serverRowDeleted || context.serverRow == null) {
-            await _deleteLocalRow(conflict.table, conflictingLocalPk);
-            await _updateRowState(
-              schema: validated.schema,
-              table: conflict.table,
-              keyJson: conflictingRow.keyJson,
-              rowVersion: conflict.serverRowVersion,
-              deleted: true,
-            );
-          } else {
-            await _upsertPayload(
-              conflict.table,
-              context.serverRow!,
-              PayloadSource.authoritativeWire,
-            );
-            await _updateRowState(
-              schema: validated.schema,
-              table: conflict.table,
-              keyJson: conflictingRow.keyJson,
-              rowVersion: conflict.serverRowVersion,
-              deleted: false,
-            );
-          }
-        } else if (resolution is KeepLocal) {
-          await _requeueDirty(
-            schema: conflictingRow.schemaName,
-            table: conflictingRow.tableName,
+    await _applyRunner.inApplyModeTransaction(() async {
+      if (resolution is AcceptServer) {
+        if (conflict.serverRowDeleted || context.serverRow == null) {
+          await _deleteLocalRow(conflict.table, conflictingLocalPk);
+          await _updateRowState(
+            schema: validated.schema,
+            table: conflict.table,
             keyJson: conflictingRow.keyJson,
-            op:
-                conflictingRow.op == 'INSERT' &&
-                    context.serverRow != null &&
-                    !context.serverRowDeleted
-                ? 'UPDATE'
-                : conflictingRow.op,
-            baseRowVersion: conflict.serverRowVersion,
-            payload: conflictingRow.localPayload,
-          );
-        } else if (resolution is KeepMerged) {
-          await _upsertPayload(
-            conflict.table,
-            resolution.mergedPayload,
-            PayloadSource.localState,
-          );
-          final payload = await _serializeExistingRow(
-            conflict.table,
-            conflictingLocalPk,
-          );
-          await _requeueDirty(
-            schema: conflictingRow.schemaName,
-            table: conflictingRow.tableName,
-            keyJson: conflictingRow.keyJson,
-            op: 'UPDATE',
-            baseRowVersion: conflict.serverRowVersion,
-            payload: payload,
+            rowVersion: conflict.serverRowVersion,
+            deleted: true,
           );
         } else {
-          throw const InvalidConflictResolutionException(
-            'unsupported conflict resolution result',
+          await _upsertPayload(
+            conflict.table,
+            context.serverRow!,
+            PayloadSource.authoritativeWire,
+          );
+          await _updateRowState(
+            schema: validated.schema,
+            table: conflict.table,
+            keyJson: conflictingRow.keyJson,
+            rowVersion: conflict.serverRowVersion,
+            deleted: false,
           );
         }
-        for (final row in snapshot.rows) {
-          if (identical(row, conflictingRow)) {
-            continue;
-          }
-          await _requeueDirty(
-            schema: row.schemaName,
-            table: row.tableName,
-            keyJson: row.keyJson,
-            op: row.op,
-            baseRowVersion: row.baseRowVersion,
-            payload: row.localPayload,
-          );
-        }
-        await _clearOutbox();
-      } finally {
-        await _connection.execute(
-          'UPDATE _sync_apply_state SET apply_mode = 0 WHERE singleton_key = 1',
+      } else if (resolution is KeepLocal) {
+        await _requeueDirty(
+          schema: conflictingRow.schemaName,
+          table: conflictingRow.tableName,
+          keyJson: conflictingRow.keyJson,
+          op:
+              conflictingRow.op == 'INSERT' &&
+                  context.serverRow != null &&
+                  !context.serverRowDeleted
+              ? 'UPDATE'
+              : conflictingRow.op,
+          baseRowVersion: conflict.serverRowVersion,
+          payload: conflictingRow.localPayload,
+        );
+      } else if (resolution is KeepMerged) {
+        await _upsertPayload(
+          conflict.table,
+          resolution.mergedPayload,
+          PayloadSource.localState,
+        );
+        final payload = await _serializeExistingRow(
+          conflict.table,
+          conflictingLocalPk,
+        );
+        await _requeueDirty(
+          schema: conflictingRow.schemaName,
+          table: conflictingRow.tableName,
+          keyJson: conflictingRow.keyJson,
+          op: 'UPDATE',
+          baseRowVersion: conflict.serverRowVersion,
+          payload: payload,
+        );
+      } else {
+        throw const InvalidConflictResolutionException(
+          'unsupported conflict resolution result',
         );
       }
-    }, mode: TransactionMode.immediate);
+      for (final row in snapshot.rows) {
+        if (identical(row, conflictingRow)) {
+          continue;
+        }
+        await _requeueDirty(
+          schema: row.schemaName,
+          table: row.tableName,
+          keyJson: row.keyJson,
+          op: row.op,
+          baseRowVersion: row.baseRowVersion,
+          payload: row.localPayload,
+        );
+      }
+      await _clearOutbox();
+    });
   }
 
-  Future<void> _applyAuthoritativeRow(BundleRow row) async {
+  Future<void> _applyCommittedReplayRow({
+    required _OutboxRow uploaded,
+    required BundleRow row,
+  }) async {
     final key = await _localKeyFromWire(row.table, row.key);
-    final keyJson = key.keyJson;
+    final table = await _tableInfo(row.table);
     final pendingDirty = await _loadDirtyUploadState(
       schema: row.schema,
       table: row.table,
-      keyJson: keyJson,
+      keyJson: key.keyJson,
     );
-    if (pendingDirty != null) {
-      await _updateRowState(
-        schema: row.schema,
-        table: row.table,
-        keyJson: keyJson,
-        rowVersion: row.rowVersion,
-        deleted: row.op == 'DELETE',
-      );
-      await _connection.execute(
-        '''UPDATE _sync_dirty_rows
-SET base_row_version = ?,
-    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-WHERE schema_name = ? AND table_name = ? AND key_json = ?''',
-        parameters: [row.rowVersion, row.schema, row.table, keyJson],
-      );
-      return;
+    final livePayload = await _serializeExistingRow(row.table, key.localPk);
+    final action = _planCommittedReplay(
+      table: table,
+      uploaded: uploaded,
+      pendingDirty: pendingDirty,
+      livePayload: livePayload,
+    );
+    switch (action) {
+      case _ReplayAcceptAuthoritative():
+        await _applyAuthoritativePayload(row, key.localPk, key.keyJson);
+        await _deleteDirty(
+          schema: row.schema,
+          table: row.table,
+          keyJson: key.keyJson,
+        );
+      case _ReplayPreserveLocal(:final op, :final payload):
+        await _updateRowState(
+          schema: row.schema,
+          table: row.table,
+          keyJson: key.keyJson,
+          rowVersion: row.rowVersion,
+          deleted: row.op == 'DELETE',
+        );
+        await _requeueDirty(
+          schema: row.schema,
+          table: row.table,
+          keyJson: key.keyJson,
+          op: op,
+          baseRowVersion: row.rowVersion,
+          payload: payload,
+        );
     }
+  }
+
+  _ReplayAction _planCommittedReplay({
+    required _TableInfo table,
+    required _OutboxRow uploaded,
+    required _DirtyUploadState? pendingDirty,
+    required String? livePayload,
+  }) {
+    final pendingMatches =
+        pendingDirty != null &&
+        pendingDirty.op == uploaded.op &&
+        _equivalentLocalPayload(
+          table,
+          pendingDirty.payload,
+          uploaded.localPayload,
+        );
+    final liveMatches = uploaded.op == 'DELETE'
+        ? livePayload == null
+        : livePayload != null &&
+              _equivalentLocalPayload(
+                table,
+                livePayload,
+                uploaded.localPayload,
+              );
+
+    if (uploaded.op == 'DELETE') {
+      return livePayload == null
+          ? const _ReplayAcceptAuthoritative()
+          : _ReplayPreserveLocal(op: 'INSERT', payload: livePayload);
+    }
+
+    if (livePayload == null) {
+      return const _ReplayPreserveLocal(op: 'DELETE', payload: null);
+    }
+    if (pendingDirty != null && !pendingMatches) {
+      return _ReplayPreserveLocal(op: 'UPDATE', payload: livePayload);
+    }
+    if (!liveMatches) {
+      return _ReplayPreserveLocal(op: 'UPDATE', payload: livePayload);
+    }
+    return const _ReplayAcceptAuthoritative();
+  }
+
+  Future<void> _applyAuthoritativePayload(
+    BundleRow row,
+    String localPk,
+    String keyJson,
+  ) async {
     if (row.op == 'DELETE') {
-      await _deleteLocalRow(row.table, key.localPk);
+      await _deleteLocalRow(row.table, localPk);
       await _updateRowState(
         schema: row.schema,
         table: row.table,
         keyJson: keyJson,
         rowVersion: row.rowVersion,
         deleted: true,
-      );
-      await _connection.execute(
-        'DELETE FROM _sync_dirty_rows WHERE schema_name = ? AND table_name = ? AND key_json = ?',
-        parameters: [row.schema, row.table, keyJson],
       );
       return;
     }
@@ -622,10 +714,6 @@ WHERE schema_name = ? AND table_name = ? AND key_json = ?''',
       keyJson: keyJson,
       rowVersion: row.rowVersion,
       deleted: false,
-    );
-    await _connection.execute(
-      'DELETE FROM _sync_dirty_rows WHERE schema_name = ? AND table_name = ? AND key_json = ?',
-      parameters: [row.schema, row.table, keyJson],
     );
   }
 
@@ -843,6 +931,17 @@ ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET
     );
   }
 
+  Future<void> _deleteDirty({
+    required String schema,
+    required String table,
+    required String keyJson,
+  }) {
+    return _connection.execute(
+      'DELETE FROM _sync_dirty_rows WHERE schema_name = ? AND table_name = ? AND key_json = ?',
+      parameters: [schema, table, keyJson],
+    );
+  }
+
   Future<int> _nextSourceBundleId(String sourceId) async {
     final rows = await _connection.select(
       'SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = ?',
@@ -1025,28 +1124,19 @@ WHERE schema_name = ? AND table_name = ? AND key_json = ?''',
   }
 
   Future<void> _restoreSnapshotToDirtyRows(_PushSnapshot snapshot) async {
-    await _connection.transaction(() async {
-      await _connection.execute(
-        'UPDATE _sync_apply_state SET apply_mode = 1 WHERE singleton_key = 1',
-      );
-      try {
-        for (final row in snapshot.rows) {
-          await _requeueDirty(
-            schema: row.schemaName,
-            table: row.tableName,
-            keyJson: row.keyJson,
-            op: row.op,
-            baseRowVersion: row.baseRowVersion,
-            payload: row.localPayload,
-          );
-        }
-        await _clearOutbox();
-      } finally {
-        await _connection.execute(
-          'UPDATE _sync_apply_state SET apply_mode = 0 WHERE singleton_key = 1',
+    await _applyRunner.inApplyModeTransaction(() async {
+      for (final row in snapshot.rows) {
+        await _requeueDirty(
+          schema: row.schemaName,
+          table: row.tableName,
+          keyJson: row.keyJson,
+          op: row.op,
+          baseRowVersion: row.baseRowVersion,
+          payload: row.localPayload,
         );
       }
-    }, mode: TransactionMode.immediate);
+      await _clearOutbox();
+    });
   }
 
   Future<({String keyJson, String localPk})> _localKeyFromWire(
@@ -1064,7 +1154,10 @@ WHERE schema_name = ? AND table_name = ? AND key_json = ?''',
     final localPk = table.primaryKey.kind == _ColumnKind.uuidBlob
         ? _hex(_decodeWireUuid(wireValue))
         : wireValue;
-    return (keyJson: _canonicalizeJson({keyColumn: localPk}), localPk: localPk);
+    return (
+      keyJson: _canonicalizeProtocolJson({keyColumn: localPk}),
+      localPk: localPk,
+    );
   }
 
   Future<int> _scalarInt(String sql) async {
@@ -1078,7 +1171,13 @@ enum PayloadSource { localState, authoritativeWire }
 const _outboxStateNone = 'none';
 const _outboxStatePrepared = 'prepared';
 const _outboxStateCommittedRemote = 'committed_remote';
+const _maxCommittedBundleFetchAttempts = 6;
+const _initialCommittedBundleFetchBackoff = Duration(milliseconds: 75);
+const _maxCommittedBundleFetchBackoff = Duration(milliseconds: 600);
 final _jsonNumberPattern = RegExp(r'^-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?$');
+final _rfc3339TimestampPattern = RegExp(
+  r'^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$',
+);
 
 final class _PushSnapshot {
   const _PushSnapshot({
@@ -1179,15 +1278,18 @@ final class _OutboxRow {
   }
 
   Map<String, Object?> canonicalRequestJson() {
-    return {
+    final json = <String, Object?>{
       'row_ordinal': rowOrdinal,
       'schema': schemaName,
       'table': tableName,
       'key': _syncKeyFromJson(wireKeyJson),
       'op': op,
       'base_row_version': baseRowVersion,
-      'payload': wirePayload == null ? null : jsonDecode(wirePayload!),
     };
+    if (wirePayload != null) {
+      json['payload'] = jsonDecode(wirePayload!);
+    }
+    return json;
   }
 }
 
@@ -1232,7 +1334,7 @@ final class _ComparableCommittedRow {
       op: row.op,
       wirePayload: row.wirePayload == null
           ? null
-          : _canonicalizeJson(jsonDecode(row.wirePayload!)),
+          : _canonicalizeProtocolJson(jsonDecode(row.wirePayload!)),
     );
   }
 
@@ -1243,7 +1345,9 @@ final class _ComparableCommittedRow {
       tableName: row.table,
       wireKey: row.key,
       op: row.op,
-      wirePayload: row.payload == null ? null : _canonicalizeJson(row.payload),
+      wirePayload: row.payload == null
+          ? null
+          : _canonicalizeProtocolJson(row.payload),
     );
   }
 
@@ -1293,6 +1397,21 @@ final class _DirtyUploadState {
 
   final String op;
   final int baseRowVersion;
+  final String? payload;
+}
+
+sealed class _ReplayAction {
+  const _ReplayAction();
+}
+
+final class _ReplayAcceptAuthoritative extends _ReplayAction {
+  const _ReplayAcceptAuthoritative();
+}
+
+final class _ReplayPreserveLocal extends _ReplayAction {
+  const _ReplayPreserveLocal({required this.op, required this.payload});
+
+  final String op;
   final String? payload;
 }
 
@@ -1357,7 +1476,7 @@ _ColumnKind _columnKind(
 }
 
 String _wireKeyJson(_TableInfo table, String localPk) {
-  return _canonicalizeJson({
+  return _canonicalizeProtocolJson({
     table.primaryKey.name
         .toLowerCase(): table.primaryKey.kind == _ColumnKind.uuidBlob
         ? _canonicalUuid(localPk)
@@ -1394,7 +1513,26 @@ String _computeCanonicalRequestHash(List<_OutboxRow> rows) {
     return '';
   }
   return _sha256Hex(
-    _canonicalizeJson([for (final row in rows) row.canonicalRequestJson()]),
+    _canonicalizeProtocolJson([
+      for (final row in rows) row.canonicalRequestJson(),
+    ]),
+  );
+}
+
+String _computeCommittedBundleHash(List<BundleRow> rows) {
+  return _sha256Hex(
+    _canonicalizeProtocolJson([
+      for (var i = 0; i < rows.length; i++)
+        {
+          'row_ordinal': i,
+          'schema': rows[i].schema,
+          'table': rows[i].table,
+          'key': rows[i].key,
+          'op': rows[i].op,
+          'row_version': rows[i].rowVersion,
+          'payload': rows[i].payload,
+        },
+    ]),
   );
 }
 
@@ -1595,6 +1733,177 @@ Object _bindPrimaryKey(_TableInfo table, String localPk) {
   return localPk;
 }
 
+bool _equivalentPayloadTexts(
+  _TableInfo table,
+  String? left,
+  String? right,
+  PayloadSource leftSource,
+  PayloadSource rightSource,
+) {
+  if (left == null && right == null) {
+    return true;
+  }
+  if (left == null || right == null) {
+    return false;
+  }
+  final leftObject = jsonDecode(left);
+  final rightObject = jsonDecode(right);
+  if (leftObject is! Map || rightObject is! Map) {
+    return false;
+  }
+  return _equivalentPayloadObjects(
+    table,
+    leftObject.cast<String, Object?>(),
+    rightObject.cast<String, Object?>(),
+    leftSource,
+    rightSource,
+  );
+}
+
+bool _equivalentLocalPayload(_TableInfo table, String? left, String? right) {
+  return _equivalentPayloadTexts(
+    table,
+    left,
+    right,
+    PayloadSource.localState,
+    PayloadSource.localState,
+  );
+}
+
+bool _equivalentPayloadObjects(
+  _TableInfo table,
+  Map<String, Object?> left,
+  Map<String, Object?> right,
+  PayloadSource leftSource,
+  PayloadSource rightSource, {
+  bool allowRfc3339InstantEquivalence = false,
+}) {
+  if (left.length != table.columns.length ||
+      right.length != table.columns.length) {
+    return false;
+  }
+  for (final column in table.columns) {
+    final leftLookup = _lookupPayloadValue(left, column);
+    final rightLookup = _lookupPayloadValue(right, column);
+    if (!leftLookup.found || !rightLookup.found) {
+      return false;
+    }
+    final equivalent = _equivalentPayloadValue(
+      column,
+      leftLookup.value,
+      rightLookup.value,
+      leftSource,
+      rightSource,
+    );
+    if (equivalent ||
+        (allowRfc3339InstantEquivalence &&
+            _rfc3339InstantEquivalent(leftLookup.value, rightLookup.value))) {
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+({bool found, Object? value}) _lookupPayloadValue(
+  Map<String, Object?> payload,
+  _ColumnInfo column,
+) {
+  final lower = column.name.toLowerCase();
+  if (payload.containsKey(lower)) {
+    return (found: true, value: payload[lower]);
+  }
+  if (payload.containsKey(column.name)) {
+    return (found: true, value: payload[column.name]);
+  }
+  return (found: false, value: null);
+}
+
+bool _equivalentPayloadValue(
+  _ColumnInfo column,
+  Object? left,
+  Object? right,
+  PayloadSource leftSource,
+  PayloadSource rightSource,
+) {
+  if (left == null || right == null) {
+    return left == right;
+  }
+  try {
+    return switch (column.kind) {
+      _ColumnKind.text => left.toString() == right.toString(),
+      _ColumnKind.integer =>
+        _decodeIntegerPayloadValue(left) == _decodeIntegerPayloadValue(right),
+      _ColumnKind.real =>
+        _canonicalizeFiniteJsonNumber(left.toString()) ==
+            _canonicalizeFiniteJsonNumber(right.toString()),
+      _ColumnKind.blob => _bytesEqual(
+        _decodeBlobPayloadValue(left, leftSource),
+        _decodeBlobPayloadValue(right, rightSource),
+      ),
+      _ColumnKind.uuidBlob => _bytesEqual(
+        _decodeUuidPayloadValue(left, leftSource),
+        _decodeUuidPayloadValue(right, rightSource),
+      ),
+    };
+  } catch (_) {
+    return false;
+  }
+}
+
+int _decodeIntegerPayloadValue(Object value) {
+  if (value is bool) {
+    return value ? 1 : 0;
+  }
+  if (value is int) {
+    return value;
+  }
+  return int.parse(value.toString());
+}
+
+Uint8List _decodeBlobPayloadValue(Object value, PayloadSource source) {
+  return switch (source) {
+    PayloadSource.localState => _decodeLocalBlob(value.toString()),
+    PayloadSource.authoritativeWire => base64Decode(value.toString()),
+  };
+}
+
+Uint8List _decodeUuidPayloadValue(Object value, PayloadSource source) {
+  return switch (source) {
+    PayloadSource.localState => _decodeLocalUuid(value.toString()),
+    PayloadSource.authoritativeWire => _decodeWireUuid(value.toString()),
+  };
+}
+
+bool _bytesEqual(Uint8List left, Uint8List right) {
+  if (left.length != right.length) {
+    return false;
+  }
+  for (var i = 0; i < left.length; i++) {
+    if (left[i] != right[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool _rfc3339InstantEquivalent(Object? left, Object? right) {
+  if (left is! String || right is! String) {
+    return false;
+  }
+  if (!_rfc3339TimestampPattern.hasMatch(left.trim()) ||
+      !_rfc3339TimestampPattern.hasMatch(right.trim())) {
+    return false;
+  }
+  try {
+    return DateTime.parse(
+      left,
+    ).toUtc().isAtSameMomentAs(DateTime.parse(right).toUtc());
+  } on FormatException {
+    return false;
+  }
+}
+
 Uint8List _decodeLocalBlob(String value) {
   final clean = value.trim().replaceFirst(
     RegExp(r'^\\x', caseSensitive: false),
@@ -1711,24 +2020,152 @@ String _trimDecimalNumber(String plain) {
 
 String _zeroes(int count) => List.filled(count, '0').join();
 
-String _canonicalizeJson(Object? value) {
+String _canonicalizeProtocolJson(Object? value) {
   if (value == null) {
     return 'null';
   }
-  if (value is String || value is bool || value is num) {
+  if (value is String || value is bool) {
     return jsonEncode(value);
   }
+  if (value is num) {
+    return _canonicalizeProtocolJsonNumber(value.toString());
+  }
   if (value is List) {
-    return '[${value.map(_canonicalizeJson).join(',')}]';
+    return '[${value.map(_canonicalizeProtocolJson).join(',')}]';
   }
   if (value is Map) {
     final entries = value.entries.toList()
       ..sort(
         (left, right) => left.key.toString().compareTo(right.key.toString()),
       );
-    return '{${entries.map((entry) => '${jsonEncode(entry.key.toString())}:${_canonicalizeJson(entry.value)}').join(',')}}';
+    return '{${entries.map((entry) => '${jsonEncode(entry.key.toString())}:${_canonicalizeProtocolJson(entry.value)}').join(',')}}';
   }
   return jsonEncode(value);
+}
+
+String _canonicalizeProtocolJsonNumber(String raw) {
+  final number = double.parse(raw);
+  if (!number.isFinite) {
+    throw ArgumentError('JSON number must be finite: $raw');
+  }
+  if (number == 0) {
+    return '0';
+  }
+
+  final absNumber = number.abs();
+  final rendered = number.toString().toLowerCase();
+  if (absNumber >= 1e-6 && absNumber < 1e21) {
+    return _normalizeProtocolPlainNumber(_protocolScientificToPlain(rendered));
+  }
+  return _normalizeProtocolScientificNumber(rendered);
+}
+
+String _protocolScientificToPlain(String raw) {
+  if (!raw.contains('e')) {
+    return raw;
+  }
+  final sign = raw.startsWith('-') ? '-' : '';
+  final unsigned = sign.isEmpty ? raw : raw.substring(1);
+  final parts = unsigned.split('e');
+  if (parts.length != 2) {
+    throw ArgumentError('invalid scientific notation: $raw');
+  }
+
+  final mantissa = parts[0];
+  final exponent = int.parse(parts[1]);
+  final dotIndex = mantissa.indexOf('.');
+  final digits = mantissa.replaceAll('.', '');
+  final fractionalDigits = dotIndex >= 0 ? mantissa.length - dotIndex - 1 : 0;
+  final decimalIndex = digits.length + exponent - fractionalDigits;
+
+  if (decimalIndex <= 0) {
+    return '${sign}0.${_zeroes(-decimalIndex)}$digits';
+  }
+  if (decimalIndex >= digits.length) {
+    return '$sign$digits${_zeroes(decimalIndex - digits.length)}';
+  }
+  return '$sign${digits.substring(0, decimalIndex)}.'
+      '${digits.substring(decimalIndex)}';
+}
+
+String _normalizeProtocolPlainNumber(String raw) {
+  final sign = raw.startsWith('-') ? '-' : '';
+  final unsigned = sign.isEmpty ? raw : raw.substring(1);
+  final dotIndex = unsigned.indexOf('.');
+  final integerRaw = dotIndex >= 0 ? unsigned.substring(0, dotIndex) : unsigned;
+  final fractionRaw = dotIndex >= 0 ? unsigned.substring(dotIndex + 1) : '';
+  final integerPart = integerRaw.replaceFirst(RegExp(r'^0+'), '');
+  final normalizedInteger = integerPart.isEmpty ? '0' : integerPart;
+  final fractionalPart = fractionRaw.replaceFirst(RegExp(r'0+$'), '');
+  if (normalizedInteger == '0' && fractionalPart.isEmpty) {
+    return '0';
+  }
+  if (fractionalPart.isEmpty) {
+    return '$sign$normalizedInteger';
+  }
+  return '$sign$normalizedInteger.$fractionalPart';
+}
+
+String _normalizeProtocolScientificNumber(String raw) {
+  if (!raw.contains('e')) {
+    return _protocolPlainToScientific(_normalizeProtocolPlainNumber(raw));
+  }
+  final sign = raw.startsWith('-') ? '-' : '';
+  final unsigned = sign.isEmpty ? raw : raw.substring(1);
+  final parts = unsigned.split('e');
+  if (parts.length != 2) {
+    throw ArgumentError('invalid scientific notation: $raw');
+  }
+
+  final mantissa = _normalizeProtocolPlainNumber(parts[0]);
+  final exponent = int.parse(parts[1]);
+  return '$sign$mantissa'
+      'e${exponent >= 0 ? '+' : ''}$exponent';
+}
+
+String _protocolPlainToScientific(String raw) {
+  final sign = raw.startsWith('-') ? '-' : '';
+  final unsigned = sign.isEmpty ? raw : raw.substring(1);
+  final dotIndex = unsigned.indexOf('.');
+  final integerPart = dotIndex >= 0
+      ? unsigned.substring(0, dotIndex)
+      : unsigned;
+  final fractionalPart = dotIndex >= 0 ? unsigned.substring(dotIndex + 1) : '';
+
+  final firstIntegerNonZero = _firstNonZeroIndex(integerPart);
+  if (firstIntegerNonZero >= 0) {
+    final digits = (integerPart + fractionalPart).replaceFirst(
+      RegExp(r'^0+'),
+      '',
+    );
+    final exponent = integerPart.length - 1;
+    return '$sign${_protocolScientificMantissa(digits)}'
+        'e+$exponent';
+  }
+
+  final firstFractionNonZero = _firstNonZeroIndex(fractionalPart);
+  if (firstFractionNonZero < 0) {
+    throw ArgumentError('plainToScientific requires a non-zero number: $raw');
+  }
+  final digits = fractionalPart.substring(firstFractionNonZero);
+  final exponent = -(firstFractionNonZero + 1);
+  return '$sign${_protocolScientificMantissa(digits)}'
+      'e$exponent';
+}
+
+int _firstNonZeroIndex(String value) {
+  for (var i = 0; i < value.length; i++) {
+    if (value.codeUnitAt(i) != 0x30) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+String _protocolScientificMantissa(String digits) {
+  final head = digits.substring(0, 1);
+  final tail = digits.substring(1);
+  return tail.isEmpty ? head : '$head.$tail';
 }
 
 String _sha256Hex(String text) {

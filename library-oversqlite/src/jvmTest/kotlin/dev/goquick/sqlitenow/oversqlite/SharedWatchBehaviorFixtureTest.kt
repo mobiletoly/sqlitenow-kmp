@@ -35,19 +35,37 @@ internal class SharedWatchBehaviorFixtureTest : CrossTargetSyncTestSupport() {
 
     private suspend fun runCase(case: WatchBehaviorCase) {
         val env = newTwoClientEnv {
-            bundleChangeWatchSupported = true
+            bundleChangeWatchSupported = case.serverScript.bundleChangeWatchSupported ?: true
             configureWatchScript(case.serverScript)
         }
         try {
+            for (bundle in case.serverScript.startBundles) {
+                env.server.addBundleForWatchFixture(bundle)
+            }
             coroutineScope {
                 val worker = launch(Dispatchers.Default) {
                     env.follower.runAutomaticDownloads(autoWatchConfig(case))
                 }
                 try {
-                    awaitExpectedState(case, env)
+                    deliverWakeBundlesAfterWatchStart(case, env)
+                    try {
+                        awaitExpectedState(case, env)
+                    } catch (failure: Throwable) {
+                        error("${case.name}: timed out waiting for expected state; ${failure.message.orEmpty()}")
+                    }
+                    case.expectedState.observeForMillis?.let { delay(it) }
+                    if (case.expectedState.stopActiveWatchBeforeAssert) {
+                        withContext(Dispatchers.Default) {
+                            withTimeout(1_000) {
+                                worker.cancelAndJoin()
+                            }
+                        }
+                    }
                     assertExpectedState(case, env)
                 } finally {
-                    worker.cancelAndJoin()
+                    if (worker.isActive) {
+                        worker.cancelAndJoin()
+                    }
                 }
             }
         } finally {
@@ -60,6 +78,8 @@ internal class SharedWatchBehaviorFixtureTest : CrossTargetSyncTestSupport() {
             addBundleForWatchFixture(bundle)
         }
         when (script.kind) {
+            "hold_watch_open" -> holdNextWatchResponseOpen()
+            "unsupported_capability" -> Unit
             "non_ok_watch_response" -> {
                 val response = script.response ?: error("missing non-OK response")
                 enqueueWatchResponse(
@@ -69,6 +89,18 @@ internal class SharedWatchBehaviorFixtureTest : CrossTargetSyncTestSupport() {
             }
             "watch_lines" -> enqueueWatchResponse(body = script.lines.joinToString(separator = "\n"))
             else -> error("unknown watch script kind ${script.kind}")
+        }
+    }
+
+    private suspend fun deliverWakeBundlesAfterWatchStart(case: WatchBehaviorCase, env: TwoClientEnv) {
+        if (case.serverScript.wakeBundles.isEmpty()) {
+            return
+        }
+        eventually {
+            env.server.watchAfterBundleSeqs.isNotEmpty()
+        }
+        for (bundle in case.serverScript.wakeBundles) {
+            env.server.addBundleAndNotifyForWatchFixture(bundle)
         }
     }
 
@@ -86,6 +118,20 @@ internal class SharedWatchBehaviorFixtureTest : CrossTargetSyncTestSupport() {
         addRemoteBundleForTest(rows)
     }
 
+    private suspend fun MockSyncServer.addBundleAndNotifyForWatchFixture(bundle: RemoteBundleScript) {
+        val rows = bundle.rows.mapIndexed { index, row ->
+            BundleRow(
+                schema = row.schema,
+                table = row.table,
+                key = row.key.mapValues { it.value.contentOrNull.orEmpty() },
+                op = row.op,
+                rowVersion = row.rowVersion ?: (index + 1).toLong(),
+                payload = row.payload,
+            )
+        }
+        addRemoteBundleAndNotifyForTest(rows)
+    }
+
     private suspend fun awaitExpectedState(case: WatchBehaviorCase, env: TwoClientEnv) {
         eventually {
             case.expectedState.users.all { user ->
@@ -93,6 +139,7 @@ internal class SharedWatchBehaviorFixtureTest : CrossTargetSyncTestSupport() {
             } &&
                 case.expectedState.watchAttemptsAtLeast?.let { env.server.watchAfterBundleSeqs.size >= it } != false &&
                 case.expectedState.watchAttemptsExactly?.let { env.server.watchAfterBundleSeqs.size == it } != false &&
+                case.expectedState.watchAfterBundleSeqsContains.all { env.server.watchAfterBundleSeqs.contains(it) } &&
                 case.expectedState.fallbackPullsAtLeast?.let { env.server.pullRequestCount >= it } != false &&
                 case.expectedState.fallbackPullsExactly?.let { env.server.pullRequestCount == it } != false
         }
@@ -113,6 +160,12 @@ internal class SharedWatchBehaviorFixtureTest : CrossTargetSyncTestSupport() {
         }
         case.expectedState.watchAttemptsExactly?.let {
             assertEquals(it, env.server.watchAfterBundleSeqs.size, "${case.name}: watch attempts")
+        }
+        for (afterBundleSeq in case.expectedState.watchAfterBundleSeqsContains) {
+            assertTrue(
+                env.server.watchAfterBundleSeqs.contains(afterBundleSeq),
+                "${case.name}: watch after_bundle_seq contains $afterBundleSeq",
+            )
         }
     }
 
@@ -173,9 +226,12 @@ internal class SharedWatchBehaviorFixtureTest : CrossTargetSyncTestSupport() {
     @Serializable
     private data class WatchServerScript(
         val kind: String,
+        val bundleChangeWatchSupported: Boolean? = null,
         val response: FixtureHttpResponse? = null,
         val lines: List<String> = emptyList(),
         val remoteBundles: List<RemoteBundleScript> = emptyList(),
+        val startBundles: List<RemoteBundleScript> = emptyList(),
+        val wakeBundles: List<RemoteBundleScript> = emptyList(),
     )
 
     @Serializable
@@ -206,6 +262,9 @@ internal class SharedWatchBehaviorFixtureTest : CrossTargetSyncTestSupport() {
         val fallbackPullsExactly: Int? = null,
         val watchAttemptsAtLeast: Int? = null,
         val watchAttemptsExactly: Int? = null,
+        val watchAfterBundleSeqsContains: List<Long> = emptyList(),
+        val observeForMillis: Long? = null,
+        val stopActiveWatchBeforeAssert: Boolean = false,
         val users: List<ExpectedUser> = emptyList(),
     )
 

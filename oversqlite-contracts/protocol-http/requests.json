@@ -1,0 +1,247 @@
+{
+  "formatVersion": 1,
+  "baseUri": "https://sync.test/api/v1/",
+  "cases": [
+    {
+      "name": "capabilities",
+      "description": "Capabilities probes preserve the configured base path and send source identity only in the source header.",
+      "operation": "capabilities",
+      "sourceId": "source-capabilities",
+      "expected": {
+        "method": "GET",
+        "path": "/api/v1/sync/capabilities",
+        "query": {},
+        "sourceHeader": "source-capabilities",
+        "body": null
+      }
+    },
+    {
+      "name": "connect",
+      "description": "Connect sends local-pending state without duplicating source identity in the body.",
+      "operation": "connect",
+      "sourceId": "source-connect",
+      "args": {
+        "hasLocalPendingRows": true
+      },
+      "expected": {
+        "method": "POST",
+        "path": "/api/v1/sync/connect",
+        "query": {},
+        "sourceHeader": "source-connect",
+        "body": {
+          "has_local_pending_rows": true
+        },
+        "bodyMustNotContain": [
+          "source_id"
+        ]
+      }
+    },
+    {
+      "name": "pull",
+      "description": "Pull preserves base path and carries cursor options in query parameters.",
+      "operation": "pull",
+      "sourceId": "source-pull",
+      "args": {
+        "afterBundleSeq": 3,
+        "maxBundles": 11,
+        "targetBundleSeq": 14
+      },
+      "expected": {
+        "method": "GET",
+        "path": "/api/v1/sync/pull",
+        "query": {
+          "after_bundle_seq": "3",
+          "max_bundles": "11",
+          "target_bundle_seq": "14"
+        },
+        "sourceHeader": "source-pull",
+        "body": null
+      }
+    },
+    {
+      "name": "push-session-create",
+      "description": "Push session creation sends bundle metadata in the body and source identity in the header only.",
+      "operation": "pushSessionCreate",
+      "sourceId": "source-push-create",
+      "args": {
+        "sourceBundleId": 7,
+        "plannedRowCount": 2,
+        "initializationId": "init-1"
+      },
+      "expected": {
+        "method": "POST",
+        "path": "/api/v1/sync/push-sessions",
+        "query": {},
+        "sourceHeader": "source-push-create",
+        "body": {
+          "source_bundle_id": 7,
+          "planned_row_count": 2,
+          "initialization_id": "init-1"
+        },
+        "bodyMustNotContain": [
+          "source_id"
+        ]
+      }
+    },
+    {
+      "name": "push-session-chunk",
+      "description": "Push chunk upload nests row payload under the session path and omits body source identity.",
+      "operation": "pushSessionChunk",
+      "sourceId": "source-push-chunk",
+      "args": {
+        "pushId": "push-fixture",
+        "startRowOrdinal": 0
+      },
+      "expected": {
+        "method": "POST",
+        "path": "/api/v1/sync/push-sessions/push-fixture/chunks",
+        "query": {},
+        "sourceHeader": "source-push-chunk",
+        "body": {
+          "start_row_ordinal": 0,
+          "rows": [
+            {
+              "schema": "main",
+              "table": "users",
+              "key": {
+                "id": "user-1"
+              },
+              "op": "INSERT",
+              "base_row_version": 0,
+              "payload": {
+                "id": "user-1",
+                "name": "Ada"
+              }
+            }
+          ]
+        },
+        "bodyMustNotContain": [
+          "source_id"
+        ]
+      }
+    },
+    {
+      "name": "push-session-commit",
+      "description": "Push commit addresses the session path and does not carry source identity in a request body.",
+      "operation": "pushSessionCommit",
+      "sourceId": "source-push-commit",
+      "args": {
+        "pushId": "push-fixture"
+      },
+      "expected": {
+        "method": "POST",
+        "path": "/api/v1/sync/push-sessions/push-fixture/commit",
+        "query": {},
+        "sourceHeader": "source-push-commit",
+        "body": null,
+        "bodyMustNotContain": [
+          "source_id"
+        ]
+      }
+    },
+    {
+      "name": "committed-rows",
+      "description": "Committed-row fetches preserve base path and chunk cursors.",
+      "operation": "committedRows",
+      "sourceId": "source-committed",
+      "args": {
+        "bundleSeq": 9,
+        "afterRowOrdinal": 4,
+        "maxRows": 17
+      },
+      "expected": {
+        "method": "GET",
+        "path": "/api/v1/sync/committed-bundles/9/rows",
+        "query": {
+          "after_row_ordinal": "4",
+          "max_rows": "17"
+        },
+        "sourceHeader": "source-committed",
+        "body": null
+      }
+    },
+    {
+      "name": "snapshot-session",
+      "description": "Plain snapshot session creation sends source identity in the header only.",
+      "operation": "snapshotSession",
+      "sourceId": "source-snapshot",
+      "expected": {
+        "method": "POST",
+        "path": "/api/v1/sync/snapshot-sessions",
+        "query": {},
+        "sourceHeader": "source-snapshot",
+        "body": null,
+        "bodyMustNotContain": [
+          "source_id"
+        ]
+      }
+    },
+    {
+      "name": "snapshot-chunk",
+      "description": "Snapshot chunk fetches preserve base path and chunk cursors.",
+      "operation": "snapshotChunk",
+      "sourceId": "source-snapshot-chunk",
+      "args": {
+        "snapshotId": "snapshot-fixture",
+        "snapshotBundleSeq": 6,
+        "afterRowOrdinal": 5,
+        "maxRows": 19
+      },
+      "expected": {
+        "method": "GET",
+        "path": "/api/v1/sync/snapshot-sessions/snapshot-fixture",
+        "query": {
+          "after_row_ordinal": "5",
+          "max_rows": "19"
+        },
+        "sourceHeader": "source-snapshot-chunk",
+        "body": null
+      }
+    },
+    {
+      "name": "source-replacement",
+      "description": "Source replacement snapshot creation carries replacement identities but still omits body source_id.",
+      "operation": "sourceReplacement",
+      "sourceId": "source-replacement",
+      "args": {
+        "previousSourceId": "source-old",
+        "newSourceId": "source-new",
+        "reason": "source_retired"
+      },
+      "expected": {
+        "method": "POST",
+        "path": "/api/v1/sync/snapshot-sessions",
+        "query": {},
+        "sourceHeader": "source-replacement",
+        "body": {
+          "source_replacement": {
+            "previous_source_id": "source-old",
+            "new_source_id": "source-new",
+            "reason": "source_retired"
+          }
+        },
+        "bodyMustNotContain": [
+          "source_id"
+        ]
+      }
+    },
+    {
+      "name": "watch",
+      "description": "Bundle-change watch preserves base path, source header, and after-bundle cursor.",
+      "operation": "watch",
+      "sourceId": "source-watch",
+      "args": {
+        "afterBundleSeq": 12
+      },
+      "expected": {
+        "method": "GET",
+        "path": "/api/v1/sync/watch",
+        "query": {
+          "after_bundle_seq": "12"
+        },
+        "sourceHeader": "source-watch",
+        "body": null
+      }
+    }
+  ]
+}

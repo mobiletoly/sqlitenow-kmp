@@ -3,6 +3,7 @@ package dev.goquick.sqlitenow.oversqlite
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import dev.goquick.sqlitenow.core.TransactionMode
 import dev.goquick.sqlitenow.core.sqlite.use
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
@@ -652,6 +653,35 @@ open class BundleClientContractTestSupport {
         )
     }
 
+    protected suspend fun executeSetupSql(db: SafeSQLiteConnection, statements: List<String>) {
+        executeFixtureSql(db, statements, applyMode = false)
+    }
+
+    protected suspend fun executeApplyModeSql(db: SafeSQLiteConnection, statements: List<String>) {
+        executeFixtureSql(db, statements, applyMode = true)
+    }
+
+    private suspend fun executeFixtureSql(
+        db: SafeSQLiteConnection,
+        statements: List<String>,
+        applyMode: Boolean,
+    ) {
+        if (statements.isEmpty()) return
+        db.transaction(TransactionMode.IMMEDIATE) {
+            db.execSQL("PRAGMA defer_foreign_keys = ON")
+            if (applyMode) {
+                db.execSQL("UPDATE _sync_apply_state SET apply_mode = 1 WHERE singleton_key = 1")
+            }
+            try {
+                statements.forEach { db.execSQL(it) }
+            } finally {
+                if (applyMode) {
+                    db.execSQL("UPDATE _sync_apply_state SET apply_mode = 0 WHERE singleton_key = 1")
+                }
+            }
+        }
+    }
+
     protected suspend fun scalarLong(db: SafeSQLiteConnection, sql: String): Long {
         return db.prepare(sql).use { st ->
             check(st.step())
@@ -971,6 +1001,7 @@ open class BundleClientContractTestSupport {
         var committedBundleChunkError: ((Long, Long?) -> Pair<Int, String>?)? = null
         var bundleChunkOverride: ((StoredBundle, Long?, Int) -> CommittedBundleRowsResponse)? = null
         var committedRowsTransform: ((List<BundleRow>) -> List<BundleRow>)? = null
+        var bundleHashTransform: ((String, List<BundleRow>) -> String)? = null
         var beforeCreateSessionResponse: (() -> Unit)? = null
         var beforeCommitResponse: ((Long, Int) -> Unit)? = null
         var beforeCommittedBundleChunkResponse: ((Long, Long?) -> Unit)? = null
@@ -1111,11 +1142,12 @@ open class BundleClientContractTestSupport {
                                 payload = row.payload,
                             )
                         }.let { committedRowsTransform?.invoke(it) ?: it }
+                        val computedBundleHash = computeBundleHash(rows)
                         val stored = StoredBundle(
                             bundleSeq = bundleSeq,
                             sourceId = session.sourceId,
                             sourceBundleId = session.sourceBundleId,
-                            bundleHash = computeBundleHash(rows),
+                            bundleHash = bundleHashTransform?.invoke(computedBundleHash, rows) ?: computedBundleHash,
                             rows = rows,
                         )
                         session.committedBundleSeq = bundleSeq

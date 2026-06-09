@@ -1,0 +1,612 @@
+{
+  "formatVersion": 1,
+  "fixture": "users",
+  "pragmas": {
+    "foreignKeys": 1
+  },
+  "tables": [
+    {
+      "name": "_sync_apply_state",
+      "columns": [
+        {
+          "name": "singleton_key",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "name": "apply_mode",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        }
+      ]
+    },
+    {
+      "name": "_sync_attachment_state",
+      "columns": [
+        {
+          "name": "singleton_key",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "name": "current_source_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "binding_state",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "'anonymous'",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "attached_user_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "schema_name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "last_bundle_seq_seen",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "rebuild_required",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "pending_initialization_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        }
+      ]
+    },
+    {
+      "name": "_sync_dirty_rows",
+      "columns": [
+        {
+          "name": "schema_name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "name": "table_name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 2
+        },
+        {
+          "name": "key_json",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 3
+        },
+        {
+          "name": "op",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "base_row_version",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "payload",
+          "type": "TEXT",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "dirty_ordinal",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "updated_at",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+          "primaryKeyPosition": 0
+        }
+      ]
+    },
+    {
+      "name": "_sync_managed_tables",
+      "columns": [
+        {
+          "name": "schema_name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "name": "table_name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 2
+        }
+      ]
+    },
+    {
+      "name": "_sync_operation_state",
+      "columns": [
+        {
+          "name": "singleton_key",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "name": "kind",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "'none'",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "target_user_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "staged_snapshot_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "snapshot_bundle_seq",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "snapshot_row_count",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "reason",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "replacement_source_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        }
+      ]
+    },
+    {
+      "name": "_sync_outbox_bundle",
+      "columns": [
+        {
+          "name": "singleton_key",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "name": "state",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "'none'",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "source_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "source_bundle_id",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "initialization_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "canonical_request_hash",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "row_count",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "remote_bundle_hash",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "remote_bundle_seq",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        }
+      ]
+    },
+    {
+      "name": "_sync_outbox_rows",
+      "columns": [
+        {
+          "name": "source_bundle_id",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "name": "row_ordinal",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 2
+        },
+        {
+          "name": "schema_name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "table_name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "key_json",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "wire_key_json",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "op",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "base_row_version",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "local_payload",
+          "type": "TEXT",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "wire_payload",
+          "type": "TEXT",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        }
+      ]
+    },
+    {
+      "name": "_sync_row_state",
+      "columns": [
+        {
+          "name": "schema_name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "name": "table_name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 2
+        },
+        {
+          "name": "key_json",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 3
+        },
+        {
+          "name": "row_version",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "deleted",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "updated_at",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+          "primaryKeyPosition": 0
+        }
+      ]
+    },
+    {
+      "name": "_sync_snapshot_stage",
+      "columns": [
+        {
+          "name": "snapshot_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "name": "row_ordinal",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 2
+        },
+        {
+          "name": "schema_name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "table_name",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "key_json",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "row_version",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "payload",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        }
+      ]
+    },
+    {
+      "name": "_sync_source_state",
+      "columns": [
+        {
+          "name": "source_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "name": "next_source_bundle_id",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "1",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "replaced_by_source_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+          "primaryKeyPosition": 0
+        }
+      ]
+    }
+  ],
+  "indexes": [
+    {
+      "name": "idx_sync_dirty_rows_dirty_ordinal",
+      "unique": false,
+      "table": "_sync_dirty_rows",
+      "columns": [
+        "dirty_ordinal"
+      ]
+    }
+  ],
+  "triggers": [
+    {
+      "name": "trg_users_ad",
+      "table": "users",
+      "sql": "CREATE TRIGGER trg_users_ad AFTER DELETE ON \"users\" WHEN COALESCE((SELECT apply_mode FROM _sync_apply_state WHERE singleton_key = 1), 0) = 0 BEGIN INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at) VALUES ( 'main', 'users', json_object('id', OLD.\"id\"), 'DELETE', COALESCE( (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', OLD.\"id\")), (SELECT row_version FROM _sync_row_state WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', OLD.\"id\")), 0 ), NULL, COALESCE( (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', OLD.\"id\")), (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows) ), strftime('%Y-%m-%dT%H:%M:%fZ','now') ) ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET op='DELETE', payload=NULL, updated_at=excluded.updated_at; END"
+    },
+    {
+      "name": "trg_users_ai",
+      "table": "users",
+      "sql": "CREATE TRIGGER trg_users_ai AFTER INSERT ON \"users\" WHEN COALESCE((SELECT apply_mode FROM _sync_apply_state WHERE singleton_key = 1), 0) = 0 BEGIN INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at) VALUES ( 'main', 'users', json_object('id', NEW.\"id\"), CASE WHEN EXISTS ( SELECT 1 FROM _sync_row_state WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', NEW.\"id\") AND deleted=0 ) THEN 'UPDATE' ELSE 'INSERT' END, COALESCE( (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', NEW.\"id\")), (SELECT row_version FROM _sync_row_state WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', NEW.\"id\")), 0 ), json_object('id', NEW.\"id\", 'name', NEW.\"name\"), COALESCE( (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', NEW.\"id\")), (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows) ), strftime('%Y-%m-%dT%H:%M:%fZ','now') ) ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET op=excluded.op, payload=excluded.payload, updated_at=excluded.updated_at; END"
+    },
+    {
+      "name": "trg_users_au",
+      "table": "users",
+      "sql": "CREATE TRIGGER trg_users_au AFTER UPDATE ON \"users\" WHEN COALESCE((SELECT apply_mode FROM _sync_apply_state WHERE singleton_key = 1), 0) = 0 BEGIN INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at) SELECT 'main', 'users', json_object('id', OLD.\"id\"), 'DELETE', COALESCE( (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', OLD.\"id\")), (SELECT row_version FROM _sync_row_state WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', OLD.\"id\")), 0 ), NULL, COALESCE( (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', OLD.\"id\")), (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows) ), strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE json_object('id', OLD.\"id\") != json_object('id', NEW.\"id\") ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET op='DELETE', payload=NULL, updated_at=excluded.updated_at; INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at) VALUES ( 'main', 'users', json_object('id', NEW.\"id\"), CASE WHEN EXISTS ( SELECT 1 FROM _sync_row_state WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', NEW.\"id\") AND deleted=0 ) THEN 'UPDATE' ELSE 'INSERT' END, COALESCE( (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', NEW.\"id\")), (SELECT row_version FROM _sync_row_state WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', NEW.\"id\")), 0 ), json_object('id', NEW.\"id\", 'name', NEW.\"name\"), COALESCE( (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', NEW.\"id\")), (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows) ), strftime('%Y-%m-%dT%H:%M:%fZ','now') ) ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET op=excluded.op, payload=excluded.payload, updated_at=excluded.updated_at; END"
+    },
+    {
+      "name": "trg_users_bd_guard",
+      "table": "users",
+      "sql": "CREATE TRIGGER trg_users_bd_guard BEFORE DELETE ON \"users\" WHEN EXISTS ( SELECT 1 FROM _sync_operation_state WHERE singleton_key = 1 AND kind != 'none' ) AND NOT EXISTS ( SELECT 1 FROM _sync_apply_state WHERE singleton_key = 1 AND apply_mode = 1 ) BEGIN SELECT RAISE(ABORT, 'SYNC_TRANSITION_PENDING'); END"
+    },
+    {
+      "name": "trg_users_bi_guard",
+      "table": "users",
+      "sql": "CREATE TRIGGER trg_users_bi_guard BEFORE INSERT ON \"users\" WHEN EXISTS ( SELECT 1 FROM _sync_operation_state WHERE singleton_key = 1 AND kind != 'none' ) AND NOT EXISTS ( SELECT 1 FROM _sync_apply_state WHERE singleton_key = 1 AND apply_mode = 1 ) BEGIN SELECT RAISE(ABORT, 'SYNC_TRANSITION_PENDING'); END"
+    },
+    {
+      "name": "trg_users_bu_guard",
+      "table": "users",
+      "sql": "CREATE TRIGGER trg_users_bu_guard BEFORE UPDATE ON \"users\" WHEN EXISTS ( SELECT 1 FROM _sync_operation_state WHERE singleton_key = 1 AND kind != 'none' ) AND NOT EXISTS ( SELECT 1 FROM _sync_apply_state WHERE singleton_key = 1 AND apply_mode = 1 ) BEGIN SELECT RAISE(ABORT, 'SYNC_TRANSITION_PENDING'); END"
+    }
+  ],
+  "state": {
+    "apply_state": [
+      {
+        "singleton_key": 1,
+        "apply_mode": 0
+      }
+    ],
+    "attachment_state": [
+      {
+        "singleton_key": 1,
+        "current_source_id": "<source-1>",
+        "binding_state": "anonymous",
+        "attached_user_id": "",
+        "schema_name": "",
+        "last_bundle_seq_seen": 0,
+        "rebuild_required": 0,
+        "pending_initialization_id": ""
+      }
+    ],
+    "source_state": [
+      {
+        "source_id": "<source-1>",
+        "next_source_bundle_id": 1,
+        "replaced_by_source_id": "",
+        "created_at": "<timestamp>"
+      }
+    ],
+    "operation_state": [
+      {
+        "singleton_key": 1,
+        "kind": "none",
+        "target_user_id": "",
+        "staged_snapshot_id": "",
+        "snapshot_bundle_seq": 0,
+        "snapshot_row_count": 0,
+        "reason": "",
+        "replacement_source_id": ""
+      }
+    ],
+    "outbox_bundle": [
+      {
+        "singleton_key": 1,
+        "state": "none",
+        "source_id": "",
+        "source_bundle_id": 0,
+        "initialization_id": "",
+        "canonical_request_hash": "",
+        "row_count": 0,
+        "remote_bundle_hash": "",
+        "remote_bundle_seq": 0
+      }
+    ],
+    "outbox_rows": [],
+    "dirty_rows": [],
+    "row_state": [],
+    "snapshot_stage": [],
+    "managed_tables": [
+      {
+        "schema_name": "main",
+        "table_name": "users"
+      }
+    ]
+  }
+}

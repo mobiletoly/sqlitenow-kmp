@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -15,12 +16,24 @@ void main() {
 
         final pull = fixture['pullResponse'];
         if (pull is Map) {
-          final response = PullResponse.fromJson(pull.cast<String, Object?>());
-          validatePullResponse(response, afterBundleSeq);
-          expect(
-            response.stableBundleSeq,
-            (fixture['expectedFinalState']! as Map)['lastBundleSeqSeen'],
-            reason: name,
+          await _expectFixtureResult(
+            name,
+            fixture['expectedPullErrorContains'] as String?,
+            () {
+              final response = PullResponse.fromJson(
+                pull.cast<String, Object?>(),
+              );
+              validatePullResponse(response, afterBundleSeq);
+              final expectedFinalState = fixture['expectedFinalState'];
+              if (expectedFinalState is Map &&
+                  expectedFinalState.containsKey('lastBundleSeqSeen')) {
+                expect(
+                  response.stableBundleSeq,
+                  expectedFinalState['lastBundleSeqSeen'],
+                  reason: name,
+                );
+              }
+            },
           );
         }
 
@@ -60,37 +73,60 @@ void main() {
                   createRequestJson.cast<String, Object?>(),
                 )
               : null;
-          final session = await OversqliteRemoteApi(
-            http,
-          ).createSnapshotSession(sourceId: 'source-1', request: request);
-          expect(session.snapshotId, sessionJson['snapshot_id'], reason: name);
-          if (createRequestJson is Map) {
-            expect(http.postedBodies.single, createRequestJson, reason: name);
-          }
+          SnapshotSession? session;
+          await _expectFixtureResult(
+            name,
+            fixture['expectedSnapshotSessionErrorContains'] as String?,
+            () async {
+              session = await OversqliteRemoteApi(
+                http,
+              ).createSnapshotSession(sourceId: 'source-1', request: request);
+              expect(
+                session!.snapshotId,
+                sessionJson['snapshot_id'],
+                reason: name,
+              );
+              if (createRequestJson is Map) {
+                expect(
+                  http.postedBodies.single,
+                  createRequestJson,
+                  reason: name,
+                );
+              }
+            },
+          );
 
           final chunkJson = fixture['snapshotChunkResponse'];
-          if (chunkJson is Map) {
+          if (chunkJson is Map && session != null) {
+            final afterRowOrdinal =
+                (fixture['snapshotChunkAfterRowOrdinal'] as int?) ?? 0;
             final chunkHttp = _FixtureHttpClient(
               getResponses: {
-                'sync/snapshot-sessions/${session.snapshotId}?after_row_ordinal=0&max_rows=1000':
+                'sync/snapshot-sessions/${session!.snapshotId}?after_row_ordinal=$afterRowOrdinal&max_rows=1000':
                     OversqliteHttpResponse(
                       statusCode: 200,
                       body: jsonEncode(chunkJson),
                     ),
               },
             );
-            final chunk = await OversqliteRemoteApi(chunkHttp)
-                .fetchSnapshotChunk(
-                  snapshotId: session.snapshotId,
-                  sourceId: 'source-1',
-                  snapshotBundleSeq: session.snapshotBundleSeq,
-                  afterRowOrdinal: 0,
-                  maxRows: 1000,
+            await _expectFixtureResult(
+              name,
+              fixture['expectedSnapshotChunkErrorContains'] as String?,
+              () async {
+                final chunk = await OversqliteRemoteApi(chunkHttp)
+                    .fetchSnapshotChunk(
+                      snapshotId: session!.snapshotId,
+                      sourceId: 'source-1',
+                      snapshotBundleSeq: session!.snapshotBundleSeq,
+                      afterRowOrdinal: afterRowOrdinal,
+                      maxRows: 1000,
+                    );
+                expect(
+                  chunk.nextRowOrdinal,
+                  chunkJson['next_row_ordinal'],
+                  reason: name,
                 );
-            expect(
-              chunk.nextRowOrdinal,
-              chunkJson['next_row_ordinal'],
-              reason: name,
+              },
             );
           }
         }
@@ -115,6 +151,29 @@ void main() {
         }
       }
     },
+  );
+}
+
+Future<void> _expectFixtureResult(
+  String name,
+  String? expectedMessage,
+  FutureOr<void> Function() block,
+) async {
+  Object? error;
+  try {
+    await Future<void>.sync(block);
+  } catch (caught) {
+    error = caught;
+  }
+  if (expectedMessage == null) {
+    expect(error, isNull, reason: '$name expected validation success');
+    return;
+  }
+  expect(error, isNotNull, reason: '$name expected validation error');
+  expect(
+    error.toString(),
+    contains(expectedMessage),
+    reason: '$name expected validation error',
   );
 }
 

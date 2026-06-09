@@ -1,0 +1,663 @@
+{
+  "formatVersion": 1,
+  "cases": [
+    {
+      "name": "parent-child-ordering-upserts-parent-first-deletes-child-first",
+      "description": "Outbound rows are ordered parent-first for upserts and child-first for deletes so FK-shaped bundles are stable across runtimes.",
+      "schema": "users-posts",
+      "syncTables": [
+        {
+          "tableName": "users",
+          "syncKeyColumnName": "id"
+        },
+        {
+          "tableName": "posts",
+          "syncKeyColumnName": "id"
+        }
+      ],
+      "localSetupSql": [
+        "INSERT INTO users(id, name) VALUES('user-1', 'Parent')",
+        "INSERT INTO posts(id, user_id, title) VALUES('post-1', 'user-1', 'Child')"
+      ],
+      "serverScript": {
+        "kind": "echo_committed_rows"
+      },
+      "steps": [
+        {
+          "action": "pushPending",
+          "expectedException": "none",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "none",
+            "outboxRowCount": 0,
+            "dirtyRowCount": 0,
+            "nextSourceBundleId": 2,
+            "lastBundleSeqSeen": 1
+          },
+          "expectedAppState": {
+            "users": [
+              {
+                "id": "user-1",
+                "name": "Parent"
+              }
+            ],
+            "posts": [
+              {
+                "id": "post-1",
+                "user_id": "user-1",
+                "title": "Child"
+              }
+            ]
+          },
+          "expectedServerState": {
+            "uploadedRows": [
+              "users:INSERT:user-1",
+              "posts:INSERT:post-1"
+            ]
+          }
+        },
+        {
+          "action": "localSql",
+          "sql": [
+            "DELETE FROM posts WHERE id = 'post-1'",
+            "DELETE FROM users WHERE id = 'user-1'"
+          ],
+          "expectedException": "none",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "none",
+            "outboxRowCount": 0,
+            "dirtyRowCount": 2,
+            "nextSourceBundleId": 2,
+            "lastBundleSeqSeen": 1
+          },
+          "expectedAppState": {
+            "users": [],
+            "posts": []
+          }
+        },
+        {
+          "action": "pushPending",
+          "expectedException": "none",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "none",
+            "outboxRowCount": 0,
+            "dirtyRowCount": 0,
+            "nextSourceBundleId": 3,
+            "lastBundleSeqSeen": 2
+          },
+          "expectedAppState": {
+            "users": [],
+            "posts": []
+          },
+          "expectedServerState": {
+            "uploadedRows": [
+              "posts:DELETE:post-1",
+              "users:DELETE:user-1"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "committed-replay-cyclic-fk-applies-under-apply-mode",
+      "description": "Committed replay runs under apply mode with deferred foreign keys, so a cyclic app-table graph can be replayed authoritatively.",
+      "schema": "immediate-authors-profiles-cycle",
+      "syncTables": [
+        {
+          "tableName": "authors",
+          "syncKeyColumnName": "id"
+        },
+        {
+          "tableName": "profiles",
+          "syncKeyColumnName": "id"
+        }
+      ],
+      "localSetupSql": [
+        "INSERT INTO authors(id, profile_id, name) VALUES('author-1', 'profile-1', 'Author')",
+        "INSERT INTO profiles(id, author_id, bio) VALUES('profile-1', 'author-1', 'Cyclic')"
+      ],
+      "serverScript": {
+        "kind": "echo_committed_rows"
+      },
+      "steps": [
+        {
+          "action": "pushPending",
+          "expectedException": "none",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "none",
+            "outboxRowCount": 0,
+            "dirtyRowCount": 0,
+            "nextSourceBundleId": 2,
+            "lastBundleSeqSeen": 1
+          },
+          "expectedAppState": {
+            "authors": [
+              {
+                "id": "author-1",
+                "profile_id": "profile-1",
+                "name": "Author"
+              }
+            ],
+            "profiles": [
+              {
+                "id": "profile-1",
+                "author_id": "author-1",
+                "bio": "Cyclic"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "committed-push-non-contiguous-bundle-does-not-advance-last-seq",
+      "description": "Committed push source sequence advances, but last_bundle_seq_seen is not skipped when the committed bundle seq is not contiguous with the local checkpoint.",
+      "schema": "users",
+      "syncTables": [
+        {
+          "tableName": "users",
+          "syncKeyColumnName": "id"
+        }
+      ],
+      "localSetupSql": [
+        "INSERT INTO users(id, name) VALUES('user-1', 'Ada')"
+      ],
+      "serverScript": {
+        "kind": "committed_bundle_seq_gap",
+        "bundleSeq": 2
+      },
+      "steps": [
+        {
+          "action": "pushPending",
+          "expectedException": "none",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "none",
+            "outboxRowCount": 0,
+            "dirtyRowCount": 0,
+            "nextSourceBundleId": 2,
+            "lastBundleSeqSeen": 0
+          },
+          "expectedAppState": {
+            "users": [
+              {
+                "id": "user-1",
+                "name": "Ada"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "committed-replay-preserves-newer-local-delete",
+      "description": "A committed_remote replay that resumes after a transient fetch failure preserves a newer local delete, rebases it onto the committed row version, and drains it on the next push.",
+      "schema": "users",
+      "syncTables": [
+        {
+          "tableName": "users",
+          "syncKeyColumnName": "id"
+        }
+      ],
+      "localSetupSql": [
+        "INSERT INTO users(id, name) VALUES('user-1', 'Ada')"
+      ],
+      "serverScript": {
+        "kind": "committed_replay_first_fetch_http_error"
+      },
+      "steps": [
+        {
+          "action": "pushPending",
+          "expectedException": "http_error",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "committed_remote",
+            "outboxRowCount": 1,
+            "dirtyRowCount": 0,
+            "nextSourceBundleId": 1,
+            "lastBundleSeqSeen": 0
+          },
+          "expectedAppState": {
+            "users": [
+              {
+                "id": "user-1",
+                "name": "Ada"
+              }
+            ]
+          }
+        },
+        {
+          "action": "localSql",
+          "sql": [
+            "DELETE FROM users WHERE id = 'user-1'"
+          ],
+          "expectedException": "none",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "committed_remote",
+            "outboxRowCount": 1,
+            "dirtyRowCount": 1,
+            "nextSourceBundleId": 1,
+            "lastBundleSeqSeen": 0
+          },
+          "expectedAppState": {
+            "users": []
+          }
+        },
+        {
+          "action": "pushPending",
+          "expectedException": "none",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "none",
+            "outboxRowCount": 0,
+            "dirtyRowCount": 1,
+            "nextSourceBundleId": 2,
+            "lastBundleSeqSeen": 1
+          },
+          "expectedAppState": {
+            "users": []
+          }
+        },
+        {
+          "action": "pushPending",
+          "expectedException": "none",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "none",
+            "outboxRowCount": 0,
+            "dirtyRowCount": 0,
+            "nextSourceBundleId": 3,
+            "lastBundleSeqSeen": 2
+          },
+          "expectedAppState": {
+            "users": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "successful-replay-restores-capture-for-later-local-writes",
+      "description": "After a committed replay succeeds, apply mode is cleared so subsequent ordinary local writes are captured.",
+      "schema": "users",
+      "syncTables": [
+        {
+          "tableName": "users",
+          "syncKeyColumnName": "id"
+        }
+      ],
+      "localSetupSql": [
+        "INSERT INTO users(id, name) VALUES('user-1', 'Ada')"
+      ],
+      "serverScript": {
+        "kind": "echo_committed_rows"
+      },
+      "steps": [
+        {
+          "action": "pushPending",
+          "expectedException": "none",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "none",
+            "outboxRowCount": 0,
+            "dirtyRowCount": 0,
+            "nextSourceBundleId": 2,
+            "lastBundleSeqSeen": 1,
+            "applyMode": 0
+          }
+        },
+        {
+          "action": "localSql",
+          "sql": [
+            "UPDATE users SET name = 'Ada Updated' WHERE id = 'user-1'"
+          ],
+          "expectedException": "none",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "none",
+            "outboxRowCount": 0,
+            "dirtyRowCount": 1,
+            "nextSourceBundleId": 2,
+            "lastBundleSeqSeen": 1,
+            "applyMode": 0
+          },
+          "expectedAppState": {
+            "users": [
+              {
+                "id": "user-1",
+                "name": "Ada Updated"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "failed-replay-rollback-restores-capture-for-later-local-writes",
+      "description": "If committed replay fails, rollback still clears leaked apply mode and later local writes remain captured.",
+      "schema": "users",
+      "syncTables": [
+        {
+          "tableName": "users",
+          "syncKeyColumnName": "id"
+        }
+      ],
+      "localSetupSql": [
+        "INSERT INTO users(id, name) VALUES('user-1', 'Ada')"
+      ],
+      "serverScript": {
+        "kind": "already_committed_rows",
+        "committedRows": [
+          {
+            "schema": "main",
+            "table": "users",
+            "key": {
+              "id": "user-1"
+            },
+            "op": "INSERT",
+            "row_version": 1,
+            "payload": {
+              "id": "user-1"
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "action": "pushPending",
+          "expectedException": "source_sequence_mismatch",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "prepared",
+            "outboxRowCount": 1,
+            "dirtyRowCount": 0,
+            "nextSourceBundleId": 1,
+            "applyMode": 0
+          }
+        },
+        {
+          "action": "localSql",
+          "sql": [
+            "INSERT INTO users(id, name) VALUES('user-2', 'Grace')"
+          ],
+          "expectedException": "none",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "prepared",
+            "outboxRowCount": 1,
+            "dirtyRowCount": 1,
+            "nextSourceBundleId": 1,
+            "applyMode": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "strict-committed-replay-accepts-rfc3339-equivalent-timestamp",
+      "description": "Strict already_committed replay compares timestamp payloads by RFC3339 instant, so offset-equivalent values do not create a source sequence mismatch.",
+      "schema": "typed-rows",
+      "syncTables": [
+        {
+          "tableName": "typed_rows",
+          "syncKeyColumnName": "id"
+        }
+      ],
+      "localSetupSql": [
+        "INSERT INTO typed_rows(id, name, note, count_value, enabled_flag, rating, data, created_at) VALUES('typed-1', 'Typed Row', NULL, 1, 0, 1.25, NULL, '2026-03-24T18:42:11Z')"
+      ],
+      "serverScript": {
+        "kind": "already_committed_rows",
+        "committedRows": [
+          {
+            "schema": "main",
+            "table": "typed_rows",
+            "key": {
+              "id": "typed-1"
+            },
+            "op": "INSERT",
+            "row_version": 1,
+            "payload": {
+              "id": "typed-1",
+              "name": "Typed Row",
+              "note": null,
+              "count_value": 1,
+              "enabled_flag": 0,
+              "rating": 1.25,
+              "data": null,
+              "created_at": "2026-03-24T20:42:11+02:00"
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "action": "pushPending",
+          "expectedException": "none",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "none",
+            "outboxRowCount": 0,
+            "dirtyRowCount": 0,
+            "nextSourceBundleId": 2,
+            "lastBundleSeqSeen": 1
+          },
+          "expectedAppState": {
+            "typedRows": [
+              {
+                "id": "typed-1",
+                "name": "Typed Row",
+                "note": null,
+                "count_value": 1,
+                "enabled_flag": 0,
+                "rating": 1.25,
+                "data": null,
+                "created_at": "2026-03-24T20:42:11+02:00"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "strict-committed-replay-accepts-numeric-json-equivalence",
+      "description": "Strict committed replay compares REAL payloads semantically instead of by raw JSON spelling.",
+      "schema": "typed-rows",
+      "syncTables": [
+        {
+          "tableName": "typed_rows",
+          "syncKeyColumnName": "id"
+        }
+      ],
+      "localSetupSql": [
+        "INSERT INTO typed_rows(id, name, note, count_value, enabled_flag, rating, data, created_at) VALUES('typed-1', 'Typed Row', NULL, 1, 0, 1.25, NULL, NULL)"
+      ],
+      "serverScript": {
+        "kind": "already_committed_rows",
+        "committedRows": [
+          {
+            "schema": "main",
+            "table": "typed_rows",
+            "key": {
+              "id": "typed-1"
+            },
+            "op": "INSERT",
+            "row_version": 1,
+            "payload": {
+              "id": "typed-1",
+              "name": "Typed Row",
+              "note": null,
+              "count_value": 1,
+              "enabled_flag": 0,
+              "rating": 1.2500,
+              "data": null,
+              "created_at": null
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "action": "pushPending",
+          "expectedException": "none",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "none",
+            "outboxRowCount": 0,
+            "dirtyRowCount": 0,
+            "nextSourceBundleId": 2,
+            "lastBundleSeqSeen": 1
+          },
+          "expectedAppState": {
+            "typedRows": [
+              {
+                "id": "typed-1",
+                "name": "Typed Row",
+                "note": null,
+                "count_value": 1,
+                "enabled_flag": 0,
+                "rating": 1.25,
+                "data": null,
+                "created_at": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "strict-committed-replay-accepts-null-blob-fields",
+      "description": "Strict committed replay treats NULL BLOB payload fields as semantically equal when both prepared and committed payloads are null.",
+      "schema": "typed-rows",
+      "syncTables": [
+        {
+          "tableName": "typed_rows",
+          "syncKeyColumnName": "id"
+        }
+      ],
+      "localSetupSql": [
+        "INSERT INTO typed_rows(id, name, note, count_value, enabled_flag, rating, data, created_at) VALUES('typed-1', 'Typed Row', NULL, NULL, 0, NULL, NULL, NULL)"
+      ],
+      "serverScript": {
+        "kind": "already_committed_rows",
+        "committedRows": [
+          {
+            "schema": "main",
+            "table": "typed_rows",
+            "key": {
+              "id": "typed-1"
+            },
+            "op": "INSERT",
+            "row_version": 1,
+            "payload": {
+              "id": "typed-1",
+              "name": "Typed Row",
+              "note": null,
+              "count_value": null,
+              "enabled_flag": 0,
+              "rating": null,
+              "data": null,
+              "created_at": null
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "action": "pushPending",
+          "expectedException": "none",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "none",
+            "outboxRowCount": 0,
+            "dirtyRowCount": 0,
+            "nextSourceBundleId": 2,
+            "lastBundleSeqSeen": 1
+          },
+          "expectedAppState": {
+            "typedRows": [
+              {
+                "id": "typed-1",
+                "name": "Typed Row",
+                "note": null,
+                "count_value": null,
+                "enabled_flag": 0,
+                "rating": null,
+                "data": null,
+                "created_at": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "strict-committed-replay-rejects-non-equivalent-typed-payload",
+      "description": "Strict already_committed replay still fails when typed payload values are not semantically equivalent.",
+      "schema": "typed-rows",
+      "syncTables": [
+        {
+          "tableName": "typed_rows",
+          "syncKeyColumnName": "id"
+        }
+      ],
+      "localSetupSql": [
+        "INSERT INTO typed_rows(id, name, note, count_value, enabled_flag, rating, data, created_at) VALUES('typed-1', 'Typed Row', NULL, 1, 0, 1.25, NULL, '2026-03-24T18:42:11Z')"
+      ],
+      "serverScript": {
+        "kind": "already_committed_rows",
+        "committedRows": [
+          {
+            "schema": "main",
+            "table": "typed_rows",
+            "key": {
+              "id": "typed-1"
+            },
+            "op": "INSERT",
+            "row_version": 1,
+            "payload": {
+              "id": "typed-1",
+              "name": "Typed Row",
+              "note": null,
+              "count_value": 1,
+              "enabled_flag": 0,
+              "rating": 1.25,
+              "data": null,
+              "created_at": "2026-03-24T20:42:12+02:00"
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "action": "pushPending",
+          "expectedException": "source_sequence_mismatch",
+          "expectedState": {
+            "rebuildRequired": false,
+            "outboxState": "prepared",
+            "outboxRowCount": 1,
+            "dirtyRowCount": 0,
+            "nextSourceBundleId": 1,
+            "lastBundleSeqSeen": 0
+          },
+          "expectedAppState": {
+            "typedRows": [
+              {
+                "id": "typed-1",
+                "name": "Typed Row",
+                "note": null,
+                "count_value": 1,
+                "enabled_flag": 0,
+                "rating": 1.25,
+                "data": null,
+                "created_at": "2026-03-24T18:42:11Z"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

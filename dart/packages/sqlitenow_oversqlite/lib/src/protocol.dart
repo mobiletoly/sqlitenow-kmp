@@ -243,6 +243,21 @@ final class SourceRecoveryRequiredException implements Exception {
       'source recovery is required (${reason.wireName}); run rebuild() before syncing';
 }
 
+final class SourceReplacementDivergedException implements Exception {
+  const SourceReplacementDivergedException({
+    required this.localReplacementSourceId,
+    required this.remoteReplacementSourceId,
+  });
+
+  final String localReplacementSourceId;
+  final String remoteReplacementSourceId;
+
+  @override
+  String toString() =>
+      'replacement source diverged between local and server recovery state: '
+      'local="$localReplacementSourceId" remote="$remoteReplacementSourceId"';
+}
+
 final class SourceRecoveryRequiredHttpException implements Exception {
   const SourceRecoveryRequiredHttpException({
     required this.reason,
@@ -260,6 +275,15 @@ final class SourceRecoveryRequiredHttpException implements Exception {
 
 final class CommittedReplayPrunedException implements Exception {
   const CommittedReplayPrunedException(this.body);
+
+  final String body;
+
+  @override
+  String toString() => body;
+}
+
+final class CommittedBundleNotFoundException implements Exception {
+  const CommittedBundleNotFoundException(this.body);
 
   final String body;
 
@@ -616,14 +640,17 @@ final class PushRequestRow {
   final Object? payload;
 
   Map<String, Object?> toJson() {
-    return {
+    final json = <String, Object?>{
       'schema': schema,
       'table': table,
       'key': key,
       'op': op,
       'base_row_version': baseRowVersion,
-      'payload': payload,
     };
+    if (payload != null) {
+      json['payload'] = payload;
+    }
+    return json;
   }
 }
 
@@ -1152,6 +1179,10 @@ final class OversqliteRemoteApi {
     final path = 'sync/committed-bundles/$bundleSeq/rows?$query';
     final response = await _http.get(path, sourceId: sourceId);
     if (response.statusCode != HttpStatus.ok) {
+      final notFound = _decodeCommittedBundleNotFound(response);
+      if (notFound != null) {
+        throw notFound;
+      }
       final pruned = _decodeCommittedReplayPruned(response);
       if (pruned != null) {
         throw pruned;
@@ -1418,6 +1449,19 @@ SourceRecoveryRequiredHttpException? _decodeSourceRecoveryRequired(
   );
 }
 
+CommittedBundleNotFoundException? _decodeCommittedBundleNotFound(
+  OversqliteHttpResponse response,
+) {
+  if (response.statusCode != HttpStatus.notFound) {
+    return null;
+  }
+  final decoded = _decodeErrorResponse(response.body);
+  if (decoded?.error != 'committed_bundle_not_found') {
+    return null;
+  }
+  return CommittedBundleNotFoundException(response.body);
+}
+
 CommittedReplayPrunedException? _decodeCommittedReplayPruned(
   OversqliteHttpResponse response,
 ) {
@@ -1603,8 +1647,23 @@ void validatePullResponse(PullResponse response, int afterBundleSeq) {
       'pull response stable_bundle_seq ${response.stableBundleSeq} is behind requested after_bundle_seq $afterBundleSeq',
     );
   }
+  if (response.bundles.isNotEmpty && response.stableBundleSeq <= 0) {
+    throw const OversqliteProtocolException(
+      'pull response missing stable_bundle_seq for non-empty bundle list',
+    );
+  }
   var previous = afterBundleSeq;
   for (final bundle in response.bundles) {
+    _validateBundle(bundle);
+    for (var index = 0; index < bundle.rows.length; index++) {
+      try {
+        _validateBundleRow(bundle.rows[index]);
+      } on OversqliteProtocolException catch (error) {
+        throw OversqliteProtocolException(
+          'invalid bundle row $index: ${error.message}',
+        );
+      }
+    }
     if (bundle.bundleSeq <= previous) {
       throw OversqliteProtocolException(
         'pull response bundle_seq ${bundle.bundleSeq} is not strictly greater than previous $previous',
@@ -1660,6 +1719,11 @@ void _validateSnapshotSession(SnapshotSession session) {
       'snapshot session row_count ${session.rowCount} must be non-negative',
     );
   }
+  if (session.rowCount > 0 && session.snapshotBundleSeq <= 0) {
+    throw const OversqliteProtocolException(
+      'snapshot session missing snapshot_bundle_seq for non-empty row set',
+    );
+  }
   if (session.byteCount < 0) {
     throw OversqliteProtocolException(
       'snapshot session byte_count ${session.byteCount} must be non-negative',
@@ -1670,7 +1734,13 @@ void _validateSnapshotSession(SnapshotSession session) {
       'snapshot session response missing expires_at',
     );
   }
-  DateTime.parse(session.expiresAt);
+  try {
+    DateTime.parse(session.expiresAt);
+  } on FormatException {
+    throw OversqliteProtocolException(
+      "oversqlite timestamp must be RFC3339/ISO-8601 instant: '${session.expiresAt}'",
+    );
+  }
 }
 
 void _validateSnapshotChunkResponse(
@@ -1689,6 +1759,11 @@ void _validateSnapshotChunkResponse(
       'snapshot chunk response snapshot_bundle_seq ${chunk.snapshotBundleSeq} does not match session $snapshotBundleSeq',
     );
   }
+  if (chunk.rows.isNotEmpty && chunk.snapshotBundleSeq <= 0) {
+    throw const OversqliteProtocolException(
+      'snapshot chunk response missing snapshot_bundle_seq for non-empty row set',
+    );
+  }
   if (chunk.nextRowOrdinal != afterRowOrdinal + chunk.rows.length) {
     throw OversqliteProtocolException(
       'snapshot chunk response next_row_ordinal ${chunk.nextRowOrdinal} does not match expected ${afterRowOrdinal + chunk.rows.length}',
@@ -1698,6 +1773,15 @@ void _validateSnapshotChunkResponse(
     throw const OversqliteProtocolException(
       'snapshot chunk response with has_more=true must include at least one row',
     );
+  }
+  for (var index = 0; index < chunk.rows.length; index++) {
+    try {
+      _validateSnapshotRow(chunk.rows[index]);
+    } on OversqliteProtocolException catch (error) {
+      throw OversqliteProtocolException(
+        'invalid snapshot row $index: ${error.message}',
+      );
+    }
   }
 }
 

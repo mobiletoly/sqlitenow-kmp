@@ -1,0 +1,78 @@
+{
+  "formatVersion": 1,
+  "cases": [
+    {
+      "name": "incremental-pull",
+      "description": "Applying incremental remote bundles emits affected-table invalidation for watched app tables.",
+      "action": "incrementalPull",
+      "watchTables": [
+        "users"
+      ],
+      "expectedEmission": true
+    },
+    {
+      "name": "snapshot-hydrate",
+      "description": "Snapshot hydration emits affected-table invalidation for watched app tables.",
+      "action": "snapshotHydrate",
+      "watchTables": [
+        "users"
+      ],
+      "expectedEmission": true
+    },
+    {
+      "name": "committed-replay",
+      "description": "Successful committed replay after a local push emits affected-table invalidation.",
+      "action": "committedReplay",
+      "watchTables": [
+        "users"
+      ],
+      "expectedEmission": true
+    },
+    {
+      "name": "conflict-rewrite",
+      "description": "Conflict-resolution rewrites emit affected-table invalidation for rewritten app rows.",
+      "action": "conflictRewrite",
+      "watchTables": [
+        "users"
+      ],
+      "expectedEmission": true
+    },
+    {
+      "name": "sync-union",
+      "description": "A sync round invalidates the union of locally pushed and remotely pulled app tables.",
+      "action": "syncUnion",
+      "watchTables": [
+        "users",
+        "posts"
+      ],
+      "expectedEmission": true
+    },
+    {
+      "name": "successful-detach",
+      "description": "Successful detach clears managed app rows and emits affected-table invalidation.",
+      "action": "successfulDetach",
+      "watchTables": [
+        "users"
+      ],
+      "expectedEmission": true
+    },
+    {
+      "name": "blocked-detach",
+      "description": "Detach blocked by unsynced local rows does not emit app-table invalidation.",
+      "action": "blockedDetach",
+      "watchTables": [
+        "users"
+      ],
+      "expectedEmission": false
+    },
+    {
+      "name": "noop-detach",
+      "description": "Metadata-only remote-replace cancellation during anonymous detach does not emit app-table invalidation.",
+      "action": "noopDetach",
+      "watchTables": [
+        "users"
+      ],
+      "expectedEmission": false
+    }
+  ]
+}

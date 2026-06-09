@@ -45,6 +45,21 @@
       ]
     },
     {
+      "name": "key-changing-update",
+      "setupSql": [
+        "UPDATE _sync_apply_state SET apply_mode = 1 WHERE singleton_key = 1",
+        "INSERT INTO users(id, name, updated_at) VALUES('user-key-old', 'Move Me', '2026-01-01T00:00:00Z')",
+        "UPDATE _sync_apply_state SET apply_mode = 0 WHERE singleton_key = 1",
+        "INSERT INTO _sync_row_state(schema_name, table_name, key_json, row_version, deleted) VALUES('main', 'users', '{\"id\":\"user-key-old\"}', 3, 0)"
+      ],
+      "actionSql": [
+        "UPDATE users SET id = 'user-key-new', updated_at = '2026-01-02T00:00:00Z' WHERE id = 'user-key-old'"
+      ],
+      "expectedInvalidatedTables": [
+        "users"
+      ]
+    },
+    {
       "name": "apply-mode-suppression",
       "setupSql": [],
       "actionSql": [
