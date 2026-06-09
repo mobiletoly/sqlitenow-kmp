@@ -38,10 +38,10 @@ Full documentation is available at https://mobiletoly.github.io/sqlitenow-kmp/.
 
 ```toml
 [plugins]
-sqlitenow = { id = "dev.goquick.sqlitenow", version = "0.9.1" }
+sqlitenow = { id = "dev.goquick.sqlitenow", version = "0.10.0" }
 
 [libraries]
-sqlitenow-core = { module = "dev.goquick.sqlitenow:core", version = "0.9.1" }
+sqlitenow-core = { module = "dev.goquick.sqlitenow:core", version = "0.10.0" }
 ```
 
 ```kotlin
