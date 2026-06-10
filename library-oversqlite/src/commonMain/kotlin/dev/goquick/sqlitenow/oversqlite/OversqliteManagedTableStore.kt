@@ -21,18 +21,6 @@ import dev.goquick.sqlitenow.core.sqlite.use
 internal class OversqliteManagedTableStore(
     private val db: SafeSQLiteConnection,
 ) {
-    suspend fun initializeControlTables() {
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS _sync_managed_tables (
-              schema_name TEXT NOT NULL,
-              table_name TEXT NOT NULL,
-              PRIMARY KEY (schema_name, table_name)
-            )
-            """.trimIndent(),
-        )
-    }
-
     suspend fun registerManagedTables(validated: ValidatedConfig) {
         val statementCache = StatementCache(db)
         try {

@@ -1,0 +1,1 @@
+enum PayloadSource { localState, authoritativeWire }

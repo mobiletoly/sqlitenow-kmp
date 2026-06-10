@@ -21,7 +21,6 @@ import dev.goquick.sqlitenow.core.TransactionMode
 import dev.goquick.sqlitenow.core.sqlite.use
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -143,35 +142,20 @@ class DefaultOversqliteClient(
     suspend fun runAutomaticDownloads(
         automaticDownloadConfig: OversqliteAutomaticDownloadConfig = OversqliteAutomaticDownloadConfig(),
     ): Nothing {
-        val backoff = AutomaticDownloadBackoff(
-            minMillis = automaticDownloadConfig.bundleChangeWatchReconnectMinMillis,
-            maxMillis = automaticDownloadConfig.bundleChangeWatchReconnectMaxMillis,
-        )
-        while (true) {
-            if (downloadsPaused) {
-                delay(automaticDownloadConfig.automaticDownloadIntervalMillis)
-                continue
-            }
-            try {
-                if (shouldUseBundleChangeWatch(automaticDownloadConfig)) {
-                    runBundleChangeWatchIteration()
-                    backoff.delayNext()
-                } else {
-                    runAutomaticPollingIteration(automaticDownloadConfig)
-                    backoff.reset()
+        return OversqliteAutomaticDownloads(
+            automaticDownloadConfig = automaticDownloadConfig,
+            remoteApi = remoteApi,
+            attachmentStateStore = attachmentStateStore,
+            downloadsPaused = { downloadsPaused },
+            connectedRuntimeState = ::requireConnectedRuntimeState,
+            fetchCapabilities = { sourceId ->
+                withTransientRetry("automatic downloads capability check") {
+                    remoteApi.fetchCapabilities(sourceId)
                 }
-            } catch (error: Throwable) {
-                if (error is CancellationException) {
-                    throw error
-                }
-                verboseLog {
-                    "oversqlite automatic downloads iteration failed " +
-                        "error=${error::class.simpleName ?: "Throwable"}: ${error.message.orEmpty()}"
-                }
-                runAutomaticPullToStable("automatic downloads fallback after failure")
-                backoff.delayNext()
-            }
-        }
+            },
+            pullToStable = { pullToStable() },
+            log = { message -> verboseLog(message) },
+        ).run()
     }
 
     override suspend fun open(): Result<Unit> = runExclusiveOperation {
@@ -429,81 +413,6 @@ class DefaultOversqliteClient(
     }
 
     override fun close() {
-    }
-
-    private suspend fun shouldUseBundleChangeWatch(
-        automaticDownloadConfig: OversqliteAutomaticDownloadConfig,
-    ): Boolean {
-        if (automaticDownloadConfig.bundleChangeWatchMode != BundleChangeWatchMode.AUTO) {
-            return false
-        }
-        return try {
-            val state = automaticDownloadState("automatic downloads capability check")
-            val capabilities = withTransientRetry("automatic downloads capability check") {
-                remoteApi.fetchCapabilities(state.sourceId)
-            }
-            capabilities.bundleChangeWatchSupported
-        } catch (error: Throwable) {
-            if (error is CancellationException) {
-                throw error
-            }
-            verboseLog {
-                "oversqlite automatic downloads capability check failed; polling fallback will run " +
-                    "error=${error::class.simpleName ?: "Throwable"}: ${error.message.orEmpty()}"
-            }
-            false
-        }
-    }
-
-    private suspend fun runAutomaticPollingIteration(
-        automaticDownloadConfig: OversqliteAutomaticDownloadConfig,
-    ) {
-        if (!downloadsPaused) {
-            runAutomaticPullToStable("automatic downloads polling")
-        }
-        delay(automaticDownloadConfig.automaticDownloadIntervalMillis)
-    }
-
-    private suspend fun runBundleChangeWatchIteration() {
-        var pullFailed = false
-        val state = automaticDownloadState("bundle change watch")
-        remoteApi.watchBundleChanges(
-            sourceId = state.sourceId,
-            afterBundleSeq = state.lastBundleSeqSeen,
-        ) { event ->
-            if (event.bundleSeq > 0 && !downloadsPaused) {
-                if (!runAutomaticPullToStable("bundle change watch event")) {
-                    pullFailed = true
-                }
-            }
-        }
-        if (!pullFailed && !downloadsPaused) {
-            runAutomaticPullToStable("bundle change watch reconnect")
-        }
-    }
-
-    private suspend fun automaticDownloadState(operation: String): AutomaticDownloadState {
-        val runtimeState = requireConnectedRuntimeState(operation)
-        val attachment = attachmentStateStore.loadState()
-        return AutomaticDownloadState(
-            sourceId = attachment.currentSourceId.ifBlank { runtimeState.sourceId },
-            lastBundleSeqSeen = attachment.lastBundleSeqSeen,
-        )
-    }
-
-    private suspend fun runAutomaticPullToStable(operation: String): Boolean {
-        val result = pullToStable()
-        val error = result.exceptionOrNull() ?: return true
-        if (error is CancellationException) {
-            throw error
-        }
-        val expectedContention = error is SyncOperationInProgressException
-        verboseLog {
-            "oversqlite automatic downloads pull skipped op=$operation " +
-                "expectedContention=$expectedContention " +
-                "error=${error::class.simpleName ?: "Throwable"}: ${error.message.orEmpty()}"
-        }
-        return false
     }
 
     private suspend fun openInternal(): ValidatedConfig {
@@ -1346,31 +1255,15 @@ class DefaultOversqliteClient(
     }
 }
 
-private data class AutomaticDownloadState(
-    val sourceId: String,
-    val lastBundleSeqSeen: Long,
+private data class PushExecution(
+    val report: PushReport,
+    val updatedTables: Set<String>,
 )
 
-private class AutomaticDownloadBackoff(
-    private val minMillis: Long,
-    private val maxMillis: Long,
-) {
-    private var nextDelayMillis = minMillis
-
-    suspend fun delayNext() {
-        val delayMillis = nextDelayMillis
-        nextDelayMillis = if (nextDelayMillis > maxMillis / 2) {
-            maxMillis
-        } else {
-            minOf(maxMillis, nextDelayMillis * 2)
-        }
-        delay(delayMillis)
-    }
-
-    fun reset() {
-        nextDelayMillis = minMillis
-    }
-}
+private data class SyncExecution(
+    val report: SyncReport,
+    val updatedTables: Set<String>,
+)
 
 suspend fun OversqliteClient.runAutomaticDownloads(
     automaticDownloadConfig: OversqliteAutomaticDownloadConfig = OversqliteAutomaticDownloadConfig(),
@@ -1381,16 +1274,6 @@ suspend fun OversqliteClient.runAutomaticDownloads(
         )
     return defaultClient.runAutomaticDownloads(automaticDownloadConfig)
 }
-
-private data class PushExecution(
-    val report: PushReport,
-    val updatedTables: Set<String>,
-)
-
-private data class SyncExecution(
-    val report: SyncReport,
-    val updatedTables: Set<String>,
-)
 
 private data class DurableLifecycleView(
     val sourceId: String,

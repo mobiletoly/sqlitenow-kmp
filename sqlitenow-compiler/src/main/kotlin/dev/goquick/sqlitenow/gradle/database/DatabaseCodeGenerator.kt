@@ -36,9 +36,7 @@ import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateViewStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedStatement
-import dev.goquick.sqlitenow.gradle.oversqlite.resolveOversqliteSyncTables
 import dev.goquick.sqlitenow.gradle.util.CaseInsensitiveMap
-import dev.goquick.sqlitenow.gradle.util.pascalize
 import dev.goquick.sqlitenow.gradle.util.queryNamespaceClassName
 import dev.goquick.sqlitenow.gradle.util.queryParamsTypeName
 import dev.goquick.sqlitenow.gradle.processing.SharedResultManager
@@ -69,260 +67,31 @@ class DatabaseCodeGenerator(
     private val tableLookup = CaseInsensitiveMap(createTableStatements.map { it.src.tableName to it })
     private val sharedResultManager = SharedResultManager()
     private val adapterNameResolver = AdapterParameterNameResolver()
-
-    // ---------- Adapter selection helpers ----------
-    private fun isCustomType(t: TypeName): Boolean {
-        val s = t.toString()
-        return !(s.startsWith("kotlin.") || s.startsWith("kotlinx."))
-    }
-
-    private fun normalizedTypeString(t: TypeName): String = t.toString().removeSuffix("?")
-
-    private fun adapterScore(u: UniqueAdapter): Int {
-        val customScore = if (isCustomType(u.outputType)) 2 else 0
-        val nnInput = if (!u.inputType.isNullable) 1 else 0
-        val nonIdentity =
-            if (normalizedTypeString(u.inputType) != normalizedTypeString(u.outputType)) 1 else 0
-        return customScore + nnInput + nonIdentity
-    }
-
-    // Give precedence to adapters emitted from the namespace that owns the source column/result
-    private fun providerPreferenceScore(namespace: String, adapter: UniqueAdapter): Int {
-        return if (adapter.providerNamespace?.equals(namespace, ignoreCase = true) == true) 1 else 0
-    }
-
-    private fun baseFunctionKey(name: String): String = name.substringBefore("For")
-
-    private fun computeBestProviders(
-        adaptersByNamespace: Map<String, List<UniqueAdapter>>
-    ): Map<String, String> {
-        val winners = mutableMapOf<String, Pair<String, UniqueAdapter>>()
-        adaptersByNamespace.toSortedMap().forEach { (ns, adapters) ->
-            // Iterate deterministically so ties break in a stable manner across platforms
-            adapters.sortedBy { it.functionName }.forEach { ua ->
-                val key = baseFunctionKey(ua.functionName)
-                val current = winners[key]
-                if (current == null) {
-                    winners[key] = ns to ua
-                } else {
-                    val currentPref = providerPreferenceScore(current.first, current.second)
-                    val candidatePref = providerPreferenceScore(ns, ua)
-                    when {
-                        candidatePref > currentPref -> winners[key] = ns to ua
-                        candidatePref < currentPref -> { /* keep current */ }
-                        else -> {
-                            val currentScore = adapterScore(current.second)
-                            val candidateScore = adapterScore(ua)
-                            if (candidateScore > currentScore || (candidateScore == currentScore && ns < current.first)) {
-                                winners[key] = ns to ua
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return winners.mapValues { it.value.first }
-    }
-
-    private fun baseNameForNamespace(namespace: String): String {
-        val table = tableLookup[namespace]
-        return table?.annotations?.name ?: pascalize(namespace)
-    }
+    private val adapterPlanner = DatabaseAdapterPlanner(
+        nsWithStatements = nsWithStatements,
+        adapterConfig = adapterConfig,
+        tableLookup = tableLookup,
+        sharedResultManager = sharedResultManager,
+    )
+    private val oversqliteEmitter = DatabaseOversqliteEmitter(
+        databaseClassName = databaseClassName,
+        createTableStatements = createTableStatements,
+        oversqlite = oversqlite,
+    )
 
     private fun adapterClassNameFor(namespace: String): String =
-        baseNameForNamespace(namespace) + "Adapters"
+        adapterPlanner.adapterClassNameFor(namespace)
 
-    private fun adapterPropertyNameFor(namespace: String): String {
-        val cls = adapterClassNameFor(namespace)
-        return cls.lowercaseFirst()
-    }
+    private fun adapterPropertyNameFor(namespace: String): String =
+        adapterPlanner.adapterPropertyNameFor(namespace)
 
     private fun queryNamespaceName(namespace: String): String = queryNamespaceClassName(namespace)
+
     private fun routerClassNameFor(namespace: String): String =
-        baseNameForNamespace(namespace) + "Router"
+        adapterPlanner.baseNameForNamespace(namespace) + "Router"
 
     private fun routerPropertyNameFor(namespace: String): String =
-        baseNameForNamespace(namespace).lowercaseFirst()
-
-    /** Data class representing a unique adapter with its function signature. */
-    data class UniqueAdapter(
-        val functionName: String,
-        val inputType: TypeName,
-        val outputType: TypeName,
-        val isNullable: Boolean,
-        val providerNamespace: String?
-    ) {
-        fun toParameterSpec(): ParameterSpec {
-            val lambdaType = LambdaTypeName.get(
-                parameters = arrayOf(inputType),
-                returnType = outputType
-            )
-            return ParameterSpec.builder(functionName, lambdaType).build()
-        }
-
-        /** Create a signature key for deduplication that considers the actual TypeName structure */
-        fun signatureKey(): String {
-            return "${inputType}__$outputType"
-        }
-    }
-
-    /** Collects and deduplicates adapters per namespace. */
-    private fun collectAdaptersByNamespace(): Map<String, List<UniqueAdapter>> {
-        val adaptersByNamespace = mutableMapOf<String, MutableList<UniqueAdapter>>()
-
-        // Collect adapters for each namespace separately
-        nsWithStatements.forEach { (namespace, statements) ->
-            val namespaceAdapters = mutableListOf<UniqueAdapter>()
-            val processedSharedResults = mutableMapOf<String, Boolean>()
-
-            // First, register all shared results for this namespace
-            statements.filterIsInstance<AnnotatedSelectStatement>().forEach { statement ->
-                sharedResultManager.registerSharedResult(statement, namespace)
-            }
-
-            statements.forEach { statement ->
-                val statementAdapters = adapterConfig.collectAllParamConfigs(statement, namespace).toMutableList()
-                if (statement is AnnotatedSelectStatement && statement.annotations.queryResult != null) {
-                    val sharedResultKey = "${namespace}.${statement.annotations.queryResult}"
-                    val alreadyProcessed = processedSharedResults[sharedResultKey] ?: false
-                    if (alreadyProcessed) {
-                        statementAdapters.removeIf { it.kind == AdapterConfig.AdapterKind.MAP_RESULT }
-                    }
-                    val mapCollected = statement.annotations.mapTo != null
-                    processedSharedResults[sharedResultKey] = alreadyProcessed || mapCollected
-                }
-                statementAdapters.forEach { config ->
-                    namespaceAdapters.add(
-                        UniqueAdapter(
-                            functionName = config.adapterFunctionName,
-                            inputType = config.inputType,
-                            outputType = config.outputType,
-                            isNullable = config.isNullable,
-                            providerNamespace = config.providerNamespace
-                        )
-                    )
-                }
-            }
-
-            val deduplicatedAdapters = deduplicateAdaptersForNamespace(namespaceAdapters)
-            adaptersByNamespace[namespace] = deduplicatedAdapters.toMutableList()
-        }
-
-        return adaptersByNamespace
-    }
-
-    /** Deduplicates adapters within a single namespace. */
-    private fun deduplicateAdaptersForNamespace(adapters: List<UniqueAdapter>): List<UniqueAdapter> {
-        val adaptersByName = adapters.groupBy { it.functionName }
-        val result = mutableListOf<UniqueAdapter>()
-
-        adaptersByName.forEach { (baseName, adapterList) ->
-            // Remove exact duplicates first (same signature)
-            val uniqueBySignature = adapterList.distinctBy { it.signatureKey() }
-
-            val best = uniqueBySignature.maxByOrNull { adapterScore(it) }
-            val bestScore = best?.let { adapterScore(it) } ?: 0
-            val top = uniqueBySignature.filter { adapterScore(it) == bestScore }
-
-            if (top.size == 1) {
-                result.add(top.first().copy(functionName = baseName))
-            } else {
-                // Tie: keep all, but disambiguate names deterministically
-                top.forEach { adapter ->
-                    val inputLabel = sanitizeTypeLabel(adapter.inputType)
-                    val outputLabel = sanitizeTypeLabel(adapter.outputType)
-                    val uniqueName = "${baseName}For${inputLabel}To${outputLabel}"
-                    result.add(adapter.copy(functionName = uniqueName))
-                }
-            }
-        }
-
-        return result
-    }
-
-    private fun sanitizeTypeLabel(type: TypeName): String {
-        // Build a short, identifier-safe type label (e.g. StringNullable, ByteArray, ListString)
-        var s = type.toString()
-        // Keep only leaf class names for qualified types
-        s = s.split('.').last()
-        // Replace nullability with a readable token
-        s = s.replace("?", "Nullable")
-        // Remove generic punctuation and non-alphanumerics
-        s = s.replace(Regex("[<>.,\\s]"), "")
-        // Capitalize first char for consistency
-        return s.replaceFirstChar { it.uppercase() }
-    }
-
-    /**
-     * Simple helper function to find the correct adapter name.
-     * Uses direct lookup by expected function name pattern.
-     */
-    private fun findAdapterName(
-        namespace: String,
-        expectedFunctionName: String,
-        expectedInputType: TypeName,
-        adaptersByNamespace: Map<String, List<UniqueAdapter>>
-    ): String {
-        val deduplicatedAdapters = adaptersByNamespace[namespace] ?: return expectedFunctionName
-
-        // Look for exact match first
-        val exactMatch = deduplicatedAdapters.find { it.functionName == expectedFunctionName }
-        if (exactMatch != null) {
-            return exactMatch.functionName
-        }
-
-        // Look for renamed version (e.g., phoneToSqlValueForString)
-        val renamedMatch = deduplicatedAdapters.find {
-            it.functionName.startsWith(expectedFunctionName + "For") && it.inputType == expectedInputType
-        }
-
-        return renamedMatch?.functionName ?: expectedFunctionName
-    }
-
-    private fun findBestProviderByName(
-        expectedFunctionName: String,
-        adaptersByNamespace: Map<String, List<UniqueAdapter>>
-    ): Pair<String, UniqueAdapter>? {
-        fun isCustom(t: TypeName): Boolean {
-            val s = t.toString()
-            return !(s.startsWith("kotlin.") || s.startsWith("kotlinx."))
-        }
-
-        fun normalized(t: TypeName) = t.toString().removeSuffix("?")
-
-        var best: Pair<String, UniqueAdapter>? = null
-        adaptersByNamespace.forEach { (ns, adapters) ->
-            adapters.filter {
-                it.functionName == expectedFunctionName || it.functionName.startsWith(
-                    expectedFunctionName + "For"
-                )
-            }.forEach { cand ->
-                val cur = best
-                if (cur == null) {
-                    best = ns to cand
-                } else {
-                    val currentPref = providerPreferenceScore(cur.first, cur.second)
-                    val candidatePref = providerPreferenceScore(ns, cand)
-                    // Prefer adapters from the namespace that declared the column/result; when that
-                    // still ties, fall back to quality score and finally namespace name for stability.
-                    when {
-                        candidatePref > currentPref -> best = ns to cand
-                        candidatePref < currentPref -> {
-                            // keep current
-                        }
-                        else -> {
-                            val currentScore = adapterScore(cur.second)
-                            val candidateScore = adapterScore(cand)
-                            if (candidateScore > currentScore || (candidateScore == currentScore && ns < cur.first)) {
-                                best = ns to cand
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return best
-    }
+        adapterPlanner.baseNameForNamespace(namespace).lowercaseFirst()
 
     /**
      * Generates the main database class file.
@@ -358,14 +127,14 @@ class DatabaseCodeGenerator(
             .addModifiers(KModifier.PUBLIC)
             .superclass(ClassName("dev.goquick.sqlitenow.core", "SqliteNowDatabase"))
 
-        val adaptersByNamespace = collectAdaptersByNamespace()
+        val adaptersByNamespace = adapterPlanner.collectAdaptersByNamespace()
 
         // Compute best provider per adapter function and filter adapters accordingly
-        val bestProviderForFunction: Map<String, String> = computeBestProviders(adaptersByNamespace)
+        val bestProviderForFunction: Map<String, String> = adapterPlanner.computeBestProviders(adaptersByNamespace)
         val namespacesWithFilteredAdapters = adaptersByNamespace
             .mapValues { (ns, adapters) ->
                 adapters.filter {
-                    bestProviderForFunction[baseFunctionKey(
+                    bestProviderForFunction[adapterPlanner.baseFunctionKey(
                         it.functionName
                     )] == ns
                 }
@@ -395,148 +164,7 @@ class DatabaseCodeGenerator(
             classBuilder.addType(routerClass)
         }
 
-        // Oversqlite integration helpers: derive sync tables from enableSync annotations
-        val syncTables = resolveOversqliteSyncTables(
-            databaseClassName = databaseClassName,
-            createTableStatements = createTableStatements,
-            oversqlite = oversqlite,
-        )
-
-        if (oversqlite) {
-            // Generate SyncTable objects with primary key detection
-            val syncTableInitializers = syncTables.map { syncTable ->
-                // Always materialize the resolved sync key into generated code so runtime bootstrap
-                // does not depend on any implicit SyncTable default.
-                val syncKeyParam = ", syncKeyColumnName = \"${syncTable.syncKeyColumnName}\""
-                "%T(tableName = \"${syncTable.table.name}\"$syncKeyParam)"
-            }
-
-            val listInitializer = syncTableInitializers.joinToString(", ")
-            val companion = TypeSpec.companionObjectBuilder()
-                .addProperty(
-                    PropertySpec.builder(
-                        "syncTables",
-                        ClassName(
-                            "kotlin.collections",
-                            "List"
-                        ).parameterizedBy(
-                            ClassName(
-                                "dev.goquick.sqlitenow.oversqlite",
-                                "SyncTable"
-                            )
-                        )
-                    ).initializer(
-                        "listOf($listInitializer)",
-                        *Array(syncTables.size) {
-                            ClassName(
-                                "dev.goquick.sqlitenow.oversqlite",
-                                "SyncTable"
-                            )
-                        })
-                        .addKdoc("Tables annotated with enableSync in schema; used to configure oversqlite.")
-                        .build()
-                )
-                .build()
-            classBuilder.addType(companion)
-
-            // fun buildOversqliteConfig(schema: String, uploadLimit: Int = 200, downloadLimit: Int = 1000): OversqliteConfig
-            classBuilder.addFunction(
-                FunSpec.builder("buildOversqliteConfig")
-                    .addKdoc("Builds oversqlite config using enableSync tables.")
-                    .addParameter("schema", String::class)
-                    .addParameter(
-                        ParameterSpec.builder("uploadLimit", Int::class).defaultValue("200").build()
-                    )
-                    .addParameter(
-                        ParameterSpec.builder("downloadLimit", Int::class).defaultValue("1000")
-                            .build()
-                    )
-                    .addParameter(
-                        ParameterSpec.builder("verboseLogs", Boolean::class).defaultValue("false")
-                            .build()
-                    )
-                    .returns(ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteConfig"))
-                    .addStatement(
-                        "return %T(schema, syncTables, uploadLimit, downloadLimit, verboseLogs = verboseLogs)",
-                        ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteConfig")
-                    )
-                    .build()
-            )
-
-            // fun buildOversqliteAutomaticDownloadConfig(...): OversqliteAutomaticDownloadConfig
-            classBuilder.addFunction(
-                FunSpec.builder("buildOversqliteAutomaticDownloadConfig")
-                    .addKdoc("Builds optional automatic download config for the generated oversqlite client.")
-                    .addParameter(
-                        ParameterSpec.builder("automaticDownloadIntervalMillis", Long::class)
-                            .defaultValue("60_000")
-                            .build()
-                    )
-                    .addParameter(
-                        ParameterSpec.builder(
-                            "bundleChangeWatchMode",
-                            ClassName("dev.goquick.sqlitenow.oversqlite", "BundleChangeWatchMode")
-                        ).defaultValue(
-                            "%T.OFF",
-                            ClassName("dev.goquick.sqlitenow.oversqlite", "BundleChangeWatchMode")
-                        ).build()
-                    )
-                    .addParameter(
-                        ParameterSpec.builder("bundleChangeWatchReconnectMinMillis", Long::class)
-                            .defaultValue("1_000")
-                            .build()
-                    )
-                    .addParameter(
-                        ParameterSpec.builder("bundleChangeWatchReconnectMaxMillis", Long::class)
-                            .defaultValue("60_000")
-                            .build()
-                    )
-                    .returns(ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteAutomaticDownloadConfig"))
-                    .addStatement(
-                        "return %T(automaticDownloadIntervalMillis = automaticDownloadIntervalMillis, bundleChangeWatchMode = bundleChangeWatchMode, bundleChangeWatchReconnectMinMillis = bundleChangeWatchReconnectMinMillis, bundleChangeWatchReconnectMaxMillis = bundleChangeWatchReconnectMaxMillis)",
-                        ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteAutomaticDownloadConfig")
-                    )
-                    .build()
-            )
-
-            // fun newOversqliteClient(schema: String, httpClient: HttpClient, resolver: Resolver = ServerWinsResolver,...)
-            classBuilder.addFunction(
-                FunSpec.builder("newOversqliteClient")
-                    .addKdoc("Creates a DefaultOversqliteClient bound to this DB using a pre-configured HttpClient with authentication and base URL.")
-                    .addParameter("schema", String::class)
-                    .addParameter("httpClient", ClassName("io.ktor.client", "HttpClient"))
-                    .addParameter(
-                        ParameterSpec.builder(
-                            "resolver",
-                            ClassName("dev.goquick.sqlitenow.oversqlite", "Resolver")
-                        ).defaultValue(
-                            "%T",
-                            ClassName("dev.goquick.sqlitenow.oversqlite", "ServerWinsResolver")
-                        ).build()
-                    )
-                    .addParameter(
-                        ParameterSpec.builder("uploadLimit", Int::class).defaultValue("200").build()
-                    )
-                    .addParameter(
-                        ParameterSpec.builder("downloadLimit", Int::class).defaultValue("1000")
-                            .build()
-                    )
-                    .addParameter(
-                        ParameterSpec.builder("verboseLogs", Boolean::class).defaultValue("false")
-                            .build()
-                    )
-                    .returns(ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteClient"))
-                    .addStatement("val cfg = buildOversqliteConfig(schema, uploadLimit, downloadLimit, verboseLogs)")
-                    .apply {
-                        val clientClass = ClassName("dev.goquick.sqlitenow.oversqlite", "DefaultOversqliteClient")
-                        addStatement(
-                            "return %T(db = this.connection(), config = cfg, http = httpClient, resolver = resolver)",
-                            clientClass,
-                        )
-                    }
-                    .build()
-            )
-        }
+        oversqliteEmitter.addOversqliteSupport(classBuilder)
 
         return classBuilder.build()
     }
@@ -607,11 +235,11 @@ class DatabaseCodeGenerator(
         adaptersByNamespace: Map<String, List<UniqueAdapter>>
     ): Pair<String, String> {
         val providerNs =
-            findBestProviderByName(config.adapterFunctionName, adaptersByNamespace)?.first
+            adapterPlanner.findBestProviderByName(config.adapterFunctionName, adaptersByNamespace)?.first
                 ?: namespace
         val providerProp = adapterPropertyNameFor(providerNs)
         val actualAdapterName =
-            findAdapterName(providerNs, config.adapterFunctionName, config.inputType, adaptersByNamespace)
+            adapterPlanner.findAdapterName(providerNs, config.adapterFunctionName, config.inputType, adaptersByNamespace)
         return providerProp to actualAdapterName
     }
 

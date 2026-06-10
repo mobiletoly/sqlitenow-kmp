@@ -20,18 +20,13 @@ import dev.goquick.sqlitenow.gradle.context.AdapterConfig
 import dev.goquick.sqlitenow.gradle.context.GeneratorContext
 import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
-import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
 import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
 import dev.goquick.sqlitenow.gradle.processing.DynamicFieldMapper
 import dev.goquick.sqlitenow.gradle.processing.DynamicFieldUtils
-import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationOverrides
 import dev.goquick.sqlitenow.gradle.processing.JoinedPropertyNameResolver
 import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
 import dev.goquick.sqlitenow.gradle.processing.SelectFieldCodeGenerator
-import dev.goquick.sqlitenow.gradle.util.AliasPathUtils
-import dev.goquick.sqlitenow.gradle.util.CaseInsensitiveMap
 import dev.goquick.sqlitenow.gradle.util.IndentedCodeBuilder
-import java.util.IdentityHashMap
 
 internal data class DynamicFieldInvocation(
     val field: AnnotatedSelectStatement.Field,
@@ -58,16 +53,14 @@ internal class ResultMappingHelper(
     private val adapterConfig: AdapterConfig,
 ) {
 
+    private val fieldResolver =
+        ResultMappingFieldResolver(generatorContext, selectFieldGenerator, adapterConfig)
+    private val collectionRenderer =
+        ResultMappingCollectionRenderer(generatorContext, fieldResolver)
     private val dynamicFieldEmitter = DynamicFieldEmitter()
     private val nullGuardBuilder = NullGuardBuilder()
     private val collectionEmitter = CollectionMappingEmitter()
     private val resultConstructorEmitter = ResultConstructorEmitter()
-    private val joinedNameMapCache =
-        IdentityHashMap<AnnotatedSelectStatement, Map<JoinedPropertyNameResolver.JoinedFieldKey, String>>()
-    private val tableLookupCache =
-        IdentityHashMap<AnnotatedSelectStatement, CaseInsensitiveMap<AnnotatedCreateTableStatement>>()
-    private val tableColumnLookupCache =
-        IdentityHashMap<AnnotatedCreateTableStatement, CaseInsensitiveMap<AnnotatedCreateTableStatement.Column>>()
 
     private data class ColumnAssignment(
         val rendered: String,
@@ -106,14 +99,7 @@ internal class ResultMappingHelper(
 
     /** Cache-friendly wrapper around JoinedPropertyNameResolver to avoid recomputing per mapping site. */
     fun computeJoinedNameMap(statement: AnnotatedSelectStatement): Map<JoinedPropertyNameResolver.JoinedFieldKey, String> {
-        joinedNameMapCache[statement]?.let { return it }
-        val map = JoinedPropertyNameResolver.computeNameMap(
-            fields = statement.fields,
-            propertyNameGenerator = statement.annotations.propertyNameGenerator,
-            selectFieldGenerator = selectFieldGenerator,
-        )
-        joinedNameMapCache[statement] = map
-        return map
+        return fieldResolver.computeJoinedNameMap(statement)
     }
 
     private data class JoinedMappingEntry(val comment: String?, val assignment: String)
@@ -200,11 +186,6 @@ internal class ResultMappingHelper(
         return entries
     }
 
-    data class ResolvedJoinedName(
-        val property: String,
-        val suffixed: Boolean,
-    )
-
     fun resolveJoinedPropertyName(
         column: SelectStatement.FieldSource,
         mapping: DynamicFieldMapper.DynamicFieldMapping,
@@ -212,37 +193,20 @@ internal class ResultMappingHelper(
         aliasPath: List<String>?,
         joinedNameMap: Map<JoinedPropertyNameResolver.JoinedFieldKey, String>,
     ): ResolvedJoinedName {
-        val aliasPrefix = mapping.aliasPrefix?.takeIf { it.isNotBlank() }
-        val tableCandidates = AliasResolutionHelper.buildTableCandidates(column, mapping, statement)
-        val candidateNames = AliasResolutionHelper.candidateFieldNames(column, aliasPrefix)
-        val preferSuffixed =
-            AliasResolutionHelper.shouldPreferSuffixed(aliasPath, mapping, statement)
-
-        tableCandidates.forEach { table ->
-            val expandedCandidates =
-                AliasResolutionHelper.expandCandidateNamesForTable(
-                    table,
-                    candidateNames,
-                    joinedNameMap,
-                    preferSuffixed
-                )
-            expandedCandidates.forEach { candidate ->
-                val key = JoinedPropertyNameResolver.JoinedFieldKey(table, candidate)
-                joinedNameMap[key]?.let { return ResolvedJoinedName(it, candidate.contains(':')) }
-            }
-        }
-
-        val fallbackName = candidateNames.firstOrNull().orEmpty().ifBlank { column.fieldName }
-        val resolved =
-            statement.annotations.propertyNameGenerator.convertToPropertyName(fallbackName)
-        return ResolvedJoinedName(resolved, fallbackName.contains(':'))
+        return fieldResolver.resolveJoinedPropertyName(
+            column = column,
+            mapping = mapping,
+            statement = statement,
+            aliasPath = aliasPath,
+            joinedNameMap = joinedNameMap,
+        )
     }
 
     fun getPropertyName(
         field: AnnotatedSelectStatement.Field,
         propertyNameGenerator: PropertyNameGeneratorType,
     ): String {
-        return adapterConfig.getPropertyName(field, propertyNameGenerator, selectFieldGenerator)
+        return fieldResolver.getPropertyName(field, propertyNameGenerator)
     }
 
     fun buildFieldDebugComment(
@@ -251,80 +215,19 @@ internal class ResultMappingHelper(
         propertyNameGenerator: PropertyNameGeneratorType,
         includeType: Boolean,
     ): String {
-        val parts = mutableListOf<String>()
-        if (includeType) {
-            val sqlType = field.src.dataType
-            val kotlinType = selectFieldGenerator
-                .generateProperty(field, propertyNameGenerator)
-                .type
-                .toString()
-            parts += "type=$sqlType -> $kotlinType"
-        }
-        field.src.fieldName.takeIf { it.isNotBlank() }?.let { parts += "select=$it" }
-        val sourceAlias = when {
-            !field.annotations.sourceTable.isNullOrBlank() -> field.annotations.sourceTable
-            field.src.tableName.isNotBlank() -> field.src.tableName
-            else -> null
-        }
-        sourceAlias?.let { alias ->
-            val target = selectStatement.tableAliases[alias] ?: alias
-            val descriptor =
-                if (!alias.equals(target, ignoreCase = true)) "$alias->$target" else alias
-            parts += "source=$descriptor"
-        }
-        field.src.originalColumnName.takeIf { it.isNotBlank() && it != field.src.fieldName }
-            ?.let { parts += "column=$it" }
-        field.annotations.aliasPrefix?.takeIf { it.isNotBlank() }?.let { parts += "prefix=$it" }
-        if (field.aliasPath.isNotEmpty()) {
-            parts += "aliasPath=${field.aliasPath.joinToString("->")}"
-        }
-        field.annotations.mappingType?.let { mappingType ->
-            parts += "mapping=${mappingType.lowercase()}"
-            field.annotations.collectionKey?.takeIf { it.isNotBlank() }
-                ?.let { key -> parts += "collectionKey=$key" }
-        }
-        field.annotations.notNull?.let { parts += "notNull=$it" }
-        return parts.joinToString(", ")
+        return fieldResolver.buildFieldDebugComment(
+            field = field,
+            selectStatement = selectStatement,
+            propertyNameGenerator = propertyNameGenerator,
+            includeType = includeType,
+        )
     }
 
     fun isTargetPropertyNullable(
         statement: AnnotatedSelectStatement,
         column: SelectStatement.FieldSource,
     ): Boolean {
-        val annotatedField = findAnnotatedField(statement, column)
-        if (annotatedField != null) {
-            return selectFieldGenerator.determineNullability(annotatedField)
-        }
-
-        val mockFieldAnnotations = FieldAnnotationOverrides(
-            propertyName = null,
-            propertyType = null,
-            notNull = null,
-            adapter = false,
-        )
-        val mockField = AnnotatedSelectStatement.Field(
-            src = column,
-            annotations = mockFieldAnnotations,
-        )
-        return selectFieldGenerator.determineNullability(mockField)
-    }
-
-    private fun findAnnotatedField(
-        statement: AnnotatedSelectStatement,
-        column: SelectStatement.FieldSource,
-    ): AnnotatedSelectStatement.Field? {
-        val normalizedFieldName = column.fieldName.substringBefore(':')
-        return statement.fields.firstOrNull { field ->
-            val candidateFieldName = field.src.fieldName.substringBefore(':')
-            val candidateOriginal = field.src.originalColumnName.substringBefore(':')
-            val matchesField = candidateFieldName.equals(column.fieldName, ignoreCase = true) ||
-                    candidateFieldName.equals(normalizedFieldName, ignoreCase = true)
-            val matchesOriginal = column.originalColumnName.isNotBlank() &&
-                    candidateOriginal.equals(column.originalColumnName, ignoreCase = true)
-            val tableMatches = field.src.tableName.equals(column.tableName, ignoreCase = true) ||
-                    field.src.tableName.isBlank() || column.tableName.isBlank()
-            (matchesField || matchesOriginal) && tableMatches
-        }
+        return fieldResolver.isTargetPropertyNullable(statement, column)
     }
 
     fun findOriginalColumnPropertyName(
@@ -332,20 +235,10 @@ internal class ResultMappingHelper(
         sourceTableAlias: String,
         statement: AnnotatedSelectStatement,
     ): String? {
-        val tableName = statement.src.tableAliases[sourceTableAlias] ?: sourceTableAlias
-        val tableLookup = tableLookupCache.getOrPut(statement) {
-            CaseInsensitiveMap(generatorContext.createTableStatements.map { it.src.tableName to it })
-        }
-        val table = tableLookup[tableName] ?: return null
-
-        val columnLookup = tableColumnLookupCache.getOrPut(table) {
-            CaseInsensitiveMap(table.columns.map { it.src.name to it })
-        }
-        val column = columnLookup[baseColumnName] ?: return null
-
-        val propertyName = column.annotations[AnnotationConstants.PROPERTY_NAME] as? String
-        return propertyName ?: statement.annotations.propertyNameGenerator.convertToPropertyName(
-            baseColumnName
+        return fieldResolver.findOriginalColumnPropertyName(
+            baseColumnName = baseColumnName,
+            sourceTableAlias = sourceTableAlias,
+            statement = statement,
         )
     }
 
@@ -646,64 +539,14 @@ internal class ResultMappingHelper(
         collectionIndentLevel: Int = 3,
         dynamicIndentLevel: Int = 4,
     ): List<List<String>> {
-        val propertyNameGenerator = statement.annotations.propertyNameGenerator
-        val joinedNameMap = computeJoinedNameMap(statement)
-        val collectionFields = statement.mappingPlan.includedCollectionFields
-        val collectionAliasPaths = collectionFields.mapNotNull { field ->
-            field.aliasPath.takeIf { it.isNotEmpty() }?.let { AliasPathUtils.lowercase(it) }
-        }
-
-        val regularBlocks = statement.mappingPlan.regularFields.map { field ->
-            val propertyName = getPropertyName(field, propertyNameGenerator)
-            val key = JoinedPropertyNameResolver.JoinedFieldKey(
-                field.src.tableName,
-                field.src.fieldName
-            )
-            val joinedProp = joinedNameMap[key] ?: propertyName
-            buildAssignmentBlock(
-                field = field,
-                statement = statement,
-                propertyName = propertyName,
-                assignmentExpression = "$firstRowVar.$joinedProp",
-                includeTypeInComment = true,
-            )
-        }
-
-        val perRowBlocks = buildDynamicAssignmentBlocks(
-            fields = statement.mappingPlan.includedPerRowEntries.map { it.field },
+        return collectionRenderer.buildCollectionConstructorBlocks(
             statement = statement,
             firstRowVar = firstRowVar,
             rowsVar = rowsVar,
-            dynamicIndentLevel = dynamicIndentLevel,
-            propertyNameGenerator = propertyNameGenerator,
-            collectionAliasPaths = collectionAliasPaths,
-        )
-
-        val entityBlocks = buildDynamicAssignmentBlocks(
-            fields = statement.mappingPlan.includedEntityEntries.map { it.field },
-            statement = statement,
-            firstRowVar = firstRowVar,
-            rowsVar = rowsVar,
-            dynamicIndentLevel = dynamicIndentLevel,
-            propertyNameGenerator = propertyNameGenerator,
-            collectionAliasPaths = collectionAliasPaths,
-        )
-
-        val collectionBlocks = collectionFields.map { collectionField ->
-            val propertyName = getPropertyName(collectionField, propertyNameGenerator)
-            val mapping =
-                statement.mappingPlan.dynamicMappingsByField[collectionField.src.fieldName]
-
-            if (mapping != null && mapping.columns.isNotEmpty()) {
-                val collectionExpr = generateCollectionMappingCode(
-                    request = DynamicFieldInvocation(
-                        field = collectionField,
-                        statement = statement,
-                        mapping = mapping,
-                        sourceVar = firstRowVar,
-                        baseIndentLevel = collectionIndentLevel,
-                    ),
-                    rowsVar = rowsVar,
+            collectionMappingCodeProvider = { request, providedRowsVar ->
+                generateCollectionMappingCode(
+                    request = request,
+                    rowsVar = providedRowsVar,
                     generateConstructorArgumentsFromMapping = { map, ctx ->
                         generateConstructorArgumentsFromMapping(map, ctx)
                     },
@@ -711,101 +554,13 @@ internal class ResultMappingHelper(
                         generateDynamicFieldMappingCodeFromJoined(nestedRequest, nestedRowsVar)
                     },
                 )
-                val exprLines = collectionExpr.split("\n")
-                val firstLine = exprLines.firstOrNull() ?: "emptyList()"
-                val trailingLines = if (exprLines.size > 1) exprLines.drop(1) else emptyList()
-                buildAssignmentBlock(
-                    field = collectionField,
-                    statement = statement,
-                    propertyName = propertyName,
-                    assignmentExpression = firstLine,
-                    includeTypeInComment = false,
-                    additionalLines = trailingLines,
-                )
-            } else {
-                buildAssignmentBlock(
-                    field = collectionField,
-                    statement = statement,
-                    propertyName = propertyName,
-                    assignmentExpression = "emptyList()",
-                    includeTypeInComment = false,
-                )
-            }
-        }
-
-        return regularBlocks + perRowBlocks + entityBlocks + collectionBlocks
-    }
-
-    private fun buildDynamicAssignmentBlocks(
-        fields: List<AnnotatedSelectStatement.Field>,
-        statement: AnnotatedSelectStatement,
-        firstRowVar: String,
-        rowsVar: String,
-        dynamicIndentLevel: Int,
-        propertyNameGenerator: PropertyNameGeneratorType,
-        collectionAliasPaths: List<List<String>>,
-    ): List<List<String>> {
-        if (fields.isEmpty()) return emptyList()
-
-        return fields
-            .filter { field ->
-                AliasResolutionHelper.shouldIncludeDynamicForCollection(
-                    aliasPath = AliasPathUtils.lowercase(field.aliasPath),
-                    collectionAliasPaths = collectionAliasPaths,
-                )
-            }
-            .map { field ->
-                val propertyName = getPropertyName(field, propertyNameGenerator)
-                val mappingPlanMapping =
-                    statement.mappingPlan.dynamicMappingsByField[field.src.fieldName]
-                val mappingCode = if (mappingPlanMapping != null) {
-                    generateDynamicFieldMappingCodeFromJoined(
-                        DynamicFieldInvocation(
-                            field = field,
-                            statement = statement,
-                            mapping = mappingPlanMapping,
-                            sourceVar = firstRowVar,
-                            baseIndentLevel = dynamicIndentLevel,
-                        ),
-                        rowsVar,
-                    )
-                } else {
-                    "null"
-                }
-                buildAssignmentBlock(
-                    field = field,
-                    statement = statement,
-                    propertyName = propertyName,
-                    assignmentExpression = mappingCode,
-                    includeTypeInComment = false,
-                )
-            }
-    }
-
-    /** Produce a reusable "comment + assignment" block for the generated constructor code. */
-    private fun buildAssignmentBlock(
-        field: AnnotatedSelectStatement.Field,
-        statement: AnnotatedSelectStatement,
-        propertyName: String,
-        assignmentExpression: String,
-        includeTypeInComment: Boolean,
-        additionalLines: List<String> = emptyList(),
-    ): List<String> {
-        val comment = buildFieldDebugComment(
-            field = field,
-            selectStatement = statement.src,
-            propertyNameGenerator = statement.annotations.propertyNameGenerator,
-            includeType = includeTypeInComment,
+            },
+            dynamicFieldMappingProvider = { nestedRequest, nestedRowsVar ->
+                generateDynamicFieldMappingCodeFromJoined(nestedRequest, nestedRowsVar)
+            },
+            collectionIndentLevel = collectionIndentLevel,
+            dynamicIndentLevel = dynamicIndentLevel,
         )
-        return buildStringList { lines ->
-            if (comment.isNotEmpty()) {
-                lines += "// $comment"
-            }
-            lines += "$propertyName = $assignmentExpression"
-            if (additionalLines.isNotEmpty()) {
-                lines += additionalLines
-            }
-        }
     }
 
     fun emitCollectionConstructorBlocks(
@@ -814,204 +569,51 @@ internal class ResultMappingHelper(
         firstRowVar: String,
         rowsVar: String,
     ) {
-        val blocks = buildCollectionConstructorBlocks(
+        collectionRenderer.emitCollectionConstructorBlocks(
+            builder = builder,
             statement = statement,
             firstRowVar = firstRowVar,
             rowsVar = rowsVar,
+            collectionMappingCodeProvider = { request, providedRowsVar ->
+                generateCollectionMappingCode(
+                    request = request,
+                    rowsVar = providedRowsVar,
+                    generateConstructorArgumentsFromMapping = { map, ctx ->
+                        generateConstructorArgumentsFromMapping(map, ctx)
+                    },
+                    dynamicFieldMapper = { nestedRequest, nestedRowsVar ->
+                        generateDynamicFieldMappingCodeFromJoined(nestedRequest, nestedRowsVar)
+                    },
+                )
+            },
+            dynamicFieldMappingProvider = { nestedRequest, nestedRowsVar ->
+                generateDynamicFieldMappingCodeFromJoined(nestedRequest, nestedRowsVar)
+            },
         )
-
-        blocks.forEachIndexed { blockIndex, lines ->
-            val isLastBlock = blockIndex == blocks.lastIndex
-            val indentPrefix = " ".repeat(builder.currentIndent())
-            lines.forEachIndexed { lineIndex, line ->
-                val suffix = if (lineIndex == lines.lastIndex && !isLastBlock) "," else ""
-                val content = if (line.isNotEmpty() && line.first().isWhitespace()) {
-                    line
-                } else {
-                    indentPrefix + line
-                }
-                builder.lineRaw(content + suffix)
-            }
-        }
     }
 
     fun findFieldByCollectionKey(
         statement: AnnotatedSelectStatement,
         collectionKey: String,
     ): AnnotatedSelectStatement.Field? {
-        val preferredFields = statement.mappingPlan.regularFields
-        val candidateSets = listOf(
-            preferredFields,
-            statement.mappingPlan.includedDynamicFields,
-            statement.fields,
-        )
-
-        val tableLookup = mutableMapOf<Pair<String, String>, AnnotatedSelectStatement.Field>()
-        preferredFields.forEach { field ->
-            val table = field.src.tableName
-            val column = field.src.originalColumnName.ifBlank { field.src.fieldName }
-            tableLookup[table.lowercase() to column.lowercase()] = field
-        }
-
-        if (collectionKey.contains(".")) {
-            val (tableAliasRaw, columnNameRaw) = collectionKey.split(".", limit = 2)
-            val key = tableAliasRaw.lowercase() to columnNameRaw.lowercase()
-            tableLookup[key]?.let { return it }
-
-            candidateSets.forEach { fields ->
-                fields.firstOrNull { field ->
-                    field.src.tableName.equals(tableAliasRaw, ignoreCase = true) &&
-                            (field.src.originalColumnName.equals(
-                                columnNameRaw,
-                                ignoreCase = true
-                            ) ||
-                                    field.src.fieldName.equals(columnNameRaw, ignoreCase = true))
-                }?.let { return it }
-            }
-        } else {
-            preferredFields.firstOrNull { field ->
-                field.src.fieldName.equals(collectionKey, ignoreCase = true)
-            }?.let { return it }
-
-            candidateSets.forEach { fields ->
-                fields.firstOrNull { field ->
-                    field.src.fieldName.equals(collectionKey, ignoreCase = true) ||
-                            field.src.originalColumnName.equals(collectionKey, ignoreCase = true)
-                }?.let { return it }
-            }
-        }
-
-        return null
+        return collectionRenderer.findFieldByCollectionKey(statement, collectionKey)
     }
 
     fun findUniqueFieldForCollection(
         collectionField: AnnotatedSelectStatement.Field,
         annotatedStatement: AnnotatedSelectStatement,
     ): String? {
-        val collectionKey = collectionField.annotations.collectionKey
-        if (collectionKey.isNullOrBlank()) return null
-
-        val matchingField = findFieldByCollectionKey(annotatedStatement, collectionKey)
-        if (matchingField == null) {
-            val availableFields = annotatedStatement.fields.map { field ->
-                val tableInfo = if (field.src.tableName.isNotBlank()) {
-                    "${field.src.tableName}.${field.src.originalColumnName}"
-                } else {
-                    field.src.originalColumnName
-                }
-                "$tableInfo AS ${field.src.fieldName}"
-            }
-            throw IllegalArgumentException(
-                "collectionKey '$collectionKey' not found in SELECT statement. Available fields: $availableFields"
-            )
-        }
-
-        val mapping =
-            annotatedStatement.mappingPlan.dynamicMappingsByField[collectionField.src.fieldName]
-        if (mapping != null) {
-            val mappingColumn = mapping.columns.find { it.fieldName == matchingField.src.fieldName }
-            if (mappingColumn != null) {
-                val basePropertyName = if (mapping.aliasPrefix != null &&
-                    mappingColumn.fieldName.startsWith(mapping.aliasPrefix)
-                ) {
-                    mappingColumn.fieldName.removePrefix(mapping.aliasPrefix)
-                } else {
-                    mappingColumn.originalColumnName
-                }
-                return annotatedStatement.annotations.propertyNameGenerator.convertToPropertyName(
-                    basePropertyName
-                )
-            }
-        }
-
-        return annotatedStatement.annotations.propertyNameGenerator.convertToPropertyName(
-            matchingField.src.fieldName
-        )
+        return collectionRenderer.findUniqueFieldForCollection(collectionField, annotatedStatement)
     }
 
     fun findDistinctByPathForNestedConstruction(
         targetPropertyType: String,
         uniqueField: String,
     ): String {
-        val actualType = GenericTypeParser.Companion.extractFirstTypeArgument(targetPropertyType)
-        val resolved = resolveDistinctPathForType(actualType, uniqueField, mutableSetOf())
-        return resolved ?: uniqueField
-    }
-
-    private fun resolveDistinctPathForType(
-        rawType: String,
-        uniqueField: String,
-        visited: MutableSet<String>,
-    ): String? {
-        val normalizedType = normalizeType(rawType)
-        if (!visited.add(normalizedType)) return null
-
-        val nestedStatement = resolveStatementForType(normalizedType) ?: return null
-        val propertyNameGenerator = nestedStatement.annotations.propertyNameGenerator
-
-        nestedStatement.mappingPlan.regularFields.firstOrNull { field ->
-            getPropertyName(field, propertyNameGenerator) == uniqueField
-        }?.let {
-            return uniqueField
-        }
-
-        nestedStatement.mappingPlan.includedDynamicEntries.forEach { entry ->
-            val field = entry.field
-            val mappingType = field.annotations.mappingType
-            if (mappingType != null &&
-                mappingType.equals(
-                    AnnotationConstants.MappingType.COLLECTION.value,
-                    ignoreCase = true
-                )
-            ) {
-                return@forEach
-            }
-            val propertyName = getPropertyName(field, propertyNameGenerator)
-            if (propertyName == uniqueField) {
-                return propertyName
-            }
-
-            val propertyType = field.annotations.propertyType
-            val nestedType = propertyType?.let { type ->
-                val innerType = GenericTypeParser.Companion.extractFirstTypeArgument(type)
-                normalizeType(innerType)
-            }
-
-            if (!nestedType.isNullOrBlank()) {
-                resolveDistinctPathForType(nestedType, uniqueField, visited)?.let { nestedPath ->
-                    return if (nestedPath.isEmpty()) propertyName else "$propertyName.$nestedPath"
-                }
-            }
-
-            val mapping = nestedStatement.mappingPlan.dynamicMappingsByField[field.src.fieldName]
-            if (mapping != null) {
-                val aliasPrefix = mapping.aliasPrefix
-                val match = mapping.columns.firstOrNull { column ->
-                    val basePropertyName = when {
-                        aliasPrefix != null && column.fieldName.startsWith(aliasPrefix) ->
-                            column.fieldName.removePrefix(aliasPrefix)
-
-                        column.originalColumnName.isNotBlank() -> column.originalColumnName
-                        else -> column.fieldName
-                    }
-                    val candidate = propertyNameGenerator.convertToPropertyName(basePropertyName)
-                    candidate == uniqueField
-                }
-                if (match != null) {
-                    return "$propertyName.$uniqueField"
-                }
-            }
-        }
-
-        return null
-    }
-
-    private fun normalizeType(typeName: String): String = typeName.trim().removeSuffix("?")
-
-    private fun resolveStatementForType(typeName: String): AnnotatedSelectStatement? {
-        val simpleName = typeName.substringAfterLast('.')
-        return generatorContext.findSelectStatementByResultName(typeName)
-            ?: generatorContext.findSelectStatementByResultName(simpleName)
+        return collectionRenderer.findDistinctByPathForNestedConstruction(
+            targetPropertyType = targetPropertyType,
+            uniqueField = uniqueField,
+        )
     }
 
     private inner class DynamicFieldEmitter {
@@ -1410,10 +1012,4 @@ internal class ResultMappingHelper(
             }
         }
     }
-}
-
-private inline fun buildStringList(builderAction: (MutableList<String>) -> Unit): List<String> {
-    val lines = mutableListOf<String>()
-    builderAction(lines)
-    return lines
 }
