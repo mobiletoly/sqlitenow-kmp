@@ -1,0 +1,54 @@
+// swift-tools-version: 6.0
+
+import PackageDescription
+
+let package = Package(
+    name: "SQLiteNow",
+    platforms: [
+        .macOS(.v14),
+    ],
+    products: [
+        .plugin(
+            name: "SQLiteNowGeneratePlugin",
+            targets: ["SQLiteNowGeneratePlugin"]
+        ),
+        .executable(
+            name: "sqlite-now-generate",
+            targets: ["SQLiteNowGenerateTool"]
+        ),
+    ],
+    targets: [
+{{SQLITENOW_COMPILER_BINARY_TARGET}}
+        .target(
+            name: "SQLiteNowGenerateCore",
+            path: "swift/plugin/sqlitenow-plugin/Sources/SQLiteNowGenerateCore",
+            resources: [
+                .copy("Resources"),
+            ]
+        ),
+        .executableTarget(
+            name: "SQLiteNowGenerateTool",
+            dependencies: ["SQLiteNowGenerateCore"],
+            path: "swift/plugin/sqlitenow-plugin/Sources/SQLiteNowGenerateTool"
+        ),
+        .plugin(
+            name: "SQLiteNowGeneratePlugin",
+            capability: .command(
+                intent: .custom(
+                    verb: "sqlitenow-generate",
+                    description: "Generate SQLiteNow Swift package sources"
+                ),
+                permissions: [
+                    .writeToPackageDirectory(reason: "Generate SQLiteNow package output under SQLiteNowGenerated"),
+                ]
+            ),
+            dependencies: ["SQLiteNowGenerateTool", "SQLiteNowCompiler"],
+            path: "swift/plugin/sqlitenow-plugin/Plugins/SQLiteNowGeneratePlugin"
+        ),
+        .testTarget(
+            name: "SQLiteNowGenerateCoreTests",
+            dependencies: ["SQLiteNowGenerateCore"],
+            path: "swift/plugin/sqlitenow-plugin/Tests/SQLiteNowGenerateCoreTests"
+        ),
+    ]
+)

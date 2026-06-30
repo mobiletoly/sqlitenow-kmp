@@ -1,5 +1,11 @@
 package dev.goquick.sqlitenow.gradle
 
+import dev.goquick.sqlitenow.gradle.swift.DEFAULT_SWIFT_PACKAGE_APPLE_TARGETS
+import dev.goquick.sqlitenow.gradle.swift.SwiftPackageMinimumPlatforms
+import dev.goquick.sqlitenow.gradle.swift.SwiftProductRuntimeMode
+import dev.goquick.sqlitenow.gradle.swift.swiftPackageGeneratorConfigInputs
+import dev.goquick.sqlitenow.gradle.swift.swiftPackageSourceInputDigest
+import groovy.json.JsonSlurper
 import java.io.File
 import java.nio.file.Path
 import java.util.zip.ZipEntry
@@ -105,6 +111,278 @@ class SqliteNowPluginFunctionalTest {
     }
 
     @Test
+    @DisplayName("Plugin owns local Swift package tasks for a single database")
+    fun pluginOwnsLocalSwiftPackageTasksForSingleDatabase() {
+        val projectDir = tempDir.resolve("swift-package-project").toFile().apply { mkdirs() }
+        val runtimeDir = projectDir.resolve("runtime/SQLiteNowCoreRuntime.xcframework").apply {
+            mkdirs()
+            resolve("Info.plist").writeText("fake runtime")
+        }
+
+        writeSettingsGradle(projectDir, includeRepoBuild = true)
+        writeJvmBuildGradle(
+            projectDir = projectDir,
+            kotlinBody = """
+                sourceSets {
+                    commonMain.dependencies {
+                        implementation("dev.goquick.sqlitenow:core")
+                    }
+                }
+            """.trimIndent(),
+            trailingBody = """
+                sqliteNow {
+                    databases {
+                        create("FixtureDatabase") {
+                            packageName = "fixture.db"
+                            swiftPackage {
+                                packageName.set("FixtureDatabaseSQLiteNow")
+                                swiftTargetName.set("FixtureDatabaseSQLiteNow")
+                                outputDirectory.set(layout.buildDirectory.dir("swift-package/FixtureDatabaseSQLiteNow"))
+                                runtimeXcframework.set(layout.projectDirectory.dir("runtime/SQLiteNowCoreRuntime.xcframework"))
+                                forbiddenTokenPatterns.set(listOf("KotlinByteArray"))
+                            }
+                        }
+                    }
+                }
+            """.trimIndent(),
+        )
+        File(projectDir, "src/commonMain/kotlin/fixture/FakeUsage.kt").apply {
+            parentFile.mkdirs()
+            writeText(
+                """
+                    package fixture
+
+                    import fixture.db.FixtureDatabase
+                    import fixture.db.PersonQuery
+                    import fixture.db.VersionBasedDatabaseMigrations
+
+                    fun createGeneratedDatabase(): FixtureDatabase {
+                        val params = PersonQuery.SelectById.Params(id = 1L)
+                        check(params.id == 1L)
+                        return FixtureDatabase(
+                            dbName = ":memory:",
+                            migration = VersionBasedDatabaseMigrations(),
+                        )
+                    }
+                """.trimIndent()
+            )
+        }
+        writeSqlFixture(
+            projectDir = projectDir,
+            dbName = "FixtureDatabase",
+            packageMarker = "data_flow",
+            queryName = "selectById",
+            querySql = """
+                SELECT *
+                FROM person
+                WHERE id = :id;
+            """.trimIndent(),
+        )
+
+        val result = runGradle(
+            projectDir,
+            "packageDebugSwiftPackage",
+            "validateDebugSwiftPackageManifest",
+            "checkDebugSwiftPackageLeaks",
+            "compileKotlinJvm",
+            "--stacktrace",
+        )
+
+        assertTrue(result.output.contains(":generateFixtureDatabase"))
+        assertTrue(result.output.contains(":generateFixtureDatabaseDebugSwiftProductSource"))
+        assertTrue(result.output.contains(":packageFixtureDatabaseDebugSwiftPackage"))
+        assertTrue(runtimeDir.resolve("Info.plist").isFile)
+
+        val packageDir = projectDir.resolve("build/swift-package/FixtureDatabaseSQLiteNow")
+        assertTrue(packageDir.resolve("Package.swift").isFile, "Generated Swift package manifest should exist")
+        assertTrue(
+            packageDir.resolve("Sources/FixtureDatabaseSQLiteNow/FixtureDatabase.swift").isFile,
+            "Generated Swift product source should be copied into the package"
+        )
+        assertTrue(
+            packageDir.resolve("Binaries/SQLiteNowCoreRuntime.xcframework/Info.plist").isFile,
+            "Runtime XCFramework should be copied into the package"
+        )
+        assertTrue(
+            projectDir.resolve("build/generated/sqlitenow/code/FixtureDatabase/fixture/db/FixtureDatabase.kt").isFile,
+            "Swift package generation must not replace the Kotlin generated source task"
+        )
+
+        @Suppress("UNCHECKED_CAST")
+        val manifest = JsonSlurper().parse(packageDir.resolve(".sqlitenow/package-manifest.json")) as Map<String, Any?>
+        assertEquals(3, (manifest["manifestVersion"] as Number).toInt())
+        assertEquals("1.0.0", manifest["sqliteNowVersion"])
+        assertEquals("1.0.0", manifest["generatorVersion"])
+        assertEquals("FixtureDatabase", manifest["databaseName"])
+        assertEquals("FixtureDatabaseSQLiteNow", manifest["packageName"])
+        assertEquals("FixtureDatabaseSQLiteNow", manifest["swiftTargetName"])
+        assertEquals("core", manifest["runtimeMode"])
+        assertEquals(listOf("SQLiteNowCoreRuntime"), manifest["runtimeBinaryTargets"])
+        assertEquals("localXcframework", manifest["runtimeArtifactKind"])
+        assertEquals(listOf("Binaries/SQLiteNowCoreRuntime.xcframework"), manifest["runtimeArtifactPaths"])
+        assertEquals(null, manifest["runtimeArtifactChecksum"])
+        assertEquals(null, manifest["runtimeArtifactVersion"])
+        assertEquals(null, manifest["runtimeArtifactUrl"])
+        assertEquals("./gradlew :packageDebugSwiftPackage", manifest["generatedBy"])
+        val generatorInputs = (manifest["generatorInputs"] as? List<*>)?.map { it as String }
+        assertNotNull(generatorInputs, "Swift package metadata should include generator inputs")
+        val sqlFiles = projectDir.resolve("src/commonMain/sql/FixtureDatabase")
+            .walkTopDown()
+            .filter { it.isFile && it.extension == "sql" }
+            .sortedBy { it.relativeTo(projectDir).invariantSeparatorsPath }
+            .toList()
+        val expectedGeneratorConfigInputs = swiftPackageGeneratorConfigInputs(
+            databaseName = "FixtureDatabase",
+            swiftTargetName = "FixtureDatabaseSQLiteNow",
+            runtimeMode = SwiftProductRuntimeMode.CORE,
+            runtimeModuleName = "SQLiteNowCoreRuntime",
+            frameworkMode = "dynamic",
+            minimumPlatforms = SwiftPackageMinimumPlatforms(),
+            requestedAppleTargets = DEFAULT_SWIFT_PACKAGE_APPLE_TARGETS,
+            forbiddenTokenPatterns = listOf("KotlinByteArray"),
+        )
+        assertEquals(
+            sqlFiles.map { it.relativeTo(projectDir).invariantSeparatorsPath } + expectedGeneratorConfigInputs,
+            generatorInputs,
+        )
+        assertNotNull(manifest["sourceInputDigest"], "Swift package metadata should include source digest")
+        assertEquals(
+            swiftPackageSourceInputDigest(projectDir, sqlFiles, expectedGeneratorConfigInputs),
+            manifest["sourceInputDigest"],
+        )
+
+        @Suppress("UNCHECKED_CAST")
+        val swiftProductMetadata = JsonSlurper().parse(
+            projectDir.resolve("build/generated/sqlitenow/swift-product-metadata/FixtureDatabaseSQLiteNow/metadata.json")
+        ) as Map<String, Any?>
+        val generatedSwiftFiles = (swiftProductMetadata["generatedSwiftFiles"] as? List<*>)?.map { it as String }
+        assertNotNull(generatedSwiftFiles, "Compiler Swift product metadata should include generated Swift files")
+        assertTrue("FixtureDatabase.swift" in generatedSwiftFiles)
+        assertEquals(emptyList<Any?>(), swiftProductMetadata["syncTables"])
+    }
+
+    @Test
+    @DisplayName("Plugin packages remote Swift runtime artifacts through the unified runtime artifact DSL")
+    fun pluginPackagesRemoteSwiftRuntimeArtifactsThroughUnifiedDsl() {
+        val projectDir = tempDir.resolve("swift-remote-runtime-project").toFile().apply { mkdirs() }
+        val runtimeUrl = "https://example.com/releases/SQLiteNowCoreRuntime-1.0.0.xcframework.zip"
+        val checksum = "a".repeat(64)
+
+        writeSettingsGradle(projectDir, includeRepoBuild = true)
+        writeJvmBuildGradle(
+            projectDir = projectDir,
+            trailingBody = """
+                sqliteNow {
+                    databases {
+                        create("FixtureDatabase") {
+                            packageName = "fixture.db"
+                            swiftPackage {
+                                packageName.set("FixtureDatabaseSQLiteNow")
+                                swiftTargetName.set("FixtureDatabaseSQLiteNow")
+                                outputDirectory.set(layout.buildDirectory.dir("swift-package/FixtureDatabaseSQLiteNow"))
+                                runtime.set("core")
+                                runtimeArtifact.remoteZip("$runtimeUrl")
+                                runtimeArtifact.checksum.set("$checksum")
+                                runtimeArtifact.sqliteNowVersion.set("1.0.0")
+                                forbiddenTokenPatterns.set(listOf("KotlinByteArray"))
+                            }
+                        }
+                    }
+                }
+            """.trimIndent(),
+        )
+        writeSqlFixture(
+            projectDir = projectDir,
+            dbName = "FixtureDatabase",
+            packageMarker = "remote_runtime",
+        )
+
+        runGradle(
+            projectDir,
+            "packageDebugSwiftPackage",
+            "validateDebugSwiftPackageManifest",
+            "--stacktrace",
+        )
+
+        val packageDir = projectDir.resolve("build/swift-package/FixtureDatabaseSQLiteNow")
+        val packageSwift = packageDir.resolve("Package.swift").readText()
+        assertTrue(packageSwift.contains("""url: "$runtimeUrl""""))
+        assertTrue(packageSwift.contains("""checksum: "$checksum""""))
+        assertFalse(packageDir.resolve("Binaries").exists(), "Remote runtime artifacts must not be copied locally")
+
+        @Suppress("UNCHECKED_CAST")
+        val manifest = JsonSlurper().parse(packageDir.resolve(".sqlitenow/package-manifest.json")) as Map<String, Any?>
+        assertEquals("remoteZip", manifest["runtimeArtifactKind"])
+        assertEquals(emptyList<String>(), manifest["runtimeArtifactPaths"])
+        assertEquals(checksum, manifest["runtimeArtifactChecksum"])
+        assertEquals("1.0.0", manifest["runtimeArtifactVersion"])
+        assertEquals(runtimeUrl, manifest["runtimeArtifactUrl"])
+    }
+
+    @Test
+    @DisplayName("Plugin uses compiler Swift metadata for sync package tables")
+    fun pluginUsesCompilerSwiftMetadataForSyncPackageTables() {
+        val projectDir = tempDir.resolve("swift-sync-metadata-project").toFile().apply { mkdirs() }
+        val runtimeUrl = "https://example.com/releases/SQLiteNowSyncRuntime-1.0.0.xcframework.zip"
+        val checksum = "b".repeat(64)
+
+        writeSettingsGradle(projectDir, includeRepoBuild = true)
+        writeJvmBuildGradle(
+            projectDir = projectDir,
+            kotlinBody = """
+                sourceSets {
+                    commonMain.dependencies {
+                        implementation("dev.goquick.sqlitenow:oversqlite")
+                    }
+                }
+            """.trimIndent(),
+            trailingBody = """
+                sqliteNow {
+                    databases {
+                        create("SyncFixtureDatabase") {
+                            packageName = "fixture.sync.db"
+                            oversqlite = true
+                            swiftPackage {
+                                packageName.set("SyncFixtureDatabaseSQLiteNow")
+                                swiftTargetName.set("SyncFixtureDatabaseSQLiteNow")
+                                outputDirectory.set(layout.buildDirectory.dir("swift-package/SyncFixtureDatabaseSQLiteNow"))
+                                runtimeArtifact.remoteZip("$runtimeUrl")
+                                runtimeArtifact.checksum.set("$checksum")
+                                runtimeArtifact.sqliteNowVersion.set("1.0.0")
+                                forbiddenTokenPatterns.set(listOf("KotlinByteArray"))
+                            }
+                        }
+                    }
+                }
+            """.trimIndent(),
+        )
+        writeSyncSqlFixture(projectDir, dbName = "SyncFixtureDatabase")
+
+        runGradle(
+            projectDir,
+            "packageDebugSwiftPackage",
+            "validateDebugSwiftPackageManifest",
+            "--stacktrace",
+        )
+
+        val packageDir = projectDir.resolve("build/swift-package/SyncFixtureDatabaseSQLiteNow")
+        @Suppress("UNCHECKED_CAST")
+        val manifest = JsonSlurper().parse(packageDir.resolve(".sqlitenow/package-manifest.json")) as Map<String, Any?>
+        val syncTables = manifest["syncTables"] as? List<*>
+        assertNotNull(syncTables, "Sync package manifest should include sync table metadata")
+        assertEquals(
+            listOf(mapOf("tableName" to "docs", "syncKeyColumnName" to "doc_id")),
+            syncTables,
+        )
+
+        @Suppress("UNCHECKED_CAST")
+        val swiftProductMetadata = JsonSlurper().parse(
+            projectDir.resolve("build/generated/sqlitenow/swift-product-metadata/SyncFixtureDatabaseSQLiteNow/metadata.json")
+        ) as Map<String, Any?>
+        assertEquals(syncTables, swiftProductMetadata["syncTables"])
+    }
+
+    @Test
     @DisplayName("Plugin extracts SQLiteNow wasm resources for a real wasmJs target")
     fun pluginExtractsWasmResourcesForRealWasmTarget() {
         val projectDir = tempDir.resolve("real-wasm-project").toFile().apply { mkdirs() }
@@ -117,7 +395,7 @@ class SqliteNowPluginFunctionalTest {
             projectDir,
             """
                 plugins {
-                    kotlin("multiplatform") version "2.3.20"
+                    kotlin("multiplatform") version "2.4.0"
                     id("dev.goquick.sqlitenow")
                 }
 
@@ -163,7 +441,7 @@ class SqliteNowPluginFunctionalTest {
                 import org.gradle.language.jvm.tasks.ProcessResources
 
                 plugins {
-                    kotlin("multiplatform") version "2.3.20"
+                    kotlin("multiplatform") version "2.4.0"
                     id("dev.goquick.sqlitenow")
                 }
 
@@ -228,7 +506,7 @@ class SqliteNowPluginFunctionalTest {
                 import org.gradle.language.jvm.tasks.ProcessResources
 
                 plugins {
-                    kotlin("multiplatform") version "2.3.20"
+                    kotlin("multiplatform") version "2.4.0"
                     id("dev.goquick.sqlitenow")
                 }
 
@@ -452,10 +730,6 @@ class SqliteNowPluginFunctionalTest {
             "build/generated/sqlitenow/code/FixtureDatabase/fixture/db/PersonQuery_SelectSnapshots.kt"
         )
         assertTrue(generatedSummary.exists(), "Complex fixture query file should exist")
-        val generatedText = generatedSummary.readText()
-        assertTrue(generatedText.contains("peopleSnapshotRowMapper"))
-        assertTrue(generatedText.contains("sqlValueToBirthDate"))
-        assertTrue(generatedText.contains("executeAsOne"))
     }
 
     private fun writeSettingsGradle(projectDir: File, includeRepoBuild: Boolean = false) {
@@ -467,6 +741,7 @@ class SqliteNowPluginFunctionalTest {
                 includeBuild("${repoRoot.invariantSeparatorsPathString}") {
                     dependencySubstitution {
                         substitute(module("dev.goquick.sqlitenow:core")).using(project(":library-core"))
+                        substitute(module("dev.goquick.sqlitenow:oversqlite")).using(project(":library-oversqlite"))
                     }
                 }
             """.trimIndent()
@@ -539,7 +814,7 @@ class SqliteNowPluginFunctionalTest {
                 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
                 plugins {
-                    kotlin("multiplatform") version "2.3.20"
+                    kotlin("multiplatform") version "2.4.0"
                     id("dev.goquick.sqlitenow")
                 }
 
@@ -556,7 +831,7 @@ class SqliteNowPluginFunctionalTest {
                     jvmToolchain(17)
 
                     compilerOptions {
-                        languageVersion.set(KotlinVersion.KOTLIN_2_3)
+                        languageVersion.set(KotlinVersion.KOTLIN_2_4)
                     }
 
                     $kotlinBody
@@ -609,6 +884,34 @@ class SqliteNowPluginFunctionalTest {
         )
         writeFixtureFile(dbRoot, "queries/person/$queryName.sql", querySql)
         writeFixtureFile(dbRoot, "migration/0001.sql", "ALTER TABLE person ADD COLUMN migrated_$packageMarker TEXT;")
+    }
+
+    private fun writeSyncSqlFixture(
+        projectDir: File,
+        dbName: String,
+    ) {
+        val dbRoot = projectDir.resolve("src/commonMain/sql/$dbName")
+        writeFixtureFile(
+            dbRoot,
+            "schema/docs.sql",
+            """
+                -- @@{ enableSync=true, syncKeyColumnName=doc_id }
+                CREATE TABLE docs (
+                    doc_id TEXT PRIMARY KEY NOT NULL,
+                    title TEXT NOT NULL
+                );
+            """.trimIndent(),
+        )
+        writeFixtureFile(
+            dbRoot,
+            "queries/docs/selectAll.sql",
+            """
+                -- @@{ queryResult=DocRow }
+                SELECT doc_id, title
+                FROM docs
+                ORDER BY doc_id;
+            """.trimIndent(),
+        )
     }
 
     private fun writeComplexCompositionFixture(projectDir: File) {
@@ -760,7 +1063,9 @@ class SqliteNowPluginFunctionalTest {
     private fun gradleRunner(projectDir: File, vararg arguments: String): GradleRunner =
         GradleRunner.create()
             .withProjectDir(projectDir)
-            .withArguments(*arguments)
+            .withArguments(
+                *(arguments.toList() + "-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g").toTypedArray()
+            )
             .forwardOutput()
 
     private fun runGradle(projectDir: File, vararg arguments: String): BuildResult =

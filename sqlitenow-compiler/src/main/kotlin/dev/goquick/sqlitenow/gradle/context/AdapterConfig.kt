@@ -167,7 +167,7 @@ class AdapterConfig(
                 return@forEach
             }
 
-            val propertyName = statement.annotations.propertyNameGenerator.convertToPropertyName(column.src.name)
+            val propertyName = ReturningColumnsResolver.propertyNameForColumn(statement, column)
             val adapterFunctionName = getOutputAdapterFunctionName(propertyName)
             if (!processedAdapters.add(adapterFunctionName)) {
                 return@forEach

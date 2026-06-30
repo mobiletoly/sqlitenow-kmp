@@ -21,6 +21,7 @@ The root URL redirects to the Kotlin Multiplatform path:
 - `index.html` - Root redirect to the Kotlin Multiplatform docs
 - `flutter/` - Flutter and pure Dart setup/runtime/reference/recipe docs
 - `kmp/` - Kotlin Multiplatform setup/reference/recipe docs
+- `swift/` - Native Swift generated-package docs
 - `_includes/shared/` - Shared prose rendered by platform-specific pages
 - `documentation/` - Legacy KMP-shaped SQL reference pages
 - `sync/` - Oversqlite docs
@@ -38,6 +39,7 @@ platform selector row and a platform-scoped main menu:
 
 - Flutter/Dart: Home, Getting Started, SQL Reference, Recipes
 - KMP: Home, Getting Started, SQL Reference, Recipes, Sync, Tutorials
+- Swift: Home, Getting Started, Configuration, Sync
 
 Shared topic content lives in `_includes/shared/` and is rendered by thin pages
 under `flutter/` and `kmp/`.

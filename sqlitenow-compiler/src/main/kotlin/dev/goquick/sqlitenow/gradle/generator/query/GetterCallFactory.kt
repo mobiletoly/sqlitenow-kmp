@@ -74,11 +74,10 @@ internal class GetterCallFactory(
         field: AnnotatedSelectStatement.Field,
         desiredType: TypeName,
         columnIndex: Int,
+        adapterPropertyName: String,
     ): String {
         return if (isCustomKotlinType(desiredType) || adapterConfig.hasAdapterAnnotation(field)) {
-            val visibleName = field.src.fieldName
-            val columnName = PropertyNameGeneratorType.LOWER_CAMEL_CASE.convertToPropertyName(visibleName)
-            val adapterParamName = adapterConfig.getOutputAdapterFunctionName(columnName)
+            val adapterParamName = adapterConfig.getOutputAdapterFunctionName(adapterPropertyName)
             buildAdapterGetterCall(
                 field = field,
                 columnIndex = columnIndex,

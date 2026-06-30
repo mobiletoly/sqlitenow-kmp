@@ -47,7 +47,7 @@ class ExecuteParameterProcessorTest {
 
             val associated = updateStatement.namedParametersToColumns["groupIds"]
             assertTrue(associated is AssociatedColumn.Collection)
-            assertEquals("group_id", (associated as AssociatedColumn.Collection).columnName)
+            assertEquals("group_id", associated.columnName)
         }
     }
 
@@ -79,7 +79,7 @@ class ExecuteParameterProcessorTest {
 
             val associated = deleteStatement.namedParametersToColumns["groupIds"]
             assertTrue(associated is AssociatedColumn.Collection)
-            assertEquals("group_id", (associated as AssociatedColumn.Collection).columnName)
+            assertEquals("group_id", associated.columnName)
         }
     }
 }

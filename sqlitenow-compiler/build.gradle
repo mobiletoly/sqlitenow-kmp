@@ -1,7 +1,7 @@
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 plugins {
-    id("org.jetbrains.kotlin.jvm") version "2.3.20"
+    id("org.jetbrains.kotlin.jvm") version "2.4.0"
     id("com.vanniktech.maven.publish") version "0.36.0"
 }
 
@@ -15,8 +15,7 @@ kotlin {
     jvmToolchain(17)
 
     compilerOptions {
-        languageVersion.set(KotlinVersion.KOTLIN_2_3)
-        freeCompilerArgs.addAll("-Xcontext-parameters")
+        languageVersion.set(KotlinVersion.KOTLIN_2_4)
     }
 }
 
@@ -30,7 +29,7 @@ dependencies {
 
     testImplementation("org.junit.jupiter:junit-jupiter-api:6.0.3")
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:6.0.3")
-    testImplementation("org.jetbrains.kotlin:kotlin-test:2.3.20")
+    testImplementation("org.jetbrains.kotlin:kotlin-test:2.4.0")
     testImplementation(gradleTestKit())
     testImplementation("org.mockito:mockito-core:5.23.0")
     testImplementation("org.mockito:mockito-junit-jupiter:5.23.0")
@@ -44,7 +43,12 @@ def compilerJarTaskProvider = tasks.register("sqlitenowCompilerJar", Jar) {
     archiveClassifier.set("compiler")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     manifest {
-        attributes("Main-Class": "dev.goquick.sqlitenow.gradle.compiler.SqliteNowCompilerCliKt")
+        attributes(
+                "Main-Class": "dev.goquick.sqlitenow.gradle.compiler.SqliteNowCompilerCliKt",
+                "Implementation-Title": "SQLiteNow Compiler",
+                "Implementation-Version": version.toString(),
+                "SQLiteNow-Version": version.toString()
+        )
     }
     exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA")
     from(sourceSets.main.output)
@@ -59,6 +63,15 @@ tasks.register("syncDartCliCompilerJar", Copy) {
     dependsOn(compilerJarTaskProvider)
     from(compilerJarTaskProvider.flatMap { it.archiveFile })
     into("../dart/packages/sqlitenow_cli/lib/src/compiler")
+    rename { "sqlitenow-compiler.jar" }
+}
+
+tasks.register("syncSwiftPmPluginCompilerJar", Copy) {
+    group = "build"
+    description = "Copies the Gradle-free compiler jar into the SwiftPM plugin package for local bundled-tool validation."
+    dependsOn(compilerJarTaskProvider)
+    from(compilerJarTaskProvider.flatMap { it.archiveFile })
+    into("../swift/plugin/sqlitenow-plugin/Sources/SQLiteNowGenerateCore/Resources")
     rename { "sqlitenow-compiler.jar" }
 }
 

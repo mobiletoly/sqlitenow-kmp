@@ -141,20 +141,28 @@ class SqliteTypeToKotlinCodeConverter {
          */
         private fun parseTypeString(typeString: String, packageName: String? = null): TypeName {
             val trimmed = typeString.trim()
+            val nullable = trimmed.endsWith('?')
+            val coreType = if (nullable) trimmed.dropLast(1).trim() else trimmed
 
             // Check if it's a generic type
-            if (trimmed.contains('<') && trimmed.contains('>')) {
-                return parseGenericType(trimmed, packageName)
+            val parsed = if (coreType.contains('<') && coreType.contains('>')) {
+                parseGenericType(coreType, packageName)
+            } else {
+                parseSimpleType(coreType, packageName)
             }
 
+            return if (nullable) parsed.copy(nullable = true) else parsed
+        }
+
+        private fun parseSimpleType(typeString: String, packageName: String? = null): TypeName {
             // Handle simple types
-            return when (trimmed) {
-                in KOTLIN_STDLIB_TYPES -> ClassName("kotlin", trimmed)
-                in KOTLIN_COLLECTION_TYPES -> ClassName("kotlin.collections", trimmed)
+            return when (typeString) {
+                in KOTLIN_STDLIB_TYPES -> ClassName("kotlin", typeString)
+                in KOTLIN_COLLECTION_TYPES -> ClassName("kotlin.collections", typeString)
                 else -> {
                     // Handle qualified type names (e.g., PersonAddress.SharedResult.Row)
-                    if (trimmed.contains('.')) {
-                        val parts = trimmed.split('.')
+                    if (typeString.contains('.')) {
+                        val parts = typeString.split('.')
                         val rootClassName = parts[0]
 
                         // Check if this looks like a same-package nested class
@@ -172,11 +180,11 @@ class SqliteTypeToKotlinCodeConverter {
                             className
                         } else {
                             // Use bestGuess for fully qualified names with packages
-                            ClassName.Companion.bestGuess(trimmed)
+                            ClassName.Companion.bestGuess(typeString)
                         }
                     } else {
                         // Use the provided package name for same-package classes
-                        ClassName(packageName ?: "", trimmed)
+                        ClassName(packageName ?: "", typeString)
                     }
                 }
             }

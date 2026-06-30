@@ -20,12 +20,17 @@ import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.sqlinspect.SelectStatement
-import dev.goquick.sqlitenow.gradle.util.CaseInsensitiveSet
 
 /**
  * Shared helper for interpreting RETURNING clauses on execute statements.
  */
 internal object ReturningColumnsResolver {
+    data class ResolvedColumn(
+        val column: AnnotatedCreateTableStatement.Column,
+        val field: AnnotatedSelectStatement.Field,
+        val propertyName: String,
+    )
+
     fun resolveColumns(
         generatorContext: GeneratorContext,
         statement: AnnotatedExecuteStatement,
@@ -60,7 +65,13 @@ internal object ReturningColumnsResolver {
     fun createSelectLikeFields(
         generatorContext: GeneratorContext,
         statement: AnnotatedExecuteStatement,
-    ): List<AnnotatedSelectStatement.Field> {
+    ): List<AnnotatedSelectStatement.Field> =
+        resolveReadColumns(generatorContext, statement).map { it.field }
+
+    fun resolveReadColumns(
+        generatorContext: GeneratorContext,
+        statement: AnnotatedExecuteStatement,
+    ): List<ResolvedColumn> {
         val (tableStatement, returningColumns) = resolveMetadata(
             generatorContext.createTableStatements,
             statement,
@@ -76,12 +87,23 @@ internal object ReturningColumnsResolver {
                 expression = null,
             )
 
-            AnnotatedSelectStatement.Field(
-                src = fieldSrc,
-                annotations = FieldAnnotationOverrides.parse(column.annotations),
+            ResolvedColumn(
+                column = column,
+                field = AnnotatedSelectStatement.Field(
+                    src = fieldSrc,
+                    annotations = FieldAnnotationOverrides.parse(column.annotations),
+                ),
+                propertyName = propertyNameForColumn(statement, column),
             )
         }
     }
+
+    fun propertyNameForColumn(
+        statement: AnnotatedExecuteStatement,
+        column: AnnotatedCreateTableStatement.Column,
+    ): String =
+        FieldAnnotationOverrides.parse(column.annotations).propertyName
+            ?: statement.annotations.propertyNameGenerator.convertToPropertyName(column.src.name)
 
     private fun resolveMetadata(
         createTableStatements: List<AnnotatedCreateTableStatement>,
@@ -114,7 +136,10 @@ internal object ReturningColumnsResolver {
         if (returningColumns.isEmpty() || returningColumns.contains("*")) {
             return allColumns
         }
-        val returningSet = CaseInsensitiveSet().apply { addAll(returningColumns) }
-        return allColumns.filter { column -> returningSet.containsIgnoreCase(column.src.name) }
+        val columnsByName = allColumns.associateBy { column -> column.src.name.lowercase() }
+        return returningColumns.map { returningColumn ->
+            columnsByName[returningColumn.lowercase()]
+                ?: error("RETURNING column '$returningColumn' not found in table '${tableStatement.src.tableName}'.")
+        }
     }
 }

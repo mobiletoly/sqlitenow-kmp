@@ -1,0 +1,284 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		B10000000000000000000001 /* SwiftOnlyCoreXcodeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000011 /* SwiftOnlyCoreXcodeApp.swift */; };
+		B10000000000000000000002 /* SwiftOnlyCoreDatabaseSQLiteNow in Frameworks */ = {isa = PBXBuildFile; productRef = B10000000000000000000090 /* SwiftOnlyCoreDatabaseSQLiteNow */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		B10000000000000000000010 /* SwiftOnlyCoreXcodeApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SwiftOnlyCoreXcodeApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B10000000000000000000011 /* SwiftOnlyCoreXcodeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftOnlyCoreXcodeApp.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		B10000000000000000000020 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B10000000000000000000002 /* SwiftOnlyCoreDatabaseSQLiteNow in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		B10000000000000000000030 = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000032 /* SwiftOnlyCoreXcodeApp */,
+				B10000000000000000000033 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		B10000000000000000000032 /* SwiftOnlyCoreXcodeApp */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000011 /* SwiftOnlyCoreXcodeApp.swift */,
+			);
+			path = SwiftOnlyCoreXcodeApp;
+			sourceTree = "<group>";
+		};
+		B10000000000000000000033 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000010 /* SwiftOnlyCoreXcodeApp.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		B10000000000000000000040 /* SwiftOnlyCoreXcodeApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B10000000000000000000073 /* Build configuration list for PBXNativeTarget "SwiftOnlyCoreXcodeApp" */;
+			buildPhases = (
+				B10000000000000000000050 /* Sources */,
+				B10000000000000000000020 /* Frameworks */,
+				B10000000000000000000051 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SwiftOnlyCoreXcodeApp;
+			packageProductDependencies = (
+				B10000000000000000000090 /* SwiftOnlyCoreDatabaseSQLiteNow */,
+			);
+			productName = SwiftOnlyCoreXcodeApp;
+			productReference = B10000000000000000000010 /* SwiftOnlyCoreXcodeApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		B10000000000000000000060 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					B10000000000000000000040 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+				};
+			};
+			buildConfigurationList = B10000000000000000000070 /* Build configuration list for PBXProject "SwiftOnlyCoreXcodeApp" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = B10000000000000000000030;
+			packageReferences = (
+				B10000000000000000000080 /* XCLocalSwiftPackageReference "../SQLiteNowGenerated/SwiftOnlyCoreDatabaseSQLiteNow" */,
+			);
+			productRefGroup = B10000000000000000000033 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				B10000000000000000000040 /* SwiftOnlyCoreXcodeApp */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		B10000000000000000000051 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		B10000000000000000000050 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B10000000000000000000001 /* SwiftOnlyCoreXcodeApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		B10000000000000000000071 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		B10000000000000000000072 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		B10000000000000000000074 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.goquick.sqlitenow.swiftonlycorexcode;
+				PRODUCT_NAME = SwiftOnlyCoreXcodeApp;
+				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B10000000000000000000075 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.goquick.sqlitenow.swiftonlycorexcode;
+				PRODUCT_NAME = SwiftOnlyCoreXcodeApp;
+				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		B10000000000000000000070 /* Build configuration list for PBXProject "SwiftOnlyCoreXcodeApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B10000000000000000000071 /* Debug */,
+				B10000000000000000000072 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B10000000000000000000073 /* Build configuration list for PBXNativeTarget "SwiftOnlyCoreXcodeApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B10000000000000000000074 /* Debug */,
+				B10000000000000000000075 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		B10000000000000000000080 /* XCLocalSwiftPackageReference "../SQLiteNowGenerated/SwiftOnlyCoreDatabaseSQLiteNow" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "../SQLiteNowGenerated/SwiftOnlyCoreDatabaseSQLiteNow";
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B10000000000000000000090 /* SwiftOnlyCoreDatabaseSQLiteNow */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B10000000000000000000080 /* XCLocalSwiftPackageReference "../SQLiteNowGenerated/SwiftOnlyCoreDatabaseSQLiteNow" */;
+			productName = SwiftOnlyCoreDatabaseSQLiteNow;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = B10000000000000000000060 /* Project object */;
+}

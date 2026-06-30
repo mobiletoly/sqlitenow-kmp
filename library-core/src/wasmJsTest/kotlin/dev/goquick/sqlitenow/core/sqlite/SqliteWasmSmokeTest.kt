@@ -1,20 +1,16 @@
 package dev.goquick.sqlitenow.core.sqlite
 
 import dev.goquick.sqlitenow.core.BundledSqliteConnectionProvider
-import kotlinx.coroutines.DelicateCoroutinesApi
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.promise
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
-import kotlin.js.ExperimentalWasmJsInterop
 
 class SqliteWasmSmokeTest {
 
-    @OptIn(DelicateCoroutinesApi::class, ExperimentalWasmJsInterop::class)
     @Test
-    fun openQueryAndReadRow() = GlobalScope.promise {
+    fun openQueryAndReadRow() = runTest {
         val connection = BundledSqliteConnectionProvider.openConnection(
             dbName = ":memory:",
             debug = false,

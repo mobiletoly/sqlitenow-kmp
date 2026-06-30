@@ -335,13 +335,13 @@ class UpdateOperationsTest {
     }
 
     @Test
-    fun testUpdateWithDateTimeEdgeCases() = runDatabaseTest {
+    fun testUpdateWithDateEdgeCases() = runDatabaseTest {
             database.open()
             
             // Insert person with normal date
             val person = database.person.add.one(PersonQuery.Add.Params(
-                email = "datetime-edge-update@example.com",
-                firstName = "DateTime",
+                email = "date-edge-update@example.com",
+                firstName = "Date",
                 lastName = "Edge",
                 phone = "+7777777777",
                 birthDate = LocalDate(1990, 6, 15)
@@ -359,7 +359,7 @@ class UpdateOperationsTest {
             edgeCaseDates.forEachIndexed { index, edgeDate ->
                 val updateParams = PersonQuery.UpdateById.Params(
                     firstName = "EdgeCase$index",
-                    lastName = "DateTime",
+                    lastName = "Date",
                     email = "edge-case-$index@example.com",
                     phone = "+${(7000000000L + index).toString()}",
                     birthDate = edgeDate,

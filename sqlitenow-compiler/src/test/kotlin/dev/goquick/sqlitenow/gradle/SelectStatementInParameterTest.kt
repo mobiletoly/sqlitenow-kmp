@@ -33,7 +33,7 @@ class SelectStatementInParameterTest {
                 associated is AssociatedColumn.Collection,
                 "Expected IN parameter to be treated as collection",
             )
-            assertEquals("last_name", (associated as AssociatedColumn.Collection).columnName)
+            assertEquals("last_name", associated.columnName)
         }
     }
 }

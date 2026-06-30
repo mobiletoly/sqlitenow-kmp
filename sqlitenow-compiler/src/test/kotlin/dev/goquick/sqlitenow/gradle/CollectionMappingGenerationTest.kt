@@ -72,6 +72,85 @@ class CollectionMappingGenerationTest {
                 },
             ),
             CodegenCase(
+                name = "normalizes blob collection keys by value",
+                prefix = "coll-map-blob-key-",
+                schemas = listOf(
+                    FixtureFile(
+                        path = "person.sql",
+                        text = """
+                            CREATE TABLE person (
+                              id BLOB PRIMARY KEY NOT NULL,
+                              name TEXT NOT NULL
+                            ) WITHOUT ROWID;
+                        """.trimIndent(),
+                    ),
+                    FixtureFile(
+                        path = "address.sql",
+                        text = """
+                            CREATE TABLE address (
+                              id BLOB PRIMARY KEY NOT NULL,
+                              person_id BLOB NOT NULL,
+                              city TEXT NOT NULL
+                            ) WITHOUT ROWID;
+                        """.trimIndent(),
+                    ),
+                ),
+                queries = listOf(
+                    QueryFile(
+                        namespace = "address",
+                        path = "selectAll.sql",
+                        text = """
+                            -- @@{ queryResult=Row }
+                            SELECT id, person_id, city FROM address;
+                        """.trimIndent(),
+                    ),
+                    QueryFile(
+                        namespace = "person",
+                        path = "selectWithAddresses.sql",
+                        text = """
+                            /* @@{ queryResult=RowWithBlobAddresses, collectionKey=person_id } */
+                            SELECT
+                              p.id AS person_id,
+                              p.name,
+                              a.id AS address__id,
+                              a.person_id AS address__person_id,
+                              a.city AS address__city
+
+                            /* @@{ dynamicField=addresses,
+                                   mappingType=collection,
+                                   propertyType=List<AddressQuery.SharedResult.Row>,
+                                   sourceTable=a,
+                                   collectionKey=address__id,
+                                   aliasPrefix=address__,
+                                   notNull=true } */
+
+                            FROM person p LEFT JOIN address a ON p.id = a.person_id;
+                        """.trimIndent(),
+                    ),
+                ),
+                generatedFileNamePart = "PersonQuery_SelectWithAddresses",
+                verifyGeneratedText = { text ->
+                    assertTrue(
+                        text.contains(
+                            "val groupedRows: Map<kotlin.Any?, List<RowWithBlobAddresses_Joined>> = joinedRows.groupBy { row ->"
+                        ),
+                        "Statement-level grouping should use value-stable key normalization",
+                    )
+                    assertTrue(
+                        text.contains("val key: kotlin.Any? = row.personId"),
+                        "Parent BLOB key should be normalized from the joined row",
+                    )
+                    assertTrue(
+                        text.contains("if (key is kotlin.ByteArray) key.asList() else key"),
+                        "BLOB keys should compare by contents",
+                    )
+                    assertTrue(
+                        text.contains("val key: kotlin.Any? = it.id"),
+                        "Child BLOB collection keys should be normalized before distinctBy",
+                    )
+                },
+            ),
+            CodegenCase(
                 name = "includes per-row dynamic field alongside collection infrastructure",
                 prefix = "perrow-map-int-",
                 dbName = "TestDb2",

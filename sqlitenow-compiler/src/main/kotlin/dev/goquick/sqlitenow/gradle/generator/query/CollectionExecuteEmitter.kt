@@ -17,8 +17,6 @@ package dev.goquick.sqlitenow.gradle.generator.query
 
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
-import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
-import dev.goquick.sqlitenow.gradle.processing.SelectFieldCodeGenerator
 import dev.goquick.sqlitenow.gradle.processing.SharedResultTypeUtils
 import dev.goquick.sqlitenow.gradle.util.IndentedCodeBuilder
 
@@ -28,7 +26,6 @@ import dev.goquick.sqlitenow.gradle.util.IndentedCodeBuilder
  */
 internal class CollectionExecuteEmitter(
     private val resultMappingHelper: ResultMappingHelper,
-    private val selectFieldGenerator: SelectFieldCodeGenerator,
     private val queryNamespaceName: (String) -> String,
 ) {
     fun emitExecuteAsListImplementation(
@@ -57,12 +54,6 @@ internal class CollectionExecuteEmitter(
 
         val propertyNameGenerator = statement.annotations.propertyNameGenerator
         val groupingKey = resultMappingHelper.getPropertyName(groupingField, propertyNameGenerator)
-        val groupingKeyType = selectFieldGenerator
-            .generateProperty(groupingField, PropertyNameGeneratorType.LOWER_CAMEL_CASE)
-            .type
-            .copy(nullable = false)
-            .toString()
-
         val joinedClassFullName = SharedResultTypeUtils.createJoinedResultTypeString(namespace, statement)
 
         val capitalizedNamespace = queryNamespaceName(namespace)
@@ -77,7 +68,11 @@ internal class CollectionExecuteEmitter(
         builder.line("}")
         builder.line("")
         builder.line("// Group joined rows by $groupingKey")
-        builder.line("val groupedRows: Map<$groupingKeyType, List<$joinedClassFullName>> = joinedRows.groupBy { it.$groupingKey }")
+        builder.line("val groupedRows: Map<kotlin.Any?, List<$joinedClassFullName>> = joinedRows.groupBy { row ->")
+        builder.indent(by = 2) {
+            emitValueStableCollectionKey("row.$groupingKey")
+        }
+        builder.line("}")
         builder.line("")
         builder.line("// Create mapped objects with collections")
         builder.line("groupedRows.map { (_, rowsForEntity: List<$joinedClassFullName>) ->")

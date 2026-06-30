@@ -175,7 +175,9 @@ class SafeSQLiteConnection internal constructor(
                         // ignore rollback errors
                     }
                 }
-                sqliteNowLogger.e(e) { "Transaction failed: ${e.message}" }
+                if (debug) {
+                    sqliteNowLogger.e(e) { "Transaction failed: ${e.message}" }
+                }
                 throw e
             } finally {
                 activeTransactionDepth--

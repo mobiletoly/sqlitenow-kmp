@@ -5,12 +5,15 @@ import dev.goquick.sqlitenow.core.test.db.LibraryTestDatabase
 import dev.goquick.sqlitenow.core.test.db.PersonAddressQuery
 import dev.goquick.sqlitenow.core.test.db.PersonQuery
 import kotlinx.datetime.LocalDate
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 import kotlin.test.*
 
 /**
  * Integration tests specifically for SQLiteNow RETURNING clause functionality.
  * Exercises ExecuteReturningStatement helpers (list/one/oneOrNull variants).
  */
+@OptIn(ExperimentalTime::class)
 class ReturningClauseTest {
 
     private lateinit var database: LibraryTestDatabase
@@ -43,8 +46,8 @@ class ReturningClauseTest {
             
             val insertedPerson = insertedList[0]
             assertTrue(insertedPerson.id > 0, "ID should be positive")
-            assertEquals("ReturningList", insertedPerson.firstName, "First name should match")
-            assertEquals("Test", insertedPerson.lastName, "Last name should match")
+            assertEquals("ReturningList", insertedPerson.myFirstName, "First name should match")
+            assertEquals("Test", insertedPerson.myLastName, "Last name should match")
             assertEquals("returning-list@example.com", insertedPerson.email, "Email should match")
             assertEquals("+2222222222", insertedPerson.phone, "Phone should match")
             assertEquals(LocalDate(1985, 5, 20), insertedPerson.birthDate, "Birth date should match")
@@ -67,8 +70,8 @@ class ReturningClauseTest {
             val insertedPerson = database.person.add.oneOrNull(testPerson)
             
             assertNotNull(insertedPerson, "Should return person")
-            assertEquals("ReturningOrNull", insertedPerson.firstName, "First name should match")
-            assertEquals("Test", insertedPerson.lastName, "Last name should match")
+            assertEquals("ReturningOrNull", insertedPerson.myFirstName, "First name should match")
+            assertEquals("Test", insertedPerson.myLastName, "Last name should match")
             assertEquals("returning-or-null@example.com", insertedPerson.email, "Email should match")
             assertEquals("+3333333333", insertedPerson.phone, "Phone should match")
             assertEquals(LocalDate(1992, 8, 10), insertedPerson.birthDate, "Birth date should match")
@@ -78,7 +81,7 @@ class ReturningClauseTest {
     fun testReturningWithTypeAdapters() = runDatabaseTest {
             database.open()
             
-            // Test RETURNING clause with custom type adapters (LocalDate, LocalDateTime)
+            // Test RETURNING clause with custom type adapters (LocalDate, Instant)
             val testDate = LocalDate(1988, 12, 25)
             
             val testPerson = PersonQuery.Add.Params(
@@ -94,13 +97,16 @@ class ReturningClauseTest {
             // Verify type adapters worked correctly in RETURNING
             assertEquals(testDate, insertedPerson.birthDate, "Birth date should be preserved through adapters")
             
-            // Verify LocalDateTime adapter for createdAt
+            // Verify Instant adapter for createdAt
             assertNotNull(insertedPerson.createdAt, "Created at should not be null")
-            assertTrue(insertedPerson.createdAt.year >= 2024, "Created at should be recent")
+            assertTrue(
+                insertedPerson.createdAt >= Instant.parse("2024-01-01T00:00:00Z"),
+                "Created at should be recent"
+            )
             
             // Verify other fields
             assertEquals("returning-adapters@example.com", insertedPerson.email, "Email should match")
-            assertEquals("ReturningAdapters", insertedPerson.firstName, "First name should match")
+            assertEquals("ReturningAdapters", insertedPerson.myFirstName, "First name should match")
             assertEquals("+4444444444", insertedPerson.phone, "Phone should match")
     }
 
@@ -130,8 +136,8 @@ class ReturningClauseTest {
             
             // Compare RETURNING result with SELECT result
             assertEquals(insertedPerson.id, selectedPerson.id, "ID should match")
-            assertEquals(insertedPerson.firstName, selectedPerson.myFirstName, "First name should match")
-            assertEquals(insertedPerson.lastName, selectedPerson.myLastName, "Last name should match")
+            assertEquals(insertedPerson.myFirstName, selectedPerson.myFirstName, "First name should match")
+            assertEquals(insertedPerson.myLastName, selectedPerson.myLastName, "Last name should match")
             assertEquals(insertedPerson.email, selectedPerson.email, "Email should match")
             assertEquals(insertedPerson.phone, selectedPerson.phone, "Phone should match")
             assertEquals(insertedPerson.birthDate, selectedPerson.birthDate, "Birth date should match")
@@ -154,7 +160,7 @@ class ReturningClauseTest {
             // First insert
             val firstInsert = database.person.add.one(originalPerson)
             assertTrue(firstInsert.id > 0, "First insert ID should be positive")
-            assertEquals("Original", firstInsert.firstName, "First insert first name should match")
+            assertEquals("Original", firstInsert.myFirstName, "First insert first name should match")
             
             // Second insert with same email (should trigger ON CONFLICT DO UPDATE)
             val updatedPerson = PersonQuery.Add.Params(
@@ -169,8 +175,8 @@ class ReturningClauseTest {
             
             // Should return the updated row
             assertEquals(firstInsert.id, secondInsert.id, "Should be same ID (updated, not new)")
-            assertEquals("Updated", secondInsert.firstName, "First name should be updated")
-            assertEquals("NewName", secondInsert.lastName, "Last name should be updated")
+            assertEquals("Updated", secondInsert.myFirstName, "First name should be updated")
+            assertEquals("NewName", secondInsert.myLastName, "Last name should be updated")
             assertEquals("+7777777777", secondInsert.phone, "Phone should be updated")
             assertEquals(LocalDate(1991, 7, 21), secondInsert.birthDate, "Birth date should be updated")
             
@@ -210,8 +216,8 @@ class ReturningClauseTest {
 
             // Verify the returned data matches the update
             assertEquals(insertedPerson.id, updatedPerson.id, "ID should remain the same")
-            assertEquals("Updated", updatedPerson.firstName, "First name should be updated")
-            assertEquals("NewName", updatedPerson.lastName, "Last name should be updated")
+            assertEquals("Updated", updatedPerson.myFirstName, "First name should be updated")
+            assertEquals("NewName", updatedPerson.myLastName, "Last name should be updated")
             assertEquals("updated-returning@example.com", updatedPerson.email, "Email should be updated")
             assertEquals("+2222222222", updatedPerson.phone, "Phone should be updated")
             assertEquals(LocalDate(1995, 5, 15), updatedPerson.birthDate, "Birth date should be updated")
@@ -255,8 +261,8 @@ class ReturningClauseTest {
 
             // Verify the returned data matches the deleted person
             assertEquals(insertedPerson.id, deletedPerson.id, "ID should match")
-            assertEquals("ToDelete", deletedPerson.firstName, "First name should match")
-            assertEquals("Person", deletedPerson.lastName, "Last name should match")
+            assertEquals("ToDelete", deletedPerson.myFirstName, "First name should match")
+            assertEquals("Person", deletedPerson.myLastName, "Last name should match")
             assertEquals("delete-returning@example.com", deletedPerson.email, "Email should match")
             assertEquals("+3333333333", deletedPerson.phone, "Phone should match")
             assertEquals(LocalDate(1985, 12, 25), deletedPerson.birthDate, "Birth date should match")
@@ -389,8 +395,8 @@ class ReturningClauseTest {
 
             // Verify all returned records have updated first_name
             updatedPersons.forEach { person ->
-                assertEquals("UpdatedMulti", person.firstName, "First name should be updated")
-                assertEquals("MultiUpdate", person.lastName, "Last name should remain")
+                assertEquals("UpdatedMulti", person.myFirstName, "First name should be updated")
+                assertEquals("MultiUpdate", person.myLastName, "Last name should remain")
             }
 
             // Verify the IDs match our inserted persons
@@ -458,14 +464,14 @@ class ReturningClauseTest {
             assertEquals(3, deletedPersons.size, "Should return 3 deleted records")
 
             // Verify the returned data matches what we inserted
-            val deletedByFirstName = deletedPersons.associateBy { it.firstName }
+            val deletedByFirstName = deletedPersons.associateBy { it.myFirstName }
 
-            assertEquals("Delete1", deletedByFirstName["Delete1"]?.firstName, "Delete1 should be returned")
-            assertEquals("Delete2", deletedByFirstName["Delete2"]?.firstName, "Delete2 should be returned")
-            assertEquals("Delete3", deletedByFirstName["Delete3"]?.firstName, "Delete3 should be returned")
+            assertEquals("Delete1", deletedByFirstName["Delete1"]?.myFirstName, "Delete1 should be returned")
+            assertEquals("Delete2", deletedByFirstName["Delete2"]?.myFirstName, "Delete2 should be returned")
+            assertEquals("Delete3", deletedByFirstName["Delete3"]?.myFirstName, "Delete3 should be returned")
 
             deletedPersons.forEach { person ->
-                assertEquals("MultiDelete", person.lastName, "Last name should match")
+                assertEquals("MultiDelete", person.myLastName, "Last name should match")
             }
 
             // Verify the IDs match our inserted persons

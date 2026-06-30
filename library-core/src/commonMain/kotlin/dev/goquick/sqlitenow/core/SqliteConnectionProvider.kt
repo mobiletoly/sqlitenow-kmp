@@ -106,5 +106,13 @@ internal expect suspend fun openBundledSqliteConnection(
 
 private fun String.isInMemoryPath(): Boolean {
     if (isEmpty()) return true
-    return this == ":memory:" || startsWith(":memory:") || startsWith(":temp:")
+    return this == ":memory:" || hasPrefix(":memory:") || hasPrefix(":temp:")
+}
+
+private fun String.hasPrefix(prefix: String): Boolean {
+    if (length < prefix.length) return false
+    for (index in prefix.indices) {
+        if (this[index] != prefix[index]) return false
+    }
+    return true
 }

@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "databases": [
+    {
+      "databaseName": "NowSampleDatabase",
+      "swiftPackageName": "NowSampleDatabaseSQLiteNow",
+      "swiftTargetName": "NowSampleDatabaseSQLiteNow",
+      "runtime": "core",
+      "runtimeXcframeworkDirectory": "../../runtime/core/build/runtime/SQLiteNowCoreRuntime.xcframework"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+CREATE TABLE comment (
+    id INTEGER PRIMARY KEY NOT NULL,
+    person_id INTEGER NOT NULL,
+    body TEXT NOT NULL
+);

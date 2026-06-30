@@ -1,3 +1,5 @@
+@file:OptIn(kotlin.time.ExperimentalTime::class)
+
 package dev.goquick.sqlitenow.core.test
 
 import dev.goquick.sqlitenow.core.test.db.AddressType
@@ -7,7 +9,7 @@ import dev.goquick.sqlitenow.core.test.db.CommentQuery
 import dev.goquick.sqlitenow.core.test.db.PersonAddResult
 import dev.goquick.sqlitenow.core.test.db.PersonAddressQuery
 import kotlinx.datetime.LocalDate
-import kotlinx.datetime.LocalDateTime
+import kotlin.time.Instant
 import kotlin.test.*
 
 /**
@@ -44,8 +46,8 @@ class InsertOperationsTest {
             // Verify null values were handled correctly
             assertTrue(insertedPerson.id > 0, "ID should be positive")
             assertEquals("null-insert@example.com", insertedPerson.email, "Email should match")
-            assertEquals("Null", insertedPerson.firstName, "First name should match")
-            assertEquals("Insert", insertedPerson.lastName, "Last name should match")
+            assertEquals("Null", insertedPerson.myFirstName, "First name should match")
+            assertEquals("Insert", insertedPerson.myLastName, "Last name should match")
             assertNull(insertedPerson.phone, "Phone should be null")
             assertNull(insertedPerson.birthDate, "Birth date should be null")
             assertNotNull(insertedPerson.createdAt, "Created at should be set")
@@ -80,8 +82,8 @@ class InsertOperationsTest {
             // Verify upsert behavior
             assertEquals(firstInsert.id, upsertedPerson.id, "Should be same ID (updated, not new record)")
             assertEquals("upsert@example.com", upsertedPerson.email, "Email should remain same")
-            assertEquals("Updated", upsertedPerson.firstName, "First name should be updated")
-            assertEquals("Upserted", upsertedPerson.lastName, "Last name should be updated")
+            assertEquals("Updated", upsertedPerson.myFirstName, "First name should be updated")
+            assertEquals("Upserted", upsertedPerson.myLastName, "Last name should be updated")
             assertEquals("+2222222222", upsertedPerson.phone, "Phone should be updated")
             assertEquals(LocalDate(1986, 6, 16), upsertedPerson.birthDate, "Birth date should be updated")
             
@@ -112,7 +114,7 @@ class InsertOperationsTest {
                 // Verify each insert
                 assertTrue(insertedPerson.id > 0, "ID should be positive for person $i")
                 assertEquals("batch$i@example.com", insertedPerson.email, "Email should match for person $i")
-                assertEquals("Batch$i", insertedPerson.firstName, "First name should match for person $i")
+                assertEquals("Batch$i", insertedPerson.myFirstName, "First name should match for person $i")
             }
             
             // Verify all persons were inserted
@@ -130,7 +132,7 @@ class InsertOperationsTest {
     }
 
     @Test
-    fun testInsertWithDateTimeEdgeCases() = runDatabaseTest {
+    fun testInsertWithTemporalEdgeCases() = runDatabaseTest {
             database.open()
             
             // Test edge case dates
@@ -159,23 +161,23 @@ class InsertOperationsTest {
                 assertEquals(date, insertedPerson.birthDate, "Birth date should match for person $index")
             }
             
-            // Test edge case DateTimes
+            // Test edge case instants
             val person = insertedPersons[0]
-            val edgeDateTime = LocalDateTime(1970, 1, 1, 0, 0, 0) // Unix epoch
+            val edgeInstant = Instant.parse("1970-01-01T00:00:00Z") // Unix epoch
             
             val commentParams = CommentQuery.Add.Params(
                 personId = person.id,
-                comment = "Edge case datetime test",
-                createdAt = edgeDateTime,
-                tags = listOf("edge", "datetime", "unix-epoch")
+                comment = "Edge case instant test",
+                createdAt = edgeInstant,
+                tags = listOf("edge", "instant", "unix-epoch")
             )
             
             database.comment.add(commentParams)
             
-            // Verify edge case datetime
+            // Verify edge case instant
             val comments = database.comment.selectAll(CommentQuery.SelectAll.Params(personId = person.id)).asList()
             assertEquals(1, comments.size, "Should have 1 comment")
-            assertEquals(edgeDateTime, comments[0].createdAt, "DateTime should match Unix epoch")
+            assertEquals(edgeInstant, comments[0].createdAt, "Instant should match Unix epoch")
     }
 
     @Test
@@ -200,8 +202,8 @@ class InsertOperationsTest {
             
             // Verify long strings were inserted correctly
             assertEquals(longEmail, insertedPerson.email, "Long email should match")
-            assertEquals(longFirstName, insertedPerson.firstName, "Long first name should match")
-            assertEquals(longLastName, insertedPerson.lastName, "Long last name should match")
+            assertEquals(longFirstName, insertedPerson.myFirstName, "Long first name should match")
+            assertEquals(longLastName, insertedPerson.myLastName, "Long last name should match")
             assertEquals(longPhone, insertedPerson.phone, "Long phone should match")
             
             // Test very long comment
@@ -211,7 +213,7 @@ class InsertOperationsTest {
             val commentParams = CommentQuery.Add.Params(
                 personId = insertedPerson.id,
                 comment = longComment,
-                createdAt = LocalDateTime(2024, 7, 14, 16, 45, 30),
+                createdAt = Instant.parse("2024-07-14T16:45:30Z"),
                 tags = longTags
             )
             
@@ -263,7 +265,7 @@ class InsertOperationsTest {
             val validCommentParams = CommentQuery.Add.Params(
                 personId = insertedPerson.id, // Valid foreign key
                 comment = "Valid foreign key comment",
-                createdAt = LocalDateTime(2024, 3, 10, 10, 15, 20),
+                createdAt = Instant.parse("2024-03-10T10:15:20Z"),
                 tags = listOf("constraint", "foreign-key", "valid")
             )
             

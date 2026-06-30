@@ -58,4 +58,57 @@ class DatabaseAdapterPlannerTest {
             planner.findBestProviderByName("sqlValueToBirthDate", adaptersByNamespace)?.first,
         )
     }
+
+    @Test
+    @DisplayName("signature-aware provider selection preserves overloaded adapter names")
+    fun signatureAwareProviderSelectionPreservesOverloadedAdapterNames() {
+        val stringType = ClassName("kotlin", "String")
+        val intType = ClassName("kotlin", "Int")
+        val planner = DatabaseAdapterPlanner(
+            nsWithStatements = emptyMap(),
+            adapterConfig = AdapterConfig(
+                columnLookup = ColumnLookup(emptyList(), emptyList()),
+                createTableStatements = emptyList(),
+                createViewStatements = emptyList(),
+                packageName = "fixture.db",
+            ),
+            tableLookup = CaseInsensitiveMap(emptyList()),
+            sharedResultManager = SharedResultManager(),
+        )
+        val adaptersByNamespace = mapOf(
+            "doc" to listOf(
+                UniqueAdapter(
+                    functionName = "statusToSqlValue",
+                    inputType = stringType,
+                    outputType = stringType,
+                    isNullable = false,
+                    providerNamespace = "doc",
+                ),
+                UniqueAdapter(
+                    functionName = "statusToSqlValue",
+                    inputType = intType,
+                    outputType = stringType,
+                    isNullable = false,
+                    providerNamespace = "doc",
+                ),
+            ),
+            "task" to listOf(
+                UniqueAdapter(
+                    functionName = "statusToSqlValue",
+                    inputType = stringType,
+                    outputType = stringType,
+                    isNullable = false,
+                    providerNamespace = "task",
+                )
+            ),
+        )
+
+        val byName = planner.computeBestProviders(adaptersByNamespace)
+        assertEquals(1, byName.size)
+
+        val bySignature = planner.computeBestProvidersBySignature(adaptersByNamespace)
+        assertEquals(2, bySignature.size)
+        assertEquals("doc", bySignature.getValue("statusToSqlValue__kotlin.Int__kotlin.String"))
+        assertEquals("doc", bySignature.getValue("statusToSqlValue__kotlin.String__kotlin.String"))
+    }
 }

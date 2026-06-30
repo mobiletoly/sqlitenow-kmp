@@ -8,9 +8,11 @@ driver can be evaluated later without changing generated query APIs.
 
 ## Install
 
+Replace `X.Y.Z` with the latest SQLiteNow release version.
+
 ```yaml
 dependencies:
-  sqlitenow_runtime: ^0.10.0
+  sqlitenow_runtime: ^X.Y.Z
 ```
 
 Use this package with generated Dart code from `sqlitenow_cli`.

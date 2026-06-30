@@ -1,10 +1,16 @@
 {%- assign current_platform = "kmp" -%}
 {%- if page.url == "/flutter/" or page.url contains "/flutter/" -%}
   {%- assign current_platform = "dart" -%}
+{%- elsif page.url == "/swift/" or page.url contains "/swift/" -%}
+  {%- assign current_platform = "swift" -%}
 {%- endif -%}
 {%- assign current_section = "home" -%}
-{%- if page.url == "/getting-started/" or page.url contains "/flutter/getting-started/" -%}
+{%- if page.url == "/getting-started/" or page.url contains "/flutter/getting-started/" or page.url contains "/swift/getting-started/" -%}
   {%- assign current_section = "getting-started" -%}
+{%- elsif page.url contains "/swift/configuration/" -%}
+  {%- assign current_section = "configuration" -%}
+{%- elsif page.url contains "/swift/sync/" -%}
+  {%- assign current_section = "sync" -%}
 {%- elsif page.url contains "/kmp/sql-reference/" or page.url contains "/flutter/sql-reference/" or page.url contains "/documentation/" -%}
   {%- assign current_section = "sql-reference" -%}
 {%- elsif page.url contains "/kmp/recipes/" or page.url contains "/flutter/recipes/" or page.url contains "/recipes/" -%}
@@ -23,6 +29,8 @@
       <a class="{% if current_platform == "kmp" %}active{% endif %}" href="{{ site.baseurl }}/kmp/">Kotlin Multiplatform</a>
       <span aria-hidden="true">|</span>
       <a class="{% if current_platform == "dart" %}active{% endif %}" href="{{ site.baseurl }}/flutter/">Flutter/Dart</a>
+      <span aria-hidden="true">|</span>
+      <a class="{% if current_platform == "swift" %}active{% endif %}" href="{{ site.baseurl }}/swift/">Swift</a>
     </div>
 
     <nav class="site-nav platform-nav" aria-label="Main navigation">
@@ -70,7 +78,7 @@
               <a href="{{ site.baseurl }}/tutorials/part-3-reactive-ui/">Part 3: Reactive UI</a>
             </div>
           </div>
-        {%- else -%}
+        {%- elsif current_platform == "dart" -%}
           <a class="page-link {% if current_section == "home" %}active{% endif %}" href="{{ site.baseurl }}/flutter/">Home</a>
           <a class="page-link {% if current_section == "getting-started" %}active{% endif %}" href="{{ site.baseurl }}/flutter/getting-started/">Getting Started</a>
           <a class="page-link {% if current_section == "sql-reference" %}active{% endif %}" href="{{ site.baseurl }}/flutter/sql-reference/">SQL Reference</a>
@@ -84,6 +92,11 @@
               <a href="{{ site.baseurl }}/flutter/recipes/complex-example/">Complex Example</a>
             </div>
           </div>
+        {%- else -%}
+          <a class="page-link {% if current_section == "home" %}active{% endif %}" href="{{ site.baseurl }}/swift/">Home</a>
+          <a class="page-link {% if current_section == "getting-started" %}active{% endif %}" href="{{ site.baseurl }}/swift/getting-started/">Getting Started</a>
+          <a class="page-link {% if current_section == "configuration" %}active{% endif %}" href="{{ site.baseurl }}/swift/configuration/">Configuration</a>
+          <a class="page-link {% if current_section == "sync" %}active{% endif %}" href="{{ site.baseurl }}/swift/sync/">Sync</a>
         {%- endif -%}
       </div>
     </nav>

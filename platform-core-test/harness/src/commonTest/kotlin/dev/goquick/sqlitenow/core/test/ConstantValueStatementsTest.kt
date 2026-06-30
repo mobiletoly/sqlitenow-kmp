@@ -52,7 +52,7 @@ class ConstantValueStatementsTest {
             assertEquals("US", insertedAddress.country)
             assertTrue(insertedAddress.isPrimary)
             assertNull(insertedAddress.state, "State should be null on insert")
-            assertNotNull(insertedAddress.createdAt, "Created at should be populated from CURRENT_TIMESTAMP")
+            assertNotNull(insertedAddress.createdAt, "Created at should be populated from the SQL timestamp expression")
 
             val updatedAddress = database.personAddress.updateConstantFlags.one(
                 PersonAddressQuery.UpdateConstantFlags.Params(

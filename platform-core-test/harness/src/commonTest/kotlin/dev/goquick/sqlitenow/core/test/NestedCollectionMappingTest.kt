@@ -1,3 +1,5 @@
+@file:OptIn(kotlin.time.ExperimentalTime::class)
+
 package dev.goquick.sqlitenow.core.test
 
 import dev.goquick.sqlitenow.core.test.db.AddressType
@@ -9,7 +11,7 @@ import dev.goquick.sqlitenow.core.test.db.PersonCategoryQuery
 import dev.goquick.sqlitenow.core.test.db.PersonQuery
 import dev.goquick.sqlitenow.core.test.db.PersonWithNestedCollectionsRow
 import kotlinx.datetime.LocalDate
-import kotlinx.datetime.LocalDateTime
+import kotlin.time.Instant
 import kotlin.test.*
 import kotlin.time.TimeSource
 
@@ -62,7 +64,7 @@ class NestedCollectionMappingTest {
     private fun baseNestedCollectionCommentParams(personId: Long) = CommentQuery.Add.Params(
         personId = personId,
         comment = "Single comment for Jane",
-        createdAt = LocalDateTime(2024, 3, 10, 9, 15, 0),
+        createdAt = Instant.parse("2024-03-10T09:15:00Z"),
         tags = listOf("single")
     )
 
@@ -186,14 +188,14 @@ class NestedCollectionMappingTest {
         val comment1 = database.comment.add(CommentQuery.Add.Params(
             personId = person.id,
             comment = "First comment about John",
-            createdAt = LocalDateTime(2024, 1, 15, 10, 30, 0),
+            createdAt = Instant.parse("2024-01-15T10:30:00Z"),
             tags = listOf("personal", "introduction")
         ))
 
         val comment2 = database.comment.add(CommentQuery.Add.Params(
             personId = person.id,
             comment = "Second comment with more details",
-            createdAt = LocalDateTime(2024, 2, 20, 14, 45, 30),
+            createdAt = Instant.parse("2024-02-20T14:45:30Z"),
             tags = listOf("detailed", "follow-up", "important")
         ))
 
@@ -422,14 +424,14 @@ class NestedCollectionMappingTest {
         database.comment.add(CommentQuery.Add.Params(
             personId = person.id,
             comment = "Comment with complex tags and special characters: 'test', \"quotes\", & symbols",
-            createdAt = LocalDateTime(2024, 4, 1, 12, 0, 0),
+            createdAt = Instant.parse("2024-04-01T12:00:00Z"),
             tags = complexTags1
         ))
 
         database.comment.add(CommentQuery.Add.Params(
             personId = person.id,
             comment = "Another comment with different complex tags",
-            createdAt = LocalDateTime(2024, 4, 2, 15, 30, 0),
+            createdAt = Instant.parse("2024-04-02T15:30:00Z"),
             tags = complexTags2
         ))
 
@@ -494,7 +496,7 @@ class NestedCollectionMappingTest {
             database.comment.add(CommentQuery.Add.Params(
                 personId = person.id,
                 comment = "Performance test comment $index with detailed content",
-                createdAt = LocalDateTime(2024, 1, index + 1, 10, 0, 0),
+                createdAt = Instant.parse("2024-01-${(index + 1).toString().padStart(2, '0')}T10:00:00Z"),
                 tags = listOf("performance", "test", "comment$index", "large-dataset")
             ))
         }
@@ -574,7 +576,7 @@ class NestedCollectionMappingTest {
         val comment = database.comment.add(CommentQuery.Add.Params(
             personId = person.id,
             comment = "Consistency test comment",
-            createdAt = LocalDateTime(2024, 6, 20, 16, 45, 0),
+            createdAt = Instant.parse("2024-06-20T16:45:00Z"),
             tags = listOf("consistency", "test", "verification")
         ))
 
@@ -602,7 +604,7 @@ class NestedCollectionMappingTest {
         val nestedComment = nestedResult.comments.first()
         assertEquals("Consistency test comment", nestedComment.comment)
         assertEquals(listOf("consistency", "test", "verification"), nestedComment.tags)
-        assertEquals(LocalDateTime(2024, 6, 20, 16, 45, 0), nestedComment.createdAt)
+        assertEquals(Instant.parse("2024-06-20T16:45:00Z"), nestedComment.createdAt)
     }
 
     @Test

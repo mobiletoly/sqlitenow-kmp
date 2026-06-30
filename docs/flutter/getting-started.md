@@ -32,14 +32,14 @@ instead of `flutter pub run`.
 ## Add SQLiteNow
 
 Add the runtime package to dependencies and the generator package to development
-dependencies:
+dependencies. Replace `X.Y.Z` with the latest SQLiteNow release version:
 
 ```yaml
 dependencies:
-  sqlitenow_runtime: ^0.10.0
+  sqlitenow_runtime: ^X.Y.Z
 
 dev_dependencies:
-  sqlitenow_cli: ^0.10.0
+  sqlitenow_cli: ^X.Y.Z
 ```
 
 SQLiteNow does not require the Gradle plugin for Flutter or Dart projects.

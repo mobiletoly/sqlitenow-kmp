@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "databases": [
+    {
+      "databaseName": "SwiftOnlySyncDatabase",
+      "swiftPackageName": "SwiftOnlySyncDatabaseSQLiteNow",
+      "swiftTargetName": "SwiftOnlySyncDatabaseSQLiteNow",
+      "runtime": "sync",
+      "runtimeXcframeworkDirectory": "../../../runtime/sync/build/runtime/SQLiteNowSyncRuntime.xcframework"
+    }
+  ]
+}

@@ -24,6 +24,7 @@ import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedStatement
 import dev.goquick.sqlitenow.gradle.processing.JoinedPropertyNameResolver
 import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
+import dev.goquick.sqlitenow.gradle.processing.ReturningColumnsResolver
 import dev.goquick.sqlitenow.gradle.processing.SelectFieldCodeGenerator
 import dev.goquick.sqlitenow.gradle.processing.SharedResultTypeUtils
 import dev.goquick.sqlitenow.gradle.util.IndentedCodeBuilder
@@ -50,9 +51,9 @@ internal class QueryReadEmitter(
         Map<String, String>,
         List<String>,
     ) -> String,
-    private val generateExecuteReturningGetter: (AnnotatedSelectStatement.Field, TypeName, Int) -> String,
+    private val generateExecuteReturningGetter: (AnnotatedSelectStatement.Field, TypeName, Int, String) -> String,
     private val generateDynamicFieldMappingFromJoined: DynamicFieldExpression,
-    private val createSelectLikeFieldsFromExecuteReturning: (AnnotatedExecuteStatement) -> List<AnnotatedSelectStatement.Field>,
+    private val resolveExecuteReturningFields: (AnnotatedExecuteStatement) -> List<ReturningColumnsResolver.ResolvedColumn>,
     private val findMainTableAlias: (List<AnnotatedSelectStatement.Field>) -> String?,
 ) {
     fun generateReadStatementResultFunction(
@@ -332,17 +333,18 @@ internal class QueryReadEmitter(
         namespace: String,
     ) {
         val resultType = SharedResultTypeUtils.createResultTypeString(namespace, statement)
-        val selectLikeFields = createSelectLikeFieldsFromExecuteReturning(statement)
+        val returningFields = resolveExecuteReturningFields(statement)
         val builder = IndentedCodeBuilder()
         builder.line("return $resultType(")
-        val lastIndex = selectLikeFields.lastIndex
+        val lastIndex = returningFields.lastIndex
         builder.indent {
-            selectLikeFields.forEachIndexed { index, field ->
-                val propertyName = statement.annotations.propertyNameGenerator.convertToPropertyName(field.src.fieldName)
+            returningFields.forEachIndexed { index, returningField ->
+                val field = returningField.field
+                val propertyName = returningField.propertyName
                 val desiredType = selectFieldGenerator
                     .generateProperty(field, statement.annotations.propertyNameGenerator)
                     .type
-                val getterCall = generateExecuteReturningGetter(field, desiredType, index)
+                val getterCall = generateExecuteReturningGetter(field, desiredType, index, propertyName)
                 val suffix = if (index == lastIndex) "" else ","
                 line("$propertyName = $getterCall$suffix")
             }

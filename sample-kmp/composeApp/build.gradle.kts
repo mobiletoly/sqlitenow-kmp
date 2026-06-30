@@ -31,7 +31,7 @@ kotlin {
     jvmToolchain(17)
     applyDefaultHierarchyTemplate()
 
-    androidLibrary {
+    android {
         namespace = "dev.goquick.sqlitenow.samplekmp"
         compileSdk = libs.versions.android.compileSdk.get().toInt()
         minSdk = libs.versions.android.minSdk.get().toInt()
@@ -44,14 +44,13 @@ kotlin {
     jvm("desktop")
 
     compilerOptions {
-        languageVersion.set(KotlinVersion.KOTLIN_2_3)
+        languageVersion.set(KotlinVersion.KOTLIN_2_4)
         freeCompilerArgs.addAll(
             "-opt-in=kotlin.time.ExperimentalTime"
         )
     }
 
     listOf(
-        iosX64(),
         iosArm64(),
         iosSimulatorArm64()
     ).forEach {
@@ -61,7 +60,7 @@ kotlin {
         }
     }
 
-    js(IR) {
+    js {
         browser {
             binaries.executable()
         }
@@ -82,7 +81,7 @@ kotlin {
             implementation(libs.jetbrains.compose.ui)
             implementation(libs.jetbrains.compose.material)
             implementation(libs.jetbrains.compose.components.resources)
-            implementation(libs.jetbrains.compose.components.uiToolingPreview)
+            implementation(libs.jetbrains.compose.ui.toolingPreview)
             implementation(libs.kotlinx.datetime)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.kotlinx.serialization.cbor)

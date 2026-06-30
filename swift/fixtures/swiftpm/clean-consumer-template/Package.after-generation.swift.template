@@ -1,0 +1,31 @@
+// swift-tools-version: 6.0
+
+import PackageDescription
+
+let package = Package(
+    name: "SQLiteNowCleanConsumer",
+    platforms: [
+        .macOS(.v14),
+    ],
+    dependencies: [
+        .package(url: "{{SQLITENOW_DISTRIBUTION_URL}}", exact: "{{SQLITENOW_VERSION}}"),
+        .package(path: "SQLiteNowGenerated/CleanConsumerCoreDatabaseSQLiteNow"),
+        .package(path: "SQLiteNowGenerated/CleanConsumerSyncDatabaseSQLiteNow"),
+    ],
+    targets: [
+        .target(name: "SQLiteNowCleanConsumer"),
+        .testTarget(
+            name: "SQLiteNowCleanConsumerTests",
+            dependencies: [
+                .product(
+                    name: "CleanConsumerCoreDatabaseSQLiteNow",
+                    package: "CleanConsumerCoreDatabaseSQLiteNow"
+                ),
+                .product(
+                    name: "CleanConsumerSyncDatabaseSQLiteNow",
+                    package: "CleanConsumerSyncDatabaseSQLiteNow"
+                ),
+            ]
+        ),
+    ]
+)

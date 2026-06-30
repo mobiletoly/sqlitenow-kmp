@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "databases": [
+    {
+      "databaseName": "CleanConsumerCoreDatabase",
+      "sqlDirectory": "DatabaseSQL/CleanConsumerCoreDatabase",
+      "swiftPackageName": "CleanConsumerCoreDatabaseSQLiteNow",
+      "swiftTargetName": "CleanConsumerCoreDatabaseSQLiteNow",
+      "runtime": "core"{{SQLITENOW_CORE_RUNTIME_ARTIFACT_CONFIG}}
+    },
+    {
+      "databaseName": "SwiftOnlySyncDatabase",
+      "sqlDirectory": "DatabaseSQL/SwiftOnlySyncDatabase",
+      "swiftPackageName": "CleanConsumerSyncDatabaseSQLiteNow",
+      "swiftTargetName": "CleanConsumerSyncDatabaseSQLiteNow",
+      "runtime": "sync"{{SQLITENOW_SYNC_RUNTIME_ARTIFACT_CONFIG}}
+    }
+  ]
+}

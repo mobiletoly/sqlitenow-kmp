@@ -15,5 +15,5 @@ VALUES (:personId,
         NULL,
         'US',
         1,
-        CURRENT_TIMESTAMP)
+        strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 RETURNING *;

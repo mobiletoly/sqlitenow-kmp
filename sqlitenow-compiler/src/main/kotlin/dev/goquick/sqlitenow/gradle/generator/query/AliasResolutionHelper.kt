@@ -40,7 +40,7 @@ internal object AliasResolutionHelper {
         if (column.tableName.isNotBlank()) {
             candidates += column.tableName
         }
-        mapping.sourceTableAlias?.takeIf { it.isNotBlank() }?.let { alias ->
+        mapping.sourceTableAlias.takeIf { it.isNotBlank() }?.let { alias ->
             candidates += alias
             statement.src.tableAliases[alias]?.let { resolved ->
                 if (resolved.isNotBlank()) {

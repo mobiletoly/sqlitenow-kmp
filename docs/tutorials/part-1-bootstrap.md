@@ -26,12 +26,13 @@ mobile/desktop trio to stay approachable.
 
 SQLiteNow operates through a Gradle plugin that scans SQL assets and emits Kotlin under
 `build/generated/sqlitenow/…`. Add the plugin ID to `composeApp/build.gradle.kts` next to your
-existing Compose/KMP plugins (to keep article brief, we are not going to use toml version catalog):
+existing Compose/KMP plugins (to keep article brief, we are not going to use toml version catalog).
+Replace `X.Y.Z` with the latest SQLiteNow release version:
 
 ```kotlin
 plugins {
     // … existing plugin declarations …
-    id("dev.goquick.sqlitenow") version "<latest-version>"
+    id("dev.goquick.sqlitenow") version "X.Y.Z"
 }
 ```
 While you are configuring the module, enable the opt-in flags we will rely on once richer types
@@ -57,14 +58,12 @@ reactive helpers) plus the bundled SQLite driver used on supported native/JVM ta
 Keep the runtime in `commonMain`, and add `sqlite-bundled` only in platform source sets
 that publish it (for example `androidMain`; do not put it in `commonMain` when using `wasmJs`).
 
-Feel free to replace version with more recent one.
-
 ```kotlin
 kotlin {
     // …
     sourceSets {
         commonMain.dependencies {
-            implementation("dev.goquick.sqlitenow:core:<latest-version>")
+            implementation("dev.goquick.sqlitenow:core:X.Y.Z")
             implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
         }
         androidMain.dependencies {

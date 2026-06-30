@@ -1,0 +1,27 @@
+-- @@{ enableSync=true }
+CREATE TABLE person_address
+(
+    id           BLOB PRIMARY KEY NOT NULL DEFAULT (randomblob(16)),
+    person_id    BLOB              NOT NULL,
+
+    address_type TEXT              NOT NULL,
+
+    street       TEXT              NOT NULL,
+    city         TEXT              NOT NULL,
+    state        TEXT,
+
+    postal_code  TEXT,
+
+    country      TEXT              NOT NULL,
+
+    -- @@{ field=is_primary, propertyType=Boolean }
+    is_primary   INTEGER           NOT NULL DEFAULT 0,
+
+    created_at   TEXT              NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+
+    FOREIGN KEY (person_id) REFERENCES person (id) ON DELETE CASCADE
+)
+WITHOUT ROWID;
+
+CREATE INDEX idx_personAddress_personId ON person_address (person_id);
+CREATE INDEX idx_personAddress_personId_isPrimary ON person_address (person_id, is_primary);

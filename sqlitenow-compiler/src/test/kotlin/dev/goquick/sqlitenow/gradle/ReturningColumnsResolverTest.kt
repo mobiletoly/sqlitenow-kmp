@@ -52,6 +52,28 @@ class ReturningColumnsResolverTest {
     }
 
     @Test
+    fun `resolve columns preserves explicit returning order`() {
+        DriverManager.getConnection("jdbc:sqlite::memory:").use { connection ->
+            val schemaDir = writeSchemaFixture()
+            val generatorContext = createGeneratorContext(schemaDir, connection)
+            val statement = annotatedUpdateStatement(
+                connection,
+                """
+                    UPDATE person
+                    SET created_at = :createdAt
+                    RETURNING created_at, id
+                """.trimIndent(),
+            )
+
+            val columns = ReturningColumnsResolver.resolveColumns(generatorContext, statement)
+            val fields = ReturningColumnsResolver.createSelectLikeFields(generatorContext, statement)
+
+            assertEquals(listOf("created_at", "id"), columns.map { it.src.name })
+            assertEquals(listOf("created_at", "id"), fields.map { it.src.fieldName })
+        }
+    }
+
+    @Test
     fun `create select like fields supports delete returning star`() {
         DriverManager.getConnection("jdbc:sqlite::memory:").use { connection ->
             val schemaDir = writeSchemaFixture()

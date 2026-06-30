@@ -19,12 +19,13 @@ and create your first type-safe database queries.
 
 ## Installation
 
-First add SQLiteNow version to your `libs.version.toml` file
+First add SQLiteNow version to your `libs.versions.toml` file. Replace `X.Y.Z`
+with the latest SQLiteNow release version.
 
 ```toml
-[version]
+[versions]
 sqlite = "2.6.2"
-sqlitenow = "0.10.0"
+sqlitenow = "X.Y.Z"
 kotlinx-datetime = "0.7.1"
 
 [libraries]

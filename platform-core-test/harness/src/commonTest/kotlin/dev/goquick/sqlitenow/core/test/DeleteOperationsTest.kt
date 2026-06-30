@@ -1,3 +1,5 @@
+@file:OptIn(kotlin.time.ExperimentalTime::class)
+
 package dev.goquick.sqlitenow.core.test
 
 import dev.goquick.sqlitenow.core.test.db.AddressType
@@ -7,7 +9,7 @@ import dev.goquick.sqlitenow.core.test.db.CommentQuery
 import dev.goquick.sqlitenow.core.test.db.PersonAddResult
 import dev.goquick.sqlitenow.core.test.db.PersonAddressQuery
 import kotlinx.datetime.LocalDate
-import kotlinx.datetime.LocalDateTime
+import kotlin.time.Instant
 import kotlin.test.*
 
 /**
@@ -190,7 +192,7 @@ class DeleteOperationsTest {
             database.comment.add(CommentQuery.Add.Params(
                 personId = person.id,
                 comment = "Comment with foreign key reference",
-                createdAt = LocalDateTime(2024, 4, 8, 10, 30, 45),
+                createdAt = Instant.parse("2024-04-08T10:30:45Z"),
                 tags = listOf("foreign-key", "constraint", "test")
             ))
             
