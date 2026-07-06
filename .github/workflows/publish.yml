@@ -63,11 +63,13 @@ jobs:
 
           echo "Release tag version: ${release_version}"
           echo "Gradle/KMP version: ${gradle_version}"
-          echo "SQLITENOW_RELEASE_VERSION=${release_version}" >> "${GITHUB_ENV}"
-          echo "SQLITENOW_RELEASE_TAG=${release_ref_name}" >> "${GITHUB_ENV}"
-          echo "SQLITENOW_SWIFTPM_TAG=${release_version}" >> "${GITHUB_ENV}"
-          echo "SQLITENOW_SWIFT_RUNTIME_ARTIFACT_BASE_URL=https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_ref_name}" >> "${GITHUB_ENV}"
-          echo "SQLITENOW_SWIFTPM_COMPILER_ARTIFACT_BASE_URL=https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_ref_name}" >> "${GITHUB_ENV}"
+          {
+            echo "SQLITENOW_RELEASE_VERSION=${release_version}"
+            echo "SQLITENOW_RELEASE_TAG=${release_ref_name}"
+            echo "SQLITENOW_SWIFTPM_TAG=${release_version}"
+            echo "SQLITENOW_SWIFT_RUNTIME_ARTIFACT_BASE_URL=https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_ref_name}"
+            echo "SQLITENOW_SWIFTPM_COMPILER_ARTIFACT_BASE_URL=https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_ref_name}"
+          } >> "${GITHUB_ENV}"
 
           if [[ "${gradle_version}" != "${release_version}" ]]; then
             echo "gradle.properties sqlitenow.version must match ${release_ref_name}."
@@ -181,4 +183,5 @@ jobs:
 
       - name: Confirm release dry run
         if: env.SQLITENOW_RELEASE_DRY_RUN == 'true'
-        run: echo "SQLiteNow release dry run completed: Maven/KMP, Swift runtime, SwiftPM plugin, and local clean-consumer proof completed; remote publish and public asset fetch steps were skipped."
+        run: |
+          echo "SQLiteNow release dry run completed: Maven/KMP, Swift runtime, SwiftPM plugin, and local clean-consumer proof completed; remote publish and public asset fetch steps were skipped."
