@@ -1,4 +1,4 @@
-name: Publish Maven/KMP
+name: Publish SQLiteNow Release
 
 on:
   push:
@@ -18,12 +18,12 @@ on:
         type: boolean
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   publish:
-    name: Release Maven/KMP artifacts
-    runs-on: macos-latest
+    name: Release SQLiteNow artifacts
+    runs-on: macos-26
     env:
       SQLITENOW_RELEASE_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
       SQLITENOW_RELEASE_VERSION_INPUT: ${{ inputs.release_version || '' }}
@@ -63,14 +63,101 @@ jobs:
 
           echo "Release tag version: ${release_version}"
           echo "Gradle/KMP version: ${gradle_version}"
+          echo "SQLITENOW_RELEASE_VERSION=${release_version}" >> "${GITHUB_ENV}"
+          echo "SQLITENOW_RELEASE_TAG=${release_ref_name}" >> "${GITHUB_ENV}"
+          echo "SQLITENOW_SWIFTPM_TAG=${release_version}" >> "${GITHUB_ENV}"
+          echo "SQLITENOW_SWIFT_RUNTIME_ARTIFACT_BASE_URL=https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_ref_name}" >> "${GITHUB_ENV}"
+          echo "SQLITENOW_SWIFTPM_COMPILER_ARTIFACT_BASE_URL=https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_ref_name}" >> "${GITHUB_ENV}"
 
           if [[ "${gradle_version}" != "${release_version}" ]]; then
             echo "gradle.properties sqlitenow.version must match ${release_ref_name}."
             exit 1
           fi
 
-      - name: Validate compiler and Gradle plugin
-        run: ./gradlew :sqlitenow-compiler:test :sqlitenow-gradle-plugin:test --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
+      - name: Validate compiler
+        run: ./gradlew :sqlitenow-compiler:test --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
+
+      - name: Validate Gradle plugin
+        run: ./gradlew :sqlitenow-gradle-plugin:test --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
+
+      - name: Validate Swift support gate
+        run: ./gradlew swiftHybridSupportGate --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
+
+      - name: Build and validate Swift runtime release artifacts
+        run: ./gradlew swiftRuntimeReleaseArtifactManifestDefaults -Psqlitenow.swiftRuntimeArtifactBaseUrl="${SQLITENOW_SWIFT_RUNTIME_ARTIFACT_BASE_URL}" --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
+
+      - name: Build SwiftPM compiler artifact bundle
+        run: ./gradlew packageSwiftPmCompilerArtifactBundle -Psqlitenow.swiftPmCompilerArtifactBaseUrl="${SQLITENOW_SWIFTPM_COMPILER_ARTIFACT_BASE_URL}" --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
+
+      - name: Stage SwiftPM plugin distribution
+        run: ./gradlew stageSwiftPmPluginDistribution -Psqlitenow.swiftPmCompilerArtifactBaseUrl="${SQLITENOW_SWIFTPM_COMPILER_ARTIFACT_BASE_URL}" --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
+
+      - name: Inspect SwiftPM plugin distribution
+        run: ./gradlew inspectSwiftPmPluginDistribution -Psqlitenow.swiftPmCompilerArtifactBaseUrl="${SQLITENOW_SWIFTPM_COMPILER_ARTIFACT_BASE_URL}" --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
+
+      - name: Upload staged SwiftPM plugin distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: swiftpm-plugin-distribution-${{ env.SQLITENOW_RELEASE_VERSION }}
+          path: build/swiftpm-plugin-distribution/sqlitenow-kmp
+          if-no-files-found: error
+
+      - name: Validate clean SwiftPM consumer with local release artifacts
+        run: ./gradlew swiftPmPluginCleanConsumerProof -Psqlitenow.swiftPmCleanConsumerRoot="${RUNNER_TEMP}/sqlitenow-local-clean-consumer" -Psqlitenow.swiftPmCompilerArtifactBaseUrl="${SQLITENOW_SWIFTPM_COMPILER_ARTIFACT_BASE_URL}" -Psqlitenow.swiftRuntimeArtifactBaseUrl="${SQLITENOW_SWIFT_RUNTIME_ARTIFACT_BASE_URL}" --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
+
+      - name: Validate SwiftPM plugin distribution tag locally
+        if: env.SQLITENOW_RELEASE_DRY_RUN == 'true'
+        run: ./gradlew validateSwiftPmPluginDistributionTag -Psqlitenow.swiftPmCompilerArtifactBaseUrl="${SQLITENOW_SWIFTPM_COMPILER_ARTIFACT_BASE_URL}" --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
+
+      - name: Upload Swift release assets
+        id: upload_swift_release_assets
+        if: env.SQLITENOW_RELEASE_DRY_RUN != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.SQLITENOW_RELEASE_TAG }}
+          fail_on_unmatched_files: true
+          files: |
+            swift/runtime/core/build/runtime-release-artifacts/SQLiteNowCoreRuntime-${{ env.SQLITENOW_RELEASE_VERSION }}.xcframework.zip
+            swift/runtime/core/build/runtime-release-artifacts/SQLiteNowCoreRuntime-${{ env.SQLITENOW_RELEASE_VERSION }}.artifact-manifest.json
+            swift/runtime/sync/build/runtime-release-artifacts/SQLiteNowSyncRuntime-${{ env.SQLITENOW_RELEASE_VERSION }}.xcframework.zip
+            swift/runtime/sync/build/runtime-release-artifacts/SQLiteNowSyncRuntime-${{ env.SQLITENOW_RELEASE_VERSION }}.artifact-manifest.json
+            build/swiftpm-compiler-artifacts/SQLiteNowCompiler-${{ env.SQLITENOW_RELEASE_VERSION }}.artifactbundle.zip
+            build/swiftpm-compiler-artifacts/SQLiteNowCompiler-${{ env.SQLITENOW_RELEASE_VERSION }}.artifact-manifest.json
+
+      - name: Validate clean SwiftPM consumer from local distribution Git tag
+        if: env.SQLITENOW_RELEASE_DRY_RUN != 'true'
+        run: ./gradlew swiftPmPluginLocalTagCleanConsumerProof -Psqlitenow.swiftPmCleanConsumerRoot="${RUNNER_TEMP}/sqlitenow-clean-consumer" -Psqlitenow.swiftPmCompilerArtifactBaseUrl="${SQLITENOW_SWIFTPM_COMPILER_ARTIFACT_BASE_URL}" -Psqlitenow.swiftRuntimeArtifactBaseUrl="${SQLITENOW_SWIFT_RUNTIME_ARTIFACT_BASE_URL}" --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
+
+      - name: Publish SwiftPM plugin distribution tag
+        id: publish_swiftpm_distribution_tag
+        if: env.SQLITENOW_RELEASE_DRY_RUN != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./gradlew publishSwiftPmPluginDistributionTag -Psqlitenow.swiftPmCompilerArtifactBaseUrl="${SQLITENOW_SWIFTPM_COMPILER_ARTIFACT_BASE_URL}" --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
+
+      - name: Validate clean SwiftPM consumer from public GitHub tag
+        if: env.SQLITENOW_RELEASE_DRY_RUN != 'true'
+        run: ./gradlew swiftPmPluginPublicTagCleanConsumerProof -Psqlitenow.swiftPmCleanConsumerRoot="${RUNNER_TEMP}/sqlitenow-public-clean-consumer" -Psqlitenow.swiftPmCleanConsumerDistributionUrl="https://github.com/${GITHUB_REPOSITORY}.git" -Psqlitenow.swiftPmCompilerArtifactBaseUrl="${SQLITENOW_SWIFTPM_COMPILER_ARTIFACT_BASE_URL}" -Psqlitenow.swiftRuntimeArtifactBaseUrl="${SQLITENOW_SWIFT_RUNTIME_ARTIFACT_BASE_URL}" --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
+
+      - name: Validate Xcode consumer from public GitHub tag
+        if: env.SQLITENOW_RELEASE_DRY_RUN != 'true'
+        run: ./gradlew swiftPmPluginPublicTagXcodeConsumerProof -Psqlitenow.swiftPmPublicTagXcodeConsumerRoot="${RUNNER_TEMP}/sqlitenow-public-xcode-clean-consumer" -Psqlitenow.swiftPmCleanConsumerDistributionUrl="https://github.com/${GITHUB_REPOSITORY}.git" -Psqlitenow.swiftPmCompilerArtifactBaseUrl="${SQLITENOW_SWIFTPM_COMPILER_ARTIFACT_BASE_URL}" -Psqlitenow.swiftRuntimeArtifactBaseUrl="${SQLITENOW_SWIFT_RUNTIME_ARTIFACT_BASE_URL}" --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
+
+      - name: Roll back public Swift release state after failed public proof
+        if: ${{ failure() && env.SQLITENOW_RELEASE_DRY_RUN != 'true' && (steps.upload_swift_release_assets.outcome == 'success' || steps.publish_swiftpm_distribution_tag.outcome == 'success') }}
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ steps.upload_swift_release_assets.outcome }}" == "success" ]]; then
+            gh release delete "${SQLITENOW_RELEASE_TAG}" --cleanup-tag --yes || true
+          fi
+
+          if [[ "${{ steps.publish_swiftpm_distribution_tag.outcome }}" == "success" ]]; then
+            git push origin ":refs/tags/${SQLITENOW_SWIFTPM_TAG}" || true
+          fi
 
       - name: Publish compiler to Maven Central
         if: env.SQLITENOW_RELEASE_DRY_RUN != 'true'
@@ -94,4 +181,4 @@ jobs:
 
       - name: Confirm release dry run
         if: env.SQLITENOW_RELEASE_DRY_RUN == 'true'
-        run: echo "Maven/KMP release dry run completed; remote publish steps were skipped."
+        run: echo "SQLiteNow release dry run completed: Maven/KMP, Swift runtime, SwiftPM plugin, and local clean-consumer proof completed; remote publish and public asset fetch steps were skipped."

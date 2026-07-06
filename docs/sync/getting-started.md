@@ -30,10 +30,12 @@ Sync-enabled databases use two SQLiteNow runtime artifacts:
 - `dev.goquick.sqlitenow:core`
 - `dev.goquick.sqlitenow:oversqlite`
 
+Replace `X.Y.Z` with the latest SQLiteNow release version.
+
 ```kotlin
 commonMain.dependencies {
-    implementation("dev.goquick.sqlitenow:core:<latest-version>")
-    implementation("dev.goquick.sqlitenow:oversqlite:<latest-version>")
+    implementation("dev.goquick.sqlitenow:core:X.Y.Z")
+    implementation("dev.goquick.sqlitenow:oversqlite:X.Y.Z")
 }
 ```
 

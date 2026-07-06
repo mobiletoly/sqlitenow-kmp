@@ -219,7 +219,7 @@ class SelectStatement(
 
             val lookup = mutableMapOf<String, Expression>()
             select.selectItems.forEach { item ->
-                val expressionItem = item as? SelectItem<*> ?: return@forEach
+                val expressionItem = item
                 val expression = expressionItem.expression ?: return@forEach
 
                 val alias = expressionItem.alias?.name?.trim()?.takeIf { it.isNotEmpty() }

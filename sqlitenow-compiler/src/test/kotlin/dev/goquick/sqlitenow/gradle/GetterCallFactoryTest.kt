@@ -126,10 +126,48 @@ class GetterCallFactoryTest {
             field = field,
             desiredType = ClassName("kotlinx.datetime", "LocalDate").copy(nullable = true),
             columnIndex = 4,
+            adapterPropertyName = "birthDate",
         )
 
         assertEquals(
             "if (statement.isNull(4)) sqlValueToBirthDate(null) else sqlValueToBirthDate(statement.getText(4))",
+            getter,
+        )
+    }
+
+    @Test
+    fun `buildExecuteReturningGetter uses resolved property name for adapter lookup`() {
+        val tables = listOf(
+            annotatedCreateTable(
+                tableName = "person",
+                columns = listOf(
+                    annotatedTableColumn(
+                        name = "birth_date",
+                        dataType = "TEXT",
+                        notNull = false,
+                        propertyType = "kotlinx.datetime.LocalDate",
+                        adapter = true,
+                        propertyName = "dateOfBirth",
+                    ),
+                ),
+            ),
+        )
+        val field = regularField(
+            fieldName = "birth_date",
+            tableName = "person",
+            originalColumnName = "birth_date",
+            dataType = "TEXT",
+            isNullable = true,
+        )
+        val getter = newFactory(tables).buildExecuteReturningGetter(
+            field = field,
+            desiredType = ClassName("kotlinx.datetime", "LocalDate").copy(nullable = true),
+            columnIndex = 4,
+            adapterPropertyName = "dateOfBirth",
+        )
+
+        assertEquals(
+            "if (statement.isNull(4)) sqlValueToDateOfBirth(null) else sqlValueToDateOfBirth(statement.getText(4))",
             getter,
         )
     }

@@ -431,7 +431,10 @@ open class DataStructCodeGenerator(
             val baseType = SqliteTypeToKotlinCodeConverter.Companion.mapSqlTypeToKotlinType(column.src.dataType)
             val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE] as? String
             val elementType = SqliteTypeToKotlinCodeConverter.Companion.determinePropertyType(
-                baseType, propertyType, column.isNullable(),
+                baseType,
+                propertyType,
+                column.isNullable(),
+                fileGenerationHelper.packageName,
             )
             return ClassName("kotlin.collections", "Collection").parameterizedBy(elementType)
         }

@@ -19,6 +19,8 @@ plugins {
     id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
 }
 
+includeBuild("sqlitenow-compiler")
+
 dependencyResolutionManagement {
     repositories {
         google {
@@ -43,3 +45,7 @@ include(":sample-kmp:composeApp")
 include(":sample-kmp:androidApp")
 include(":samplesync-kmp:composeApp")
 include(":samplesync-kmp:androidApp")
+include(":swift:fixtures:package:core")
+include(":swift:fixtures:package:sync")
+include(":swift:runtime:core")
+include(":swift:runtime:sync")

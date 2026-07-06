@@ -11,6 +11,7 @@ import dev.goquick.sqlitenow.gradle.generator.query.QueryReadEmitter
 import dev.goquick.sqlitenow.gradle.generator.query.ResultMappingHelper
 import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationResolver
 import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
+import dev.goquick.sqlitenow.gradle.processing.ReturningColumnsResolver
 import dev.goquick.sqlitenow.gradle.processing.StatementProcessingHelper
 import dev.goquick.sqlitenow.gradle.util.IndentedCodeBuilder
 import java.io.File
@@ -124,7 +125,13 @@ class QueryEmitterCoverageTest {
             tableName = "person",
             columns = listOf(
                 annotatedTableColumn("id", "INTEGER"),
-                annotatedTableColumn("birth_date", "TEXT", notNull = false, adapter = true),
+                annotatedTableColumn(
+                    "birth_date",
+                    "TEXT",
+                    notNull = false,
+                    adapter = true,
+                    propertyName = "dateOfBirth",
+                ),
             ),
         )
         val statement = annotatedInsertStatement(
@@ -143,7 +150,8 @@ class QueryEmitterCoverageTest {
 
         assertTrue(rendered.contains("executeReturningOne("))
         assertTrue(rendered.contains("fixture.db.PersonQuery.AddReturning"))
-        assertTrue(rendered.contains("sqlValueToBirthDate"))
+        assertTrue(rendered.contains("sqlValueToDateOfBirth"))
+        assertFalse(rendered.contains("sqlValueToBirthDate"))
         assertTrue(rendered.contains(": fixture.db.CreatedPersonRow"))
     }
 
@@ -283,7 +291,7 @@ class QueryEmitterCoverageTest {
             generateGetterCallWithPrefixes = getterFactory::buildGetterCall,
             generateExecuteReturningGetter = getterFactory::buildExecuteReturningGetter,
             generateDynamicFieldMappingFromJoined = { _, _ -> "dynamicValue()" },
-            createSelectLikeFieldsFromExecuteReturning = { emptyList() },
+            resolveExecuteReturningFields = { emptyList<ReturningColumnsResolver.ResolvedColumn>() },
             findMainTableAlias = ctx::findMainTableAlias,
         )
     }

@@ -15,7 +15,7 @@ kotlin {
     jvmToolchain(17)
     applyDefaultHierarchyTemplate()
 
-    androidLibrary {
+    android {
         namespace = "dev.goquick.sqlitenow.oversqlite"
         compileSdk = libs.versions.android.compileSdk.get().toInt()
         minSdk = libs.versions.android.minSdk.get().toInt()
@@ -35,7 +35,7 @@ kotlin {
 
     jvm()
 
-    js(IR) {
+    js {
         nodejs()
         browser()
         binaries.library()
@@ -47,14 +47,12 @@ kotlin {
         binaries.library()
     }
 
-    iosX64()
     iosArm64()
     iosSimulatorArm64()
     macosArm64()
-    macosX64()
 
     compilerOptions {
-        languageVersion.set(KotlinVersion.KOTLIN_2_3)
+        languageVersion.set(KotlinVersion.KOTLIN_2_4)
     }
     sourceSets {
         commonMain.dependencies {
@@ -63,7 +61,7 @@ kotlin {
             implementation(libs.jetbrains.compose.ui)
             implementation(libs.jetbrains.compose.material)
             implementation(libs.jetbrains.compose.components.resources)
-            implementation(libs.jetbrains.compose.components.uiToolingPreview)
+            implementation(libs.jetbrains.compose.ui.toolingPreview)
             implementation(libs.kotlinx.datetime)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.kotlinx.serialization.cbor)

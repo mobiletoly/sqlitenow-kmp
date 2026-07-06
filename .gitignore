@@ -9,6 +9,13 @@ captures
 local.properties
 xcuserdata
 .kotlin
+
+# Swift / SwiftPM local build state
+.build/
+.swiftpm/
+DerivedData/
+/swift/plugin/sqlitenow-plugin/Sources/SQLiteNowGenerateCore/Resources/sqlitenow-compiler.jar
+
 #So we don't accidentally commit our private keys
 *.gpg
 

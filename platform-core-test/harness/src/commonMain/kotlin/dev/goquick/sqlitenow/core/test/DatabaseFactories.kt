@@ -10,13 +10,10 @@ import dev.goquick.sqlitenow.core.test.db.PersonSummaryResult
 import dev.goquick.sqlitenow.core.test.db.SinglePersonSummary
 import dev.goquick.sqlitenow.core.test.db.VersionBasedDatabaseMigrations
 import dev.goquick.sqlitenow.core.util.fromSqliteDate
-import dev.goquick.sqlitenow.core.util.fromSqliteTimestamp
+import dev.goquick.sqlitenow.core.util.fromRfc3339String
 import dev.goquick.sqlitenow.core.util.toSqliteDate
-import dev.goquick.sqlitenow.core.util.toSqliteTimestamp
+import dev.goquick.sqlitenow.core.util.toRfc3339String
 import kotlinx.datetime.LocalDate
-import kotlinx.datetime.LocalDateTime
-import kotlinx.datetime.TimeZone
-import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.json.Json
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
@@ -34,7 +31,7 @@ fun createLibraryTestDatabase(
         migration = VersionBasedDatabaseMigrations(),
         debug = debug,
         categoryAdapters = LibraryTestDatabase.CategoryAdapters(
-            sqlValueToCreatedAt = { LocalDateTime.fromSqliteTimestamp(it) }
+            sqlValueToCreatedAt = { Instant.fromRfc3339String(it) }
         ),
         personAdapters = LibraryTestDatabase.PersonAdapters(
             birthDateToSqlValue = { it?.toSqliteDate() },
@@ -60,18 +57,18 @@ fun createLibraryTestDatabase(
             },
         ),
         commentAdapters = LibraryTestDatabase.CommentAdapters(
-            createdAtToSqlValue = { it.toSqliteTimestamp() },
+            createdAtToSqlValue = { it.toRfc3339String() },
             tagsToSqlValue = { value -> value?.let { Json.encodeToString(it) } },
             sqlValueToTags = { value -> value?.let { Json.decodeFromString<List<String>>(it) } },
         ),
         personCategoryAdapters = LibraryTestDatabase.PersonCategoryAdapters(
-            sqlValueToAssignedAt = { LocalDateTime.fromSqliteTimestamp(it) }
+            sqlValueToAssignedAt = { Instant.fromRfc3339String(it) }
         ),
         personAddressAdapters = LibraryTestDatabase.PersonAddressAdapters(
             addressTypeToSqlValue = { it.value },
             sqlValueToAddressType = { AddressType.from(it) },
             sqlValueToConstantTimestamp = { epochSeconds ->
-                epochSeconds?.let { Instant.fromEpochSeconds(it).toLocalDateTime(TimeZone.UTC) }
+                epochSeconds?.let { Instant.fromEpochSeconds(it) }
             },
         ),
     )

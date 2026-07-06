@@ -161,6 +161,11 @@ Prefer these suite-level tasks over broad target tasks.
 | JS Node             | `./gradlew oversqlitePlatformJsNode`            |
 | Wasm browser        | `./gradlew oversqlitePlatformWasmBrowser`       |
 
+The oversqlite platform app is Compose-based and intentionally does not declare
+Linux native harness targets yet. Published oversqlite Linux targets remain
+covered by library compilation/runtime lanes rather than this local app
+harness.
+
 ### Realserver
 
 Before running `realserver`, start a compatible `go-oversync/examples/nethttp_server`.

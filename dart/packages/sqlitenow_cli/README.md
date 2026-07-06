@@ -4,9 +4,11 @@ Dart-facing generator command for SQLiteNow.
 
 Add it as a dev dependency:
 
+Replace `X.Y.Z` with the latest SQLiteNow release version.
+
 ```yaml
 dev_dependencies:
-  sqlitenow_cli: ^0.10.0
+  sqlitenow_cli: ^X.Y.Z
 ```
 
 For pure Dart packages:
@@ -49,7 +51,7 @@ During local repository development, `--compiler-jar` remains available as an
 explicit override:
 
 ```shell
-dart run sqlitenow_cli generate --compiler-jar ../../sqlitenow-compiler/build/libs/sqlitenow-compiler-0.10.0-compiler.jar
+dart run sqlitenow_cli generate --compiler-jar ../../sqlitenow-compiler/build/libs/sqlitenow-compiler-X.Y.Z-compiler.jar
 ```
 
 Documentation: https://mobiletoly.github.io/sqlitenow-kmp/flutter/

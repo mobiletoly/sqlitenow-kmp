@@ -1,7 +1,7 @@
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 plugins {
-    id("org.jetbrains.kotlin.jvm") version "2.3.20"
+    id("org.jetbrains.kotlin.jvm") version "2.4.0"
     id("com.vanniktech.maven.publish") version "0.36.0"
     id("java-gradle-plugin")
 }
@@ -20,10 +20,9 @@ repositories {
 kotlin {
     jvmToolchain(17)
 
-    // Set language version to 2.2 to support break/continue in inline lambdas
+    // Set language version explicitly so plugin code uses the repo Kotlin language level.
     compilerOptions {
-        languageVersion.set(KotlinVersion.KOTLIN_2_3)
-        freeCompilerArgs.addAll("-Xcontext-parameters")
+        languageVersion.set(KotlinVersion.KOTLIN_2_4)
     }
 }
 
@@ -42,12 +41,12 @@ dependencies {
     implementation(gradleApi())
     implementation(localGroovy())
     implementation("dev.goquick.sqlitenow:sqlitenow-compiler:${version}")
-    compileOnly("org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.0")
+    compileOnly("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.0")
 
     // -- Testing dependencies --
     testImplementation("org.junit.jupiter:junit-jupiter-api:6.0.3")
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:6.0.3")
-    testImplementation("org.jetbrains.kotlin:kotlin-test:2.3.20")
+    testImplementation("org.jetbrains.kotlin:kotlin-test:2.4.0")
     testImplementation(gradleTestKit())
     testImplementation("org.mockito:mockito-core:5.23.0")
     testImplementation("org.mockito:mockito-junit-jupiter:5.23.0")

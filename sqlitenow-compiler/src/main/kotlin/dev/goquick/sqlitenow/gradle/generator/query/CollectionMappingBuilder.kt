@@ -39,7 +39,11 @@ internal class CollectionMappingBuilder(
             elementSimpleName: String,
             emitElement: ArgumentEmitter.() -> Unit,
         ) {
-            builder.line(".groupBy { row -> $groupExpression }")
+            builder.line(".groupBy { row ->")
+            builder.indent {
+                emitValueStableCollectionKey(groupExpression)
+            }
+            builder.line("}")
             builder.line(".map { (_, $rowsVarName) ->")
             builder.indent {
                 builder.line("val $firstRowVar = $rowsVarName.first()")
@@ -68,7 +72,11 @@ internal class CollectionMappingBuilder(
         }
 
         fun distinctBy(path: String) {
-            builder.line(".distinctBy { it.$path }")
+            builder.line(".distinctBy {")
+            builder.indent {
+                emitValueStableCollectionKey("it.$path")
+            }
+            builder.line("}")
         }
     }
 

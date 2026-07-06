@@ -1,0 +1,4 @@
+CREATE TABLE person (
+    id INTEGER PRIMARY KEY NOT NULL,
+    first_name TEXT NOT NULL
+);

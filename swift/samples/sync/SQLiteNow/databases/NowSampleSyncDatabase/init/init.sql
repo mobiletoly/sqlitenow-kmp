@@ -1,0 +1,2 @@
+-- The Swift sample starts with an empty sync-managed catalog. The server fixture
+-- is intentionally populated through the app so oversqlite can observe writes.

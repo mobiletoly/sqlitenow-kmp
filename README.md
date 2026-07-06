@@ -8,10 +8,11 @@
 **If SQLiteNow saves you time, please consider starring ⭐ the repository - it helps
 more KMP and Flutter/Dart developers find it.**
 
-SQLiteNow is SQL-first tooling for type-safe SQLite access in Kotlin Multiplatform
-and Flutter/Dart apps. Write schema, migration, and query files in SQL, then
-generate platform-native code with typed parameters, typed results, migrations,
-transactions, and reactive invalidation.
+SQLiteNow is SQL-first tooling for type-safe SQLite access in Kotlin Multiplatform,
+Flutter/Dart, and native Swift apps through a supported local package workflow.
+Write schema, migration, and query
+files in SQL, then generate platform-native code with typed parameters, typed
+results, migrations, transactions, and reactive invalidation.
 
 Kotlin Multiplatform apps use the `dev.goquick.sqlitenow` Gradle plugin and KMP
 runtime libraries.
@@ -19,6 +20,14 @@ runtime libraries.
 Flutter and Dart apps use `sqlitenow_runtime` plus `sqlitenow_cli`. You might see a
 little documentation bias toward KMP at first, because originally project was started
 as KMP-only, but eventually it will have a full docs parity.
+
+Native Swift support currently uses local generated Swift packages on Apple
+platforms. Core Swift apps can keep SQL in a Swift/Xcode repository, run the
+`sqlitenow-generate` SwiftPM command plugin, and import the generated package
+product. The generator still requires Java 17 or newer, and published runtime
+binary artifacts, a Swift-native generator/runtime, and a public `SWIFT`
+compiler backend are not released yet. Native Swift runtime artifacts are
+arm64-only: `macosArm64`, `iosArm64`, and `iosSimulatorArm64`.
 
 **Sync-Ready**: SQLiteNow includes Oversqlite, a synchronization system for
 multi-device applications with conflict resolution and offline-first behavior.
@@ -34,14 +43,57 @@ Full documentation is available at https://mobiletoly.github.io/sqlitenow-kmp/.
 
 ## First Run
 
+### Native Swift Local Package
+
+SQLiteNow can generate a local SwiftPM package containing a Swift-facing core
+database API plus a reusable SQLiteNow runtime XCFramework.
+
+In a Swift package, add the SQLiteNow generator package, configure
+`SQLiteNow.json`, and run:
+
+```shell
+swift package plugin --allow-writing-to-package-directory sqlitenow-generate
+```
+
+The default generated package path is:
+
+```text
+SQLiteNowGenerated/<swiftPackageName>
+```
+
+The default SQL input path for each database is:
+
+```text
+SQLiteNow/databases/<databaseName>
+```
+
+When launching the command plugin from a nested Xcode project, pass
+`--package-root <Swift package root>` explicitly. `--config` changes only the
+config file path; default SQL and generated output paths still resolve from the
+package root.
+
+Swift app code imports the generated Swift product:
+
+```swift
+import AppDatabaseSQLiteNow
+
+let db = AppDatabase(path: databaseURL)
+try await db.open()
+let people = try await db.person.selectAll().list()
+```
+
+Start here: https://mobiletoly.github.io/sqlitenow-kmp/swift/
+
 ### Kotlin Multiplatform
+
+Replace `X.Y.Z` with the latest SQLiteNow release version.
 
 ```toml
 [plugins]
-sqlitenow = { id = "dev.goquick.sqlitenow", version = "0.10.0" }
+sqlitenow = { id = "dev.goquick.sqlitenow", version = "X.Y.Z" }
 
 [libraries]
-sqlitenow-core = { module = "dev.goquick.sqlitenow:core", version = "0.10.0" }
+sqlitenow-core = { module = "dev.goquick.sqlitenow:core", version = "X.Y.Z" }
 ```
 
 ```kotlin
@@ -62,12 +114,14 @@ accompanying [sample project](https://github.com/mobiletoly/moodtracker-sample-k
 
 ### Flutter/Dart
 
+Replace `X.Y.Z` with the latest SQLiteNow release version.
+
 ```yaml
 dependencies:
-  sqlitenow_runtime: ^0.10.0
+  sqlitenow_runtime: ^X.Y.Z
 
 dev_dependencies:
-  sqlitenow_cli: ^0.10.0
+  sqlitenow_cli: ^X.Y.Z
 ```
 
 ```shell
@@ -90,12 +144,14 @@ Start here: https://mobiletoly.github.io/sqlitenow-kmp/flutter/
 ### Supported Platforms
 - Android (Kotlin/JVM via AndroidX bundled SQLite driver)
 - iOS (Kotlin/Native with bundled SQLite)
-- macOS native (`macosArm64`, `macosX64`) with bundled SQLite
+- macOS native (`macosArm64`) with bundled SQLite
 - Linux native (`linuxX64`, `linuxArm64`) with bundled SQLite
 - JVM desktop/server targets
 - JavaScript (browser) via SQL.js with optional IndexedDB persistence
 - Kotlin/Wasm (browser) using the same SQL.js runtime with automatic OPFS or IndexedDB persistence
 - Flutter native runtimes through Dart VM and `package:sqlite3`
+- Native Swift local package support on Apple platforms through a generated
+  SwiftPM package with reusable arm64 runtime XCFramework artifacts
 
 ### Type-Safe SQL Generation
 
@@ -122,7 +178,7 @@ Start here: https://mobiletoly.github.io/sqlitenow-kmp/flutter/
 
 Client-side framework components:
 - **SQLiteNow Generator** - The code generation component of the SQLiteNow framework that
-  generates type-safe Kotlin or Dart code from SQL files.
+  generates type-safe Kotlin, Dart, or native Swift package code from SQL files.
 - **SQLiteNow Library** - The core library that provides convenient APIs for database access.
 - **OverSqlite** - The sync component of the SQLiteNow framework that enables seamless data
   sharing across multiple devices with automatic conflict resolution, change tracking, and
@@ -300,15 +356,16 @@ KMP sync example: [`/samplesync-kmp`](./samplesync-kmp).
 
 ### Flutter/Dart
 
-Add the Dart runtime packages and enable Oversqlite in `sqlitenow.yaml`:
+Add the Dart runtime packages and enable Oversqlite in `sqlitenow.yaml`.
+Replace `X.Y.Z` with the latest SQLiteNow release version.
 
 ```yaml
 dependencies:
-  sqlitenow_runtime: ^0.10.0
-  sqlitenow_oversqlite: ^0.10.0
+  sqlitenow_runtime: ^X.Y.Z
+  sqlitenow_oversqlite: ^X.Y.Z
 
 dev_dependencies:
-  sqlitenow_cli: ^0.10.0
+  sqlitenow_cli: ^X.Y.Z
 ```
 
 ```yaml

@@ -8,6 +8,7 @@ import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.processing.FieldAnnotationOverrides
 import java.nio.file.Path
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -89,6 +90,40 @@ class DataEmitterCoverageTest {
         assertEquals("SharedPersonRow", type.name)
         assertTrue(rendered.contains("val personId"))
         assertTrue(rendered.contains("val customBirthDate"))
+    }
+
+    @Test
+    @DisplayName("DataStructResultEmitter uses table property names for RETURNING result columns")
+    fun dataStructResultEmitterUsesReturningPropertyNames() {
+        val personTable = annotatedCreateTable(
+            tableName = "person",
+            columns = listOf(
+                annotatedTableColumn("id", "INTEGER"),
+                annotatedTableColumn(
+                    "birth_date",
+                    "TEXT",
+                    notNull = false,
+                    propertyName = "dateOfBirth",
+                ),
+            ),
+        )
+        val statement = annotatedInsertStatement(
+            name = "AddReturning",
+            table = "person",
+            returningColumns = listOf("id", "birth_date"),
+            sql = "INSERT INTO person (birth_date) VALUES (?) RETURNING id, birth_date",
+        )
+        val ctx = generatorContext(createTableStatements = listOf(personTable))
+        val emitter = DataStructResultEmitter(ctx, DataStructPropertyEmitter())
+
+        val rendered = emitter.generateExecuteResult(
+            statement = statement,
+            className = "AddReturningResult",
+            columnsToInclude = personTable.columns,
+        ).toString()
+
+        assertTrue(rendered.contains("val dateOfBirth"))
+        assertFalse(rendered.contains("val birthDate"))
     }
 
     @TempDir

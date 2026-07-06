@@ -1,10 +1,11 @@
+@file:OptIn(kotlin.time.ExperimentalTime::class)
+
 package dev.goquick.sqlitenow.core.test
 
 import dev.goquick.sqlitenow.core.test.db.CategoryAddResult
 import dev.goquick.sqlitenow.core.test.db.CategoryQuery
 import dev.goquick.sqlitenow.core.test.db.LibraryTestDatabase
-import kotlinx.datetime.LocalDateTime
-import kotlinx.datetime.number
+import kotlin.time.Instant
 import kotlin.test.*
 
 /**
@@ -42,7 +43,10 @@ class CategoryReturningClauseTest {
             assertEquals("Technology", insertedCategory.name, "Name should match")
             assertEquals("All things tech-related", insertedCategory.description, "Description should match")
             assertNotNull(insertedCategory.createdAt, "Created at should not be null")
-            assertTrue(insertedCategory.createdAt.year >= 2024, "Created at should be recent")
+            assertTrue(
+                insertedCategory.createdAt >= Instant.parse("2024-01-01T00:00:00Z"),
+                "Created at should be recent"
+            )
     }
 
     @Test
@@ -69,20 +73,20 @@ class CategoryReturningClauseTest {
     fun testCategoryInsertReturningTypeAdapters() = runDatabaseTest {
             database.open()
 
-            // Test that LocalDateTime type adapter works correctly with RETURNING
+            // Test that Instant type adapter works correctly with RETURNING
             val categoryParams = CategoryQuery.Add.Params(
-                name = "DateTime Test",
-                description = "Testing LocalDateTime adapter"
+                name = "Instant Test",
+                description = "Testing Instant adapter"
             )
 
             val insertedCategory = database.category.add.one(categoryParams)
 
-            // Verify LocalDateTime type adapter worked correctly
+            // Verify Instant type adapter worked correctly
             assertNotNull(insertedCategory.createdAt, "Created at should not be null")
-            assertTrue(true, "Created at should be LocalDateTime type")
-            assertTrue(insertedCategory.createdAt.year >= 2024, "Created at should be recent")
-            assertTrue(insertedCategory.createdAt.month.number in 1..12, "Created at month should be valid")
-            assertTrue(insertedCategory.createdAt.day in 1..31, "Created at day should be valid")
+            assertTrue(
+                insertedCategory.createdAt >= Instant.parse("2024-01-01T00:00:00Z"),
+                "Created at should be recent"
+            )
     }
 
     @Test
@@ -191,7 +195,7 @@ class CategoryReturningClauseTest {
             database.open()
 
             // Test that field mapping works correctly with RETURNING
-            // The category table has created_at field mapped to LocalDateTime
+            // The category table has created_at field mapped to Instant
             val categoryParams = CategoryQuery.Add.Params(
                 name = "Field Mapping Test",
                 description = "Testing field name and type mapping"
@@ -205,10 +209,11 @@ class CategoryReturningClauseTest {
             // Test that the createdAt field (mapped from created_at column) is properly typed
             val createdAt = insertedCategory.createdAt
             assertNotNull(createdAt, "Created at should not be null")
-            assertTrue(true, "Created at should be LocalDateTime")
-            
             // Verify the field is accessible with the mapped property name
-            assertTrue(createdAt.year > 2020, "Should be able to access createdAt property")
+            assertTrue(
+                createdAt > Instant.parse("2020-01-01T00:00:00Z"),
+                "Should be able to access createdAt property"
+            )
     }
 
     @Test

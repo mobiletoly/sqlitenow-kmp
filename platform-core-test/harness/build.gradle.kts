@@ -14,7 +14,7 @@ kotlin {
     jvmToolchain(17)
     applyDefaultHierarchyTemplate()
 
-    androidLibrary {
+    android {
         namespace = "dev.goquick.sqlitenow.core.test"
         compileSdk = libs.versions.android.compileSdk.get().toInt()
         minSdk = libs.versions.android.minSdk.get().toInt()
@@ -34,7 +34,7 @@ kotlin {
 
     jvm()
 
-    js(IR) {
+    js {
         nodejs()
         browser()
         binaries.library()
@@ -48,9 +48,11 @@ kotlin {
 
     iosSimulatorArm64()
     macosArm64()
+    linuxArm64()
+    linuxX64()
 
     compilerOptions {
-        languageVersion.set(KotlinVersion.KOTLIN_2_3)
+        languageVersion.set(KotlinVersion.KOTLIN_2_4)
     }
 
     sourceSets {

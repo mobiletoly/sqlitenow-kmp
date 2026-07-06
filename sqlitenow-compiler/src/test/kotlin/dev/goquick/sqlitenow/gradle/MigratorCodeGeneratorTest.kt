@@ -258,7 +258,7 @@ class MigratorCodeGeneratorTest {
                 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
                 plugins {
-                    kotlin("jvm") version "2.3.20"
+                    kotlin("jvm") version "2.4.0"
                 }
 
                 repositories {
@@ -269,7 +269,7 @@ class MigratorCodeGeneratorTest {
                     jvmToolchain(17)
                     compilerOptions {
                         jvmTarget.set(JvmTarget.JVM_17)
-                        languageVersion.set(KotlinVersion.KOTLIN_2_3)
+                        languageVersion.set(KotlinVersion.KOTLIN_2_4)
                     }
                 }
             """.trimIndent()

@@ -47,6 +47,12 @@ internal data class UniqueAdapter(
     fun signatureKey(): String {
         return "${inputType}__$outputType"
     }
+
+    fun signatureDisambiguatedFunctionName(baseName: String = functionName.substringBefore("For")): String {
+        val inputLabel = sanitizeAdapterTypeLabel(inputType)
+        val outputLabel = sanitizeAdapterTypeLabel(outputType)
+        return "${baseName}For${inputLabel}To${outputLabel}"
+    }
 }
 
 internal class DatabaseAdapterPlanner(
@@ -108,6 +114,39 @@ internal class DatabaseAdapterPlanner(
         return winners.mapValues { it.value.first }
     }
 
+    fun providerSignatureKey(adapter: UniqueAdapter): String =
+        "${baseFunctionKey(adapter.functionName)}__${adapter.signatureKey()}"
+
+    fun computeBestProvidersBySignature(
+        adaptersByNamespace: Map<String, List<UniqueAdapter>>
+    ): Map<String, String> {
+        val winners = mutableMapOf<String, Pair<String, UniqueAdapter>>()
+        adaptersByNamespace.toSortedMap().forEach { (ns, adapters) ->
+            adapters.sortedBy { it.functionName }.forEach { adapter ->
+                val key = providerSignatureKey(adapter)
+                val current = winners[key]
+                if (current == null) {
+                    winners[key] = ns to adapter
+                } else {
+                    val currentPref = providerPreferenceScore(current.first, current.second)
+                    val candidatePref = providerPreferenceScore(ns, adapter)
+                    when {
+                        candidatePref > currentPref -> winners[key] = ns to adapter
+                        candidatePref < currentPref -> { /* keep current */ }
+                        else -> {
+                            val currentScore = adapterScore(current.second)
+                            val candidateScore = adapterScore(adapter)
+                            if (candidateScore > currentScore || (candidateScore == currentScore && ns < current.first)) {
+                                winners[key] = ns to adapter
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return winners.mapValues { it.value.first }
+    }
+
     fun baseNameForNamespace(namespace: String): String {
         val table = tableLookup[namespace]
         return table?.annotations?.name ?: pascalize(namespace)
@@ -122,7 +161,9 @@ internal class DatabaseAdapterPlanner(
     }
 
     /** Collects and deduplicates adapters per namespace. */
-    fun collectAdaptersByNamespace(): Map<String, List<UniqueAdapter>> {
+    fun collectAdaptersByNamespace(
+        preserveSignatureCollisions: Boolean = false,
+    ): Map<String, List<UniqueAdapter>> {
         val adaptersByNamespace = mutableMapOf<String, MutableList<UniqueAdapter>>()
 
         // Collect adapters for each namespace separately
@@ -159,7 +200,10 @@ internal class DatabaseAdapterPlanner(
                 }
             }
 
-            val deduplicatedAdapters = deduplicateAdaptersForNamespace(namespaceAdapters)
+            val deduplicatedAdapters = deduplicateAdaptersForNamespace(
+                adapters = namespaceAdapters,
+                preserveSignatureCollisions = preserveSignatureCollisions,
+            )
             adaptersByNamespace[namespace] = deduplicatedAdapters.toMutableList()
         }
 
@@ -167,13 +211,32 @@ internal class DatabaseAdapterPlanner(
     }
 
     /** Deduplicates adapters within a single namespace. */
-    private fun deduplicateAdaptersForNamespace(adapters: List<UniqueAdapter>): List<UniqueAdapter> {
+    private fun deduplicateAdaptersForNamespace(
+        adapters: List<UniqueAdapter>,
+        preserveSignatureCollisions: Boolean,
+    ): List<UniqueAdapter> {
         val adaptersByName = adapters.groupBy { it.functionName }
         val result = mutableListOf<UniqueAdapter>()
 
         adaptersByName.forEach { (baseName, adapterList) ->
             // Remove exact duplicates first (same signature)
             val uniqueBySignature = adapterList.distinctBy { it.signatureKey() }
+
+            if (preserveSignatureCollisions && uniqueBySignature.size > 1) {
+                uniqueBySignature
+                    .sortedWith(
+                        compareBy<UniqueAdapter>(
+                            { sanitizeAdapterTypeLabel(it.inputType) },
+                            { sanitizeAdapterTypeLabel(it.outputType) },
+                            { it.inputType.toString() },
+                            { it.outputType.toString() },
+                        )
+                    )
+                    .forEach { adapter ->
+                        result.add(adapter.copy(functionName = adapter.signatureDisambiguatedFunctionName(baseName)))
+                    }
+                return@forEach
+            }
 
             val best = uniqueBySignature.maxByOrNull { adapterScore(it) }
             val bestScore = best?.let { adapterScore(it) } ?: 0
@@ -184,28 +247,12 @@ internal class DatabaseAdapterPlanner(
             } else {
                 // Tie: keep all, but disambiguate names deterministically
                 top.forEach { adapter ->
-                    val inputLabel = sanitizeTypeLabel(adapter.inputType)
-                    val outputLabel = sanitizeTypeLabel(adapter.outputType)
-                    val uniqueName = "${baseName}For${inputLabel}To${outputLabel}"
-                    result.add(adapter.copy(functionName = uniqueName))
+                    result.add(adapter.copy(functionName = adapter.signatureDisambiguatedFunctionName(baseName)))
                 }
             }
         }
 
         return result
-    }
-
-    private fun sanitizeTypeLabel(type: TypeName): String {
-        // Build a short, identifier-safe type label (e.g. StringNullable, ByteArray, ListString)
-        var s = type.toString()
-        // Keep only leaf class names for qualified types
-        s = s.split('.').last()
-        // Replace nullability with a readable token
-        s = s.replace("?", "Nullable")
-        // Remove generic punctuation and non-alphanumerics
-        s = s.replace(Regex("[<>.,\\s]"), "")
-        // Capitalize first char for consistency
-        return s.replaceFirstChar { it.uppercase() }
     }
 
     /**
@@ -271,4 +318,13 @@ internal class DatabaseAdapterPlanner(
         }
         return best
     }
+}
+
+private fun sanitizeAdapterTypeLabel(type: TypeName): String {
+    // Build a short, identifier-safe type label (e.g. StringNullable, ByteArray, ListString).
+    var s = type.toString()
+    s = s.split('.').last()
+    s = s.replace("?", "Nullable")
+    s = s.replace(Regex("[<>.,\\s]"), "")
+    return s.replaceFirstChar { it.uppercase() }
 }

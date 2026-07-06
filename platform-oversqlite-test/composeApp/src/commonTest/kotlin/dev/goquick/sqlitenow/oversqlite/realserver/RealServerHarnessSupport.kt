@@ -9,12 +9,13 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
+import io.ktor.client.plugins.observer.ResponseObserver
+import io.ktor.client.request.HttpRequestPipeline
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
-import io.ktor.client.plugins.observer.ResponseObserver
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -68,10 +69,17 @@ internal open class RealServerHarnessSupport : PlatformCrossTargetTestSupport() 
         baseUrl: String,
         token: String? = null,
         afterResponse: suspend (String) -> Unit = {},
+        beforeRequest: suspend (String) -> Unit = {},
     ): HttpClient {
         return HttpClient {
             install(ContentNegotiation) {
                 json(realServerJson)
+            }
+            install("RealServerRequestObserver") {
+                requestPipeline.intercept(HttpRequestPipeline.Before) {
+                    beforeRequest(context.url.build().encodedPath)
+                    proceed()
+                }
             }
             install(ResponseObserver) {
                 onResponse { response ->

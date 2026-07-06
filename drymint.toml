@@ -56,6 +56,10 @@ rules = [
   { domain = "platform-oversqlite-test-composeApp-main", match = ["platform-oversqlite-test/composeApp/src/*Main/**"] },
   { domain = "sample-kmp-composeApp-main", match = ["sample-kmp/composeApp/src/*Main/**"] },
   { domain = "samplesync-kmp-composeApp-main", match = ["samplesync-kmp/composeApp/src/*Main/**"] },
+  { domain = "swift-hybrid-proof-core-main", match = ["swift-hybrid-proof/core/src/*Main/**"] },
+  { domain = "swift-hybrid-proof-sync-main", match = ["swift-hybrid-proof/sync/src/*Main/**"] },
+  { domain = "swift-runtime-core-main", match = ["swift/runtime/core/src/*Main/**"] },
+  { domain = "swift-runtime-sync-main", match = ["swift/runtime/sync/src/*Main/**"] },
 ]
 
 [languages.kotlin.labels]
@@ -66,6 +70,10 @@ rules = [
   { label = "module", value = "platform-oversqlite-test-composeApp", match = ["platform-oversqlite-test/composeApp/src/**"] },
   { label = "module", value = "sample-kmp-composeApp", match = ["sample-kmp/composeApp/src/**"] },
   { label = "module", value = "samplesync-kmp-composeApp", match = ["samplesync-kmp/composeApp/src/**"] },
+  { label = "module", value = "swift-hybrid-proof-core", match = ["swift-hybrid-proof/core/src/**"] },
+  { label = "module", value = "swift-hybrid-proof-sync", match = ["swift-hybrid-proof/sync/src/**"] },
+  { label = "module", value = "swift-runtime-core", match = ["swift/runtime/core/src/**"] },
+  { label = "module", value = "swift-runtime-sync", match = ["swift/runtime/sync/src/**"] },
   { label = "module", value = "sqlitenow-compiler", match = ["sqlitenow-compiler/src/**"] },
   { label = "module", value = "sqlitenow-gradle-plugin", match = ["sqlitenow-gradle-plugin/src/**"] },
   { label = "source_set", value = "main", match = ["sqlitenow-compiler/src/main/**", "sqlitenow-gradle-plugin/src/main/**"] },
@@ -191,6 +199,26 @@ depends_on = ["library-core-commonMain", "library-core-nativeMain", "library-cor
 id = "library-oversqlite-commonMain"
 match = ["library-oversqlite/src/commonMain/kotlin/**"]
 depends_on = ["library-core-commonMain"]
+
+[[languages.kotlin.resolution.partitions]]
+id = "swift-hybrid-proof-core-appleMain"
+match = ["swift-hybrid-proof/core/src/appleMain/kotlin/**"]
+depends_on = ["library-core-commonMain", "library-core-nativeMain"]
+
+[[languages.kotlin.resolution.partitions]]
+id = "swift-hybrid-proof-sync-appleMain"
+match = ["swift-hybrid-proof/sync/src/appleMain/kotlin/**"]
+depends_on = ["swift-hybrid-proof-core-appleMain", "library-oversqlite-commonMain", "library-core-commonMain", "library-core-nativeMain"]
+
+[[languages.kotlin.resolution.partitions]]
+id = "swift-runtime-core-appleMain"
+match = ["swift/runtime/core/src/appleMain/kotlin/**"]
+depends_on = ["library-core-commonMain", "library-core-nativeMain"]
+
+[[languages.kotlin.resolution.partitions]]
+id = "swift-runtime-sync-appleMain"
+match = ["swift/runtime/sync/src/appleMain/kotlin/**"]
+depends_on = ["swift-runtime-core-appleMain", "library-oversqlite-commonMain", "library-core-commonMain", "library-core-nativeMain"]
 
 [[languages.kotlin.resolution.partitions]]
 id = "library-oversqlite-androidMain"

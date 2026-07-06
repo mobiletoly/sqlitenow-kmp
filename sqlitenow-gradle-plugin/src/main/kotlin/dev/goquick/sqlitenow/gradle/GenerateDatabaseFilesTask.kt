@@ -16,7 +16,13 @@
 package dev.goquick.sqlitenow.gradle
 
 import dev.goquick.sqlitenow.gradle.compiler.SqliteNowCompilerInput
+import dev.goquick.sqlitenow.gradle.compiler.SqliteNowCompilerResult
 import dev.goquick.sqlitenow.gradle.compiler.compileSqliteNowDatabase
+import dev.goquick.sqlitenow.gradle.swift.SqliteNowSwiftExportConfig
+import dev.goquick.sqlitenow.gradle.swift.SqliteNowSwiftProductExportConfig
+import dev.goquick.sqlitenow.gradle.swift.SwiftProductRuntimeMode
+import dev.goquick.sqlitenow.gradle.swift.requireValidSwiftIdentifier
+import groovy.json.JsonOutput
 import java.io.File
 import javax.inject.Inject
 import org.gradle.api.DefaultTask
@@ -81,6 +87,42 @@ abstract class GenerateDatabaseFilesTask @Inject constructor(
     @get:Input
     abstract val oversqliteRuntimePresent: Property<Boolean>
 
+    @get:OutputDirectory
+    @get:Optional
+    val swiftOverlayOutputDir: DirectoryProperty = objects.directoryProperty()
+
+    @get:Input
+    @get:Optional
+    abstract val swiftOverlayModuleName: Property<String>
+
+    @get:Input
+    @get:Optional
+    abstract val swiftFrameworkModuleName: Property<String>
+
+    @get:Input
+    @get:Optional
+    abstract val swiftBridgePackageName: Property<String>
+
+    @get:OutputDirectory
+    @get:Optional
+    val swiftProductOutputDir: DirectoryProperty = objects.directoryProperty()
+
+    @get:Input
+    @get:Optional
+    abstract val swiftProductModuleName: Property<String>
+
+    @get:Input
+    @get:Optional
+    abstract val swiftProductRuntimeModuleName: Property<String>
+
+    @get:Input
+    @get:Optional
+    abstract val swiftProductRuntimeMode: Property<String>
+
+    @get:OutputFile
+    @get:Optional
+    val swiftProductMetadataFile: RegularFileProperty = objects.fileProperty()
+
     @TaskAction
     fun generate() {
         // 1. Ensure the output directory exists
@@ -91,7 +133,57 @@ abstract class GenerateDatabaseFilesTask @Inject constructor(
 
         val sqlDir = dbDir.get().asFile
         val packageName = packageName.get()
+        val databaseName = if (swiftProductOutputDir.isPresent) {
+            requireValidSwiftIdentifier(dbName.get(), "Swift product databaseName")
+        } else {
+            dbName.get()
+        }
         val oversqliteEnabled = oversqlite.get()
+        val resolvedSwiftProductRuntimeMode = if (swiftProductOutputDir.isPresent && swiftProductRuntimeMode.isPresent) {
+            SwiftProductRuntimeMode.fromId(swiftProductRuntimeMode.get())
+        } else if (oversqliteEnabled) {
+            SwiftProductRuntimeMode.SYNC
+        } else {
+            SwiftProductRuntimeMode.CORE
+        }
+        val swiftExport = if (swiftOverlayOutputDir.isPresent) {
+            SqliteNowSwiftExportConfig(
+                swiftOutputDirectory = swiftOverlayOutputDir.get().asFile,
+                swiftModuleName = swiftOverlayModuleName.get(),
+                frameworkModuleName = swiftFrameworkModuleName.get(),
+                bridgePackageName = swiftBridgePackageName.get(),
+            )
+        } else {
+            null
+        }
+        val swiftProductExport = if (swiftProductOutputDir.isPresent && swiftProductRuntimeModuleName.isPresent) {
+            SqliteNowSwiftProductExportConfig(
+                swiftOutputDirectory = swiftProductOutputDir.get().asFile,
+                swiftModuleName = requireValidSwiftIdentifier(
+                    swiftProductModuleName.get(),
+                    "Swift product swiftModuleName",
+                ),
+                runtimeModuleName = requireValidSwiftIdentifier(
+                    swiftProductRuntimeModuleName.get(),
+                    "Swift product runtimeModuleName",
+                ),
+                runtimeMode = resolvedSwiftProductRuntimeMode,
+            )
+        } else if (swiftProductOutputDir.isPresent) {
+            SqliteNowSwiftProductExportConfig(
+                swiftOutputDirectory = swiftProductOutputDir.get().asFile,
+                swiftModuleName = requireValidSwiftIdentifier(
+                    swiftProductModuleName.get(),
+                    "Swift product swiftModuleName",
+                ),
+                runtimeMode = resolvedSwiftProductRuntimeMode,
+            )
+        } else {
+            null
+        }
+        require(swiftExport == null || swiftProductExport == null) {
+            "Configure either Swift overlay export or product Swift source export, not both, for '${dbName.get()}'."
+        }
 
         if (oversqliteEnabled && !oversqliteRuntimePresent.get()) {
             error(
@@ -102,16 +194,53 @@ abstract class GenerateDatabaseFilesTask @Inject constructor(
 
         val result = compileSqliteNowDatabase(
             SqliteNowCompilerInput(
-                databaseName = dbName.get(),
+                databaseName = databaseName,
                 sqlDirectory = sqlDir,
                 packageName = packageName,
                 outputDirectory = outDir,
                 schemaDatabaseFile = dbFile,
                 debug = debug.get(),
                 oversqlite = oversqliteEnabled,
+                swiftExport = swiftExport,
+                swiftProductExport = swiftProductExport,
             )
         ) { logger.lifecycle(it) }
+        if (swiftProductExport != null && swiftProductMetadataFile.isPresent) {
+            writeSwiftProductMetadata(
+                metadataFile = swiftProductMetadataFile.get().asFile,
+                swiftOutputDirectory = swiftProductExport.swiftOutputDirectory,
+                result = result,
+            )
+        }
         result.warnings.forEach { logger.warn(it) }
+    }
+
+    private fun writeSwiftProductMetadata(
+        metadataFile: File,
+        swiftOutputDirectory: File,
+        result: SqliteNowCompilerResult,
+    ) {
+        metadataFile.parentFile.mkdirs()
+        val generatedSwiftFiles = result.generatedFiles
+            .filter { it.isFile && it.extension == "swift" }
+            .map { it.relativeTo(swiftOutputDirectory).path.replace(File.separatorChar, '/') }
+            .sorted()
+        val syncTables = result.swiftPackageSyncTables.map { table ->
+            mapOf(
+                "tableName" to table.tableName,
+                "syncKeyColumnName" to table.syncKeyColumnName,
+            )
+        }
+        metadataFile.writeText(
+            JsonOutput.prettyPrint(
+                JsonOutput.toJson(
+                    mapOf(
+                        "generatedSwiftFiles" to generatedSwiftFiles,
+                        "syncTables" to syncTables,
+                    )
+                )
+            ) + "\n"
+        )
     }
 }
 

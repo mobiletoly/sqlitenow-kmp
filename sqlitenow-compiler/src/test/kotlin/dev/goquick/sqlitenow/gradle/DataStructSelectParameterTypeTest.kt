@@ -153,6 +153,39 @@ class DataStructSelectParameterTypeTest : DataStructParameterTestSupport() {
                         message = "setOfBirthDates parameter should map to Collection<LocalDate?> for IN clause with custom property type",
                     )
                 ),
+            ),
+            CollectionParameterTypeCase(
+                queryFileName = "selectByStatuses.sql",
+                querySql = "SELECT * FROM Person WHERE status IN (:statuses);",
+                createTableSql = """
+                CREATE TABLE person (
+                    status TEXT NOT NULL
+                )
+                """,
+                tableColumns = listOf(
+                    ParameterTableColumn(
+                        name = "status",
+                        dataType = "TEXT",
+                        notNull = true,
+                        propertyType = "TaskStatus",
+                    )
+                ),
+                selectName = "selectByStatuses",
+                selectSql = "SELECT * FROM Person WHERE status IN (?)",
+                selectFields = listOf(
+                    ParameterSelectField(fieldName = "status", dataType = "TEXT")
+                ),
+                namedParameters = listOf("statuses"),
+                namedParametersToColumns = mapOf(
+                    "statuses" to AssociatedColumn.Collection("status")
+                ),
+                expectations = listOf(
+                    ParameterTypeExpectation(
+                        parameterName = "statuses",
+                        expectedType = "kotlin.collections.Collection<com.example.db.TaskStatus>",
+                        message = "statuses parameter should qualify same-package custom collection element types",
+                    )
+                ),
             )
         ).forEach { case ->
             val fixture = createParameterTypeFixture(

@@ -72,7 +72,6 @@ internal class QueryCodeGenerator(
     )
     private val collectionExecuteEmitter = CollectionExecuteEmitter(
         resultMappingHelper = resultMappingHelper,
-        selectFieldGenerator = selectFieldGenerator,
         queryNamespaceName = { namespaceValue -> queryNamespaceName(namespaceValue) },
     )
 
@@ -97,8 +96,8 @@ internal class QueryCodeGenerator(
         generateDynamicFieldMappingFromJoined = { request, rowsVar ->
             resultMappingHelper.generateDynamicFieldMappingCodeFromJoined(request, rowsVar)
         },
-        createSelectLikeFieldsFromExecuteReturning = { statement ->
-            ReturningColumnsResolver.createSelectLikeFields(generatorContext, statement)
+        resolveExecuteReturningFields = { statement ->
+            ReturningColumnsResolver.resolveReadColumns(generatorContext, statement)
         },
         findMainTableAlias = { fields -> generatorContext.findMainTableAlias(fields) },
     )

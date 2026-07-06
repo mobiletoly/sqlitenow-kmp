@@ -1,3 +1,5 @@
+@file:OptIn(kotlin.time.ExperimentalTime::class)
+
 package dev.goquick.sqlitenow.core.test
 
 import dev.goquick.sqlitenow.core.test.db.AddressType
@@ -7,7 +9,7 @@ import dev.goquick.sqlitenow.core.test.db.CommentQuery
 import dev.goquick.sqlitenow.core.test.db.PersonAddResult
 import dev.goquick.sqlitenow.core.test.db.PersonAddressQuery
 import kotlinx.datetime.LocalDate
-import kotlinx.datetime.LocalDateTime
+import kotlin.time.Instant
 import kotlin.test.*
 
 /**
@@ -44,8 +46,8 @@ class ParameterBindingTest {
             
             // Verify all parameters were bound correctly
             assertEquals("param-binding@example.com", insertedPerson.email, "Email parameter should be bound correctly")
-            assertEquals("Parameter", insertedPerson.firstName, "First name parameter should be bound correctly")
-            assertEquals("Binding", insertedPerson.lastName, "Last name parameter should be bound correctly")
+            assertEquals("Parameter", insertedPerson.myFirstName, "First name parameter should be bound correctly")
+            assertEquals("Binding", insertedPerson.myLastName, "Last name parameter should be bound correctly")
             assertEquals("+1234567890", insertedPerson.phone, "Phone parameter should be bound correctly")
             assertEquals(LocalDate(1990, 5, 15), insertedPerson.birthDate, "Birth date parameter should be bound correctly")
             
@@ -77,8 +79,8 @@ class ParameterBindingTest {
             
             // Verify null parameters were bound correctly
             assertEquals("null-params@example.com", insertedPerson.email, "Email should be bound")
-            assertEquals("Null", insertedPerson.firstName, "First name should be bound")
-            assertEquals("Parameters", insertedPerson.lastName, "Last name should be bound")
+            assertEquals("Null", insertedPerson.myFirstName, "First name should be bound")
+            assertEquals("Parameters", insertedPerson.myLastName, "Last name should be bound")
             assertNull(insertedPerson.phone, "Phone should be null")
             assertNull(insertedPerson.birthDate, "Birth date should be null")
             
@@ -177,7 +179,7 @@ class ParameterBindingTest {
             val comment = CommentQuery.Add.Params(
                 personId = person.id,
                 comment = "Test comment with JSON parameter binding",
-                createdAt = LocalDateTime(2024, 6, 15, 12, 30, 45),
+                createdAt = Instant.parse("2024-06-15T12:30:45Z"),
                 tags = testTags // List<String> parameter
             )
             
@@ -206,8 +208,8 @@ class ParameterBindingTest {
             
             // Verify special characters were handled correctly in parameter binding
             assertEquals("special+chars@example.com", insertedPerson.email, "Email with + should be bound correctly")
-            assertEquals("Special'Chars\"Test", insertedPerson.firstName, "First name with quotes should be bound correctly")
-            assertEquals("O'Connor & Smith", insertedPerson.lastName, "Last name with apostrophe and ampersand should be bound correctly")
+            assertEquals("Special'Chars\"Test", insertedPerson.myFirstName, "First name with quotes should be bound correctly")
+            assertEquals("O'Connor & Smith", insertedPerson.myLastName, "Last name with apostrophe and ampersand should be bound correctly")
             assertEquals("+1-800-555-0123", insertedPerson.phone, "Phone with dashes should be bound correctly")
             
             // Test special characters in JSON parameter binding
@@ -225,7 +227,7 @@ class ParameterBindingTest {
             val comment = CommentQuery.Add.Params(
                 personId = insertedPerson.id,
                 comment = "Comment with special characters: 'quotes', \"double quotes\", & ampersands, /slashes/, \\backslashes\\",
-                createdAt = LocalDateTime(2024, 6, 15, 14, 45, 30),
+                createdAt = Instant.parse("2024-06-15T14:45:30Z"),
                 tags = specialTags
             )
             

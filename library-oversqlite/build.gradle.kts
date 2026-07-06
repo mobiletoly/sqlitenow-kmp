@@ -1,7 +1,6 @@
 @file:OptIn(org.jetbrains.kotlin.gradle.ExperimentalWasmDsl::class)
 
 import org.gradle.api.file.DuplicatesStrategy
-import org.gradle.api.tasks.Copy
 import org.gradle.api.tasks.testing.Test
 import org.gradle.language.jvm.tasks.ProcessResources
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
@@ -35,7 +34,7 @@ kotlin {
     applyDefaultHierarchyTemplate()
     jvm()
 
-    androidLibrary {
+    android {
         namespace = "dev.goquick.sqlitenow.oversqlite"
         compileSdk = libs.versions.android.compileSdk.get().toInt()
         minSdk = libs.versions.android.minSdk.get().toInt()
@@ -51,11 +50,11 @@ kotlin {
     }
 
     compilerOptions {
-        languageVersion.set(KotlinVersion.KOTLIN_2_3)
+        languageVersion.set(KotlinVersion.KOTLIN_2_4)
         freeCompilerArgs.addAll("-Xexpect-actual-classes")
     }
 
-    js(IR) {
+    js {
         nodejs {
             testTask {
                 useMocha {
@@ -71,11 +70,9 @@ kotlin {
         binaries.library()
     }
 
-    iosX64()
     iosArm64()
     iosSimulatorArm64()
     macosArm64()
-    macosX64()
     linuxArm64()
     linuxX64()
 
@@ -171,18 +168,17 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEa
     }
 }
 
-val sqlJsModuleDir = rootProject.layout.buildDirectory.dir("js/node_modules/sql.js/dist")
-val wasmSqlJsResourceDir = layout.buildDirectory.dir("generated/sqljs/wasm")
-
-val copySqlJsWasmForWasm by tasks.registering(Copy::class) {
-    dependsOn(rootProject.tasks.named("kotlinNpmInstall"))
-    from(sqlJsModuleDir.map { it.file("sql-wasm.wasm") })
-    into(wasmSqlJsResourceDir)
-}
+val libraryCoreProject = project(":library-core")
+val librarySqlJsResource = libraryCoreProject.layout.buildDirectory.file("processedResources/wasmJs/main/sqlitenow-sqljs.js")
+val librarySqlWasmBinary = libraryCoreProject.layout.buildDirectory.file("processedResources/wasmJs/main/sql-wasm.wasm")
+val libraryIndexedDbResource =
+    libraryCoreProject.layout.buildDirectory.file("processedResources/wasmJs/main/sqlitenow-indexeddb.js")
 
 tasks.named<ProcessResources>("wasmJsProcessResources") {
-    dependsOn(copySqlJsWasmForWasm)
-    from(wasmSqlJsResourceDir)
+    dependsOn(libraryCoreProject.tasks.named("wasmJsProcessResources"))
+    from(librarySqlJsResource)
+    from(librarySqlWasmBinary)
+    from(libraryIndexedDbResource)
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 

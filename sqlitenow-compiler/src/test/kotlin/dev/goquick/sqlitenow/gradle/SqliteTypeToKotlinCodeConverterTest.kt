@@ -65,6 +65,21 @@ class SqliteTypeToKotlinCodeConverterTest {
             expectedNullable = true,
         ),
         PropertyTypeCase(
+            displayName = "nullable Kotlin standard library type annotation",
+            propertyType = "String?",
+            isNullable = false,
+            expectedType = "kotlin.String?",
+            expectedNullable = true,
+        ),
+        PropertyTypeCase(
+            displayName = "nullable same-package custom type annotation",
+            propertyType = "TaskStatus?",
+            isNullable = false,
+            expectedType = "dev.test.db.TaskStatus?",
+            expectedNullable = true,
+            packageName = "dev.test.db",
+        ),
+        PropertyTypeCase(
             displayName = "without type annotation",
             propertyType = null,
             isNullable = true,
@@ -79,6 +94,7 @@ class SqliteTypeToKotlinCodeConverterTest {
                 baseType = baseType,
                 propertyType = case.propertyType,
                 isNullable = case.isNullable,
+                packageName = case.packageName,
             )
 
             assertEquals(case.expectedType, resultType.toString())
@@ -145,6 +161,23 @@ class SqliteTypeToKotlinCodeConverterTest {
         assertTrue(resultType is ParameterizedTypeName, "Result should be a ParameterizedTypeName")
     }
 
+    @Test
+    @DisplayName("Test nullable generic arguments and nullable same-package generic type")
+    fun testNullableGenericTypeArguments() {
+        val baseType = ClassName("kotlin", "String")
+        val resultType = SqliteTypeToKotlinCodeConverter.determinePropertyType(
+            baseType = baseType,
+            propertyType = "List<TaskStatus?>?",
+            isNullable = false,
+            packageName = "dev.test.db",
+        )
+
+        assertEquals("kotlin.collections.List<dev.test.db.TaskStatus?>?", resultType.toString())
+        assertTrue(resultType.isNullable, "Result list should be nullable")
+        assertTrue(resultType is ParameterizedTypeName, "Result should be a ParameterizedTypeName")
+        assertEquals("dev.test.db.TaskStatus?", resultType.typeArguments.single().toString())
+    }
+
     private data class GenericTypeCase(
         val displayName: String,
         val propertyType: String,
@@ -158,5 +191,6 @@ class SqliteTypeToKotlinCodeConverterTest {
         val isNullable: Boolean,
         val expectedType: String,
         val expectedNullable: Boolean,
+        val packageName: String? = null,
     )
 }

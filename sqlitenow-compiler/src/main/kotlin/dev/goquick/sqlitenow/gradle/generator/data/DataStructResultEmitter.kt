@@ -26,7 +26,7 @@ import dev.goquick.sqlitenow.gradle.model.AnnotatedCreateTableStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedExecuteStatement
 import dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement
 import dev.goquick.sqlitenow.gradle.processing.AnnotationConstants
-import dev.goquick.sqlitenow.gradle.processing.PropertyNameGeneratorType
+import dev.goquick.sqlitenow.gradle.processing.ReturningColumnsResolver
 
 internal class DataStructResultEmitter(
     private val generatorContext: GeneratorContext,
@@ -85,8 +85,7 @@ internal class DataStructResultEmitter(
                 isNullable,
                 generatorContext.packageName
             )
-            val propertyName =
-                PropertyNameGeneratorType.LOWER_CAMEL_CASE.convertToPropertyName(column.src.name)
+            val propertyName = ReturningColumnsResolver.propertyNameForColumn(statement, column)
             PropertySpec.builder(propertyName, kotlinType)
                 .initializer(propertyName)
                 .build()

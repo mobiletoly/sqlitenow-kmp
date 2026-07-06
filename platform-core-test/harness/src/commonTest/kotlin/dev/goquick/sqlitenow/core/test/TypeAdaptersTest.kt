@@ -1,3 +1,5 @@
+@file:OptIn(kotlin.time.ExperimentalTime::class)
+
 package dev.goquick.sqlitenow.core.test
 
 import dev.goquick.sqlitenow.core.test.db.AddressType
@@ -6,12 +8,12 @@ import dev.goquick.sqlitenow.core.test.db.PersonQuery
 import dev.goquick.sqlitenow.core.test.db.CommentQuery
 import dev.goquick.sqlitenow.core.test.db.PersonAddressQuery
 import kotlinx.datetime.LocalDate
-import kotlinx.datetime.LocalDateTime
+import kotlin.time.Instant
 import kotlin.test.*
 
 /**
  * Integration tests specifically for SQLiteNow Type Adapters functionality.
- * Tests custom type adapters (LocalDate, LocalDateTime, custom objects, JSON serialization).
+ * Tests custom type adapters (LocalDate, Instant, custom objects, JSON serialization).
  */
 class TypeAdaptersTest {
 
@@ -75,13 +77,13 @@ class TypeAdaptersTest {
     }
 
     @Test
-    fun testLocalDateTimeTypeAdapter() = runDatabaseTest {
+    fun testInstantTypeAdapter() = runDatabaseTest {
             database.open()
             
             // Insert a person to get a createdAt timestamp
             val person = PersonQuery.Add.Params(
-                email = "datetime-test@example.com",
-                firstName = "DateTime",
+                email = "instant-test@example.com",
+                firstName = "Instant",
                 lastName = "Test",
                 phone = "+2222222222",
                 birthDate = LocalDate(1995, 3, 15)
@@ -89,17 +91,20 @@ class TypeAdaptersTest {
             
             val insertedPerson = database.person.add.one(person)
             
-            // Verify LocalDateTime adapter worked correctly
+            // Verify Instant adapter worked correctly
             assertNotNull(insertedPerson.createdAt, "Created at should not be null")
-            assertTrue(insertedPerson.createdAt.year >= 2024, "Created at should be recent")
+            assertTrue(
+                insertedPerson.createdAt >= Instant.parse("2024-01-01T00:00:00Z"),
+                "Created at should be recent"
+            )
             
             // Test with Comment table which has createdAt as input parameter
-            val testDateTime = LocalDateTime(2024, 6, 15, 14, 30, 45)
+            val testInstant = Instant.parse("2024-06-15T14:30:45Z")
             val comment = CommentQuery.Add.Params(
                 personId = insertedPerson.id,
-                comment = "Test comment with custom datetime",
-                createdAt = testDateTime,
-                tags = listOf("test", "datetime")
+                comment = "Test comment with custom instant",
+                createdAt = testInstant,
+                tags = listOf("test", "instant")
             )
 
             val insertedComment = database.comment.add(comment)
@@ -107,7 +112,7 @@ class TypeAdaptersTest {
             // Verify by selecting the comment
             val selectedComments = database.comment.selectAll(CommentQuery.SelectAll.Params(personId = insertedPerson.id)).asList()
             assertEquals(1, selectedComments.size, "Should have 1 comment")
-            assertEquals(testDateTime, selectedComments[0].createdAt, "Created at should match exactly")
+            assertEquals(testInstant, selectedComments[0].createdAt, "Created at should match exactly")
     }
 
     @Test
@@ -173,7 +178,7 @@ class TypeAdaptersTest {
             val comment = CommentQuery.Add.Params(
                 personId = person.id,
                 comment = "Test comment with JSON tags",
-                createdAt = LocalDateTime(2024, 6, 15, 10, 30, 0),
+                createdAt = Instant.parse("2024-06-15T10:30:00Z"),
                 tags = testTags
             )
 
@@ -193,7 +198,7 @@ class TypeAdaptersTest {
             val commentWithNullTags = CommentQuery.Add.Params(
                 personId = person.id,
                 comment = "Comment without tags",
-                createdAt = LocalDateTime(2024, 6, 15, 11, 0, 0),
+                createdAt = Instant.parse("2024-06-15T11:00:00Z"),
                 tags = null
             )
 
@@ -203,7 +208,7 @@ class TypeAdaptersTest {
             val commentWithEmptyTags = CommentQuery.Add.Params(
                 personId = person.id,
                 comment = "Comment with empty tags",
-                createdAt = LocalDateTime(2024, 6, 15, 11, 30, 0),
+                createdAt = Instant.parse("2024-06-15T11:30:00Z"),
                 tags = emptyList()
             )
 
@@ -261,7 +266,7 @@ class TypeAdaptersTest {
             
             // Test that type adapters work consistently between INSERT and SELECT operations
             val testDate = LocalDate(1987, 4, 22)
-            val testDateTime = LocalDateTime(2024, 6, 15, 16, 45, 30)
+            val testInstant = Instant.parse("2024-06-15T16:45:30Z")
             val testTags = listOf("consistency", "test", "adapters")
             
             // Insert person
@@ -277,7 +282,7 @@ class TypeAdaptersTest {
             database.comment.add(CommentQuery.Add.Params(
                 personId = person.id,
                 comment = "Consistency test comment",
-                createdAt = testDateTime,
+                createdAt = testInstant,
                 tags = testTags
             ))
 
@@ -307,7 +312,7 @@ class TypeAdaptersTest {
             // Verify comment data consistency
             val selectedComment = selectedComments.find { it.comment == "Consistency test comment" }
             assertNotNull(selectedComment, "Should find selected comment")
-            assertEquals(testDateTime, selectedComment.createdAt, "Comment created at should be consistent")
+            assertEquals(testInstant, selectedComment.createdAt, "Comment created at should be consistent")
             assertEquals(testTags, selectedComment.tags, "Comment tags should be consistent")
 
             // Verify address data consistency
@@ -341,12 +346,12 @@ class TypeAdaptersTest {
                 assertEquals(date, person.birthDate, "Extreme date $index should be preserved")
             }
             
-            // Test extreme datetime values
-            val extremeDateTime = LocalDateTime(1970, 1, 1, 0, 0, 1) // Near Unix epoch
+            // Test extreme instant values
+            val extremeInstant = Instant.parse("1970-01-01T00:00:01Z") // Near Unix epoch
             
             val person = database.person.add.one(PersonQuery.Add.Params(
-                email = "extreme-datetime@example.com",
-                firstName = "ExtremeDateTime",
+                email = "extreme-instant@example.com",
+                firstName = "ExtremeInstant",
                 lastName = "Test",
                 phone = "+7777777777",
                 birthDate = LocalDate(1990, 1, 1)
@@ -354,15 +359,15 @@ class TypeAdaptersTest {
             
             database.comment.add(CommentQuery.Add.Params(
                 personId = person.id,
-                comment = "Extreme datetime test",
-                createdAt = extremeDateTime,
-                tags = listOf("extreme", "datetime")
+                comment = "Extreme instant test",
+                createdAt = extremeInstant,
+                tags = listOf("extreme", "instant")
             ))
 
             val selectedComments = database.comment.selectAll(CommentQuery.SelectAll.Params(personId = person.id)).asList()
-            val comment = selectedComments.find { it.comment == "Extreme datetime test" }
-            assertNotNull(comment, "Should find extreme datetime comment")
+            val comment = selectedComments.find { it.comment == "Extreme instant test" }
+            assertNotNull(comment, "Should find extreme instant comment")
             
-            assertEquals(extremeDateTime, comment.createdAt, "Extreme datetime should be preserved")
+            assertEquals(extremeInstant, comment.createdAt, "Extreme instant should be preserved")
     }
 }

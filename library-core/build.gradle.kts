@@ -35,7 +35,7 @@ kotlin {
     applyDefaultHierarchyTemplate()
     jvm()
 
-    androidLibrary {
+    android {
         namespace = "dev.goquick.sqlitenow.core"
         compileSdk = libs.versions.android.compileSdk.get().toInt()
         minSdk = libs.versions.android.minSdk.get().toInt()
@@ -51,11 +51,11 @@ kotlin {
     }
 
     compilerOptions {
-        languageVersion.set(KotlinVersion.KOTLIN_2_3)
+        languageVersion.set(KotlinVersion.KOTLIN_2_4)
         freeCompilerArgs.addAll("-Xexpect-actual-classes")
     }
 
-    js(IR) {
+    js {
         nodejs {
             testTask {
                 useMocha {
@@ -71,11 +71,9 @@ kotlin {
         binaries.library()
     }
 
-    iosX64()
     iosArm64()
     iosSimulatorArm64()
     macosArm64()
-    macosX64()
     linuxArm64()
     linuxX64()
 

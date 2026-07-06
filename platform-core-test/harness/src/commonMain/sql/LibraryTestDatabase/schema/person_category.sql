@@ -4,8 +4,8 @@ CREATE TABLE person_category
     id          INTEGER PRIMARY KEY NOT NULL,
     person_id   INTEGER NOT NULL,
     category_id INTEGER NOT NULL,
-    -- @@{ field=assigned_at, propertyType=kotlinx.datetime.LocalDateTime }
-    assigned_at TEXT                NOT NULL DEFAULT current_timestamp,
+    -- @@{ field=assigned_at, propertyType=kotlin.time.Instant }
+    assigned_at TEXT                NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     -- @@{ field=is_primary, propertyType=kotlin.Boolean }
     is_primary  INTEGER NOT NULL DEFAULT 0 CHECK (is_primary IN (0,1)),
 

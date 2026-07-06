@@ -61,7 +61,7 @@ Representative entry points:
 
 `:platform-core-test:harness` owns the `platform` surface.
 
-It provides Android, JVM, iOS simulator, macOS, JS Node, and Wasm browser runtime surfaces for
+It provides Android, JVM, iOS simulator, macOS, Linux, JS Node, and Wasm browser runtime surfaces for
 generated-code validation.
 
 ## Entry Points
@@ -93,6 +93,8 @@ Preferred wrapper tasks:
 | JVM | `./gradlew corePlatformJvm` |
 | iOS simulator | `./gradlew corePlatformIosSimulatorArm64` |
 | macOS | `./gradlew corePlatformMacosArm64` |
+| Linux x64 | `./gradlew corePlatformLinuxX64` |
+| Linux arm64 | `./gradlew corePlatformLinuxArm64` |
 | JS Node | `./gradlew corePlatformJsNode` |
 | Wasm browser | `./gradlew corePlatformWasmBrowser` |
 
@@ -103,6 +105,7 @@ host-agnostic guarantee.
 
 - `corePlatformAndroid` requires an Android emulator or connected device.
 - `corePlatformIosSimulatorArm64` and `corePlatformMacosArm64` require macOS.
+- `corePlatformLinuxX64` and `corePlatformLinuxArm64` require compatible Linux hosts.
 - `corePlatformJsNode` requires the normal Kotlin/JS Node toolchain.
 - `corePlatformWasmBrowser` requires a working local browser test environment.
 - `corePlatformAll` assumes all of the above are available on the current machine.

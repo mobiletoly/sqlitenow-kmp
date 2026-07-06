@@ -59,7 +59,7 @@ class SelectFieldCodeGenerator(
      * @param propertyNameGeneratorType The type of property name generator to use
      * @return A Pair of property name and property type
      */
-    private fun generateFieldInfo(
+    internal fun generateFieldInfo(
         field: AnnotatedSelectStatement.Field,
         propertyNameGeneratorType: PropertyNameGeneratorType
     ): Pair<String, TypeName> {

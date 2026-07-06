@@ -89,7 +89,7 @@ class SqliteNowGeneratedCodeTest {
 
             assertNotNull(insertedPerson, "Inserted person should not be null")
             assertTrue(insertedPerson.id > 0, "ID should be positive")
-            assertEquals("John", insertedPerson.firstName, "First name should match")
+            assertEquals("John", insertedPerson.myFirstName, "First name should match")
             assertEquals("test@example.com", insertedPerson.email, "Email should match")
     }
 
@@ -203,8 +203,8 @@ class SqliteNowGeneratedCodeTest {
             
             // Non-null parameters should be preserved
             assertEquals("null-test@example.com", insertedPerson.email, "Email should be preserved")
-            assertEquals("Null", insertedPerson.firstName, "First name should be preserved")
-            assertEquals("Test", insertedPerson.lastName, "Last name should be preserved")
+            assertEquals("Null", insertedPerson.myFirstName, "First name should be preserved")
+            assertEquals("Test", insertedPerson.myLastName, "Last name should be preserved")
     }
 
     @Test

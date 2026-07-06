@@ -71,11 +71,15 @@ internal class RealServerHarnessBundleChangeWatchTest : RealServerHarnessSupport
             val writerToken = issueDummySigninToken(config.baseUrl, userId, writerSourceId)
             val observerToken = issueDummySigninToken(config.baseUrl, userId, observerSourceId)
             writerHttp = newRealServerHttpClient(config.baseUrl, writerToken)
-            observerHttp = newRealServerHttpClient(config.baseUrl, observerToken) { path ->
-                if (path == "/sync/watch" && !watchRequestSeen.isCompleted) {
-                    watchRequestSeen.complete(Unit)
-                }
-            }
+            observerHttp = newRealServerHttpClient(
+                baseUrl = config.baseUrl,
+                token = observerToken,
+                beforeRequest = { path ->
+                    if (path == "/sync/watch" && !watchRequestSeen.isCompleted) {
+                        watchRequestSeen.complete(Unit)
+                    }
+                },
+            )
             val writer = newRealServerClient(writerDb, writerHttp)
             val observer = newRealServerClient(observerDb, observerHttp)
 
@@ -141,11 +145,15 @@ internal class RealServerHarnessBundleChangeWatchTest : RealServerHarnessSupport
             createBusinessSubsetTables(db)
             val sourceId = bootstrapManagedSourceId(db, config.baseUrl)
             val token = issueDummySigninToken(config.baseUrl, userId, sourceId)
-            http = newRealServerHttpClient(config.baseUrl, token) { path ->
-                if (path == "/sync/watch" && !watchRequestSeen.isCompleted) {
-                    watchRequestSeen.complete(Unit)
-                }
-            }
+            http = newRealServerHttpClient(
+                baseUrl = config.baseUrl,
+                token = token,
+                beforeRequest = { path ->
+                    if (path == "/sync/watch" && !watchRequestSeen.isCompleted) {
+                        watchRequestSeen.complete(Unit)
+                    }
+                },
+            )
             val client = newRealServerClient(db, http)
             client.open().getOrThrow()
             assertConnectedOutcome(
