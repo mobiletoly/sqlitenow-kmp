@@ -33,7 +33,7 @@ jobs:
       SQLITENOW_RELEASE_VERSION_INPUT: ${{ inputs.release_version || '' }}
     steps:
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Dart
         uses: dart-lang/setup-dart@v1

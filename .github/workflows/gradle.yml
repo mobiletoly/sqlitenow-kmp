@@ -24,7 +24,7 @@ jobs:
     outputs:
       code_changed: ${{ github.event_name == 'workflow_call' && 'true' || steps.filter.outputs.code }}
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       if: ${{ github.event_name != 'workflow_call' }}
     - name: Detect code changes
       if: ${{ github.event_name != 'workflow_call' }}
@@ -62,7 +62,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - name: Validate Gradle Wrapper
       uses: gradle/actions/wrapper-validation@v3
     - uses: actions/cache@v4
@@ -87,7 +87,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - name: Validate Gradle Wrapper
       uses: gradle/actions/wrapper-validation@v3
     - name: Set up JDK 17
@@ -148,7 +148,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
