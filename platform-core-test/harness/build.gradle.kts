@@ -23,6 +23,10 @@ kotlin {
             enable = true
         }
 
+        withHostTestBuilder {
+            sourceSetTreeName = "test"
+        }
+
         withDeviceTestBuilder {
             sourceSetTreeName = "test"
         }

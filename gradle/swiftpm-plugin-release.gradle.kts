@@ -4,6 +4,7 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.security.MessageDigest
+import java.util.Base64
 import org.gradle.api.Project
 import org.gradle.api.provider.Provider
 import org.gradle.api.tasks.Sync
@@ -292,7 +293,9 @@ fun gitHubTokenGitEnvironment(token: String): Map<String, String> =
     mapOf(
         "GIT_CONFIG_COUNT" to "1",
         "GIT_CONFIG_KEY_0" to "http.https://github.com/.extraheader",
-        "GIT_CONFIG_VALUE_0" to "AUTHORIZATION: bearer $token",
+        "GIT_CONFIG_VALUE_0" to "AUTHORIZATION: basic ${
+            Base64.getEncoder().encodeToString("x-access-token:$token".toByteArray(Charsets.UTF_8))
+        }",
     )
 
 fun Project.createSwiftPmDistributionGitCommit(

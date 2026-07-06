@@ -652,7 +652,7 @@ internal open class CrossTargetSyncTestSupport {
 
         private suspend fun MockRequestHandleScope.handleCreateSnapshotSession(
             request: HttpRequestData,
-        ) = try {
+        ): io.ktor.client.request.HttpResponseData = try {
             val rawBody = request.bodyText().trim()
             val createRequest = rawBody.takeIf { it.isNotEmpty() }?.let {
                 json.decodeFromString(SnapshotSessionCreateRequest.serializer(), it)

@@ -581,7 +581,6 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             val exhausted = clientB.pushPending().exceptionOrNull()
             assertNotNull(exhausted)
             assertTrue(exhausted is PushConflictRetryExhaustedException)
-            exhausted as PushConflictRetryExhaustedException
             assertEquals(2, exhausted.retryCount)
             assertEquals(1, exhausted.remainingDirtyCount)
             assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_outbox_rows"))

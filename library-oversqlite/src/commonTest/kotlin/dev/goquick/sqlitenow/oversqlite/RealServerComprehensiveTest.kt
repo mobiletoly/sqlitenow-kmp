@@ -608,7 +608,7 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
                 assertEquals(DetachOutcome.DETACHED, installSeedClient.detach().getOrThrow())
             } finally {
                 installSeedClient.close()
-                installHttpSeed?.close()
+                installHttpSeed.close()
             }
 
             val installRestoreSourceId = scalarText(installDb, "SELECT current_source_id FROM _sync_attachment_state")
@@ -631,7 +631,7 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
                 assertEquals(DetachOutcome.DETACHED, remoteSeedClient.detach().getOrThrow())
             } finally {
                 remoteSeedClient.close()
-                remoteSeedHttp?.close()
+                remoteSeedHttp.close()
             }
 
             installHttpRestore = newRealServerHttpClient(
@@ -655,7 +655,7 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
                 assertEquals(DetachOutcome.DETACHED, installRestoreClient.detach().getOrThrow())
             } finally {
                 installRestoreClient.close()
-                installHttpRestore?.close()
+                installHttpRestore.close()
             }
 
             verifyHttp = newRealServerHttpClient(
@@ -674,7 +674,7 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
                 assertEquals(0L, scalarLong(verifyDb, "SELECT COUNT(*) FROM users WHERE id = '$installSeedUserRowId'"))
             } finally {
                 verifyClient.close()
-                verifyHttp?.close()
+                verifyHttp.close()
             }
         } finally {
             installDb.close()
@@ -724,7 +724,7 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
             assertEquals(DetachOutcome.DETACHED, client.detach().getOrThrow())
             val rotatedSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
             assertNotEquals(sourceId, rotatedSourceId)
-            http?.close()
+            http.close()
             http = newRealServerHttpClient(config.baseUrl, issueDummySigninToken(config.baseUrl, userId, rotatedSourceId))
             client.close()
             val restartedClient = newRealServerClient(db, http)
@@ -839,7 +839,7 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
             assertEquals(recoverSourceId, retired.sourceId)
             assertEquals(rotatedSourceId, retired.replacedBySourceId)
 
-            recoverHttp?.close()
+            recoverHttp.close()
             recoverClient.close()
             recoverHttp = newRealServerHttpClient(
                 config.baseUrl,

@@ -111,20 +111,25 @@ jobs:
         if: env.SQLITENOW_RELEASE_DRY_RUN == 'true'
         run: ./gradlew validateSwiftPmPluginDistributionTag -Psqlitenow.swiftPmCompilerArtifactBaseUrl="${SQLITENOW_SWIFTPM_COMPILER_ARTIFACT_BASE_URL}" --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
 
-      - name: Upload Swift release assets
+      - name: Create GitHub release with Swift assets
         id: upload_swift_release_assets
         if: env.SQLITENOW_RELEASE_DRY_RUN != 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.SQLITENOW_RELEASE_TAG }}
-          fail_on_unmatched_files: true
-          files: |
-            swift/runtime/core/build/runtime-release-artifacts/SQLiteNowCoreRuntime-${{ env.SQLITENOW_RELEASE_VERSION }}.xcframework.zip
-            swift/runtime/core/build/runtime-release-artifacts/SQLiteNowCoreRuntime-${{ env.SQLITENOW_RELEASE_VERSION }}.artifact-manifest.json
-            swift/runtime/sync/build/runtime-release-artifacts/SQLiteNowSyncRuntime-${{ env.SQLITENOW_RELEASE_VERSION }}.xcframework.zip
-            swift/runtime/sync/build/runtime-release-artifacts/SQLiteNowSyncRuntime-${{ env.SQLITENOW_RELEASE_VERSION }}.artifact-manifest.json
-            build/swiftpm-compiler-artifacts/SQLiteNowCompiler-${{ env.SQLITENOW_RELEASE_VERSION }}.artifactbundle.zip
-            build/swiftpm-compiler-artifacts/SQLiteNowCompiler-${{ env.SQLITENOW_RELEASE_VERSION }}.artifact-manifest.json
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          gh release create "${SQLITENOW_RELEASE_TAG}" \
+            --title "${SQLITENOW_RELEASE_TAG}" \
+            --notes "SQLiteNow ${SQLITENOW_RELEASE_VERSION}" \
+            --verify-tag \
+            "swift/runtime/core/build/runtime-release-artifacts/SQLiteNowCoreRuntime-${SQLITENOW_RELEASE_VERSION}.xcframework.zip" \
+            "swift/runtime/core/build/runtime-release-artifacts/SQLiteNowCoreRuntime-${SQLITENOW_RELEASE_VERSION}.artifact-manifest.json" \
+            "swift/runtime/sync/build/runtime-release-artifacts/SQLiteNowSyncRuntime-${SQLITENOW_RELEASE_VERSION}.xcframework.zip" \
+            "swift/runtime/sync/build/runtime-release-artifacts/SQLiteNowSyncRuntime-${SQLITENOW_RELEASE_VERSION}.artifact-manifest.json" \
+            "build/swiftpm-compiler-artifacts/SQLiteNowCompiler-${SQLITENOW_RELEASE_VERSION}.artifactbundle.zip" \
+            "build/swiftpm-compiler-artifacts/SQLiteNowCompiler-${SQLITENOW_RELEASE_VERSION}.artifact-manifest.json"
 
       - name: Validate clean SwiftPM consumer from local distribution Git tag
         if: env.SQLITENOW_RELEASE_DRY_RUN != 'true'

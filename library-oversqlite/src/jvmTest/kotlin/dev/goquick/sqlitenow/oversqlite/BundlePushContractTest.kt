@@ -1382,7 +1382,6 @@ $indentedCommittedRowsJson
             val error = client.pushPending().exceptionOrNull()
             assertNotNull(error)
             assertTrue(error is PushConflictRetryExhaustedException)
-            error as PushConflictRetryExhaustedException
             assertEquals(2, error.retryCount)
             assertEquals(1, error.remainingDirtyCount)
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
