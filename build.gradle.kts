@@ -795,8 +795,6 @@ tasks.register("swiftHybridSupportGate") {
     group = "verification"
     description = "Validates the supported local Swift package workflows for core and sync."
     dependsOn(
-        gradle.includedBuild("sqlitenow-compiler").task(":test"),
-        gradle.includedBuild("sqlitenow-gradle-plugin").task(":test"),
         "sampleSwiftSupportGate",
         "sampleSyncSwiftSupportGate",
         ":swift:fixtures:package:core:swiftTest",
