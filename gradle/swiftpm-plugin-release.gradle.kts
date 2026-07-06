@@ -431,33 +431,17 @@ tasks.register("swiftRuntimeReleaseArtifacts") {
     )
 }
 
-tasks.register<Zip>("packageSwiftPmCompilerArtifactBundle") {
+tasks.register("prepareSwiftPmCompilerArtifactBundle") {
     group = "build"
-    description = "Builds the SwiftPM executable artifact bundle that wraps the SQLiteNow compiler jar."
+    description = "Prepares the SwiftPM executable artifact bundle directory that wraps the SQLiteNow compiler jar."
 
     dependsOn(gradle.includedBuild("sqlitenow-compiler").task(":sqlitenowCompilerJar"))
 
-    archiveFileName.set(sqliteNowVersion.map { "SQLiteNowCompiler-$it.artifactbundle.zip" })
-    destinationDirectory.set(swiftPmCompilerArtifactsDir)
-    isPreserveFileTimestamps = false
-    isReproducibleFileOrder = true
-    from(swiftPmCompilerArtifactBundleDir) {
-        into("SQLiteNowCompiler.artifactbundle")
-        exclude("SQLiteNowCompiler/bin/sqlitenow-compiler")
-    }
-    from(swiftPmCompilerArtifactBundleDir.map { it.file("SQLiteNowCompiler/bin/sqlitenow-compiler") }) {
-        into("SQLiteNowCompiler.artifactbundle/SQLiteNowCompiler/bin")
-        filePermissions {
-            unix("rwxr-xr-x")
-        }
-    }
-
     inputs.file(swiftPmCompilerJar)
     inputs.property("sqliteNowVersion", sqliteNowVersion)
-    inputs.property("swiftPmCompilerArtifactBaseUrl", swiftPmCompilerArtifactBaseUrl)
-    outputs.dir(swiftPmCompilerArtifactsDir)
+    outputs.dir(swiftPmCompilerArtifactBundleDir)
 
-    doFirst {
+    doLast {
         val version = sqliteNowVersion.get()
         val jarFile = swiftPmCompilerJar.asFile
         require(jarFile.isFile) {
@@ -511,7 +495,37 @@ tasks.register<Zip>("packageSwiftPmCompilerArtifactBundle") {
             }
             """.trimIndent() + "\n"
         )
+    }
+}
 
+tasks.register<Zip>("packageSwiftPmCompilerArtifactBundle") {
+    group = "build"
+    description = "Builds the SwiftPM executable artifact bundle that wraps the SQLiteNow compiler jar."
+
+    dependsOn("prepareSwiftPmCompilerArtifactBundle")
+
+    archiveFileName.set(sqliteNowVersion.map { "SQLiteNowCompiler-$it.artifactbundle.zip" })
+    destinationDirectory.set(swiftPmCompilerArtifactsDir)
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    from(swiftPmCompilerArtifactBundleDir) {
+        into("SQLiteNowCompiler.artifactbundle")
+        exclude("SQLiteNowCompiler/bin/sqlitenow-compiler")
+    }
+    from(swiftPmCompilerArtifactBundleDir.map { it.file("SQLiteNowCompiler/bin/sqlitenow-compiler") }) {
+        into("SQLiteNowCompiler.artifactbundle/SQLiteNowCompiler/bin")
+        filePermissions {
+            unix("rwxr-xr-x")
+        }
+    }
+
+    inputs.file(swiftPmCompilerJar)
+    inputs.property("sqliteNowVersion", sqliteNowVersion)
+    inputs.property("swiftPmCompilerArtifactBaseUrl", swiftPmCompilerArtifactBaseUrl)
+    outputs.dir(swiftPmCompilerArtifactsDir)
+
+    doFirst {
+        val version = sqliteNowVersion.get()
         val outputDir = swiftPmCompilerArtifactsDir.get().asFile
         project.delete(
             outputDir.resolve("SQLiteNowCompiler-$version.artifactbundle.zip"),

@@ -64,21 +64,21 @@ jobs:
     steps:
     - uses: actions/checkout@v7
     - name: Validate Gradle Wrapper
-      uses: gradle/actions/wrapper-validation@v3
-    - uses: actions/cache@v4
+      uses: gradle/actions/wrapper-validation@v6
+    - uses: actions/cache@v6
       with:
         path: |
           ~/.konan
         key: ${{ runner.os }}-${{ hashFiles('**/.lock') }}
     - name: Set up JDK 17
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@v5
       with:
         java-version: '17'
         distribution: 'temurin'
+    - name: Set up Gradle
+      uses: gradle/actions/setup-gradle@v6
     - name: Build with Gradle
-      uses: gradle/gradle-build-action@ce999babab2de1c4b649dc15f0ee67e6246c994f
-      with:
-        arguments: ${{ matrix.target }}
+      run: ./gradlew ${{ matrix.target }}
 
   dart-flutter:
     name: Dart and Flutter
@@ -89,9 +89,9 @@ jobs:
     steps:
     - uses: actions/checkout@v7
     - name: Validate Gradle Wrapper
-      uses: gradle/actions/wrapper-validation@v3
+      uses: gradle/actions/wrapper-validation@v6
     - name: Set up JDK 17
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@v5
       with:
         java-version: '17'
         distribution: 'temurin'
@@ -150,7 +150,7 @@ jobs:
     steps:
     - uses: actions/checkout@v7
     - name: Set up JDK 17
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@v5
       with:
         java-version: '17'
         distribution: 'temurin'
