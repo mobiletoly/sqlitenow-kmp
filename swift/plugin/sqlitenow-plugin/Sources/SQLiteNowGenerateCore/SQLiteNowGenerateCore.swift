@@ -224,6 +224,7 @@ public struct SQLiteNowDatabaseConfiguration: Decodable, Equatable {
     public let metadataPackageName: String?
     public let runtimeArtifact: RuntimeArtifactConfiguration?
     public let runtimeXcframeworkDirectory: String?
+    public let sqliteNowPackage: SwiftPackageDependencyConfiguration?
     public let requestedAppleTargets: [String]?
     public let debug: Bool?
 }
@@ -263,6 +264,40 @@ public struct RuntimeArtifactConfiguration: Codable, Equatable {
     }
 }
 
+public struct SwiftPackageDependencyConfiguration: Codable, Equatable {
+    public let kind: String
+    public let packageIdentity: String?
+    public let path: String?
+    public let url: String?
+    public let version: String?
+    public let coreRuntimeProduct: String?
+    public let syncRuntimeProduct: String?
+    public let coreSupportProduct: String?
+    public let syncSupportProduct: String?
+
+    public init(
+        kind: String,
+        packageIdentity: String? = nil,
+        path: String? = nil,
+        url: String? = nil,
+        version: String? = nil,
+        coreRuntimeProduct: String? = nil,
+        syncRuntimeProduct: String? = nil,
+        coreSupportProduct: String? = nil,
+        syncSupportProduct: String? = nil
+    ) {
+        self.kind = kind
+        self.packageIdentity = packageIdentity
+        self.path = path
+        self.url = url
+        self.version = version
+        self.coreRuntimeProduct = coreRuntimeProduct
+        self.syncRuntimeProduct = syncRuntimeProduct
+        self.coreSupportProduct = coreSupportProduct
+        self.syncSupportProduct = syncSupportProduct
+    }
+}
+
 public struct SQLiteNowReleaseDistribution: Decodable, Equatable {
     public let manifestVersion: Int
     public let sqliteNowVersion: String
@@ -270,6 +305,7 @@ public struct SQLiteNowReleaseDistribution: Decodable, Equatable {
     public let compilerArtifactUrl: String?
     public let compilerArtifactChecksum: String?
     public let runtimeArtifacts: [String: ReleaseRuntimeArtifactConfiguration]?
+    public let sqliteNowPackage: SwiftPackageDependencyConfiguration?
 
     public init(
         manifestVersion: Int,
@@ -277,7 +313,8 @@ public struct SQLiteNowReleaseDistribution: Decodable, Equatable {
         compilerBinaryTargetName: String? = nil,
         compilerArtifactUrl: String? = nil,
         compilerArtifactChecksum: String? = nil,
-        runtimeArtifacts: [String: ReleaseRuntimeArtifactConfiguration]? = nil
+        runtimeArtifacts: [String: ReleaseRuntimeArtifactConfiguration]? = nil,
+        sqliteNowPackage: SwiftPackageDependencyConfiguration? = nil
     ) {
         self.manifestVersion = manifestVersion
         self.sqliteNowVersion = sqliteNowVersion
@@ -285,6 +322,7 @@ public struct SQLiteNowReleaseDistribution: Decodable, Equatable {
         self.compilerArtifactUrl = compilerArtifactUrl
         self.compilerArtifactChecksum = compilerArtifactChecksum
         self.runtimeArtifacts = runtimeArtifacts
+        self.sqliteNowPackage = sqliteNowPackage
     }
 
     public func runtimeArtifact(
@@ -443,6 +481,9 @@ public enum SQLiteNowConfigLoader {
             if database.runtimeArtifact != nil && database.runtimeXcframeworkDirectory != nil {
                 throw SQLiteNowGenerateError("Database '\(database.databaseName)' cannot specify both runtimeArtifact and runtimeXcframeworkDirectory.")
             }
+            if let sqliteNowPackage = database.sqliteNowPackage {
+                try validateSqliteNowPackage(sqliteNowPackage, context: "sqliteNowPackage for database '\(database.databaseName)'")
+            }
             if let runtimeArtifact = database.runtimeArtifact {
                 switch runtimeArtifact.kind {
                 case "localZip":
@@ -506,6 +547,7 @@ public enum SQLiteNowConfigLoader {
                         "metadataPackageName",
                         "runtimeArtifact",
                         "runtimeXcframeworkDirectory",
+                        "sqliteNowPackage",
                         "requestedAppleTargets",
                         "debug",
                     ],
@@ -517,6 +559,23 @@ public enum SQLiteNowConfigLoader {
                     Set(artifact.keys),
                     allowed: ["kind", "path", "url", "checksum", "sqliteNowVersion"],
                     context: "runtimeArtifact"
+                )
+            }
+            if let sqliteNowPackage = database["sqliteNowPackage"] as? [String: Any] {
+                try rejectUnsupportedFields(
+                    Set(sqliteNowPackage.keys),
+                    allowed: [
+                        "kind",
+                        "packageIdentity",
+                        "path",
+                        "url",
+                        "version",
+                        "coreRuntimeProduct",
+                        "syncRuntimeProduct",
+                        "coreSupportProduct",
+                        "syncSupportProduct",
+                    ],
+                    context: "sqliteNowPackage"
                 )
             }
             if let minimumPlatforms = database["minimumPlatforms"] as? [String: Any] {
@@ -537,6 +596,40 @@ public enum SQLiteNowConfigLoader {
         let unsupported = fields.subtracting(allowed).sorted()
         guard unsupported.isEmpty else {
             throw SQLiteNowGenerateError("Unsupported field(s) in \(context): \(unsupported.joined(separator: ", ")).")
+        }
+    }
+
+    private static func validateSqliteNowPackage(
+        _ sqliteNowPackage: SwiftPackageDependencyConfiguration,
+        context: String
+    ) throws {
+        switch sqliteNowPackage.kind {
+        case "localPath":
+            guard !(sqliteNowPackage.path ?? "").trimmed().isEmpty else {
+                throw SQLiteNowGenerateError("\(context).path is required for localPath dependencies.")
+            }
+            guard (sqliteNowPackage.url ?? "").trimmed().isEmpty else {
+                throw SQLiteNowGenerateError("\(context).url is not supported for localPath dependencies.")
+            }
+            guard (sqliteNowPackage.version ?? "").trimmed().isEmpty else {
+                throw SQLiteNowGenerateError("\(context).version is not supported for localPath dependencies.")
+            }
+        case "remoteExact":
+            guard (sqliteNowPackage.path ?? "").trimmed().isEmpty else {
+                throw SQLiteNowGenerateError("\(context).path is not supported for remoteExact dependencies.")
+            }
+            let url = (sqliteNowPackage.url ?? "").trimmed()
+            guard !url.isEmpty else {
+                throw SQLiteNowGenerateError("\(context).url is required for remoteExact dependencies.")
+            }
+            guard URL(string: url)?.scheme == "https" || URL(string: url)?.isFileURL == true else {
+                throw SQLiteNowGenerateError("\(context).url must use https or file.")
+            }
+            guard !(sqliteNowPackage.version ?? "").trimmed().isEmpty else {
+                throw SQLiteNowGenerateError("\(context).version is required for remoteExact dependencies.")
+            }
+        default:
+            throw SQLiteNowGenerateError("\(context).kind must be 'localPath' or 'remoteExact'.")
         }
     }
 }
@@ -637,12 +730,14 @@ public enum SQLiteNowCompilerRequestBuilder {
             let resolvedRuntimeArtifactConfiguration: RuntimeArtifactConfiguration?
             if let runtimeArtifact = database.runtimeArtifact {
                 resolvedRuntimeArtifactConfiguration = runtimeArtifact
-            } else {
+            } else if runtimeXcframeworkDirectory == nil {
                 resolvedRuntimeArtifactConfiguration = try releaseDistribution?.runtimeArtifact(
                     for: database.runtime,
                     runtimeModuleName: runtimeModuleName,
                     databaseName: database.databaseName
                 )
+            } else {
+                resolvedRuntimeArtifactConfiguration = nil
             }
             if runtimeXcframeworkDirectory == nil && resolvedRuntimeArtifactConfiguration == nil {
                 throw SQLiteNowGenerateError(
@@ -658,6 +753,16 @@ public enum SQLiteNowCompilerRequestBuilder {
                     fileManager: fileManager
                 )
             }
+            let sqliteNowPackage = try compilerSwiftPackageDependency(
+                sqliteNowPackageConfiguration(
+                    database: database,
+                    releaseDistribution: releaseDistribution
+                ),
+                databaseName: database.databaseName,
+                configRoot: configRoot,
+                packageRoot: packageRoot,
+                generatedPackageRoot: outputDirectoryURL
+            )
             let sqliteNowVersion = resolvedRuntimeArtifactConfiguration?.sqliteNowVersion ?? compilerVersion
             let schemaDatabaseFile: String?
             if database.debug ?? false {
@@ -684,6 +789,7 @@ public enum SQLiteNowCompilerRequestBuilder {
                 runtimeModuleName: runtimeModuleName,
                 runtimeXcframeworkDirectory: runtimeXcframeworkDirectory,
                 runtimeArtifact: runtimeArtifact,
+                sqliteNowPackage: sqliteNowPackage,
                 sqliteNowVersion: sqliteNowVersion,
                 minimumPlatforms: database.minimumPlatforms,
                 requestedAppleTargets: database.requestedAppleTargets,
@@ -741,6 +847,75 @@ public enum SQLiteNowCompilerRequestBuilder {
             sqliteNowVersion: artifact.sqliteNowVersion
         )
     }
+
+    private static func compilerSwiftPackageDependency(
+        _ dependency: SwiftPackageDependencyConfiguration?,
+        databaseName: String,
+        configRoot: URL,
+        packageRoot: URL,
+        generatedPackageRoot: URL
+    ) throws -> CompilerSwiftPackageDependency? {
+        guard let dependency else {
+            return nil
+        }
+        switch dependency.kind {
+        case "remoteExact":
+            let url = (dependency.url ?? "").trimmed()
+            guard !url.isEmpty else {
+                throw SQLiteNowGenerateError("sqliteNowPackage.url is required for database '\(databaseName)'.")
+            }
+            let version = (dependency.version ?? "").trimmed()
+            guard !version.isEmpty else {
+                throw SQLiteNowGenerateError("sqliteNowPackage.version is required for database '\(databaseName)'.")
+            }
+            return CompilerSwiftPackageDependency(
+                kind: dependency.kind,
+                packageIdentity: dependency.packageIdentity,
+                path: nil,
+                url: url,
+                version: version,
+                coreRuntimeProduct: dependency.coreRuntimeProduct,
+                syncRuntimeProduct: dependency.syncRuntimeProduct,
+                coreSupportProduct: dependency.coreSupportProduct,
+                syncSupportProduct: dependency.syncSupportProduct
+            )
+        case "localPath":
+            guard let path = dependency.path, !path.trimmed().isEmpty else {
+                throw SQLiteNowGenerateError("sqliteNowPackage.path is required for database '\(databaseName)'.")
+            }
+            let resolved = resolveURL(path, relativeTo: configRoot)
+            return CompilerSwiftPackageDependency(
+                kind: dependency.kind,
+                packageIdentity: dependency.packageIdentity,
+                path: localSwiftPackageDependencyPath(
+                    resolved,
+                    packageRoot: packageRoot,
+                    generatedPackageRoot: generatedPackageRoot
+                ),
+                url: nil,
+                version: nil,
+                coreRuntimeProduct: dependency.coreRuntimeProduct,
+                syncRuntimeProduct: dependency.syncRuntimeProduct,
+                coreSupportProduct: dependency.coreSupportProduct,
+                syncSupportProduct: dependency.syncSupportProduct
+            )
+        default:
+            throw SQLiteNowGenerateError("Unsupported sqliteNowPackage.kind '\(dependency.kind)' for database '\(databaseName)'.")
+        }
+    }
+
+    private static func sqliteNowPackageConfiguration(
+        database: SQLiteNowDatabaseConfiguration,
+        releaseDistribution: SQLiteNowReleaseDistribution?
+    ) -> SwiftPackageDependencyConfiguration? {
+        if let sqliteNowPackage = database.sqliteNowPackage {
+            return sqliteNowPackage
+        }
+        if database.runtimeArtifact != nil || database.runtimeXcframeworkDirectory != nil {
+            return nil
+        }
+        return releaseDistribution?.sqliteNowPackage
+    }
 }
 
 private struct CompilerRequest: Encodable {
@@ -757,6 +932,7 @@ private struct CompilerRequest: Encodable {
     let runtimeModuleName: String
     let runtimeXcframeworkDirectory: String?
     let runtimeArtifact: CompilerRuntimeArtifact?
+    let sqliteNowPackage: CompilerSwiftPackageDependency?
     let sqliteNowVersion: String
     let minimumPlatforms: MinimumPlatforms?
     let requestedAppleTargets: [String]?
@@ -771,6 +947,18 @@ private struct CompilerRuntimeArtifact: Encodable, Equatable {
     let url: String?
     let checksum: String?
     let sqliteNowVersion: String?
+}
+
+private struct CompilerSwiftPackageDependency: Encodable, Equatable {
+    let kind: String
+    let packageIdentity: String?
+    let path: String?
+    let url: String?
+    let version: String?
+    let coreRuntimeProduct: String?
+    let syncRuntimeProduct: String?
+    let coreSupportProduct: String?
+    let syncSupportProduct: String?
 }
 
 private struct CompilerResponse: Decodable {
@@ -1054,6 +1242,34 @@ private func requestPath(_ url: URL, relativeTo baseURL: URL) -> String {
         return normalizedRequestPath(relative)
     }
     return path
+}
+
+private func localSwiftPackageDependencyPath(
+    _ url: URL,
+    packageRoot: URL,
+    generatedPackageRoot: URL
+) -> String {
+    let standardizedURL = url.standardizedFileURL
+    let standardizedPackageRoot = packageRoot.standardizedFileURL
+    guard standardizedURL.isDescendantOrEqual(to: standardizedPackageRoot) else {
+        return requestPath(standardizedURL, relativeTo: standardizedPackageRoot)
+    }
+    return relativeRequestPath(standardizedURL, from: generatedPackageRoot)
+}
+
+private func relativeRequestPath(_ url: URL, from baseURL: URL) -> String {
+    let targetComponents = url.standardizedFileURL.pathComponents
+    let baseComponents = baseURL.standardizedFileURL.pathComponents
+    var commonPrefixCount = 0
+    while commonPrefixCount < targetComponents.count,
+          commonPrefixCount < baseComponents.count,
+          targetComponents[commonPrefixCount] == baseComponents[commonPrefixCount] {
+        commonPrefixCount += 1
+    }
+
+    let parentSegments = Array(repeating: "..", count: baseComponents.count - commonPrefixCount)
+    let childSegments = Array(targetComponents.dropFirst(commonPrefixCount))
+    return normalizedRequestPath((parentSegments + childSegments).joined(separator: "/"))
 }
 
 private extension URL {

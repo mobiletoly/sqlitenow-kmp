@@ -11,10 +11,11 @@ from SQL files in your app repository. Your app depends on the released
 SQLiteNow SwiftPM package for the generator, runs the `sqlitenow-generate`
 command plugin, then imports the generated package product from Swift code.
 
-The generated package contains Swift source plus a SwiftPM binary target for the
-SQLiteNow runtime XCFramework. Core databases use `SQLiteNowCoreRuntime`; sync
-databases use `SQLiteNowSyncRuntime`. App source imports the generated product,
-not the runtime module.
+The generated package contains schema-specific Swift source. It depends on the
+released SQLiteNow package for support and runtime products:
+`SQLiteNowCoreSupport`/`SQLiteNowCoreRuntime` for core databases and
+`SQLiteNowSyncSupport`/`SQLiteNowSyncRuntime` for sync databases. App source
+imports the generated product, not the support or runtime modules.
 
 ## Start Here
 

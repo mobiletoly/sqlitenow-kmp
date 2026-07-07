@@ -1,3 +1,17 @@
+@_exported import SQLiteNowSyncRuntime
+import Foundation
+
+public extension SQLiteNowError {
+    static func from(_ payload: SQLiteNowSyncRuntimeErrorPayload) -> SQLiteNowError {
+        switch payload.category {
+        case "cancelled": return .cancelled(message: payload.message)
+        case "state": return .misuse(message: payload.message)
+        case "network", "auth", "conflict": return .sync(message: payload.message)
+        default: return .unknown(message: payload.message)
+        }
+    }
+}
+
 public struct SQLiteNowSyncAuth: Sendable {
     internal let accessTokenProvider: @Sendable () -> String
     internal let refreshedAccessTokenProvider: (@Sendable () -> String?)?
@@ -19,7 +33,7 @@ public struct SQLiteNowSyncAuth: Sendable {
         )
     }
 
-    internal var runtimeAuth: SQLiteNowSyncRuntimeAuth {
+    public var runtimeAuth: SQLiteNowSyncRuntimeAuth {
         SQLiteNowSyncRuntimeAuth(
             accessTokenProvider: accessTokenProvider,
             refreshedAccessTokenProvider: refreshedAccessTokenProvider
@@ -430,7 +444,7 @@ public enum SQLiteNowSyncResolverResult: Equatable, Sendable {
 }
 
 public struct SQLiteNowSyncResolver: @unchecked Sendable {
-    internal let runtimeResolver: SQLiteNowSyncRuntimeResolver
+    public let runtimeResolver: SQLiteNowSyncRuntimeResolver
 
     public init(resolve: @escaping @Sendable (SQLiteNowSyncConflict) -> SQLiteNowSyncResolverResult) {
         self.runtimeResolver = SQLiteNowSyncRuntimeResolver { conflict in
@@ -483,7 +497,7 @@ public final class SQLiteNowSyncClient {
     private var isClosed = false
     private var onClose: (() -> Void)?
 
-    internal init(
+    public init(
         runtime: SQLiteNowSyncRuntimeClient,
         onClose: (() -> Void)? = nil
     ) {
@@ -618,11 +632,13 @@ public final class SQLiteNowSyncClient {
     }
 }
 
-internal final class SQLiteNowSyncClientLease: @unchecked Sendable {
+public final class SQLiteNowSyncClientLease: @unchecked Sendable {
     private let lock = NSLock()
     private var activeClient: SQLiteNowSyncClient?
 
-    func bind(runtime: SQLiteNowSyncRuntimeClient) throws -> SQLiteNowSyncClient {
+    public init() {}
+
+    public func bind(runtime: SQLiteNowSyncRuntimeClient) throws -> SQLiteNowSyncClient {
         lock.lock()
         guard activeClient == nil else {
             lock.unlock()
@@ -647,7 +663,7 @@ internal final class SQLiteNowSyncClientLease: @unchecked Sendable {
         return leasedClient
     }
 
-    func closeActiveClient() {
+    public func closeActiveClient() {
         lock.lock()
         let client = activeClient
         activeClient = nil

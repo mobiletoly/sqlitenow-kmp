@@ -1,8 +1,7 @@
 # SQLiteNow Swift Sync Sample
 
 This sample is a native SwiftUI iOS app backed by a generated SQLiteNow Swift
-package and the reusable `SQLiteNowSyncRuntime.xcframework` Oversqlite runtime.
-The app imports only:
+package and SQLiteNow's sync support/runtime products. The app imports only:
 
 ```swift
 import NowSampleSyncDatabaseSQLiteNow
@@ -33,6 +32,11 @@ swift build --package-path swift/samples/sync/SQLiteNowGenerated/NowSampleSyncDa
 
 The generated package includes manifest version 3 metadata under
 `.sqlitenow/package-manifest.json`.
+
+This repository sample uses `runtimeXcframeworkDirectory` so it can build
+against locally produced runtime artifacts. Released app projects normally omit
+that field and let the SQLiteNow SwiftPM package provide runtime/support
+products.
 
 The local support guard is:
 

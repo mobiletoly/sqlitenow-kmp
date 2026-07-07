@@ -18,12 +18,16 @@ package dev.goquick.sqlitenow.gradle.compiler
 import dev.goquick.sqlitenow.gradle.swift.DEFAULT_SWIFT_PACKAGE_APPLE_TARGETS
 import dev.goquick.sqlitenow.gradle.swift.DEFAULT_SWIFT_PACKAGE_MINIMUM_IOS
 import dev.goquick.sqlitenow.gradle.swift.DEFAULT_SWIFT_PACKAGE_MINIMUM_MACOS
+import dev.goquick.sqlitenow.gradle.swift.DEFAULT_SWIFT_CORE_RUNTIME_MODULE_NAME
+import dev.goquick.sqlitenow.gradle.swift.DEFAULT_SWIFT_SYNC_RUNTIME_MODULE_NAME
 import dev.goquick.sqlitenow.gradle.swift.SWIFT_PACKAGE_FRAMEWORK_MODE_DYNAMIC
 import dev.goquick.sqlitenow.gradle.swift.SqliteNowSwiftProductExportConfig
 import dev.goquick.sqlitenow.gradle.swift.SwiftPackageAssembler
 import dev.goquick.sqlitenow.gradle.swift.SwiftPackageAssemblerInput
 import dev.goquick.sqlitenow.gradle.swift.SwiftPackageAssemblerResult
 import dev.goquick.sqlitenow.gradle.swift.SwiftPackageCleanPolicy
+import dev.goquick.sqlitenow.gradle.swift.SwiftPackageDependency
+import dev.goquick.sqlitenow.gradle.swift.SwiftPackageDependencyKind
 import dev.goquick.sqlitenow.gradle.swift.SwiftPackageMinimumPlatforms
 import dev.goquick.sqlitenow.gradle.swift.SwiftPackageRuntimeArtifact
 import dev.goquick.sqlitenow.gradle.swift.SwiftPackageRuntimeArtifactValidationContext
@@ -279,6 +283,7 @@ object SqliteNowCompilerCli {
         )
         val runtimeXcframeworkDirectory = request.optionalString("runtimeXcframeworkDirectory")?.let(::File)
         val runtimeArtifact = request.optionalObject("runtimeArtifact")?.let(::parseRuntimeArtifact)
+        val sqliteNowPackage = request.optionalObject("sqliteNowPackage")?.let(::parseSqliteNowPackageDependency)
         val sqliteNowVersion = request.requiredString("sqliteNowVersion")
         val generatorVersion = generatorVersion()
         val resolvedRuntimeArtifact = resolveSwiftPackageRuntimeArtifact(
@@ -310,6 +315,7 @@ object SqliteNowCompilerCli {
                     swiftModuleName = swiftTargetName,
                     runtimeModuleName = runtimeModuleName,
                     runtimeMode = runtimeMode,
+                    emitSupportSources = sqliteNowPackage == null,
                 ),
             ),
             responseContractVersion = SWIFT_PRODUCT_CONTRACT_VERSION,
@@ -334,6 +340,7 @@ object SqliteNowCompilerCli {
                     generatedSwiftSourceDirectory = swiftOutputDirectory,
                     runtimeXcframeworkDirectory = runtimeXcframeworkDirectory,
                     runtimeArtifact = runtimeArtifact,
+                    sqliteNowPackage = sqliteNowPackage,
                     sqlInputFiles = sortedSqlFiles(File(request.requiredString("sqlDirectory"))),
                     sourceDigestBaseDirectory = sourceDigestBaseDirectory,
                     packageRootDirectory = swiftPackageOutputDirectory,
@@ -361,6 +368,19 @@ object SqliteNowCompilerCli {
             url = runtimeArtifact.optionalString("url"),
             checksum = runtimeArtifact.optionalString("checksum"),
             sqliteNowVersion = runtimeArtifact.optionalString("sqliteNowVersion"),
+        )
+
+    private fun parseSqliteNowPackageDependency(sqliteNowPackage: JsonObject): SwiftPackageDependency =
+        SwiftPackageDependency(
+            kind = SwiftPackageDependencyKind.fromId(sqliteNowPackage.requiredString("kind")),
+            packageIdentity = sqliteNowPackage.optionalString("packageIdentity") ?: "sqlitenow-kmp",
+            path = sqliteNowPackage.optionalString("path"),
+            url = sqliteNowPackage.optionalString("url"),
+            version = sqliteNowPackage.optionalString("version"),
+            coreRuntimeProduct = sqliteNowPackage.optionalString("coreRuntimeProduct") ?: DEFAULT_SWIFT_CORE_RUNTIME_MODULE_NAME,
+            syncRuntimeProduct = sqliteNowPackage.optionalString("syncRuntimeProduct") ?: DEFAULT_SWIFT_SYNC_RUNTIME_MODULE_NAME,
+            coreSupportProduct = sqliteNowPackage.optionalString("coreSupportProduct") ?: "SQLiteNowCoreSupport",
+            syncSupportProduct = sqliteNowPackage.optionalString("syncSupportProduct") ?: "SQLiteNowSyncSupport",
         )
 
     private fun successResponse(

@@ -263,6 +263,94 @@ class SwiftPackageAssemblerTest {
     }
 
     @Test
+    fun assemblerRecordsSqliteNowPackageDependencyInMetadata() {
+        val sourceDir = createGeneratedSwiftSource(
+            databaseName = "ExternalSupportPackageDatabase",
+            source = """
+                @preconcurrency import SQLiteNowCoreRuntime
+                @_exported import SQLiteNowCoreSupport
+
+                public enum ExternalSupportPackageDatabase {}
+            """.trimIndent(),
+        )
+        val runtimeZip = createRuntimeZip(DEFAULT_SWIFT_CORE_RUNTIME_MODULE_NAME, version = "1.2.3")
+        val sqlFiles = createSqlInputs("ExternalSupportPackageDatabase")
+        val packageDir = tempDir.resolve("SQLiteNowGenerated/ExternalSupportPackageDatabaseSQLiteNow")
+        val sqliteNowPackage = SwiftPackageDependency(
+            kind = SwiftPackageDependencyKind.REMOTE_EXACT,
+            packageIdentity = "sqlitenow-kmp",
+            url = "https://github.com/mobiletoly/sqlitenow-kmp.git",
+            version = "1.2.3",
+            coreRuntimeProduct = "CustomCoreRuntime",
+            syncRuntimeProduct = "CustomSyncRuntime",
+            coreSupportProduct = "CustomCoreSupport",
+            syncSupportProduct = "CustomSyncSupport",
+        )
+
+        val result = SwiftPackageAssembler.assemble(
+            assemblerInput(
+                databaseName = "ExternalSupportPackageDatabase",
+                packageName = "ExternalSupportPackageDatabaseSQLiteNow",
+                targetName = "ExternalSupportPackageDatabaseSQLiteNow",
+                runtimeMode = SwiftProductRuntimeMode.CORE,
+                sourceDir = sourceDir,
+                runtimeDir = null,
+                runtimeArtifact = SwiftPackageRuntimeArtifact.localZip(
+                    file = runtimeZip,
+                    checksum = sha256(runtimeZip),
+                    sqliteNowVersion = "1.2.3",
+                ),
+                sqliteNowPackage = sqliteNowPackage,
+                sqlFiles = sqlFiles,
+                packageDir = packageDir,
+            )
+        )
+
+        assertEquals(emptyList(), result.runtimeArtifactPaths)
+        assertFalse(packageDir.resolve("Binaries").exists())
+
+        val packageSwift = result.packageSwiftFile.readText()
+        assertTrue(packageSwift.contains("""url: "https://github.com/mobiletoly/sqlitenow-kmp.git""""))
+        assertTrue(packageSwift.contains("""exact: "1.2.3""""))
+        assertTrue(packageSwift.contains(""".product(name: "CustomCoreRuntime", package: "sqlitenow-kmp")"""))
+        assertTrue(packageSwift.contains(""".product(name: "CustomCoreSupport", package: "sqlitenow-kmp")"""))
+
+        val manifest = Json.parseToJsonElement(result.metadataManifestFile.readText()).jsonObject
+        val manifestPackage = manifest.getValue("sqliteNowPackage").jsonObject
+        assertEquals("remoteExact", manifestPackage.getValue("kind").jsonPrimitive.content)
+        assertEquals("sqlitenow-kmp", manifestPackage.getValue("packageIdentity").jsonPrimitive.content)
+        assertEquals(
+            "https://github.com/mobiletoly/sqlitenow-kmp.git",
+            manifestPackage.getValue("url").jsonPrimitive.content,
+        )
+        assertEquals("1.2.3", manifestPackage.getValue("version").jsonPrimitive.content)
+        assertEquals("CustomCoreRuntime", manifestPackage.getValue("coreRuntimeProduct").jsonPrimitive.content)
+        assertEquals("CustomSyncRuntime", manifestPackage.getValue("syncRuntimeProduct").jsonPrimitive.content)
+        assertEquals("CustomCoreSupport", manifestPackage.getValue("coreSupportProduct").jsonPrimitive.content)
+        assertEquals("CustomSyncSupport", manifestPackage.getValue("syncSupportProduct").jsonPrimitive.content)
+        assertTrue(
+            manifest.stringArray("generatorInputs")
+                .contains("sqliteNowPackage.url=https://github.com/mobiletoly/sqlitenow-kmp.git"),
+        )
+        assertTrue(
+            manifest.stringArray("generatorInputs")
+                .contains("sqliteNowPackage.coreRuntimeProduct=CustomCoreRuntime"),
+        )
+        assertTrue(
+            manifest.stringArray("generatorInputs")
+                .contains("sqliteNowPackage.syncRuntimeProduct=CustomSyncRuntime"),
+        )
+        assertTrue(
+            manifest.stringArray("generatorInputs")
+                .contains("sqliteNowPackage.coreSupportProduct=CustomCoreSupport"),
+        )
+        assertTrue(
+            manifest.stringArray("generatorInputs")
+                .contains("sqliteNowPackage.syncSupportProduct=CustomSyncSupport"),
+        )
+    }
+
+    @Test
     fun assemblerRejectsInvalidSwiftIdentifiers() {
         val databaseName = "EscapedPackageDatabase"
 
@@ -548,6 +636,7 @@ class SwiftPackageAssemblerTest {
         minimumPlatforms: SwiftPackageMinimumPlatforms = SwiftPackageMinimumPlatforms(),
         requestedAppleTargets: List<String> = DEFAULT_SWIFT_PACKAGE_APPLE_TARGETS,
         forbiddenTokenPatterns: List<String> = SwiftPackageLeakChecker.DEFAULT_FORBIDDEN_REGEX_PATTERNS,
+        sqliteNowPackage: SwiftPackageDependency? = null,
         syncTables: List<SwiftSyncTable> = emptyList(),
     ): SwiftPackageAssemblerInput =
         SwiftPackageAssemblerInput(
@@ -570,6 +659,7 @@ class SwiftPackageAssemblerTest {
             generatedBy = "test",
             tools = SwiftPackageToolsMetadata(),
             forbiddenTokenPatterns = forbiddenTokenPatterns,
+            sqliteNowPackage = sqliteNowPackage,
             syncTables = syncTables,
         )
 

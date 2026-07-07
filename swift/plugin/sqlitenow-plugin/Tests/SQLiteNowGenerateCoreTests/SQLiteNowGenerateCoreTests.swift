@@ -316,6 +316,43 @@ final class SQLiteNowGenerateCoreTests: XCTestCase {
         XCTAssertEqual(syncRequest["sqliteNowVersion"] as? String, "1.2.3")
     }
 
+    func testReleaseDistributionSqliteNowPackageMapsToCompilerPackageRequest() throws {
+        _ = try createSQLDirectory(databaseName: "ReleasePackageDatabase")
+        let releaseDistribution = releaseDistribution(sqliteNowPackage: releaseSqliteNowPackage())
+        let config = """
+        {
+          "schemaVersion": 1,
+          "databases": [
+            {
+              "databaseName": "ReleasePackageDatabase",
+              "swiftPackageName": "ReleasePackageDatabaseSQLiteNow",
+              "swiftTargetName": "ReleasePackageDatabaseSQLiteNow",
+              "runtime": "core"
+            }
+          ]
+        }
+        """
+        let configPath = try writeConfig(config)
+
+        let loaded = try SQLiteNowConfigLoader.load(configPath: configPath)
+        let invocation = try SQLiteNowCompilerRequestBuilder.buildInvocations(
+            config: loaded,
+            configPath: configPath,
+            packageRoot: tempRoot,
+            compilerVersion: "1.2.3",
+            releaseDistribution: releaseDistribution
+        ).single()
+
+        let request = try jsonObject(invocation.requestJSON)
+        let sqliteNowPackage = try XCTUnwrap(request["sqliteNowPackage"] as? [String: Any])
+        XCTAssertEqual(sqliteNowPackage["kind"] as? String, "remoteExact")
+        XCTAssertEqual(sqliteNowPackage["packageIdentity"] as? String, "sqlitenow-kmp")
+        XCTAssertEqual(sqliteNowPackage["url"] as? String, "https://github.com/mobiletoly/sqlitenow-kmp.git")
+        XCTAssertEqual(sqliteNowPackage["version"] as? String, "1.2.3")
+        XCTAssertEqual(sqliteNowPackage["coreRuntimeProduct"] as? String, "SQLiteNowCoreRuntime")
+        XCTAssertEqual(sqliteNowPackage["coreSupportProduct"] as? String, "SQLiteNowCoreSupport")
+    }
+
     func testExplicitRuntimeArtifactOverridesReleaseDistributionRuntimeArtifact() throws {
         let sqlDir = try createSQLDirectory(databaseName: "ExplicitRemoteDatabase")
         let explicitURL = "https://example.com/SQLiteNowCoreRuntime-1.2.3.xcframework.zip"
@@ -354,6 +391,120 @@ final class SQLiteNowGenerateCoreTests: XCTestCase {
         let artifact = try XCTUnwrap(request["runtimeArtifact"] as? [String: Any])
         XCTAssertEqual(artifact["url"] as? String, explicitURL)
         XCTAssertEqual(artifact["checksum"] as? String, "explicitchecksum")
+    }
+
+    func testExplicitRuntimeArtifactDoesNotInheritReleaseDistributionSqliteNowPackage() throws {
+        let sqlDir = try createSQLDirectory(databaseName: "ExplicitArtifactPackageDatabase")
+        let explicitURL = "https://example.com/SQLiteNowCoreRuntime-1.2.3.xcframework.zip"
+        let config = """
+        {
+          "schemaVersion": 1,
+          "databases": [
+            {
+              "databaseName": "ExplicitArtifactPackageDatabase",
+              "sqlDirectory": "\(sqlDir)",
+              "swiftPackageName": "ExplicitArtifactPackageDatabaseSQLiteNow",
+              "swiftTargetName": "ExplicitArtifactPackageDatabaseSQLiteNow",
+              "runtime": "core",
+              "runtimeArtifact": {
+                "kind": "remoteZip",
+                "url": "\(explicitURL)",
+                "checksum": "explicitchecksum",
+                "sqliteNowVersion": "1.2.3"
+              }
+            }
+          ]
+        }
+        """
+        let configPath = try writeConfig(config)
+
+        let loaded = try SQLiteNowConfigLoader.load(configPath: configPath)
+        let invocation = try SQLiteNowCompilerRequestBuilder.buildInvocations(
+            config: loaded,
+            configPath: configPath,
+            packageRoot: tempRoot,
+            compilerVersion: "1.2.3",
+            releaseDistribution: releaseDistribution(sqliteNowPackage: releaseSqliteNowPackage())
+        ).single()
+
+        let request = try jsonObject(invocation.requestJSON)
+        let artifact = try XCTUnwrap(request["runtimeArtifact"] as? [String: Any])
+        XCTAssertEqual(artifact["url"] as? String, explicitURL)
+        XCTAssertNil(request["sqliteNowPackage"])
+    }
+
+    func testExplicitRuntimeXcframeworkDoesNotInheritReleaseDistributionSqliteNowPackage() throws {
+        let sqlDir = try createSQLDirectory(databaseName: "ExplicitXcframeworkPackageDatabase")
+        let runtimeDir = try createRuntimeDirectory()
+        let config = """
+        {
+          "schemaVersion": 1,
+          "databases": [
+            {
+              "databaseName": "ExplicitXcframeworkPackageDatabase",
+              "sqlDirectory": "\(sqlDir)",
+              "swiftPackageName": "ExplicitXcframeworkPackageDatabaseSQLiteNow",
+              "swiftTargetName": "ExplicitXcframeworkPackageDatabaseSQLiteNow",
+              "runtime": "core",
+              "runtimeXcframeworkDirectory": "\(runtimeDir)"
+            }
+          ]
+        }
+        """
+        let configPath = try writeConfig(config)
+
+        let loaded = try SQLiteNowConfigLoader.load(configPath: configPath)
+        let invocation = try SQLiteNowCompilerRequestBuilder.buildInvocations(
+            config: loaded,
+            configPath: configPath,
+            packageRoot: tempRoot,
+            compilerVersion: "1.2.3",
+            releaseDistribution: releaseDistribution(sqliteNowPackage: releaseSqliteNowPackage())
+        ).single()
+
+        let request = try jsonObject(invocation.requestJSON)
+        XCTAssertEqual(request["runtimeXcframeworkDirectory"] as? String, runtimeDir)
+        XCTAssertNil(request["runtimeArtifact"])
+        XCTAssertNil(request["sqliteNowPackage"])
+    }
+
+    func testLocalSqliteNowPackagePathIsRelativeToGeneratedPackage() throws {
+        let sqlDir = try createSQLDirectory(databaseName: "LocalPackageDatabase")
+        let runtimeDir = try createRuntimeDirectory()
+        let config = """
+        {
+          "schemaVersion": 1,
+          "databases": [
+            {
+              "databaseName": "LocalPackageDatabase",
+              "sqlDirectory": "\(sqlDir)",
+              "swiftPackageName": "LocalPackageDatabaseSQLiteNow",
+              "swiftTargetName": "LocalPackageDatabaseSQLiteNow",
+              "runtime": "core",
+              "runtimeXcframeworkDirectory": "\(runtimeDir)",
+              "sqliteNowPackage": {
+                "kind": "localPath",
+                "packageIdentity": "sqlitenow-kmp",
+                "path": "SQLiteNowLocal"
+              }
+            }
+          ]
+        }
+        """
+        let configPath = try writeConfig(config)
+
+        let loaded = try SQLiteNowConfigLoader.load(configPath: configPath)
+        let invocation = try SQLiteNowCompilerRequestBuilder.buildInvocations(
+            config: loaded,
+            configPath: configPath,
+            packageRoot: tempRoot,
+            compilerVersion: "1.2.3"
+        ).single()
+
+        let request = try jsonObject(invocation.requestJSON)
+        let sqliteNowPackage = try XCTUnwrap(request["sqliteNowPackage"] as? [String: Any])
+        XCTAssertEqual(sqliteNowPackage["kind"] as? String, "localPath")
+        XCTAssertEqual(sqliteNowPackage["path"] as? String, "../../SQLiteNowLocal")
     }
 
     func testRejectsMissingRuntimeArtifactWhenNoReleaseDistributionIsAvailable() throws {
@@ -1427,7 +1578,20 @@ final class SQLiteNowGenerateCoreTests: XCTestCase {
         return resource
     }
 
-    private func releaseDistribution() -> SQLiteNowReleaseDistribution {
+    private func releaseSqliteNowPackage() -> SwiftPackageDependencyConfiguration {
+        SwiftPackageDependencyConfiguration(
+            kind: "remoteExact",
+            packageIdentity: "sqlitenow-kmp",
+            url: "https://github.com/mobiletoly/sqlitenow-kmp.git",
+            version: "1.2.3",
+            coreRuntimeProduct: "SQLiteNowCoreRuntime",
+            syncRuntimeProduct: "SQLiteNowSyncRuntime",
+            coreSupportProduct: "SQLiteNowCoreSupport",
+            syncSupportProduct: "SQLiteNowSyncSupport"
+        )
+    }
+
+    private func releaseDistribution(sqliteNowPackage: SwiftPackageDependencyConfiguration? = nil) -> SQLiteNowReleaseDistribution {
         SQLiteNowReleaseDistribution(
             manifestVersion: 1,
             sqliteNowVersion: "1.2.3",
@@ -1449,7 +1613,8 @@ final class SQLiteNowGenerateCoreTests: XCTestCase {
                     sqliteNowVersion: "1.2.3",
                     runtimeModuleName: "SQLiteNowSyncRuntime"
                 ),
-            ]
+            ],
+            sqliteNowPackage: sqliteNowPackage
         )
     }
 

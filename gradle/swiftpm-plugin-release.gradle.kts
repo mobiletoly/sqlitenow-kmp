@@ -171,15 +171,45 @@ fun swiftPmLocalCompilerBinaryTarget(
         "        ),",
     ).joinToString("\n")
 
+fun swiftPmReleaseRuntimeBinaryTarget(
+    runtimeModuleName: String,
+    runtimeArtifactUrl: String,
+    runtimeArtifactChecksum: String,
+): String =
+    listOf(
+        "        .binaryTarget(",
+        "            name: ${jsonString(runtimeModuleName)},",
+        "            url: ${jsonString(runtimeArtifactUrl)},",
+        "            checksum: ${jsonString(runtimeArtifactChecksum)}",
+        "        ),",
+    ).joinToString("\n")
+
+fun swiftPmLocalRuntimeBinaryTarget(
+    runtimeModuleName: String,
+    runtimeArtifactPath: String,
+): String =
+    listOf(
+        "        .binaryTarget(",
+        "            name: ${jsonString(runtimeModuleName)},",
+        "            path: ${jsonString(runtimeArtifactPath)}",
+        "        ),",
+    ).joinToString("\n")
+
 fun writeSwiftPmPackageManifest(
     templateFile: File,
     packageSwift: File,
     compilerBinaryTarget: String,
+    coreRuntimeBinaryTarget: String,
+    syncRuntimeBinaryTarget: String,
 ) {
     renderTemplateFile(
         templateFile,
         packageSwift,
-        mapOf("SQLITENOW_COMPILER_BINARY_TARGET" to compilerBinaryTarget),
+        mapOf(
+            "SQLITENOW_COMPILER_BINARY_TARGET" to compilerBinaryTarget,
+            "SQLITENOW_CORE_RUNTIME_BINARY_TARGET" to coreRuntimeBinaryTarget,
+            "SQLITENOW_SYNC_RUNTIME_BINARY_TARGET" to syncRuntimeBinaryTarget,
+        ),
     )
 }
 
@@ -594,6 +624,7 @@ tasks.register<Sync>("stageSwiftPmPluginDistribution") {
     inputs.property("swiftPmCompilerArtifactBaseUrl", swiftPmCompilerArtifactBaseUrl)
     inputs.property("swiftRuntimeArtifactBaseUrl", swiftRuntimeArtifactBaseUrl)
     inputs.file(swiftPmPluginReleasePackageTemplate)
+    inputs.dir(layout.projectDirectory.dir("swift/support/Sources"))
     inputs.file(
         swiftPmCompilerArtifactsDir.map {
             it.file("SQLiteNowCompiler-${sqliteNowVersion.get()}.artifactbundle.zip")
@@ -633,6 +664,9 @@ tasks.register<Sync>("stageSwiftPmPluginDistribution") {
     }
     from(layout.projectDirectory.dir("swift/plugin/sqlitenow-plugin/Tests")) {
         into("swift/plugin/sqlitenow-plugin/Tests")
+    }
+    from(layout.projectDirectory.dir("swift/support/Sources")) {
+        into("swift/support/Sources")
     }
 
     doLast {
@@ -747,6 +781,16 @@ tasks.register<Sync>("stageSwiftPmPluginDistribution") {
                         "core" to coreRuntimeArtifact,
                         "sync" to syncRuntimeArtifact,
                     ),
+                    "sqliteNowPackage" to linkedMapOf(
+                        "kind" to "remoteExact",
+                        "packageIdentity" to "sqlitenow-kmp",
+                        "url" to "https://github.com/mobiletoly/sqlitenow-kmp.git",
+                        "version" to version,
+                        "coreRuntimeProduct" to "SQLiteNowCoreRuntime",
+                        "syncRuntimeProduct" to "SQLiteNowSyncRuntime",
+                        "coreSupportProduct" to "SQLiteNowCoreSupport",
+                        "syncSupportProduct" to "SQLiteNowSyncSupport",
+                    ),
                 )
             )
         ) + "\n"
@@ -756,6 +800,16 @@ tasks.register<Sync>("stageSwiftPmPluginDistribution") {
             compilerBinaryTarget = swiftPmReleaseCompilerBinaryTarget(
                 compilerArtifactUrl = artifactUrl,
                 compilerArtifactChecksum = artifactChecksum,
+            ),
+            coreRuntimeBinaryTarget = swiftPmReleaseRuntimeBinaryTarget(
+                runtimeModuleName = "SQLiteNowCoreRuntime",
+                runtimeArtifactUrl = coreRuntimeArtifact["url"] as String,
+                runtimeArtifactChecksum = coreRuntimeArtifact["checksum"] as String,
+            ),
+            syncRuntimeBinaryTarget = swiftPmReleaseRuntimeBinaryTarget(
+                runtimeModuleName = "SQLiteNowSyncRuntime",
+                runtimeArtifactUrl = syncRuntimeArtifact["url"] as String,
+                runtimeArtifactChecksum = syncRuntimeArtifact["checksum"] as String,
             ),
         )
         distributionDir.resolve(swiftPmPluginReleaseMarkerPath).also { marker ->
@@ -1140,6 +1194,8 @@ val runSwiftCleanConsumerProof = { request: SwiftCleanConsumerProofRequest ->
             val compilerArtifactRelativePath = "Artifacts/${compilerArtifactZip.name}"
             project.copy {
                 from(compilerArtifactZip)
+                from(coreRuntimeZip)
+                from(syncRuntimeZip)
                 into(distributionRepo.resolve("Artifacts"))
             }
             writeSwiftPmPackageManifest(
@@ -1147,6 +1203,14 @@ val runSwiftCleanConsumerProof = { request: SwiftCleanConsumerProofRequest ->
                 packageSwift = distributionRepo.resolve("Package.swift"),
                 compilerBinaryTarget = swiftPmLocalCompilerBinaryTarget(
                     compilerArtifactPath = compilerArtifactRelativePath,
+                ),
+                coreRuntimeBinaryTarget = swiftPmLocalRuntimeBinaryTarget(
+                    runtimeModuleName = "SQLiteNowCoreRuntime",
+                    runtimeArtifactPath = "Artifacts/${coreRuntimeZip.name}",
+                ),
+                syncRuntimeBinaryTarget = swiftPmLocalRuntimeBinaryTarget(
+                    runtimeModuleName = "SQLiteNowSyncRuntime",
+                    runtimeArtifactPath = "Artifacts/${syncRuntimeZip.name}",
                 ),
             )
         }

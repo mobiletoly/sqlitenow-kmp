@@ -94,6 +94,72 @@ data class SwiftPackageMinimumPlatforms(
     val macos: String = DEFAULT_SWIFT_PACKAGE_MINIMUM_MACOS,
 )
 
+enum class SwiftPackageDependencyKind(val id: String) {
+    LOCAL_PATH("localPath"),
+    REMOTE_EXACT("remoteExact"),
+    ;
+
+    companion object {
+        fun fromId(value: String): SwiftPackageDependencyKind =
+            entries.firstOrNull { it.id == value }
+                ?: error(
+                    "Unsupported Swift package dependency kind '$value'. " +
+                        "Expected '${LOCAL_PATH.id}' or '${REMOTE_EXACT.id}'."
+                )
+    }
+}
+
+data class SwiftPackageDependency(
+    val kind: SwiftPackageDependencyKind,
+    val packageIdentity: String = "sqlitenow-kmp",
+    val path: String? = null,
+    val url: String? = null,
+    val version: String? = null,
+    val coreRuntimeProduct: String = DEFAULT_SWIFT_CORE_RUNTIME_MODULE_NAME,
+    val syncRuntimeProduct: String = DEFAULT_SWIFT_SYNC_RUNTIME_MODULE_NAME,
+    val coreSupportProduct: String = "SQLiteNowCoreSupport",
+    val syncSupportProduct: String = "SQLiteNowSyncSupport",
+) {
+    fun validate(sqliteNowVersion: String): SwiftPackageDependency {
+        require(packageIdentity.isNotBlank()) {
+            "sqliteNowPackage.packageIdentity must not be blank."
+        }
+        requireValidSwiftIdentifier(coreRuntimeProduct, "sqliteNowPackage.coreRuntimeProduct")
+        requireValidSwiftIdentifier(syncRuntimeProduct, "sqliteNowPackage.syncRuntimeProduct")
+        requireValidSwiftIdentifier(coreSupportProduct, "sqliteNowPackage.coreSupportProduct")
+        requireValidSwiftIdentifier(syncSupportProduct, "sqliteNowPackage.syncSupportProduct")
+        when (kind) {
+            SwiftPackageDependencyKind.LOCAL_PATH -> {
+                require(!path.isNullOrBlank()) {
+                    "sqliteNowPackage.path is required for localPath dependencies."
+                }
+                require(url == null) {
+                    "sqliteNowPackage.url must not be specified for localPath dependencies."
+                }
+                require(version == null) {
+                    "sqliteNowPackage.version must not be specified for localPath dependencies."
+                }
+            }
+
+            SwiftPackageDependencyKind.REMOTE_EXACT -> {
+                require(path == null) {
+                    "sqliteNowPackage.path must not be specified for remoteExact dependencies."
+                }
+                require(!url.isNullOrBlank()) {
+                    "sqliteNowPackage.url is required for remoteExact dependencies."
+                }
+                require(!version.isNullOrBlank()) {
+                    "sqliteNowPackage.version is required for remoteExact dependencies."
+                }
+                require(version == sqliteNowVersion) {
+                    "sqliteNowPackage.version '$version' is not compatible with requested SQLiteNow version '$sqliteNowVersion'."
+                }
+            }
+        }
+        return this
+    }
+}
+
 enum class SwiftPackageRuntimeArtifactKind(val id: String) {
     LOCAL_XCFRAMEWORK("localXcframework"),
     LOCAL_ZIP("localZip"),
@@ -326,6 +392,7 @@ data class SwiftPackageAssemblerInput(
     val generatedSwiftSourceDirectory: File,
     val runtimeXcframeworkDirectory: File? = null,
     val runtimeArtifact: SwiftPackageRuntimeArtifact? = null,
+    val sqliteNowPackage: SwiftPackageDependency? = null,
     val sqlInputFiles: List<File>,
     val sourceDigestBaseDirectory: File,
     val packageRootDirectory: File,
@@ -366,6 +433,7 @@ object SwiftPackageAssembler {
         val normalizedInput = input.copy(
             frameworkMode = requireSupportedSwiftPackageFrameworkMode(input.frameworkMode),
             requestedAppleTargets = requireSupportedSwiftPackageAppleTargets(input.requestedAppleTargets),
+            sqliteNowPackage = input.sqliteNowPackage?.validate(input.sqliteNowVersion),
             forbiddenTokenPatterns = input.forbiddenTokenPatterns
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
@@ -393,8 +461,12 @@ object SwiftPackageAssembler {
         packageRoot.deleteRecursively()
         val sourcesDir = packageRoot.resolve("Sources/${normalizedInput.swiftTargetName}").apply { mkdirs() }
         val manifestDir = packageRoot.resolve(".sqlitenow").apply { mkdirs() }
-        val runtimeTarget = runtimeArtifact.packagedFileName(normalizedInput.runtimeModuleName)?.let { packagedFileName ->
-            packageRoot.resolve("Binaries").resolve(packagedFileName)
+        val runtimeTarget = if (normalizedInput.sqliteNowPackage == null) {
+            runtimeArtifact.packagedFileName(normalizedInput.runtimeModuleName)?.let { packagedFileName ->
+                packageRoot.resolve("Binaries").resolve(packagedFileName)
+            }
+        } else {
+            null
         }
         val runtimeArtifactPaths = listOfNotNull(runtimeTarget?.relativePathFrom(packageRoot))
         val runtimeArtifactAbsolutePaths = listOfNotNull(runtimeTarget)
@@ -429,6 +501,7 @@ object SwiftPackageAssembler {
             runtimeArtifactChecksum = runtimeArtifact.checksum,
             runtimeArtifactVersion = runtimeArtifact.sqliteNowVersion,
             runtimeArtifactUrl = runtimeArtifact.url,
+            sqliteNowPackage = normalizedInput.sqliteNowPackage,
             forbiddenTokenPatterns = normalizedInput.forbiddenTokenPatterns,
             syncTables = syncTables,
         )
@@ -611,34 +684,79 @@ object SwiftPackageAssembler {
         appendLine("            targets: [${swiftStringLiteral(input.swiftTargetName)}]")
         appendLine("        ),")
         appendLine("    ],")
-        appendLine("    targets: [")
-        when (runtimeArtifact.kind) {
-            SwiftPackageRuntimeArtifactKind.LOCAL_XCFRAMEWORK,
-            SwiftPackageRuntimeArtifactKind.LOCAL_ZIP -> {
-                require(!runtimeArtifactPath.isNullOrBlank()) {
-                    "Local runtime artifacts require a packaged artifact path."
+        input.sqliteNowPackage?.let { sqliteNowPackage ->
+            appendLine("    dependencies: [")
+            when (sqliteNowPackage.kind) {
+                SwiftPackageDependencyKind.LOCAL_PATH -> {
+                    appendLine("        .package(path: ${swiftStringLiteral(sqliteNowPackage.path.orEmpty())}),")
                 }
-                appendLine("        .binaryTarget(")
-                appendLine("            name: ${swiftStringLiteral(input.runtimeModuleName)},")
-                appendLine("            path: ${swiftStringLiteral(runtimeArtifactPath)}")
-                appendLine("        ),")
-            }
 
-            SwiftPackageRuntimeArtifactKind.REMOTE_ZIP -> {
-                appendLine("        .binaryTarget(")
-                appendLine("            name: ${swiftStringLiteral(input.runtimeModuleName)},")
-                appendLine("            url: ${swiftStringLiteral(runtimeArtifact.url.orEmpty())},")
-                appendLine("            checksum: ${swiftStringLiteral(runtimeArtifact.checksum.orEmpty())}")
-                appendLine("        ),")
+                SwiftPackageDependencyKind.REMOTE_EXACT -> {
+                    appendLine("        .package(")
+                    appendLine("            url: ${swiftStringLiteral(sqliteNowPackage.url.orEmpty())},")
+                    appendLine("            exact: ${swiftStringLiteral(sqliteNowPackage.version.orEmpty())}")
+                    appendLine("        ),")
+                }
+            }
+            appendLine("    ],")
+        }
+        appendLine("    targets: [")
+        val sqliteNowPackage = input.sqliteNowPackage
+        if (sqliteNowPackage == null) {
+            when (runtimeArtifact.kind) {
+                SwiftPackageRuntimeArtifactKind.LOCAL_XCFRAMEWORK,
+                SwiftPackageRuntimeArtifactKind.LOCAL_ZIP -> {
+                    require(!runtimeArtifactPath.isNullOrBlank()) {
+                        "Local runtime artifacts require a packaged artifact path."
+                    }
+                    appendLine("        .binaryTarget(")
+                    appendLine("            name: ${swiftStringLiteral(input.runtimeModuleName)},")
+                    appendLine("            path: ${swiftStringLiteral(runtimeArtifactPath)}")
+                    appendLine("        ),")
+                }
+
+                SwiftPackageRuntimeArtifactKind.REMOTE_ZIP -> {
+                    appendLine("        .binaryTarget(")
+                    appendLine("            name: ${swiftStringLiteral(input.runtimeModuleName)},")
+                    appendLine("            url: ${swiftStringLiteral(runtimeArtifact.url.orEmpty())},")
+                    appendLine("            checksum: ${swiftStringLiteral(runtimeArtifact.checksum.orEmpty())}")
+                    appendLine("        ),")
+                }
             }
         }
         appendLine("        .target(")
         appendLine("            name: ${swiftStringLiteral(input.swiftTargetName)},")
-        appendLine("            dependencies: [${swiftStringLiteral(input.runtimeModuleName)}]")
+        appendLine("            dependencies: [")
+        val dependencies = targetDependencies(input, sqliteNowPackage)
+        dependencies.forEachIndexed { index, dependency ->
+            appendLine("                $dependency${if (index == dependencies.lastIndex) "" else ","}")
+        }
+        appendLine("            ]")
         appendLine("        ),")
         appendLine("    ]")
         appendLine(")")
     }
+
+    private fun targetDependencies(
+        input: SwiftPackageAssemblerInput,
+        sqliteNowPackage: SwiftPackageDependency?,
+    ): List<String> =
+        if (sqliteNowPackage == null) {
+            listOf(swiftStringLiteral(input.runtimeModuleName))
+        } else {
+            buildList {
+                if (input.runtimeMode == SwiftProductRuntimeMode.SYNC) {
+                    add(productDependency(sqliteNowPackage.syncRuntimeProduct, sqliteNowPackage.packageIdentity))
+                    add(productDependency(sqliteNowPackage.syncSupportProduct, sqliteNowPackage.packageIdentity))
+                } else {
+                    add(productDependency(sqliteNowPackage.coreRuntimeProduct, sqliteNowPackage.packageIdentity))
+                    add(productDependency(sqliteNowPackage.coreSupportProduct, sqliteNowPackage.packageIdentity))
+                }
+            }
+        }
+
+    private fun productDependency(productName: String, packageIdentity: String): String =
+        ".product(name: ${swiftStringLiteral(productName)}, package: ${swiftStringLiteral(packageIdentity)})"
 
     private fun swiftStringLiteral(value: String): String =
         buildString {
@@ -708,6 +826,25 @@ object SwiftPackageAssembler {
             )
             putNullableString("runtimeArtifactVersion", runtimeArtifact.sqliteNowVersion)
             putNullableString("runtimeArtifactUrl", runtimeArtifact.url)
+            val sqliteNowPackage = input.sqliteNowPackage
+            if (sqliteNowPackage != null) {
+                put(
+                    "sqliteNowPackage",
+                    buildJsonObject {
+                        put("kind", sqliteNowPackage.kind.id)
+                        put("packageIdentity", sqliteNowPackage.packageIdentity)
+                        putNullableString("path", sqliteNowPackage.path)
+                        putNullableString("url", sqliteNowPackage.url)
+                        putNullableString("version", sqliteNowPackage.version)
+                        put("coreRuntimeProduct", sqliteNowPackage.coreRuntimeProduct)
+                        put("syncRuntimeProduct", sqliteNowPackage.syncRuntimeProduct)
+                        put("coreSupportProduct", sqliteNowPackage.coreSupportProduct)
+                        put("syncSupportProduct", sqliteNowPackage.syncSupportProduct)
+                    }
+                )
+            } else {
+                put("sqliteNowPackage", JsonNull)
+            }
             put("requestedAppleTargets", stringArray(input.requestedAppleTargets))
             put(
                 "minimumPlatforms",
@@ -864,6 +1001,7 @@ fun swiftPackageGeneratorConfigInputs(
     runtimeArtifactChecksum: String? = null,
     runtimeArtifactVersion: String? = null,
     runtimeArtifactUrl: String? = null,
+    sqliteNowPackage: SwiftPackageDependency? = null,
     forbiddenTokenPatterns: List<String> = SwiftPackageLeakChecker.DEFAULT_FORBIDDEN_REGEX_PATTERNS,
     syncTables: List<SwiftSyncTable> = emptyList(),
 ): List<String> =
@@ -881,6 +1019,17 @@ fun swiftPackageGeneratorConfigInputs(
         runtimeArtifactChecksum?.let { add("runtimeArtifactChecksum=$it") }
         runtimeArtifactVersion?.let { add("runtimeArtifactVersion=$it") }
         runtimeArtifactUrl?.let { add("runtimeArtifactUrl=$it") }
+        sqliteNowPackage?.let { dependency ->
+            add("sqliteNowPackage.kind=${dependency.kind.id}")
+            add("sqliteNowPackage.packageIdentity=${dependency.packageIdentity}")
+            dependency.path?.let { add("sqliteNowPackage.path=$it") }
+            dependency.url?.let { add("sqliteNowPackage.url=$it") }
+            dependency.version?.let { add("sqliteNowPackage.version=$it") }
+            add("sqliteNowPackage.coreRuntimeProduct=${dependency.coreRuntimeProduct}")
+            add("sqliteNowPackage.syncRuntimeProduct=${dependency.syncRuntimeProduct}")
+            add("sqliteNowPackage.coreSupportProduct=${dependency.coreSupportProduct}")
+            add("sqliteNowPackage.syncSupportProduct=${dependency.syncSupportProduct}")
+        }
         add("frameworkMode=$frameworkMode")
         add("minimumPlatforms=iOS${minimumPlatforms.ios},macOS${minimumPlatforms.macos}")
         add("requestedAppleTargets=${requestedAppleTargets.joinToString(",")}")

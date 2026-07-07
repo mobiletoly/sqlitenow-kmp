@@ -5,6 +5,7 @@ import PackageDescription
 let package = Package(
     name: "SQLiteNow",
     platforms: [
+        .iOS(.v15),
         .macOS(.v14),
     ],
     products: [
@@ -16,9 +17,37 @@ let package = Package(
             name: "sqlite-now-generate",
             targets: ["SQLiteNowGenerateTool"]
         ),
+        .library(
+            name: "SQLiteNowCoreRuntime",
+            targets: ["SQLiteNowCoreRuntime"]
+        ),
+        .library(
+            name: "SQLiteNowSyncRuntime",
+            targets: ["SQLiteNowSyncRuntime"]
+        ),
+        .library(
+            name: "SQLiteNowCoreSupport",
+            targets: ["SQLiteNowCoreSupport"]
+        ),
+        .library(
+            name: "SQLiteNowSyncSupport",
+            targets: ["SQLiteNowSyncSupport"]
+        ),
     ],
     targets: [
 {{SQLITENOW_COMPILER_BINARY_TARGET}}
+{{SQLITENOW_CORE_RUNTIME_BINARY_TARGET}}
+{{SQLITENOW_SYNC_RUNTIME_BINARY_TARGET}}
+        .target(
+            name: "SQLiteNowCoreSupport",
+            dependencies: ["SQLiteNowCoreRuntime"],
+            path: "swift/support/Sources/SQLiteNowCoreSupport"
+        ),
+        .target(
+            name: "SQLiteNowSyncSupport",
+            dependencies: ["SQLiteNowSyncRuntime"],
+            path: "swift/support/Sources/SQLiteNowSyncSupport"
+        ),
         .target(
             name: "SQLiteNowGenerateCore",
             path: "swift/plugin/sqlitenow-plugin/Sources/SQLiteNowGenerateCore",

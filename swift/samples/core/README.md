@@ -2,8 +2,8 @@
 
 This sample is the richer native SwiftUI sample for the current SQLiteNow Swift
 local package support lane. It uses a generated local Swift package backed by
-the reusable `SQLiteNowCoreRuntime.xcframework` runtime and imports only the
-Swift-facing product:
+SQLiteNow's Swift support/runtime products and imports only the Swift-facing
+generated product:
 
 ```swift
 import NowSampleDatabaseSQLiteNow
@@ -45,6 +45,11 @@ swift/samples/core/SQLiteNowGenerated/NowSampleDatabaseSQLiteNow
 
 The generated package includes manifest version 3 metadata under
 `.sqlitenow/package-manifest.json`.
+
+This repository sample uses `runtimeXcframeworkDirectory` so it can build
+against locally produced runtime artifacts. Released app projects normally omit
+that field and let the SQLiteNow SwiftPM package provide runtime/support
+products.
 
 The local support guard is:
 

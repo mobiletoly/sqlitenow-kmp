@@ -63,17 +63,11 @@ internal class SwiftProductSyncSourceEmitter(
                 line("verboseLogs: verboseLogs")
             }
             line(")")
-            line("let runtimeAuth = SQLiteNowSyncRuntimeAuth(")
-            indent {
-                line("accessTokenProvider: auth.accessTokenProvider,")
-                line("refreshedAccessTokenProvider: auth.refreshedAccessTokenProvider")
-            }
-            line(")")
             line("let runtimeClient = SQLiteNowSyncRuntimeClient(")
             indent {
                 line("coreDatabase: runtime,")
                 line("baseUrl: baseURL.absoluteString,")
-                line("auth: runtimeAuth,")
+                line("auth: auth.runtimeAuth,")
                 line("config: runtimeConfig,")
                 line("resolver: resolver?.runtimeResolver")
             }

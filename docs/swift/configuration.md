@@ -60,7 +60,8 @@ For a sync database, use `"runtime": "sync"`:
 
 This generates a local Swift package at
 `SQLiteNowGenerated/AppSyncDatabaseSQLiteNow` and links
-`SQLiteNowSyncRuntime`. Because `sqlDirectory` is omitted, SQL is read from
+`SQLiteNowSyncSupport` and `SQLiteNowSyncRuntime` from the released SQLiteNow
+package. Because `sqlDirectory` is omitted, SQL is read from
 `SQLiteNow/databases/AppSyncDatabase`. See the
 [Swift sync guide]({{ site.baseurl }}/swift/sync/) for sync-managed table and
 client setup.
@@ -85,11 +86,11 @@ Each database entry generates one local Swift package. `databaseName` values,
 | `swiftTargetName` | yes | Generated Swift target name. Usually the same as `swiftPackageName`. |
 | `runtime` | yes | Use `"core"` for a local database package or `"sync"` for an Oversqlite-enabled package. |
 | `outputDirectory` | no | Generated package destination. Defaults to `SQLiteNowGenerated/<swiftPackageName>` from the package root. Explicit paths are relative to the config file. |
-| `runtimeArtifact` | no | Advanced/custom runtime artifact override. Released SQLiteNow SwiftPM packages provide this automatically. Mutually exclusive with `runtimeXcframeworkDirectory`. |
+| `runtimeArtifact` | no | Advanced/custom runtime artifact override. Released SQLiteNow SwiftPM packages provide runtime/support products automatically. Mutually exclusive with `runtimeXcframeworkDirectory`. |
 | `runtimeXcframeworkDirectory` | no | Local-development-only unpacked runtime XCFramework directory. Mutually exclusive with `runtimeArtifact`. |
 | `minimumPlatforms` | no | Swift package platform versions. Defaults to iOS 15 and macOS 14. |
 | `requestedAppleTargets` | no | Runtime target list. Defaults to `macosArm64`, `iosArm64`, and `iosSimulatorArm64`. |
-| `runtimeModuleName` | no | Runtime binary target module name. Defaults to `SQLiteNowCoreRuntime` for core and `SQLiteNowSyncRuntime` for sync. |
+| `runtimeModuleName` | no | Advanced runtime module override. Defaults to `SQLiteNowCoreRuntime` for core and `SQLiteNowSyncRuntime` for sync. |
 | `metadataPackageName` | no | Internal compiler metadata package name. Defaults from `databaseName`. |
 | `debug` | no | Enables extra compiler debug behavior when `true`; the plugin writes the temporary schema database under `.build/sqlitenow/schema/`. |
 
@@ -97,11 +98,11 @@ The config rejects unknown fields so misspelled options fail fast.
 
 ## Runtime Artifacts
 
-Released SQLiteNow SwiftPM packages include metadata for the matching core and
-sync runtime XCFramework zips. During generation, SQLiteNow uses that metadata
-to write the generated package `Package.swift` with the correct SwiftPM binary
-target URL and checksum. Normal app configs do not include artifact URLs or
-checksums.
+Released SQLiteNow SwiftPM packages expose matching support and runtime
+products. During generation, SQLiteNow uses release metadata to write the
+generated package `Package.swift` with a dependency on the same SQLiteNow
+package version and the correct `.product(...)` entries. Normal app configs do
+not include artifact URLs or checksums.
 
 Use `runtimeArtifact.kind: "localZip"` only when you intentionally want a custom
 runtime zip stored in your app repository or produced by a local development
@@ -142,8 +143,8 @@ swift package plugin --allow-writing-to-package-directory sqlitenow-generate
 ```
 
 Generated output under `SQLiteNowGenerated/` can be deleted and regenerated. Do
-not hand-edit generated `Package.swift`, Swift source, binary artifact copies,
-or `.sqlitenow/package-manifest.json`.
+not hand-edit generated `Package.swift`, Swift source, copied local runtime
+artifacts, or `.sqlitenow/package-manifest.json`.
 
 The plugin writes compiler request files under `.build/sqlitenow/requests/`.
 Those files are build intermediates and can be removed with normal SwiftPM
@@ -167,10 +168,11 @@ released package URL and a matching `X.Y.Z` version:
 .package(url: "https://github.com/mobiletoly/sqlitenow-kmp.git", from: "X.Y.Z")
 ```
 
-If generation fails with a checksum or binary target error, confirm that the
-SQLiteNow package dependency version and generated package were created from
-the same release. If you are using a custom `runtimeArtifact`, confirm its URL,
-`sqliteNowVersion`, and `checksum` all come from the same artifact.
+If generation fails with a package product, checksum, or binary target error,
+confirm that the SQLiteNow package dependency version and generated package were
+created from the same release. If you are using a custom `runtimeArtifact`,
+confirm its URL, `sqliteNowVersion`, and `checksum` all come from the same
+artifact.
 
 If Xcode cannot add the generated local package, run generation first so the
 output directory contains `Package.swift`.

@@ -31,6 +31,7 @@ data class SqliteNowSwiftProductExportConfig(
     val swiftModuleName: String,
     val runtimeModuleName: String = DEFAULT_SWIFT_CORE_RUNTIME_MODULE_NAME,
     val runtimeMode: SwiftProductRuntimeMode = SwiftProductRuntimeMode.CORE,
+    val emitSupportSources: Boolean = true,
 )
 
 enum class SwiftProductRuntimeMode(val id: String) {

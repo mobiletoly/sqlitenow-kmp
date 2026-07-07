@@ -159,8 +159,10 @@ internal class SwiftProductSourceAssembler(
     private fun emitSwiftSourceFiles(): List<SwiftProductSourceFile> =
         buildList {
             add(swiftSourceFile("$databaseName.swift") { databaseEmitter.emit(this) })
-            add(swiftSourceFile("SQLiteNowSupport.swift") { supportEmitter.emit(this) })
-            if (config.runtimeMode == SwiftProductRuntimeMode.SYNC) {
+            if (config.emitSupportSources) {
+                add(swiftSourceFile("SQLiteNowSupport.swift") { supportEmitter.emit(this) })
+            }
+            if (config.runtimeMode == SwiftProductRuntimeMode.SYNC && config.emitSupportSources) {
                 add(swiftSourceFile("SQLiteNowSyncSupport.swift") { syncSourceEmitter.emitSyncTypes(this) })
             }
             val emittedResultNames = mutableSetOf<String>()
@@ -179,6 +181,13 @@ internal class SwiftProductSourceAssembler(
             relativePath = relativePath,
             content = SwiftWriter().apply {
                 line("@preconcurrency import ${config.runtimeModuleName}")
+                if (!config.emitSupportSources) {
+                    if (config.runtimeMode == SwiftProductRuntimeMode.SYNC) {
+                        line("@_exported import SQLiteNowSyncSupport")
+                    } else {
+                        line("@_exported import SQLiteNowCoreSupport")
+                    }
+                }
                 line("import Foundation")
                 line()
                 emitBody()
