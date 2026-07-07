@@ -1,7 +1,7 @@
 ---
 layout: doc
 title: Part 1 – Bootstrapping SQLiteNow in MoodTracker
-permalink: /tutorials/part-1-bootstrap/
+permalink: /kmp/tutorials/part-1-bootstrap/
 parent: Tutorials
 nav_order: 1
 ---
@@ -64,10 +64,10 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation("dev.goquick.sqlitenow:core:X.Y.Z")
-            implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
+            implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.8.0")
         }
         androidMain.dependencies {
-            implementation("androidx.sqlite:sqlite-bundled:2.6.1")
+            implementation("androidx.sqlite:sqlite-bundled:2.6.2")
         }
     }
 }
@@ -109,7 +109,7 @@ queries/mood_entry/selectRecent.sql
 ```
 
 SQLiteNow expects this layout for every database under `src/commonMain/sql/<DatabaseName>/`
-(see the [Create Schema]({{ site.baseurl }}/documentation/create-schema/) guide for the full breakdown):
+(see the [Create Schema]({{ site.baseurl }}/kmp/sql-reference/create-schema/) guide for the full breakdown):
 
 - **schema** – Here goes the SQL schema: `CREATE TABLE`, `CREATE VIEW`, `CREATE INDEX`,
   and similar statements. These files teach SQLiteNow what columns exist and which
@@ -120,7 +120,7 @@ SQLiteNow expects this layout for every database under `src/commonMain/sql/<Data
   classes, parameter types). The directory structure under `queries/` becomes the
   namespace, so `queries/mood_entry/add.sql` will produce `MoodEntryQuery.Add`.
 - **init** *(optional)* – Seed data executed once when the database is created.
-- **migration** *(optional)* – Versioned scripts (`0001_update_name_column.sql`, etc.) that 
+- **migration** *(optional)* – Versioned scripts (`0001_update_name_column.sql`, etc.) that
   run during upgrades.
 
 For this first pass we only need `schema/` and `queries/`; the other folders become useful
@@ -219,8 +219,8 @@ the SQL remains valid for every tool. A few essentials:
 - **Reusable defaults** live entirely in SQL comments, so they work with any editor, diff
   tool, or migration review process—you don't need IDE plugins.
 
-The [Create Schema]({{ site.baseurl }}/documentation/create-schema/) 
-and [Query Data]({{ site.baseurl }}/documentation/query-data/) guides include full reference tables,
+The [Create Schema]({{ site.baseurl }}/kmp/sql-reference/create-schema/)
+and [Query Data]({{ site.baseurl }}/kmp/sql-reference/query-data/) guides include full reference tables,
 but the key idea is that every Kotlin artefact is controlled from the SQL file you already
 own. Having comment-style annotations part of the SQL keeps the entire workflow self-contained and
 editor-agnostic.
@@ -321,7 +321,7 @@ class MoodEntryRepository(private val database: MoodTrackerDatabase) {
 ```
 
 At this stage you can open the database from any KMP target, insert a row, and fetch it back
-with type-safe Kotlin. In [Part 2]({{ site.baseurl }}/tutorials/part-2-tags-and-filters/) we will layer annotations and adapters on top so these APIs can
+with type-safe Kotlin. In [Part 2]({{ site.baseurl }}/kmp/tutorials/part-2-tags-and-filters/) we will layer annotations and adapters on top so these APIs can
 work with `Instant`, UUID wrappers, and richer domain models without changing the SQL files.
 
 ## Where We Stand
@@ -336,5 +336,5 @@ You now have a working SQLiteNow pipeline:
 
 ## Next Time
 
-In [Part 2]({{ site.baseurl }}/tutorials/part-2-tags-and-filters/) we will extend the schema with mood tags, wire adapters for richer types, and start
+In [Part 2]({{ site.baseurl }}/kmp/tutorials/part-2-tags-and-filters/) we will extend the schema with mood tags, wire adapters for richer types, and start
 streaming results with SQLiteNow's reactive helpers. See you there!

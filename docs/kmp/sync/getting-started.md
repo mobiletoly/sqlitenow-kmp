@@ -1,8 +1,8 @@
 ---
 layout: doc
 title: Getting Started with Sync
-permalink: /sync/getting-started/
-parent: Sync
+permalink: /kmp/sync/getting-started/
+parent: KMP Sync
 ---
 
 # Getting Started with Sync
@@ -43,18 +43,18 @@ commonMain.dependencies {
 
 ```kotlin
 commonMain.dependencies {
-    implementation("io.ktor:ktor-client-core:3.4.1")
-    implementation("io.ktor:ktor-client-content-negotiation:3.4.1")
-    implementation("io.ktor:ktor-client-auth:3.4.1")
-    implementation("io.ktor:ktor-serialization-kotlinx-json:3.4.1")
+    implementation("io.ktor:ktor-client-core:3.5.1")
+    implementation("io.ktor:ktor-client-content-negotiation:3.5.1")
+    implementation("io.ktor:ktor-client-auth:3.5.1")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:3.5.1")
 }
 
 androidMain.dependencies {
-    implementation("io.ktor:ktor-client-okhttp:3.4.1")
+    implementation("io.ktor:ktor-client-okhttp:3.5.1")
 }
 
 iosMain.dependencies {
-    implementation("io.ktor:ktor-client-darwin:3.4.1")
+    implementation("io.ktor:ktor-client-darwin:3.5.1")
 }
 ```
 

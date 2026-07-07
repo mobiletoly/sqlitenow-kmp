@@ -11,4 +11,7 @@ For the full Dart migration guide, see
 {% elsif include.platform == "kmp" %}
 For the full KMP migration guide, see
 [KMP Migrations]({{ site.baseurl }}/kmp/migrations/).
+{% elsif include.platform == "swift" %}
+For the full Swift migration guide, see
+[Swift Migrations]({{ site.baseurl }}/swift/migrations/).
 {% endif %}

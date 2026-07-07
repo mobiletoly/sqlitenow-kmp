@@ -30,6 +30,21 @@ runtime artifact options, regeneration behavior, and troubleshooting:
 
 [Configuration]({{ site.baseurl }}/swift/configuration/)
 
+Use the SQL reference for schema files, queries, migrations, dynamic fields, and
+generated Swift API shape:
+
+[SQL reference]({{ site.baseurl }}/swift/sql-reference/)
+
+Use recipes for custom adapters, reactive streams, inspection, parameter
+inference, and nested result mapping:
+
+[Recipes]({{ site.baseurl }}/swift/recipes/)
+
+Use the migration guide when changing schema after users already have installed
+databases:
+
+[Migration guide]({{ site.baseurl }}/swift/migrations/)
+
 Use the sync guide when your database participates in Oversqlite sync:
 
 [Swift sync]({{ site.baseurl }}/swift/sync/)

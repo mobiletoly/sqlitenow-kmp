@@ -25,6 +25,17 @@ src/commonMain/sql/AppDatabase/
   migration/
   queries/
 ```
+{% elsif include.platform == "swift" %}
+For Swift projects, migration inputs live beside the rest of the SQL files in
+the package root:
+
+```text
+SQLiteNow/databases/AppDatabase/
+  schema/
+  init/
+  migration/
+  queries/
+```
 {% endif %}
 
 `schema/` is the current schema. `migration/` is the ordered history for
@@ -71,6 +82,12 @@ src/commonMain/sql/AppDatabase/migration/
   0002_add_task_due_date.sql
   0003_add_task_archived.sql
 ```
+{% elsif include.platform == "swift" %}
+```text
+SQLiteNow/databases/AppDatabase/migration/
+  0002_add_task_due_date.sql
+  0003_add_task_archived.sql
+```
 {% endif %}
 
 Accepted format:
@@ -113,6 +130,9 @@ fresh database and stores version `1`.
 {% elsif include.platform == "kmp" %}
 With no `migration/` files, the generated KMP database creates this schema on a
 fresh database and stores version `1`.
+{% elsif include.platform == "swift" %}
+With no `migration/` files, the generated Swift database creates this schema on
+a fresh database and stores version `1`.
 {% endif %}
 
 ## Adding A Column
@@ -157,6 +177,8 @@ These two files serve different users:
   SQLiteNow reads that version during `open()`,
   {%- elsif include.platform == "kmp" -%}
   SQLiteNow reads that version during generated database initialization,
+  {%- elsif include.platform == "swift" -%}
+  SQLiteNow reads that version during `open()`,
   {%- endif %}
   does not run the main `CREATE TABLE task (...)` schema statement again, and
   instead applies migration files with a higher version. In this example it runs
@@ -208,6 +230,8 @@ SQLiteNow applies migration work during `open()` inside a transaction.
 {% elsif include.platform == "kmp" %}
 SQLiteNow applies migration work during generated database initialization inside
 a transaction.
+{% elsif include.platform == "swift" %}
+SQLiteNow applies migration work during `open()` inside a transaction.
 {% endif %}
 
 If a migration statement throws:
@@ -220,6 +244,9 @@ If a migration statement throws:
 {% elsif include.platform == "kmp" %}
 - database initialization fails
 - the caller receives the migration error
+{% elsif include.platform == "swift" %}
+- the database is not marked open
+- the caller receives the error from `open()`
 {% endif %}
 
 Fix the migration SQL and reopen a new generated database instance.
@@ -242,6 +269,12 @@ When changing schema after release:
 
    ```shell
    ./gradlew :composeApp:generateAppDatabase
+   ```
+{% elsif include.platform == "swift" %}
+4. Regenerate the Swift package:
+
+   ```shell
+   swift package plugin --allow-writing-to-package-directory sqlitenow-generate
    ```
 {% endif %}
 5. Test both a fresh database and an upgrade from the previous version.

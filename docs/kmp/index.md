@@ -16,7 +16,7 @@ The getting-started guide is a complete walkthrough: apply the Gradle plugin,
 add the runtime dependency, configure a database, create SQL files, generate KMP
 code, and wire platform SQLite drivers.
 
-[Getting started]({{ site.baseurl }}/getting-started/)
+[Getting started]({{ site.baseurl }}/kmp/getting-started/)
 
 ## SQL Reference
 
@@ -42,14 +42,14 @@ databases run versioned upgrade SQL.
 
 ## Sync
 
-Oversqlite is public for the KMP runtime today. The sync docs cover client
-setup, bootstrap, sync operations, reactive updates, and server integration.
+The KMP sync docs cover client setup, bootstrap, sync operations, reactive
+updates, and server integration.
 
-[Sync docs]({{ site.baseurl }}/sync/)
+[Sync docs]({{ site.baseurl }}/kmp/sync/)
 
 ## Tutorials
 
 The tutorial series walks through a Kotlin Multiplatform app from project setup
 to generated SQL APIs and reactive UI.
 
-[Tutorials]({{ site.baseurl }}/tutorials/)
+[Tutorials]({{ site.baseurl }}/kmp/tutorials/)

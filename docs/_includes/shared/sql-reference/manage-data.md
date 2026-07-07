@@ -35,6 +35,15 @@ db.task.insertOne(
     )
 )
 ```
+{% elsif include.platform == "swift" %}
+```swift
+try await db.task.insertOne(
+    TaskInsertOneParams(
+        title: "Call patient",
+        createdAt: "2026-05-05T12:00:00Z"
+    )
+)
+```
 {% endif %}
 
 ## UPDATE
@@ -53,6 +62,10 @@ await db.task.completeById(TaskCompleteByIdParams(id: taskId));
 ```kotlin
 db.task.completeById(TaskQuery.CompleteById.Params(id = taskId))
 ```
+{% elsif include.platform == "swift" %}
+```swift
+try await db.task.completeById(TaskCompleteByIdParams(id: taskId))
+```
 {% endif %}
 
 ## DELETE
@@ -69,6 +82,10 @@ await db.task.deleteCompleted();
 {% elsif include.platform == "kmp" %}
 ```kotlin
 db.task.deleteCompleted()
+```
+{% elsif include.platform == "swift" %}
+```swift
+try await db.task.deleteCompleted()
 ```
 {% endif %}
 

@@ -51,6 +51,14 @@ tasks.forEach { task ->
     println("${task.title}: ${task.notes.size} notes")
 }
 ```
+{% elsif include.platform == "swift" %}
+```swift
+let tasks = try await db.task.selectWithNotes().list()
+
+for task in tasks {
+    print("\(task.title): \(task.notes.count) notes")
+}
+```
 {% endif %}
 
 For larger schemas, keep aliases stable and move repeated join logic into views.

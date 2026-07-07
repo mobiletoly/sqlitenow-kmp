@@ -127,7 +127,7 @@ run the generator, and use the generated API from application code.
 
 ### Kotlin Multiplatform
 
-Full setup: [KMP getting started](https://mobiletoly.github.io/sqlitenow-kmp/getting-started/)
+Full setup: [KMP getting started](https://mobiletoly.github.io/sqlitenow-kmp/kmp/getting-started/)
 
 KMP apps use the `dev.goquick.sqlitenow` Gradle plugin and the
 `dev.goquick.sqlitenow:core` runtime dependency. Configure one or more
@@ -166,7 +166,7 @@ generated output: edit SQL/configuration and rerun the task instead of
 hand-editing the generated files.
 
 For a complete app walkthrough, follow the
-[Mood Tracker tutorial series](https://mobiletoly.github.io/sqlitenow-kmp/tutorials/)
+[Mood Tracker tutorial series](https://mobiletoly.github.io/sqlitenow-kmp/kmp/tutorials/)
 and browse the
 [sample project](https://github.com/mobiletoly/moodtracker-sample-kmp).
 
@@ -401,13 +401,9 @@ final syncClient = db.newOversqliteClient(
   httpClient: httpClient,
 );
 
-await
-syncClient.open
-();await
-syncClient.attach
-('user123
-'
-);await syncClient.sync();
+await syncClient.open();
+await syncClient.attach('user123');
+await syncClient.sync();
 
 // Optional: start default-off automatic downloads.
 // Bundle-change watch is only a wake-up hint; pullToStable() remains authoritative.

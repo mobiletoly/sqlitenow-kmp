@@ -13,6 +13,11 @@ lib/db/sql/AppDatabase/init/
 src/commonMain/sql/AppDatabase/init/
   seed.sql
 ```
+{% elsif include.platform == "swift" %}
+```text
+SQLiteNow/databases/AppDatabase/init/
+  seed.sql
+```
 {% endif %}
 
 ```sql

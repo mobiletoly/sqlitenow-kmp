@@ -1,8 +1,8 @@
 ---
 layout: doc
 title: Sync Operations Reference
-permalink: /sync/sync-operations/
-parent: Sync
+permalink: /kmp/sync/sync-operations/
+parent: KMP Sync
 ---
 
 # Sync Operations Reference

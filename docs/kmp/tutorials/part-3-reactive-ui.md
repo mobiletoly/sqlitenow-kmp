@@ -1,7 +1,7 @@
 ---
 layout: doc
 title: Part 3 – Reactive Mood Dashboard
-permalink: /tutorials/part-3-reactive-ui/
+permalink: /kmp/tutorials/part-3-reactive-ui/
 parent: Tutorials
 nav_order: 3
 ---
@@ -494,8 +494,8 @@ val database = MoodTrackerDatabase(
 )
 ```
 
-Nothing else from [Part 1]({{ site.baseurl }}/tutorials/part-1-bootstrap/) or
-[Part 2]({{ site.baseurl }}/tutorials/part-2-tags-and-filters/) needs to change because the helper
+Nothing else from [Part 1]({{ site.baseurl }}/kmp/tutorials/part-1-bootstrap/) or
+[Part 2]({{ site.baseurl }}/kmp/tutorials/part-2-tags-and-filters/) needs to change because the helper
 already handles every target.
 
 ## Step 4 – Regenerate and Test

@@ -1,8 +1,8 @@
 ---
 layout: doc
 title: Reactive Updates
-permalink: /sync/reactive-updates/
-parent: Sync
+permalink: /kmp/sync/reactive-updates/
+parent: KMP Sync
 ---
 
 # Reactive Updates

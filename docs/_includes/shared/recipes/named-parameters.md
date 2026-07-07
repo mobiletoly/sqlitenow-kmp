@@ -37,4 +37,13 @@ back to strings:
 ```kotlin
 db.task.selectForMonth(TaskQuery.SelectForMonth.Params(year = 2026, month = 5))
 ```
+{% elsif include.platform == "swift" %}
+The generated Swift params type then exposes numeric fields instead of falling
+back to strings:
+
+```swift
+try await db.task
+    .selectForMonth(TaskSelectForMonthParams(year: 2026, month: 5))
+    .list()
+```
 {% endif %}

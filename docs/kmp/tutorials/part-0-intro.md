@@ -1,7 +1,7 @@
 ---
 layout: doc
 title: Part 0 – Series Overview
-permalink: /tutorials/part-0-intro/
+permalink: /kmp/tutorials/part-0-intro/
 parent: Tutorials
 nav_order: 0
 ---
@@ -23,12 +23,12 @@ sources that:
 - expose strongly typed routers (generated query objects you call from Kotlin—no hand-written DAOs)
   for every statement,
 - map results into data classes, collections, and nested aggregates,
-- plug in adapters for [enums]({{ site.baseurl }}/recipes/serialization/),
+- plug in adapters for [enums]({{ site.baseurl }}/kmp/recipes/serialization/),
   custom serializers, and complex joins,
 - run the exact same API on Android/JVM, iOS/Native, desktop, JS, and wasm.
 
 Use inline `@@{ ... }` comment-style annotations to embed nested objects and group child rows into
-collections—see [Dynamic Fields]({{ site.baseurl }}/documentation/dynamic-fields/).
+collections—see [Dynamic Fields]({{ site.baseurl }}/kmp/sql-reference/dynamic-fields/).
 
 Because everything happens at compile time, there are no runtime reflection penalties or
 annotation processors to wrestle with. The runtime handles connection management, migrations,
@@ -46,7 +46,7 @@ Kotlin—no entities, no DAOs, no runtime annotations.
 to shape results—including nested objects and grouped collections—without custom mappers; it doesn't
 rely on an IDE plugin, and it includes an optional multi‑device sync module. If you like SQLDelight,
 you'll feel at home, but SQLiteNow leans into SQLite‑only optimizations and allows generating
-dynamic result mapping. [Dynamic Fields]({{ site.baseurl }}/documentation/dynamic-fields/) · [Serialization]({{ site.baseurl }}/recipes/serialization/)
+dynamic result mapping. [Dynamic Fields]({{ site.baseurl }}/kmp/sql-reference/dynamic-fields/) · [Serialization]({{ site.baseurl }}/kmp/recipes/serialization/)
 
 ## Why This Series Matters
 
@@ -86,4 +86,4 @@ This series is for Kotlin developers who want SQL-level control without the tool
 overhead. If you have felt boxed in by annotation-driven ORMs, or if you need one
 persistence story that spans Android, iOS, desktop, and web, SQLiteNow was built for you.
 
-Ready to see SQLiteNow in action? Jump into [Part 1]({{ site.baseurl }}/tutorials/part-1-bootstrap/) to wire up the essentials.
+Ready to see SQLiteNow in action? Jump into [Part 1]({{ site.baseurl }}/kmp/tutorials/part-1-bootstrap/) to wire up the essentials.

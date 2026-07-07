@@ -5,6 +5,8 @@ Curated patterns for common SQLiteNow scenarios.
 {% assign base = "/flutter/recipes" %}
 {% if include.platform == "kmp" %}
 {% assign base = "/kmp/recipes" %}
+{% elsif include.platform == "swift" %}
+{% assign base = "/swift/recipes" %}
 {% endif %}
 
 - [Serialization]({{ site.baseurl }}{{ base }}/serialization/)

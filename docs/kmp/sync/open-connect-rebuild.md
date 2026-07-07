@@ -1,8 +1,8 @@
 ---
 layout: doc
 title: Open, Attach, and Rebuild
-permalink: /sync/open-connect-rebuild/
-parent: Sync
+permalink: /kmp/sync/open-connect-rebuild/
+parent: KMP Sync
 ---
 
 # Open, Attach, and Rebuild

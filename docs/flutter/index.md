@@ -48,6 +48,13 @@ databases run versioned upgrade SQL.
 
 [Migration guide]({{ site.baseurl }}/flutter/migrations/)
 
+## Sync
+
+Flutter and Dart sync uses `package:sqlitenow_oversqlite` with generated
+sync metadata and the Dart oversqlite client.
+
+[Sync guide]({{ site.baseurl }}/flutter/sync/)
+
 ## Example
 
 The repository contains a Flutter todo example using SQL assets, generated Dart

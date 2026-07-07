@@ -17,9 +17,9 @@ CREATE TABLE task
 ```dart
 final db = AppDatabase(
   path: path,
-  taskAdapters: TaskAdapters(
-    sqlColumnToTags: (value) => List<String>.from(jsonDecode(value)),
-    tagsToSqlColumn: (tags) => jsonEncode(tags),
+  adapters: AppDatabaseAdapters(
+    taskTagsToSql: (tags) => jsonEncode(tags),
+    sqlValueToTaskTags: (value) => List<String>.from(jsonDecode(value as String)),
   ),
 );
 ```
@@ -29,9 +29,19 @@ val db = AppDatabase(
     dbName = dbPath,
     migration = VersionBasedDatabaseMigrations(),
     taskAdapters = AppDatabase.TaskAdapters(
-        sqlColumnToTags = { value -> value.jsonDecodeFromSqlite() },
-        tagsToSqlColumn = { tags -> tags.jsonEncodeToSqlite() },
+        sqlValueToTags = { value -> value.jsonDecodeFromSqlite() },
+        tagsToSqlValue = { tags -> tags.jsonEncodeToSqlite() },
     ),
+)
+```
+{% elsif include.platform == "swift" %}
+```swift
+let db = AppDatabase(
+    path: databaseURL,
+    adapters: AppDatabaseAdapters(
+        sqlValueToTags: { value in decodeTags(value) },
+        tagsToSqlValue: { tags in encodeTags(tags) }
+    )
 )
 ```
 {% endif %}

@@ -1,7 +1,7 @@
 ---
 layout: page
 title: KMP Getting Started
-permalink: /getting-started/
+permalink: /kmp/getting-started/
 ---
 
 This guide is for Kotlin Multiplatform projects using the SQLiteNow Gradle plugin.
@@ -24,9 +24,9 @@ with the latest SQLiteNow release version.
 
 ```toml
 [versions]
-sqlite = "2.6.2"
 sqlitenow = "X.Y.Z"
-kotlinx-datetime = "0.7.1"
+sqlite = "2.6.2"
+kotlinx-datetime = "0.8.0"
 
 [libraries]
 sqlitenow-kmp = { module = "dev.goquick.sqlitenow:core", version.ref = "sqlitenow" }
@@ -158,7 +158,7 @@ because we don't have any queries yet.
 
 ## Create Your First Query
 
-Each query should be in its own file and generated code will use file name as a query name (you 
+Each query should be in its own file and generated code will use file name as a query name (you
 can override the name with `-- @@{ name=YourName }` annotation).
 The file path will be used to determine the query namespace. For example,
 `queries/person/selectAll.sql` will generate `selectAll` query in `person` namespace.
@@ -194,7 +194,7 @@ Run the Gradle plugin to generate your database code:
 (or `./gradlew build` if you are OK with building your entire codebase)
 
 Generated code will be added to `build/generated/sqlitenow/code` directory (not to your source directory)
-and will be available to your `commonMain` source set. 
+and will be available to your `commonMain` source set.
 
 ## Use the Generated Code
 
@@ -213,7 +213,7 @@ ignore `appName`.
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
         // Add this call to provide android context to SQLiteNow framework
         setupAndroidAppContext(this.applicationContext)
 
@@ -231,19 +231,19 @@ val db = SampleDatabase(
     resolveDatabasePath(dbName = "sample.db", appName = "SampleApp"),
     personAdapters = SampleDatabase.PersonAdapters(
         // serialize LocalDate to SQLite date string for `birth_date` column
-        birthDateToSqlColumn = {
+        birthDateToSqlValue = {
             it?.toSqliteDate()
         },
         // deserialize SQLite date string to LocalDate for `birth_date` column
-        sqlColumnToBirthDate = {
+        sqlValueToBirthDate = {
             it?.let { LocalDate.fromSqliteDate(it) }
         },
         // deserialize RFC3339 text to Instant for `created_at` column
-        sqlColumnToCreatedAt = {
+        sqlValueToCreatedAt = {
             Instant.fromRfc3339String(it)
         },
         // serialize Instant back to RFC3339 text for `created_at` column
-        createdAtToSqlColumn = {
+        createdAtToSqlValue = {
             it.toRfc3339String()
         },
     ),
@@ -257,7 +257,7 @@ val db = SampleDatabase(
 LaunchedEffect(Unit) {
     // Open the database (you need to find a better place for this code, but for the sake of example it's here)
     db.open()
-    
+
     // Query all persons
     val personList: List<PersonQuery.SelectAll.Result> = db.person
         .selectAll(

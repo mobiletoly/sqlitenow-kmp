@@ -5,19 +5,21 @@
   {%- assign current_platform = "swift" -%}
 {%- endif -%}
 {%- assign current_section = "home" -%}
-{%- if page.url == "/getting-started/" or page.url contains "/flutter/getting-started/" or page.url contains "/swift/getting-started/" -%}
+{%- if page.url contains "/kmp/getting-started/" or page.url contains "/flutter/getting-started/" or page.url contains "/swift/getting-started/" -%}
   {%- assign current_section = "getting-started" -%}
 {%- elsif page.url contains "/swift/configuration/" -%}
   {%- assign current_section = "configuration" -%}
-{%- elsif page.url contains "/swift/sync/" -%}
+{%- elsif page.url contains "/kmp/sync/" or page.url contains "/flutter/sync/" or page.url contains "/swift/sync/" -%}
   {%- assign current_section = "sync" -%}
-{%- elsif page.url contains "/kmp/sql-reference/" or page.url contains "/flutter/sql-reference/" or page.url contains "/documentation/" -%}
+{%- elsif page.url contains "/kmp/sql-reference/" or page.url contains "/flutter/sql-reference/" or page.url contains "/swift/sql-reference/" -%}
   {%- assign current_section = "sql-reference" -%}
-{%- elsif page.url contains "/kmp/recipes/" or page.url contains "/flutter/recipes/" or page.url contains "/recipes/" -%}
+{%- elsif page.url contains "/kmp/recipes/" or page.url contains "/flutter/recipes/" or page.url contains "/swift/recipes/" -%}
   {%- assign current_section = "recipes" -%}
+{%- elsif page.url contains "/kmp/migrations/" or page.url contains "/flutter/migrations/" or page.url contains "/swift/migrations/" -%}
+  {%- assign current_section = "migrations" -%}
 {%- elsif page.url contains "/sync/" -%}
   {%- assign current_section = "sync" -%}
-{%- elsif page.url contains "/tutorials/" -%}
+{%- elsif page.url contains "/kmp/tutorials/" -%}
   {%- assign current_section = "tutorials" -%}
 {%- endif -%}
 
@@ -46,7 +48,7 @@
       <div class="trigger">
         {%- if current_platform == "kmp" -%}
           <a class="page-link {% if current_section == "home" %}active{% endif %}" href="{{ site.baseurl }}/kmp/">Home</a>
-          <a class="page-link {% if current_section == "getting-started" %}active{% endif %}" href="{{ site.baseurl }}/getting-started/">Getting Started</a>
+          <a class="page-link {% if current_section == "getting-started" %}active{% endif %}" href="{{ site.baseurl }}/kmp/getting-started/">Getting Started</a>
           <a class="page-link {% if current_section == "sql-reference" %}active{% endif %}" href="{{ site.baseurl }}/kmp/sql-reference/">SQL Reference</a>
           <div class="nav-dropdown">
             <a class="page-link dropdown-toggle {% if current_section == "recipes" %}active{% endif %}" href="{{ site.baseurl }}/kmp/recipes/">Recipes</a>
@@ -58,24 +60,25 @@
               <a href="{{ site.baseurl }}/kmp/recipes/complex-example/">Complex Example</a>
             </div>
           </div>
+          <a class="page-link {% if current_section == "migrations" %}active{% endif %}" href="{{ site.baseurl }}/kmp/migrations/">Migrations</a>
           <div class="nav-dropdown">
-            <a class="page-link dropdown-toggle {% if current_section == "sync" %}active{% endif %}" href="{{ site.baseurl }}/sync/">Sync</a>
+            <a class="page-link dropdown-toggle {% if current_section == "sync" %}active{% endif %}" href="{{ site.baseurl }}/kmp/sync/">Sync</a>
             <div class="dropdown-content">
+              <a href="{{ site.baseurl }}/kmp/sync/getting-started/">Getting Started</a>
+              <a href="{{ site.baseurl }}/kmp/sync/open-connect-rebuild/">Open, Attach & Rebuild</a>
+              <a href="{{ site.baseurl }}/kmp/sync/sync-operations/">Sync Operations</a>
+              <a href="{{ site.baseurl }}/kmp/sync/reactive-updates/">Reactive Updates</a>
               <a href="{{ site.baseurl }}/sync/core-concepts/">Core Concepts</a>
-              <a href="{{ site.baseurl }}/sync/getting-started/">Getting Started</a>
               <a href="{{ site.baseurl }}/sync/server-setup/">Server Setup</a>
-              <a href="{{ site.baseurl }}/sync/open-connect-rebuild/">Open, Connect & Rebuild</a>
-              <a href="{{ site.baseurl }}/sync/sync-operations/">Sync Operations</a>
-              <a href="{{ site.baseurl }}/sync/reactive-updates/">Reactive Updates</a>
             </div>
           </div>
           <div class="nav-dropdown">
-            <a class="page-link dropdown-toggle {% if current_section == "tutorials" %}active{% endif %}" href="{{ site.baseurl }}/tutorials/">Tutorials</a>
+            <a class="page-link dropdown-toggle {% if current_section == "tutorials" %}active{% endif %}" href="{{ site.baseurl }}/kmp/tutorials/">Tutorials</a>
             <div class="dropdown-content">
-              <a href="{{ site.baseurl }}/tutorials/part-0-intro/">Series Overview</a>
-              <a href="{{ site.baseurl }}/tutorials/part-1-bootstrap/">Part 1: Bootstrap</a>
-              <a href="{{ site.baseurl }}/tutorials/part-2-tags-and-filters/">Part 2: Tags And Filters</a>
-              <a href="{{ site.baseurl }}/tutorials/part-3-reactive-ui/">Part 3: Reactive UI</a>
+              <a href="{{ site.baseurl }}/kmp/tutorials/part-0-intro/">Series Overview</a>
+              <a href="{{ site.baseurl }}/kmp/tutorials/part-1-bootstrap/">Part 1: Bootstrap</a>
+              <a href="{{ site.baseurl }}/kmp/tutorials/part-2-tags-and-filters/">Part 2: Tags And Filters</a>
+              <a href="{{ site.baseurl }}/kmp/tutorials/part-3-reactive-ui/">Part 3: Reactive UI</a>
             </div>
           </div>
         {%- elsif current_platform == "dart" -%}
@@ -92,9 +95,23 @@
               <a href="{{ site.baseurl }}/flutter/recipes/complex-example/">Complex Example</a>
             </div>
           </div>
+          <a class="page-link {% if current_section == "migrations" %}active{% endif %}" href="{{ site.baseurl }}/flutter/migrations/">Migrations</a>
+          <a class="page-link {% if current_section == "sync" %}active{% endif %}" href="{{ site.baseurl }}/flutter/sync/">Sync</a>
         {%- else -%}
           <a class="page-link {% if current_section == "home" %}active{% endif %}" href="{{ site.baseurl }}/swift/">Home</a>
           <a class="page-link {% if current_section == "getting-started" %}active{% endif %}" href="{{ site.baseurl }}/swift/getting-started/">Getting Started</a>
+          <a class="page-link {% if current_section == "sql-reference" %}active{% endif %}" href="{{ site.baseurl }}/swift/sql-reference/">SQL Reference</a>
+          <div class="nav-dropdown">
+            <a class="page-link dropdown-toggle {% if current_section == "recipes" %}active{% endif %}" href="{{ site.baseurl }}/swift/recipes/">Recipes</a>
+            <div class="dropdown-content">
+              <a href="{{ site.baseurl }}/swift/recipes/serialization/">Serialization</a>
+              <a href="{{ site.baseurl }}/swift/recipes/reactive-flows/">Reactive Flows</a>
+              <a href="{{ site.baseurl }}/swift/recipes/inspection/">Inspection</a>
+              <a href="{{ site.baseurl }}/swift/recipes/named-parameters/">Named Parameters</a>
+              <a href="{{ site.baseurl }}/swift/recipes/complex-example/">Complex Example</a>
+            </div>
+          </div>
+          <a class="page-link {% if current_section == "migrations" %}active{% endif %}" href="{{ site.baseurl }}/swift/migrations/">Migrations</a>
           <a class="page-link {% if current_section == "configuration" %}active{% endif %}" href="{{ site.baseurl }}/swift/configuration/">Configuration</a>
           <a class="page-link {% if current_section == "sync" %}active{% endif %}" href="{{ site.baseurl }}/swift/sync/">Sync</a>
         {%- endif -%}

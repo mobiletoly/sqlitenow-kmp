@@ -1,14 +1,14 @@
 ---
 layout: doc
 title: Part 2 – Tags, Filters, and Richer Types
-permalink: /tutorials/part-2-tags-and-filters/
+permalink: /kmp/tutorials/part-2-tags-and-filters/
 parent: Tutorials
 nav_order: 2
 ---
 
 # Part 2 – Tags, Filters, and Richer Types
 
-In [Part 1]({{ site.baseurl }}/tutorials/part-1-bootstrap/) we bootstrapped a simple database and proved we could insert and fetch mood entries.
+In [Part 1]({{ site.baseurl }}/kmp/tutorials/part-1-bootstrap/) we bootstrapped a simple database and proved we could insert and fetch mood entries.
 Now we extend the schema with tags, show how SQLiteNow handles relationships, and lean on
 column-level annotations to surface Kotlin types such as `Uuid` and `Int` without manual casts.
 
@@ -25,10 +25,10 @@ Create two new schema files and update the existing one under
 CREATE TABLE mood_entry (
     -- @@{ field=id, propertyType=kotlin.uuid.Uuid }
     id TEXT PRIMARY KEY NOT NULL,
-    
+
     -- @@{ field=entry_time, propertyType=kotlin.time.Instant }
     entry_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    
+
     -- @@{ field=mood_score, propertyType=kotlin.Int }
     mood_score INTEGER NOT NULL,
 
@@ -43,7 +43,7 @@ CREATE INDEX idx_mood_entry_entry_time ON mood_entry(entry_time);
 CREATE TABLE mood_tag (
     -- @@{ field=id, propertyType=kotlin.uuid.Uuid }
     id TEXT PRIMARY KEY NOT NULL,
-    
+
     name TEXT NOT NULL
 );
 
@@ -55,10 +55,10 @@ CREATE UNIQUE INDEX idx_mood_tag_name ON mood_tag(name);
 CREATE TABLE mood_entry_tag (
     -- @@{ field=entry_id, propertyType=kotlin.uuid.Uuid }
     entry_id TEXT NOT NULL,
-    
+
     -- @@{ field=tag_id, propertyType=kotlin.uuid.Uuid }
     tag_id TEXT NOT NULL,
-    
+
     PRIMARY KEY (entry_id, tag_id)
 );
 
@@ -342,4 +342,4 @@ map natively while `notNull=true` protects you from nullable surprises.
 Next up we can explore reactive flows or more advanced result mappings, but at this point you
 already have a strongly typed tagging system running across Android, iOS, and Desktop. When you're
 ready to wire everything into a Compose UI, continue with
-[Part 3 – Reactive Mood Dashboard]({{ site.baseurl }}/tutorials/part-3-reactive-ui/).
+[Part 3 – Reactive Mood Dashboard]({{ site.baseurl }}/kmp/tutorials/part-3-reactive-ui/).

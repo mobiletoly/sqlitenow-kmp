@@ -36,6 +36,16 @@ rows.forEach { row ->
     println(row.title)
 }
 ```
+{% elsif include.platform == "swift" %}
+`queries/task/selectAll.sql` generates a Swift method under `db.task`:
+
+```swift
+let rows = try await db.task.selectAll().list()
+
+for row in rows {
+    print(row.title)
+}
+```
 {% endif %}
 
 ## Parameters
@@ -59,6 +69,12 @@ final task = await db.task
 val task = db.task
     .selectById(TaskQuery.SelectById.Params(id = 42))
     .asOneOrNull()
+```
+{% elsif include.platform == "swift" %}
+```swift
+let task = try await db.task
+    .selectById(TaskSelectByIdParams(id: 42))
+    .oneOrNull()
 ```
 {% endif %}
 
@@ -86,5 +102,13 @@ database.task
     .selectAll()
     .asFlow()
     .collect { rows -> tasks = rows }
+```
+{% elsif include.platform == "swift" %}
+Swift SELECT methods expose `AsyncThrowingStream` APIs for reactive reads:
+
+```swift
+for try await rows in db.task.selectAll().stream() {
+    tasks = rows
+}
 ```
 {% endif %}

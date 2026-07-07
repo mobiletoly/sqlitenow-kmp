@@ -8,6 +8,9 @@ and generated APIs.
 {% if include.platform == "kmp" %}
 {% assign base = "/kmp/sql-reference" %}
 {% assign migrations = "/kmp/migrations" %}
+{% elsif include.platform == "swift" %}
+{% assign base = "/swift/sql-reference" %}
+{% assign migrations = "/swift/migrations" %}
 {% endif %}
 
 ## Core Concepts
@@ -47,12 +50,3 @@ Move installed databases between schema versions.
 Map JOIN-heavy SQL into nested result models.
 
 [Dynamic Fields]({{ site.baseurl }}{{ base }}/dynamic-fields/)
-
-{% if include.platform == "kmp" %}
-## KMP Platform Guides
-
-The Kotlin/JS and Kotlin/Wasm guides are KMP-specific.
-
-- [Kotlin/JS Integration]({{ site.baseurl }}/documentation/kotlin-js/)
-- [Kotlin/Wasm Integration]({{ site.baseurl }}/documentation/kotlin-wasm/)
-{% endif %}

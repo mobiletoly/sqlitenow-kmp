@@ -42,6 +42,13 @@ Generated KMP SELECT models expose nested properties directly:
 val tasks = db.task.selectWithNotes().asList()
 val firstNote = tasks.first().notes.firstOrNull()
 ```
+{% elsif include.platform == "swift" %}
+Generated Swift SELECT models expose nested properties directly:
+
+```swift
+let tasks = try await db.task.selectWithNotes().list()
+let firstNote = tasks.first?.notes.first
+```
 {% endif %}
 
 Use stable aliases for complex views. That keeps generated names predictable and

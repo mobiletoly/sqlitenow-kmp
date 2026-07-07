@@ -14,6 +14,11 @@ lib/db/sql/AppDatabase/schema/
 src/commonMain/sql/AppDatabase/schema/
   task.sql
 ```
+{% elsif include.platform == "swift" %}
+```text
+SQLiteNow/databases/AppDatabase/schema/
+  task.sql
+```
 {% endif %}
 
 ## Table Definition
@@ -78,9 +83,9 @@ value and your Dart type:
 ```dart
 final db = AppDatabase(
   path: path,
-  taskAdapters: TaskAdapters(
-    sqlColumnToStatus: TaskStatus.parse,
-    statusToSqlColumn: (status) => status.name,
+  adapters: AppDatabaseAdapters(
+    taskStatusToSql: (status) => status.name,
+    sqlValueToTaskStatus: (value) => TaskStatus.parse(value as String),
   ),
 );
 ```
@@ -93,9 +98,22 @@ val db = AppDatabase(
     dbName = dbPath,
     migration = VersionBasedDatabaseMigrations(),
     taskAdapters = AppDatabase.TaskAdapters(
-        sqlColumnToStatus = { value -> TaskStatus.valueOf(value) },
-        statusToSqlColumn = { status -> status.name },
+        sqlValueToStatus = { value -> TaskStatus.valueOf(value) },
+        statusToSqlValue = { status -> status.name },
     ),
+)
+```
+{% elsif include.platform == "swift" %}
+Generated Swift code expects an adapter that converts between the SQLite value
+and your Swift type:
+
+```swift
+let db = AppDatabase(
+    path: databaseURL,
+    adapters: AppDatabaseAdapters(
+        sqlValueToStatus: { value in TaskStatus(rawValue: value) },
+        statusToSqlValue: { status in status.rawValue }
+    )
 )
 ```
 {% endif %}
