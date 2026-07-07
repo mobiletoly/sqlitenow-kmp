@@ -124,7 +124,9 @@ internal data class DirtyUploadState(
 
 internal class DirtyStateRejectedException(
     private val dirtyCount: Int,
-) : RuntimeException("cannot pull while $dirtyCount local dirty rows exist")
+) : RuntimeException("cannot pull while $dirtyCount local dirty rows exist"), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
 
 internal fun DirtyRowCapture.toVerboseSummary(): String {
     return "table=$tableName op=$op key=$wireKey baseRowVersion=$baseRowVersion " +

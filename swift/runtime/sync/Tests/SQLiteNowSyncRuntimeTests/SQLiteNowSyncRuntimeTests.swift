@@ -57,7 +57,16 @@ final class SQLiteNowSyncRuntimeTests: XCTestCase {
             _ = try await client.syncStatus()
             XCTFail("Expected syncStatus() to require attach")
         } catch {
-            XCTAssertTrue(String(describing: error).lowercased().contains("attach"))
+            guard let runtimeError = Self.syncRuntimeException(from: error) else {
+                let nsError = error as NSError
+                XCTFail("Expected SQLiteNowSyncRuntimeException payload, got \(type(of: error)): \(nsError)")
+                client.close()
+                try await core.close()
+                return
+            }
+            XCTAssertEqual(runtimeError.payload.category, "state")
+            XCTAssertFalse(runtimeError.payload.code.isEmpty)
+            XCTAssertFalse(runtimeError.payload.message.isEmpty)
         }
 
         client.close()
@@ -113,5 +122,12 @@ final class SQLiteNowSyncRuntimeTests: XCTestCase {
     private func temporaryDatabaseURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("sqlitenow-sync-runtime-smoke-\(UUID().uuidString).db")
+    }
+
+    private static func syncRuntimeException(from error: Error) -> SQLiteNowSyncRuntimeException? {
+        if let runtimeError = error as? SQLiteNowSyncRuntimeException {
+            return runtimeError
+        }
+        return (error as NSError).userInfo["K" + "otlinException"] as? SQLiteNowSyncRuntimeException
     }
 }

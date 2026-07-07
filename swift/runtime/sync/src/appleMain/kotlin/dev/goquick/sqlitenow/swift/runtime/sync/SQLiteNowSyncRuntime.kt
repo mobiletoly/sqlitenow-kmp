@@ -23,6 +23,7 @@ import dev.goquick.sqlitenow.oversqlite.DefaultOversqliteClient
 import dev.goquick.sqlitenow.oversqlite.DetachOutcome
 import dev.goquick.sqlitenow.oversqlite.MergeResult
 import dev.goquick.sqlitenow.oversqlite.OversqliteAutomaticDownloadConfig
+import dev.goquick.sqlitenow.oversqlite.OversqliteCategorizedException
 import dev.goquick.sqlitenow.oversqlite.OversqliteConfig
 import dev.goquick.sqlitenow.oversqlite.OversqliteProgress
 import dev.goquick.sqlitenow.oversqlite.PendingSyncStatus
@@ -546,15 +547,12 @@ private fun <T> Result<T>.runtimeGet(): T =
 
 private fun syncErrorPayload(error: Throwable): SQLiteNowSyncRuntimeErrorPayload {
     val message = error.message ?: error.toString()
-    val code = error::class.simpleName ?: "Throwable"
-    val lowerCode = code.lowercase()
-    val lowerMessage = message.lowercase()
+    val cancellationCause = error.firstCauseMatching { it is KotlinCancellationException }
+    val categorizedCause = error.firstCauseMatching { it is OversqliteCategorizedException }
+    val code = (cancellationCause ?: categorizedCause)?.let { it::class.simpleName } ?: (error::class.simpleName ?: "Throwable")
     val category = when {
-        lowerCode.contains("cancel") || lowerMessage.contains("cancel") -> "cancelled"
-        lowerCode.contains("auth") || lowerMessage.contains("unauthorized") || lowerMessage.contains("forbidden") -> "auth"
-        lowerCode.contains("conflict") || lowerMessage.contains("conflict") -> "conflict"
-        lowerCode.contains("network") || lowerCode.contains("http") || lowerMessage.contains("connect") -> "network"
-        lowerCode.contains("state") || lowerMessage.contains("open") || lowerMessage.contains("attach") -> "state"
+        cancellationCause != null -> "cancelled"
+        categorizedCause is OversqliteCategorizedException -> categorizedCause.category.payloadCategory
         else -> "unknown"
     }
     return SQLiteNowSyncRuntimeErrorPayload(
@@ -562,4 +560,13 @@ private fun syncErrorPayload(error: Throwable): SQLiteNowSyncRuntimeErrorPayload
         code = code,
         message = message,
     )
+}
+
+private inline fun Throwable.firstCauseMatching(predicate: (Throwable) -> Boolean): Throwable? {
+    var current: Throwable? = this
+    while (current != null) {
+        if (predicate(current)) return current
+        current = current.cause
+    }
+    return null
 }

@@ -25,7 +25,7 @@ internal class SwiftOverlayEmitter(
     private val databaseName: String,
     private val config: SqliteNowSwiftExportConfig,
     private val context: GeneratorContext,
-    private val model: SwiftLegacyExportModel,
+    private val model: SwiftKmpExportModel,
     private val swiftOversqliteEnabled: Boolean,
 ) {
 
@@ -57,6 +57,9 @@ internal class SwiftOverlayEmitter(
             line("case cancelled(underlying: Error?)")
             line("case adapter(message: String, underlying: Error?)")
             line("case observation(message: String, underlying: Error?)")
+            if (swiftOversqliteEnabled) {
+                line("case sync(message: String, underlying: Error?)")
+            }
             line("case unknown(message: String, underlying: Error?)")
             line()
             line("public var description: String {")
@@ -68,6 +71,9 @@ internal class SwiftOverlayEmitter(
                 line("case .cancelled: return \"Operation cancelled\"")
                 line("case let .adapter(message, _): return message")
                 line("case let .observation(message, _): return message")
+                if (swiftOversqliteEnabled) {
+                    line("case let .sync(message, _): return message")
+                }
                 line("case let .unknown(message, _): return message")
                 line("}")
             }
@@ -80,34 +86,38 @@ internal class SwiftOverlayEmitter(
                     line("return sqliteNowError")
                 }
                 line("}")
-                line("let message = String(describing: error)")
-                line("let lowercased = message.lowercased()")
-                line("if lowercased.contains(\"cancellationexception\") || lowercased.contains(\"cancelled\") {")
+                line("if let overlayError = error as? ${databaseName}SwiftOverlayException {")
+                indent {
+                    line("return from(overlayError.payload, underlying: error)")
+                }
+                line("}")
+                line("if let overlayError = (error as NSError).userInfo[\"K\" + \"otlinException\"] as? ${databaseName}SwiftOverlayException {")
+                indent {
+                    line("return from(overlayError.payload, underlying: error)")
+                }
+                line("}")
+                line("if error is CancellationError {")
                 indent {
                     line("return .cancelled(underlying: error)")
                 }
                 line("}")
-                line("if lowercased.contains(\"adapter failed\") {")
-                indent {
-                    line("return .adapter(message: message, underlying: error)")
+                line("return .unknown(message: String(describing: error), underlying: error)")
+            }
+            line("}")
+            line()
+            line("fileprivate static func from(_ payload: ${databaseName}SwiftOverlayErrorPayload, underlying: Error?) -> SQLiteNowError {")
+            indent {
+                line("switch payload.category {")
+                line("case \"sqlite\": return .sqlite(message: payload.message, underlying: underlying)")
+                line("case \"migration\": return .migration(message: payload.message, underlying: underlying)")
+                line("case \"misuse\", \"state\": return .misuse(message: payload.message, underlying: underlying)")
+                line("case \"cancelled\": return .cancelled(underlying: underlying)")
+                line("case \"adapter\": return .adapter(message: payload.message, underlying: underlying)")
+                if (swiftOversqliteEnabled) {
+                    line("case \"network\", \"auth\", \"conflict\": return .sync(message: payload.message, underlying: underlying)")
                 }
+                line("default: return .unknown(message: payload.message, underlying: underlying)")
                 line("}")
-                line("if lowercased.contains(\"migration\") {")
-                indent {
-                    line("return .migration(message: message, underlying: error)")
-                }
-                line("}")
-                line("if lowercased.contains(\"sqlite\") || lowercased.contains(\"constraint\") {")
-                indent {
-                    line("return .sqlite(message: message, underlying: error)")
-                }
-                line("}")
-                line("if lowercased.contains(\"illegalstateexception\") || lowercased.contains(\"misuse\") {")
-                indent {
-                    line("return .misuse(message: message, underlying: error)")
-                }
-                line("}")
-                line("return .unknown(message: message, underlying: error)")
             }
             line("}")
         }
@@ -833,8 +843,7 @@ internal class SwiftOverlayEmitter(
                         line("},")
                         line("onError: { failure in")
                         indent {
-                            line("let message = failure.message ?? \"Sync progress observation failed\"")
-                            line("continuation.finish(throwing: SQLiteNowError.observation(message: message, underlying: nil))")
+                            line("continuation.finish(throwing: SQLiteNowError.from(failure, underlying: nil))")
                         }
                         line("},")
                         line("onComplete: {")
@@ -867,8 +876,7 @@ internal class SwiftOverlayEmitter(
                     line("config: config.bridgeConfig,")
                     line("onError: { failure in")
                     indent {
-                        line("let message = failure.message ?? \"Automatic downloads failed\"")
-                        line("onError(.unknown(message: message, underlying: nil))")
+                        line("onError(SQLiteNowError.from(failure, underlying: nil))")
                     }
                     line("}")
                 }
@@ -1325,7 +1333,7 @@ internal class SwiftOverlayEmitter(
     private fun SwiftWriter.emitSwiftStreams() {
         line("private func sqliteNowStream<BridgeRow, Row: Sendable>(")
         indent {
-            line("observe: (@escaping ([BridgeRow]) -> Void, @escaping (${databaseName}BridgeError) -> Void) -> ${databaseName}Observation,")
+            line("observe: (@escaping ([BridgeRow]) -> Void, @escaping (${databaseName}SwiftOverlayErrorPayload) -> Void) -> ${databaseName}Observation,")
             line("map: @escaping (BridgeRow) -> Row")
         }
         line(") -> AsyncThrowingStream<[Row], Error> {")
@@ -1341,8 +1349,7 @@ internal class SwiftOverlayEmitter(
                     line("},")
                     line("{ failure in")
                     indent {
-                        line("let message = failure.message ?? \"Observation failed\"")
-                        line("continuation.finish(throwing: SQLiteNowError.observation(message: message, underlying: nil))")
+                        line("continuation.finish(throwing: SQLiteNowError.from(failure, underlying: nil))")
                     }
                     line("}")
                 }
@@ -1360,7 +1367,7 @@ internal class SwiftOverlayEmitter(
     }
 
 
-    private fun parameterDescriptors(statement: AnnotatedStatement): List<SwiftLegacyParameter> =
+    private fun parameterDescriptors(statement: AnnotatedStatement): List<SwiftKmpParameter> =
         model.parameterDescriptors(statement)
 
     private fun adapterDescriptors(): List<SwiftAdapterDescriptor> =
@@ -1368,7 +1375,7 @@ internal class SwiftOverlayEmitter(
 
     private fun namespaces(): List<String> = model.namespaces()
 
-    private fun resultStatements(): List<SwiftLegacyResult> = model.resultStatements()
+    private fun resultStatements(): List<SwiftKmpResult> = model.resultStatements()
 
     private fun statements(): List<Pair<String, AnnotatedStatement>> = model.statements()
 

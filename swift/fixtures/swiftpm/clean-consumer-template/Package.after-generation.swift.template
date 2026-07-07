@@ -22,8 +22,16 @@ let package = Package(
                     package: "CleanConsumerCoreDatabaseSQLiteNow"
                 ),
                 .product(
+                    name: "SQLiteNowCoreSupport",
+                    package: "sqlitenow-kmp"
+                ),
+                .product(
                     name: "CleanConsumerSyncDatabaseSQLiteNow",
                     package: "CleanConsumerSyncDatabaseSQLiteNow"
+                ),
+                .product(
+                    name: "SQLiteNowSyncSupport",
+                    package: "sqlitenow-kmp"
                 ),
             ]
         ),

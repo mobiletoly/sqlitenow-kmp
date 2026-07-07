@@ -24,7 +24,9 @@ class ConnectLifecycleUnsupportedException(
     } else {
         "server does not support the oversqlite connect lifecycle: $reason"
     }
-)
+), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
 
 /** Thrown when a database already attached to one user is asked to attach as another user. */
 class ConnectBindingConflictException(
@@ -33,50 +35,66 @@ class ConnectBindingConflictException(
 ) : RuntimeException(
     "local database is already attached to user \"$attachedUserId\"; detach before " +
         "attaching user \"$requestedUserId\""
-)
+), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
 
 /** Thrown when local lifecycle state is incompatible with the requested attach flow. */
 class ConnectLocalStateConflictException(
     val reason: String,
 ) : RuntimeException(
     "local sync state is incompatible with the requested attach lifecycle: $reason"
-)
+), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
 
 /** Thrown when a pending remote-authoritative replacement must be completed by [OversqliteClient.attach]. */
 class RemoteReplacePendingException(
     val targetUserId: String,
 ) : RuntimeException(
     "remote-authoritative replacement for user \"$targetUserId\" is pending and must be finalized by attach(userId)"
-)
+), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
 
 /** Thrown while a destructive local lifecycle transition is still in progress. */
 class DestructiveTransitionInProgressException(
     val transitionKind: String,
 ) : RuntimeException(
     "destructive local lifecycle transition \"$transitionKind\" is in progress"
-)
+), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
 
 /** Thrown when a lifecycle-aware sync operation is called before [OversqliteClient.open]. */
 class OpenRequiredException(
     val operation: String,
-) : RuntimeException("open() must be called before $operation")
+) : RuntimeException("open() must be called before $operation"), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
 
 /** Thrown when a lifecycle-aware sync operation is called before [OversqliteClient.attach]. */
 class ConnectRequiredException(
     val operation: String,
-) : RuntimeException("attach(userId) must complete successfully before $operation")
+) : RuntimeException("attach(userId) must complete successfully before $operation"), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
 
 /** Thrown when the client must rebuild from snapshot before it can continue syncing. */
 class RebuildRequiredException : RuntimeException(
     "client rebuild is required; run rebuild() before syncing"
-)
+), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
 
 /** Thrown when the current source stream is blocked and recovery requires internal source rotation. */
 class SourceRecoveryRequiredException(
     val reason: SourceRecoveryReason,
 ) : RuntimeException(
     "source recovery is required ($reason); run rebuild() before syncing",
-)
+), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
 
 /** Thrown when local and server replacement-source state disagree. */
 class SourceReplacementDivergedException(
@@ -85,31 +103,41 @@ class SourceReplacementDivergedException(
 ) : RuntimeException(
     "replacement source diverged between local and server recovery state: " +
         "local=\"$localReplacementSourceId\" remote=\"$remoteReplacementSourceId\"",
-)
+), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
 
 /** Thrown when the server rejects a rotated replacement request as invalid. */
 class SourceReplacementInvalidException(
     message: String,
-) : RuntimeException(message)
+) : RuntimeException(message), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
 
 /** Thrown when the same client instance is already running another sync operation. */
 class SyncOperationInProgressException : RuntimeException(
     "another sync operation is already in progress for this client"
-)
+), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
 
 /** Thrown when rebuild/recovery is attempted while staged outbound push replay is still pending. */
 class PendingPushReplayException(
     val outboundCount: Int,
 ) : RuntimeException(
     "cannot rebuild while $outboundCount staged push rows are pending authoritative replay"
-)
+), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
 
 /** Thrown when a configured conflict resolver returns a structurally invalid decision. */
 class InvalidConflictResolutionException(
     val conflict: ConflictContext,
     val result: MergeResult,
     message: String,
-) : RuntimeException(message)
+) : RuntimeException(message), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.CONFLICT
+}
 
 /** Thrown after automatic push-conflict retries are exhausted. */
 class PushConflictRetryExhaustedException(
@@ -118,26 +146,34 @@ class PushConflictRetryExhaustedException(
 ) : RuntimeException(
     "push conflict auto-retry exhausted after $retryCount retries; " +
         "$remainingDirtyCount dirty rows remain replayable"
-)
+), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.CONFLICT
+}
 
 /** Thrown when [OversqliteClient.detach] is blocked by unsynced attached rows. */
 class SignOutBlockedException(
     val pendingRowCount: Long,
 ) : RuntimeException(
     "cannot detach while $pendingRowCount attached sync rows are pending upload"
-)
+), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
 
 /** Thrown when a previously granted initialization lease is stale or expired. */
 class InitializationLeaseInvalidException(
     val reasonCode: String,
 ) : RuntimeException(
     "initialization lease is no longer valid: $reasonCode; call attach(userId) again"
-)
+), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
 
 /** Thrown when a reused source bundle sequence cannot be proven to match server history. */
 class SourceSequenceMismatchException(
     message: String,
-) : RuntimeException(message)
+) : RuntimeException(message), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
 
 /** Returns `true` when [error] represents normal local sync-operation contention. */
 fun isExpectedSyncContention(error: Throwable?): Boolean {

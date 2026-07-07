@@ -61,17 +61,34 @@ internal class SwiftProductSupportEmitter(
                     line("return sqliteNowError")
                 }
                 line("}")
-                line("let message = String(describing: error)")
-                line("let lowercased = message.lowercased()")
-                line("if lowercased.contains(\"adapter\") { return .adapter(message: message) }")
-                line("if lowercased.contains(\"cancel\") { return .cancelled(message: message) }")
-                line("if lowercased.contains(\"migration\") { return .migration(message: message) }")
-                if (syncEnabled) {
-                    line("if lowercased.contains(\"sync\") || lowercased.contains(\"oversqlite\") || lowercased.contains(\"network\") || lowercased.contains(\"auth\") { return .sync(message: message) }")
+                line("if let runtimeError = error as? SQLiteNowCoreRuntimeException {")
+                indent {
+                    line("return from(runtimeError.payload)")
                 }
-                line("if lowercased.contains(\"sqlite\") || lowercased.contains(\"constraint\") { return .sqlite(message: message) }")
-                line("if lowercased.contains(\"illegalstate\") || lowercased.contains(\"open\") { return .misuse(message: message) }")
-                line("return .unknown(message: message)")
+                line("}")
+                line("if let runtimeError = (error as NSError).userInfo[\"K\" + \"otlinException\"] as? SQLiteNowCoreRuntimeException {")
+                indent {
+                    line("return from(runtimeError.payload)")
+                }
+                line("}")
+                if (syncEnabled) {
+                    line("if let runtimeError = error as? SQLiteNowSyncRuntimeException {")
+                    indent {
+                        line("return from(runtimeError.payload)")
+                    }
+                    line("}")
+                    line("if let runtimeError = (error as NSError).userInfo[\"K\" + \"otlinException\"] as? SQLiteNowSyncRuntimeException {")
+                    indent {
+                        line("return from(runtimeError.payload)")
+                    }
+                    line("}")
+                }
+                line("if error is CancellationError {")
+                indent {
+                    line("return .cancelled(message: String(describing: error))")
+                }
+                line("}")
+                line("return .unknown(message: String(describing: error))")
             }
             line("}")
             line()

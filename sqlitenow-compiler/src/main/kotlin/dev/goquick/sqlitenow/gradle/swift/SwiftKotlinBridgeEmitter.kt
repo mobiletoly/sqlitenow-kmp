@@ -28,7 +28,7 @@ internal class SwiftKotlinBridgeEmitter(
     private val oversqlite: Boolean,
     private val context: GeneratorContext,
     private val plan: SwiftGenerationPlan,
-    private val model: SwiftLegacyExportModel,
+    private val model: SwiftKmpExportModel,
 ) {
     private val swiftOversqliteEnabled: Boolean
         get() = oversqlite && context.createTableStatements.any { it.annotations.enableSync }
@@ -67,6 +67,7 @@ internal class SwiftKotlinBridgeEmitter(
                 line("import dev.goquick.sqlitenow.oversqlite.AttachResult")
                 line("import dev.goquick.sqlitenow.oversqlite.BundleChangeWatchMode")
                 line("import dev.goquick.sqlitenow.oversqlite.DetachOutcome")
+                line("import dev.goquick.sqlitenow.oversqlite.OversqliteCategorizedException")
                 line("import dev.goquick.sqlitenow.oversqlite.OversqliteProgress")
                 line("import dev.goquick.sqlitenow.oversqlite.PendingSyncStatus")
                 line("import dev.goquick.sqlitenow.oversqlite.PushReport")
@@ -88,11 +89,10 @@ internal class SwiftKotlinBridgeEmitter(
                 line("import kotlinx.serialization.json.Json")
             }
             line("import dev.goquick.sqlitenow.core.SelectRunners")
+            line("import dev.goquick.sqlitenow.core.sqlite.SqliteException")
             line("import kotlin.Suppress")
             line("import kotlin.Throwable")
-            if (selectStatements().isNotEmpty() || swiftOversqliteEnabled) {
-                line("import kotlinx.coroutines.CancellationException")
-            }
+            line("import kotlinx.coroutines.CancellationException")
             line("import kotlinx.coroutines.CoroutineScope")
             line("import kotlinx.coroutines.Dispatchers")
             line("import kotlinx.coroutines.Job")
@@ -115,12 +115,19 @@ internal class SwiftKotlinBridgeEmitter(
         }.toString()
 
     private fun SwiftWriter.emitBridgeErrorTypes() {
-        line("public class ${databaseName}BridgeError(")
+        line("public class ${databaseName}SwiftOverlayErrorPayload(")
         indent {
-            line("public val type: String,")
-            line("public val message: String?,")
+            line("public val category: String,")
+            line("public val code: String,")
+            line("public val message: String,")
         }
         line(")")
+        line()
+        line("public class ${databaseName}SwiftOverlayException(")
+        indent {
+            line("public val payload: ${databaseName}SwiftOverlayErrorPayload,")
+        }
+        line(") : RuntimeException(payload.message)")
         line()
         line("public class ${databaseName}Observation internal constructor(")
         indent {
@@ -136,15 +143,88 @@ internal class SwiftKotlinBridgeEmitter(
         }
         line("}")
         line()
-        line("private fun Throwable.toBridgeError(): ${databaseName}BridgeError =")
+        line("private suspend inline fun <T> mapSwiftOverlayErrors(")
         indent {
-            line("${databaseName}BridgeError(")
+            line("preferredCategory: String? = null,")
+            line("crossinline block: suspend () -> T,")
+        }
+        line("): T {")
+        indent {
+            line("try {")
             indent {
-                line("type = this::class.simpleName ?: \"Throwable\",")
+                line("return block()")
+            }
+            line("} catch (error: ${databaseName}SwiftOverlayException) {")
+            indent {
+                line("throw error")
+            }
+            line("} catch (error: CancellationException) {")
+            indent {
+                line("throw error")
+            }
+            line("} catch (error: Throwable) {")
+            indent {
+                line("throw ${databaseName}SwiftOverlayException(error.toSwiftOverlayPayload(preferredCategory))")
+            }
+            line("}")
+        }
+        line("}")
+        line()
+        line("private fun Throwable.toSwiftOverlayPayload(preferredCategory: String? = null): ${databaseName}SwiftOverlayErrorPayload {")
+        indent {
+            line("val category = swiftOverlayErrorCategory(preferredCategory)")
+            line("val sqliteCause = firstCauseMatching { it is SqliteException }")
+            if (swiftOversqliteEnabled) {
+                line("val oversqliteCause = firstCauseMatching { it is OversqliteCategorizedException }")
+            }
+            line("return ${databaseName}SwiftOverlayErrorPayload(")
+            indent {
+                line("category = category,")
+                if (swiftOversqliteEnabled) {
+                    line(
+                        "code = sqliteCause?.let { it::class.simpleName } " +
+                            "?: oversqliteCause?.let { it::class.simpleName } " +
+                            "?: (this::class.simpleName ?: category),"
+                    )
+                } else {
+                    line("code = sqliteCause?.let { it::class.simpleName } ?: (this::class.simpleName ?: category),")
+                }
                 line("message = message ?: toString(),")
             }
             line(")")
         }
+        line()
+        line("private fun Throwable.swiftOverlayErrorCategory(preferredCategory: String?): String {")
+        indent {
+            line("if (containsCause { it is CancellationException }) return \"cancelled\"")
+            line("if (containsCause { it is IllegalStateException || it is IllegalArgumentException || it is NoSuchElementException }) return \"misuse\"")
+            line("if (containsCause { it is SqliteException }) return preferredCategory ?: \"sqlite\"")
+            if (swiftOversqliteEnabled) {
+                line("val oversqliteCause = firstCauseMatching { it is OversqliteCategorizedException }")
+                line("if (oversqliteCause is OversqliteCategorizedException) return oversqliteCause.category.payloadCategory")
+            }
+            line("if (preferredCategory != null) return preferredCategory")
+            line("return \"unknown\"")
+        }
+        line("}")
+        line()
+        line("private inline fun Throwable.containsCause(predicate: (Throwable) -> Boolean): Boolean =")
+        indent {
+            line("firstCauseMatching(predicate) != null")
+        }
+        line()
+        line("private inline fun Throwable.firstCauseMatching(predicate: (Throwable) -> Boolean): Throwable? {")
+        indent {
+            line("var current: Throwable? = this")
+            line("while (current != null) {")
+            indent {
+                line("if (predicate(current)) return current")
+                line("current = current.cause")
+            }
+            line("}")
+            line("return null")
+        }
+        line("}")
         line()
     }
 
@@ -449,7 +529,17 @@ internal class SwiftKotlinBridgeEmitter(
                 indent {
                     line("failureMessage?.let { message ->")
                     indent {
-                        line("throw IllegalStateException(\"Adapter failed: \$message\")")
+                        line("throw ${databaseName}SwiftOverlayException(")
+                        indent {
+                            line("${databaseName}SwiftOverlayErrorPayload(")
+                            indent {
+                                line("category = \"adapter\",")
+                                line("code = \"AdapterFailure\",")
+                                line("message = \"Adapter failed: \$message\",")
+                            }
+                            line(")")
+                        }
+                        line(")")
                     }
                     line("}")
                     line("@Suppress(\"UNCHECKED_CAST\")")
@@ -512,25 +602,25 @@ internal class SwiftKotlinBridgeEmitter(
                 line("@Throws(Exception::class)")
                 line("public suspend fun list(): List<$bridgeResultName> =")
                 indent {
-                    line("runners.asList().map { it.to$bridgeResultName() }")
+                    line("mapSwiftOverlayErrors { runners.asList().map { it.to$bridgeResultName() } }")
                 }
                 line()
                 line("@Throws(Exception::class)")
                 line("public suspend fun one(): $bridgeResultName =")
                 indent {
-                    line("runners.asOne().to$bridgeResultName()")
+                    line("mapSwiftOverlayErrors { runners.asOne().to$bridgeResultName() }")
                 }
                 line()
                 line("@Throws(Exception::class)")
                 line("public suspend fun oneOrNull(): $bridgeResultName? =")
                 indent {
-                    line("runners.asOneOrNull()?.to$bridgeResultName()")
+                    line("mapSwiftOverlayErrors { runners.asOneOrNull()?.to$bridgeResultName() }")
                 }
                 line()
                 line("public fun observe(")
                 indent {
                     line("onRows: (List<$bridgeResultName>) -> Unit,")
-                    line("onError: (${databaseName}BridgeError) -> Unit,")
+                    line("onError: (${databaseName}SwiftOverlayErrorPayload) -> Unit,")
                 }
                 line("): ${databaseName}Observation {")
                 indent {
@@ -547,7 +637,7 @@ internal class SwiftKotlinBridgeEmitter(
                         line("} catch (error: Throwable) {")
                         indent {
                             line("if (error is CancellationException) throw error")
-                            line("onError(error.toBridgeError())")
+                            line("onError(error.toSwiftOverlayPayload())")
                         }
                         line("}")
                     }
@@ -577,19 +667,19 @@ internal class SwiftKotlinBridgeEmitter(
                 line("@Throws(Exception::class)")
                 line("public suspend fun list(): List<$bridgeResultName> =")
                 indent {
-                    line("listBlock().map { it.to$bridgeResultName() }")
+                    line("mapSwiftOverlayErrors { listBlock().map { it.to$bridgeResultName() } }")
                 }
                 line()
                 line("@Throws(Exception::class)")
                 line("public suspend fun one(): $bridgeResultName =")
                 indent {
-                    line("oneBlock().to$bridgeResultName()")
+                    line("mapSwiftOverlayErrors { oneBlock().to$bridgeResultName() }")
                 }
                 line()
                 line("@Throws(Exception::class)")
                 line("public suspend fun oneOrNull(): $bridgeResultName? =")
                 indent {
-                    line("oneOrNullBlock()?.to$bridgeResultName()")
+                    line("mapSwiftOverlayErrors { oneOrNullBlock()?.to$bridgeResultName() }")
                 }
             }
             line("}")
@@ -683,15 +773,23 @@ internal class SwiftKotlinBridgeEmitter(
             line("@Throws(Exception::class)")
             line("public suspend fun open() {")
             indent {
-                line("database.open()")
+                line("mapSwiftOverlayErrors(preferredCategory = \"migration\") {")
+                indent {
+                    line("database.open()")
+                }
+                line("}")
             }
             line("}")
             line()
             line("@Throws(Exception::class)")
             line("public suspend fun close() {")
             indent {
-                line("observationScope.coroutineContext.cancelChildren()")
-                line("database.close()")
+                line("mapSwiftOverlayErrors {")
+                indent {
+                    line("observationScope.coroutineContext.cancelChildren()")
+                    line("database.close()")
+                }
+                line("}")
             }
             line("}")
             line()
@@ -755,11 +853,15 @@ internal class SwiftKotlinBridgeEmitter(
                 line("public suspend fun $methodName($argument) {")
                 indent {
                     val router = "database.${namespace.swiftNamespacePropertyName()}.${statement.kotlinRouterPropertyName()}"
-                    if (params.isEmpty()) {
-                        line("$router()")
-                    } else {
-                        line("$router(params.toGeneratedParams())")
+                    line("mapSwiftOverlayErrors {")
+                    indent {
+                        if (params.isEmpty()) {
+                            line("$router()")
+                        } else {
+                            line("$router(params.toGeneratedParams())")
+                        }
                     }
+                    line("}")
                 }
                 line("}")
                 line()
@@ -767,11 +869,15 @@ internal class SwiftKotlinBridgeEmitter(
             line("@Throws(Exception::class)")
             line("public suspend fun transaction(batch: ${databaseName}MutationBatch) {")
             indent {
-                line("database.transaction {")
+                line("mapSwiftOverlayErrors {")
                 indent {
-                    line("batch.operations.forEach { operation ->")
+                    line("database.transaction {")
                     indent {
-                        line("operation(database)")
+                        line("batch.operations.forEach { operation ->")
+                        indent {
+                            line("operation(database)")
+                        }
+                        line("}")
                     }
                     line("}")
                 }
@@ -912,68 +1018,68 @@ internal class SwiftKotlinBridgeEmitter(
             line("@Throws(Exception::class)")
             line("public suspend fun open() {")
             indent {
-                line("client.open().getOrThrow()")
+                line("mapSwiftOverlayErrors { client.open().getOrThrow() }")
             }
             line("}")
             line()
             line("@Throws(Exception::class)")
             line("public suspend fun attach(userId: String): ${databaseName}AttachResultBridge =")
             indent {
-                line("client.attach(userId).getOrThrow().to${databaseName}AttachResultBridge()")
+                line("mapSwiftOverlayErrors { client.attach(userId).getOrThrow().to${databaseName}AttachResultBridge() }")
             }
             line()
             line("@Throws(Exception::class)")
             line("public suspend fun sourceInfo(): ${databaseName}SourceInfoBridge =")
             indent {
-                line("client.sourceInfo().getOrThrow().to${databaseName}SourceInfoBridge()")
+                line("mapSwiftOverlayErrors { client.sourceInfo().getOrThrow().to${databaseName}SourceInfoBridge() }")
             }
             line()
             line("@Throws(Exception::class)")
             line("public suspend fun syncStatus(): ${databaseName}SyncStatusBridge =")
             indent {
-                line("client.syncStatus().getOrThrow().to${databaseName}SyncStatusBridge()")
+                line("mapSwiftOverlayErrors { client.syncStatus().getOrThrow().to${databaseName}SyncStatusBridge() }")
             }
             line()
             line("@Throws(Exception::class)")
             line("public suspend fun detach(): ${databaseName}DetachOutcomeBridge =")
             indent {
-                line("client.detach().getOrThrow().to${databaseName}DetachOutcomeBridge()")
+                line("mapSwiftOverlayErrors { client.detach().getOrThrow().to${databaseName}DetachOutcomeBridge() }")
             }
             line()
             line("@Throws(Exception::class)")
             line("public suspend fun pushPending(): ${databaseName}PushReportBridge =")
             indent {
-                line("client.pushPending().getOrThrow().to${databaseName}PushReportBridge()")
+                line("mapSwiftOverlayErrors { client.pushPending().getOrThrow().to${databaseName}PushReportBridge() }")
             }
             line()
             line("@Throws(Exception::class)")
             line("public suspend fun pullToStable(): ${databaseName}RemoteSyncReportBridge =")
             indent {
-                line("client.pullToStable().getOrThrow().to${databaseName}RemoteSyncReportBridge()")
+                line("mapSwiftOverlayErrors { client.pullToStable().getOrThrow().to${databaseName}RemoteSyncReportBridge() }")
             }
             line()
             line("@Throws(Exception::class)")
             line("public suspend fun sync(): ${databaseName}SyncReportBridge =")
             indent {
-                line("client.sync().getOrThrow().to${databaseName}SyncReportBridge()")
+                line("mapSwiftOverlayErrors { client.sync().getOrThrow().to${databaseName}SyncReportBridge() }")
             }
             line()
             line("@Throws(Exception::class)")
             line("public suspend fun syncThenDetach(): ${databaseName}SyncThenDetachResultBridge =")
             indent {
-                line("client.syncThenDetach().getOrThrow().to${databaseName}SyncThenDetachResultBridge()")
+                line("mapSwiftOverlayErrors { client.syncThenDetach().getOrThrow().to${databaseName}SyncThenDetachResultBridge() }")
             }
             line()
             line("@Throws(Exception::class)")
             line("public suspend fun rebuild(): ${databaseName}RemoteSyncReportBridge =")
             indent {
-                line("client.rebuild().getOrThrow().to${databaseName}RemoteSyncReportBridge()")
+                line("mapSwiftOverlayErrors { client.rebuild().getOrThrow().to${databaseName}RemoteSyncReportBridge() }")
             }
             line()
             line("public fun observeProgress(")
             indent {
                 line("onProgress: (${databaseName}ProgressBridge) -> Unit,")
-                line("onError: (${databaseName}BridgeError) -> Unit,")
+                line("onError: (${databaseName}SwiftOverlayErrorPayload) -> Unit,")
                 line("onComplete: () -> Unit,")
             }
             line("): ${databaseName}Observation {")
@@ -997,7 +1103,7 @@ internal class SwiftKotlinBridgeEmitter(
                             line("throw error")
                         }
                         line("}")
-                        line("onError(error.toBridgeError())")
+                        line("onError(error.toSwiftOverlayPayload())")
                     }
                     line("}")
                 }
@@ -1009,7 +1115,7 @@ internal class SwiftKotlinBridgeEmitter(
             line("public fun startAutomaticDownloads(")
             indent {
                 line("config: ${databaseName}AutomaticDownloadConfigBridge,")
-                line("onError: (${databaseName}BridgeError) -> Unit,")
+                line("onError: (${databaseName}SwiftOverlayErrorPayload) -> Unit,")
             }
             line("): ${databaseName}Observation {")
             indent {
@@ -1022,7 +1128,7 @@ internal class SwiftKotlinBridgeEmitter(
                     line("} catch (error: Throwable) {")
                     indent {
                         line("if (error is CancellationException) throw error")
-                        line("onError(error.toBridgeError())")
+                        line("onError(error.toSwiftOverlayPayload())")
                     }
                     line("}")
                 }
@@ -1083,7 +1189,7 @@ internal class SwiftKotlinBridgeEmitter(
     private val generatedAdapterProviders
         get() = model.generatedAdapterProviders
 
-    private fun parameterDescriptors(statement: AnnotatedStatement): List<SwiftLegacyParameter> =
+    private fun parameterDescriptors(statement: AnnotatedStatement): List<SwiftKmpParameter> =
         model.parameterDescriptors(statement)
 
     private fun adapterDescriptors(): List<SwiftAdapterDescriptor> =
@@ -1091,7 +1197,7 @@ internal class SwiftKotlinBridgeEmitter(
 
     private fun namespaces(): List<String> = model.namespaces()
 
-    private fun resultStatements(): List<SwiftLegacyResult> = model.resultStatements()
+    private fun resultStatements(): List<SwiftKmpResult> = model.resultStatements()
 
     private fun statements(): List<Pair<String, AnnotatedStatement>> = model.statements()
 

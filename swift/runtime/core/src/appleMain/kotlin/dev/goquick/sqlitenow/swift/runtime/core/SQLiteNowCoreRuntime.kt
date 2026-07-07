@@ -21,6 +21,7 @@ import dev.goquick.sqlitenow.core.DatabaseMigrations
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.SqliteNowDatabase
 import dev.goquick.sqlitenow.core.TransactionMode
+import dev.goquick.sqlitenow.core.sqlite.SqliteException
 import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
 import dev.goquick.sqlitenow.core.sqlite.use
 import kotlinx.cinterop.addressOf
@@ -358,25 +359,36 @@ private class RuntimeMigrationPlan(
     private val plan: SQLiteNowCoreRuntimeMigrationPlan,
 ) : DatabaseMigrations {
     override suspend fun applyMigration(conn: SafeSQLiteConnection, currentVersion: Int): Int {
-        return conn.withExclusiveAccess {
-            val latestVersion = plan.latestVersion.toInt()
-            if (currentVersion == -1) {
-                plan.schemaSql.forEach { conn.execSQL(it) }
-                plan.initSql.forEach { conn.execSQL(it) }
-                return@withExclusiveAccess latestVersion
-            }
-
-            plan.migrationSteps
-                .sortedBy { it.version }
-                .filter { currentVersion < it.version }
-                .forEach { step ->
-                    step.sql.forEach { conn.execSQL(it) }
+        try {
+            return conn.withExclusiveAccess {
+                val latestVersion = plan.latestVersion.toInt()
+                if (currentVersion == -1) {
+                    plan.schemaSql.forEach { conn.execSQL(it) }
+                    plan.initSql.forEach { conn.execSQL(it) }
+                    return@withExclusiveAccess latestVersion
                 }
 
-            maxOf(currentVersion, latestVersion)
+                plan.migrationSteps
+                    .sortedBy { it.version }
+                    .filter { currentVersion < it.version }
+                    .forEach { step ->
+                        step.sql.forEach { conn.execSQL(it) }
+                    }
+
+                maxOf(currentVersion, latestVersion)
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            throw SQLiteNowCoreMigrationException(error.message ?: error.toString(), error)
         }
     }
 }
+
+private class SQLiteNowCoreMigrationException(
+    message: String,
+    cause: Throwable,
+) : RuntimeException(message, cause)
 
 private fun List<SQLiteNowCoreRuntimeBindValue>.bindAll(statement: SqliteStatement) {
     forEachIndexed { index, value ->
@@ -464,19 +476,39 @@ private inline fun <T> mapRuntimeErrors(block: () -> T): T {
 
 private fun errorPayload(t: Throwable): SQLiteNowCoreRuntimeErrorPayload {
     val message = t.message ?: t.toString()
-    val lower = message.lowercase()
     val category = when {
-        lower.contains("migration") -> "migration"
-        lower.contains("sqlite") || lower.contains("constraint") -> "sqlite"
-        lower.contains("cancel") -> "cancelled"
-        lower.contains("illegalstate") || lower.contains("open") -> "misuse"
+        t.containsCause<SQLiteNowCoreMigrationException>() -> "migration"
+        t.containsCause<SqliteException>() -> "sqlite"
+        t.containsCause<CancellationException>() -> "cancelled"
+        t.containsCause<IllegalStateException>() ||
+            t.containsCause<IllegalArgumentException>() ||
+            t.containsCause<NoSuchElementException>() -> "misuse"
         else -> "unknown"
     }
     return SQLiteNowCoreRuntimeErrorPayload(
         category = category,
-        code = t::class.simpleName ?: category,
+        code = t.firstCauseMatching { cause ->
+            cause is SQLiteNowCoreMigrationException ||
+                cause is SqliteException ||
+                cause is CancellationException ||
+                cause is IllegalStateException ||
+                cause is IllegalArgumentException ||
+                cause is NoSuchElementException
+        }?.let { it::class.simpleName } ?: (t::class.simpleName ?: category),
         message = message,
     )
+}
+
+private inline fun <reified T : Throwable> Throwable.containsCause(): Boolean =
+    firstCauseMatching { it is T } != null
+
+private inline fun Throwable.firstCauseMatching(predicate: (Throwable) -> Boolean): Throwable? {
+    var current: Throwable? = this
+    while (current != null) {
+        if (predicate(current)) return current
+        current = current.cause
+    }
+    return null
 }
 
 private fun NSData.toByteArray(): ByteArray {

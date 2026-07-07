@@ -28,17 +28,22 @@ public enum SQLiteNowError: Error, CustomStringConvertible, Equatable {
         if let sqliteNowError = error as? SQLiteNowError {
             return sqliteNowError
         }
-        let message = String(describing: error)
-        let lowercased = message.lowercased()
-        if lowercased.contains("adapter") { return .adapter(message: message) }
-        if lowercased.contains("cancel") { return .cancelled(message: message) }
-        if lowercased.contains("migration") { return .migration(message: message) }
-        if lowercased.contains("sync") || lowercased.contains("oversqlite") || lowercased.contains("network") || lowercased.contains("auth") {
-            return .sync(message: message)
+        if let runtimeError = error as? SQLiteNowCoreRuntimeException {
+            return from(runtimeError.payload)
         }
-        if lowercased.contains("sqlite") || lowercased.contains("constraint") { return .sqlite(message: message) }
-        if lowercased.contains("illegalstate") || lowercased.contains("open") { return .misuse(message: message) }
-        return .unknown(message: message)
+        if let runtimeError = (error as NSError).userInfo["K" + "otlinException"] as? SQLiteNowCoreRuntimeException {
+            return from(runtimeError.payload)
+        }
+        if let runtimeError = error as? SQLiteNowSyncRuntimeException {
+            return from(runtimeError.payload)
+        }
+        if let runtimeError = (error as NSError).userInfo["K" + "otlinException"] as? SQLiteNowSyncRuntimeException {
+            return from(runtimeError.payload)
+        }
+        if error is CancellationError {
+            return .cancelled(message: String(describing: error))
+        }
+        return .unknown(message: String(describing: error))
     }
 
     public static func from(_ payload: SQLiteNowCoreRuntimeErrorPayload) -> SQLiteNowError {

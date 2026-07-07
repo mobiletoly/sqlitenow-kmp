@@ -24,17 +24,33 @@ open class UploadHttpException(
     val status: HttpStatusCode,
     val rawBody: String,
     cause: Throwable? = null,
-) : RuntimeException("Upload failed: HTTP $status - $rawBody", cause)
+) : RuntimeException("Upload failed: HTTP $status - $rawBody", cause), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory
+        get() = if (status.value in AUTH_HTTP_STATUSES) {
+            OversqliteErrorCategory.AUTH
+        } else {
+            OversqliteErrorCategory.NETWORK
+        }
+}
 
 open class DownloadHttpException(
     val status: HttpStatusCode,
     val rawBody: String,
     cause: Throwable? = null,
-) : RuntimeException("Download failed: HTTP $status - $rawBody", cause)
+) : RuntimeException("Download failed: HTTP $status - $rawBody", cause), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory
+        get() = if (status.value in AUTH_HTTP_STATUSES) {
+            OversqliteErrorCategory.AUTH
+        } else {
+            OversqliteErrorCategory.NETWORK
+        }
+}
 
 class HistoryPrunedException(
     message: String,
-) : RuntimeException(message)
+) : RuntimeException(message), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.NETWORK
+}
 
 class CommittedReplayPrunedException(
     rawBody: String,
@@ -51,7 +67,14 @@ class SourceReplacementInvalidHttpException(
     val status: HttpStatusCode,
     val rawBody: String,
     val errorMessage: String,
-) : RuntimeException("Snapshot session request failed: HTTP $status - $errorMessage")
+) : RuntimeException("Snapshot session request failed: HTTP $status - $errorMessage"), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory
+        get() = if (status.value in AUTH_HTTP_STATUSES) {
+            OversqliteErrorCategory.AUTH
+        } else {
+            OversqliteErrorCategory.NETWORK
+        }
+}
 
 class CommittedBundleNotFoundException(
     rawBody: String,
@@ -61,9 +84,13 @@ class PushConflictException(
     rawBody: String,
     val response: PushConflictResponse,
 ) : UploadHttpException(HttpStatusCode.Conflict, rawBody) {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.CONFLICT
+
     val conflict: PushConflictDetails
         get() = response.conflict ?: error("push conflict response is missing conflict details")
 }
+
+private val AUTH_HTTP_STATUSES = setOf(401, 403)
 
 internal fun DownloadHttpException.toHistoryPrunedOrNull(): HistoryPrunedException? {
     val error = decodeErrorResponseOrNull(

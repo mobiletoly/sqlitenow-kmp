@@ -35,7 +35,7 @@ internal class SwiftCodeGenerator(
 ) {
     private val context = dataStructCodeGenerator.generatorContext
     private val plan = SwiftGenerationPlan(context, dataStructCodeGenerator)
-    private val model = SwiftLegacyExportModel(context, plan)
+    private val model = SwiftKmpExportModel(context, plan)
     private val swiftOversqliteEnabled: Boolean
         get() = oversqlite && context.createTableStatements.any { it.annotations.enableSync }
 

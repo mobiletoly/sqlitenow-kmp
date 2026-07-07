@@ -6,214 +6,54 @@
 [![License](https://img.shields.io/github/license/mobiletoly/sqlitenow-kmp?logo=apache&label=License)](LICENSE)
 
 **If SQLiteNow saves you time, please consider starring ⭐ the repository - it helps
-more KMP and Flutter/Dart developers find it.**
+more KMP, Flutter/Dart, and Swift developers find it.**
 
-SQLiteNow is SQL-first tooling for type-safe SQLite access in Kotlin Multiplatform,
-Flutter/Dart, and native Swift apps through a supported local package workflow.
-Write schema, migration, and query
-files in SQL, then generate platform-native code with typed parameters, typed
-results, migrations, transactions, and reactive invalidation.
-
-Kotlin Multiplatform apps use the `dev.goquick.sqlitenow` Gradle plugin and KMP
-runtime libraries.
-
-Flutter and Dart apps use `sqlitenow_runtime` plus `sqlitenow_cli`. You might see a
-little documentation bias toward KMP at first, because originally project was started
-as KMP-only, but eventually it will have a full docs parity.
-
-Native Swift support currently uses local generated Swift packages on Apple
-platforms. Core Swift apps can keep SQL in a Swift/Xcode repository, run the
-`sqlitenow-generate` SwiftPM command plugin, and import the generated package
-product. The generator still requires Java 17 or newer, and published runtime
-binary artifacts, a Swift-native generator/runtime, and a public `SWIFT`
-compiler backend are not released yet. Native Swift runtime artifacts are
-arm64-only: `macosArm64`, `iosArm64`, and `iosSimulatorArm64`.
-
-**Sync-Ready**: SQLiteNow includes Oversqlite, a synchronization system for
-multi-device applications with conflict resolution and offline-first behavior.
-
-## Overview
-
-SQLiteNow generates code from your SQL files, giving you full control over your
-queries while maintaining type safety. Unlike SQLDelight (for KMP), which supports
-multiple database engines, SQLiteNow is focused exclusively on SQLite, allowing
-for deeper integration and SQLite-specific optimizations.
+SQLiteNow is SQL-first tooling for type-safe SQLite access in Kotlin
+Multiplatform and Flutter/Dart apps, plus native Swift apps through a local
+generated-package workflow. Write schema, migration, and query files in SQL,
+then generate platform-native code with typed parameters, typed results,
+migrations, transactions, and reactive invalidation.
 
 Full documentation is available at https://mobiletoly.github.io/sqlitenow-kmp/.
 
-## First Run
+## Contents
 
-### Native Swift Local Package
+- [Why SQLiteNow](#why-sqlitenow)
+- [Choose Your Platform](#choose-your-platform)
+- [SQL-First Example](#sql-first-example)
+- [Quick Start](#quick-start)
+- [Multi-Device Synchronization](#multi-device-synchronization-optional)
+- [Components](#components)
+- [Documentation](#documentation)
 
-SQLiteNow can generate a local SwiftPM package containing a Swift-facing core
-database API plus a reusable SQLiteNow runtime XCFramework.
+## Why SQLiteNow
 
-In a Swift package, add the SQLiteNow generator package, configure
-`SQLiteNow.json`, and run:
+SQLiteNow keeps SQL as the source of truth while still giving application code a
+typed API. It is focused exclusively on SQLite instead of abstracting over
+multiple database engines, which leaves room for SQLite-specific behavior,
+annotations, migrations, and sync-aware generated code.
 
-```shell
-swift package plugin --allow-writing-to-package-directory sqlitenow-generate
-```
+The main goals are:
 
-The default generated package path is:
-
-```text
-SQLiteNowGenerated/<swiftPackageName>
-```
-
-The default SQL input path for each database is:
-
-```text
-SQLiteNow/databases/<databaseName>
-```
-
-When launching the command plugin from a nested Xcode project, pass
-`--package-root <Swift package root>` explicitly. `--config` changes only the
-config file path; default SQL and generated output paths still resolve from the
-package root.
-
-Swift app code imports the generated Swift product:
-
-```swift
-import AppDatabaseSQLiteNow
-
-let db = AppDatabase(path: databaseURL)
-try await db.open()
-let people = try await db.person.selectAll().list()
-```
-
-Start here: https://mobiletoly.github.io/sqlitenow-kmp/swift/
-
-### Kotlin Multiplatform
-
-Replace `X.Y.Z` with the latest SQLiteNow release version.
-
-```toml
-[plugins]
-sqlitenow = { id = "dev.goquick.sqlitenow", version = "X.Y.Z" }
-
-[libraries]
-sqlitenow-core = { module = "dev.goquick.sqlitenow:core", version = "X.Y.Z" }
-```
-
-```kotlin
-sqliteNow {
-    databases {
-        create("SampleDatabase") {
-            packageName.set("com.example.app.db")
-        }
-    }
-}
-```
-
-Start here: https://mobiletoly.github.io/sqlitenow-kmp/kmp/
-
-While we have added includes few sample projects to this repository, but for a very simple
-end-to-end walkthrough, follow the [Mood Tracker tutorial series](https://mobiletoly.github.io/sqlitenow-kmp/tutorials/) and browse the
-accompanying [sample project](https://github.com/mobiletoly/moodtracker-sample-kmp).
-
-### Flutter/Dart
-
-Replace `X.Y.Z` with the latest SQLiteNow release version.
-
-```yaml
-dependencies:
-  sqlitenow_runtime: ^X.Y.Z
-
-dev_dependencies:
-  sqlitenow_cli: ^X.Y.Z
-```
-
-```shell
-flutter pub run sqlitenow_cli generate
-```
-
-For pure Dart packages, use:
-
-```shell
-dart run sqlitenow_cli generate
-```
-
-The released Dart CLI package embeds the SQLiteNow compiler jar. Flutter and
-Dart users do not pass `--compiler-jar` for normal consumption.
-
-Start here: https://mobiletoly.github.io/sqlitenow-kmp/flutter/
-
-## Key Features
-
-### Supported Platforms
-- Android (Kotlin/JVM via AndroidX bundled SQLite driver)
-- iOS (Kotlin/Native with bundled SQLite)
-- macOS native (`macosArm64`) with bundled SQLite
-- Linux native (`linuxX64`, `linuxArm64`) with bundled SQLite
-- JVM desktop/server targets
-- JavaScript (browser) via SQL.js with optional IndexedDB persistence
-- Kotlin/Wasm (browser) using the same SQL.js runtime with automatic OPFS or IndexedDB persistence
-- Flutter native runtimes through Dart VM and `package:sqlite3`
-- Native Swift local package support on Apple platforms through a generated
-  SwiftPM package with reusable arm64 runtime XCFramework artifacts
-
-### Type-Safe SQL Generation
-
-- **Pure SQL Control** - Write your queries in SQL files, get type-safe generated code
-- **Comment-based Annotations** - Control code generation using simple `-- @@{ annotations }`
-  comments in your SQL.
-- **No IDE Plugin Required** - Works with any editor
-- **Multiple Consumption Paths** - Flutter/Dart packages use the Dart CLI; KMP apps use the Gradle plugin
-- **SQLite Focused** - Optimized specifically for SQLite features and capabilities
-- **Migration support** - Migration scripts are supported to manage database schema changes
-
-### Optional Multi-Device Synchronization
-
-- **Built-in Sync System** - Complete synchronization solution for multi-device applications
-- **Conflict Resolution** - Automatic conflict resolution with pluggable strategies (Server Wins,
-  Client Wins, etc.)
-- **Change Tracking** - Automatic tracking of INSERT, UPDATE, DELETE operations
-- **Offline-First** - Works seamlessly offline, syncs when connection is available
-- **JWT Authentication** - Secure sync with customizable authentication via HttpClient
-- **Incremental Sync** - Efficient sync with pagination and change-based updates
+- **Pure SQL control** - Write normal `.sql` files for schema, migrations, and
+  queries.
+- **Type-safe generated APIs** - Get typed parameters, typed result models,
+  transactions, migrations, and reactive invalidation.
+- **No IDE plugin requirement** - Use any editor and regular SQL tooling.
+- **SQLite-specific generation** - Optimize for SQLite features instead of a
+  lowest-common-denominator SQL dialect.
+- **Domain-shaped results** - Use comment-based annotations such as
+  `-- @@{ queryResult=... }`, `dynamicField`, and `mapTo` to shape generated
+  models.
+- **Optional sync** - Use SQLiteNow without synchronization, or add Oversqlite
+  when an offline-first multi-device app needs it.
 
 
-## Components
+## SQL-First Example
 
-Client-side framework components:
-- **SQLiteNow Generator** - The code generation component of the SQLiteNow framework that
-  generates type-safe Kotlin, Dart, or native Swift package code from SQL files.
-- **SQLiteNow Library** - The core library that provides convenient APIs for database access.
-- **OverSqlite** - The sync component of the SQLiteNow framework that enables seamless data
-  sharing across multiple devices with automatic conflict resolution, change tracking, and
-  offline-first capabilities.
+SQLiteNow can shape generated result models directly from SQL annotations:
 
-Server-side components:
-- **OverSync** - Sync server that provides an adapter library for data synchronization.
-  Currently we have **go-oversync** implementation in Go with PostgreSQL as data store.
-  Visit this link for more information: https://github.com/mobiletoly/go-oversync
-
-**It is important to mention** that you can use SQLiteNow Generator and SQLiteNow Library without
-using OverSqlite for synchronization. And vice versa - you can use OverSqlite for synchronization
-of SQLite database with PostgreSQL without using SQLiteNow Generator and SQLiteNow Library.
-
-
-## Why SQLiteNow exists if SQLDelight is really awesome
-
-Even if you don't care about multi-device synchronization, SQLiteNow has few key differences
-from SQLDelight:
-
-First of all, I wanted to target specifically SQLite in Kotlin Multiplatform and Dart environments,
-these are my platform of choice as of now for mobile development.
-
-Second, since we use comment-based annotations, no plugin is required (like in case of SQLDelight),
-so you can easily use just a regular SQL files that will be validated by your IDE or other external
-tools for correctness.
-
-Third, I wanted to have a more flexible and extensible code generation system that can be easily
-extended and customized. I use hexagonal architecture in my code, but sometimes converting between
-multiple layers is tiresome, so I wanted to have a way to generate code that will be very close
-to my domain layer, without sacrificing the ability to write pure SQL queries.
-
-Here is the brief example:
-
-```sqlite
+```sql
 -- @@{ queryResult=PersonWithAddresses }
 SELECT p.id,
        p.first_name,
@@ -240,23 +80,190 @@ ORDER BY p.id, a.address_type
 LIMIT :limit OFFSET :offset
 ```
 
-This will generate **PersonWithAddresses** data class. This class has `addresses: List<Address>`
-property that contains all home addresses for the person. Another class
-**PersonQuery.SelectAllWithAddresses.Params** will be generated as well with `limit` and `offset`
-parameters to pass parameters to the query.
+This generates a `PersonWithAddresses` result model with
+`addresses: List<Address>` plus typed query parameters for `limit` and `offset`.
+Adapters can convert between SQLite values and domain types, and `mapTo` can
+shape data further when the generated model should match application-layer
+types.
 
-And you can define your own adapters to convert between SQLite and your domain types
-and register them for seamless integration. We provide few built-in adapters as well,
-such as converting from TEXT to Kotlin's date/time etc.
+Full examples are available in [`/sample-kmp`](./sample-kmp) for KMP,
+[`/dart/examples`](./dart/examples) for Dart/Flutter, and
+[`/swift/samples/core`](./swift/samples/core) for native Swift.
 
-You can always shape your data even more with `mapTo` annotation.
 
-Full example is available in the [`/sample-kmp`](./sample-kmp) directory (for KMP) and
-in [`/dart/examples`] for Dart/Flutter.
+## Choose Your Platform
+
+| Platform                   | Use this when                                                               | Status                                                                | Start here                                                                |
+|----------------------------|-----------------------------------------------------------------------------|-----------------------------------------------------------------------|---------------------------------------------------------------------------|
+| Kotlin Multiplatform       | You are building shared Kotlin apps for Android, iOS, desktop, JS, or Wasm. | Released Gradle plugin and KMP runtime libraries                      | [KMP guide](https://mobiletoly.github.io/sqlitenow-kmp/kmp/)              |
+| Flutter/Dart               | You are building Flutter apps or pure Dart packages.                        | Released Dart runtime and CLI packages                                | [Flutter/Dart guide](https://mobiletoly.github.io/sqlitenow-kmp/flutter/) |
+| Native Swift local package | You want Swift/Xcode code to consume a generated local SwiftPM package.     | Local generated package workflow; release artifacts still in progress | [Swift guide](https://mobiletoly.github.io/sqlitenow-kmp/swift/)          |
+
+Supported target details:
+
+- Kotlin Multiplatform: Android, iOS, `macosArm64`, `linuxX64`, `linuxArm64`,
+  JVM desktop/server, JavaScript browser, and Kotlin/Wasm browser.
+- Flutter/Dart: Flutter native runtimes through Dart VM and `package:sqlite3`,
+  plus pure Dart packages through the Dart runtime.
+- Native Swift local package: Apple platforms through generated SwiftPM
+  packages with reusable arm64 runtime XCFramework artifacts.
+- JavaScript uses SQL.js with optional IndexedDB persistence. Kotlin/Wasm uses
+  the same SQL.js runtime with automatic OPFS or IndexedDB persistence.
+
+Native Swift support currently uses local generated Swift packages on Apple
+platforms. Core Swift apps can keep SQL in a Swift/Xcode repository, run the
+`sqlitenow-generate` SwiftPM command plugin, and import the generated package
+product. The generator still requires Java 17 or newer, and published runtime
+binary artifacts, a Swift-native generator/runtime, and a public `SWIFT`
+compiler backend are not released yet. Native Swift runtime artifacts are
+arm64-only: `macosArm64`, `iosArm64`, and `iosSimulatorArm64`.
+
+
+## Quick Start
+
+Each platform has a complete setup guide. The short version is the same across
+all runtimes: keep SQL in your app repository, configure one or more databases,
+run the generator, and use the generated API from application code.
+
+### Kotlin Multiplatform
+
+Full setup: [KMP getting started](https://mobiletoly.github.io/sqlitenow-kmp/getting-started/)
+
+KMP apps use the `dev.goquick.sqlitenow` Gradle plugin and the
+`dev.goquick.sqlitenow:core` runtime dependency. Configure one or more
+databases in Gradle:
+
+```kotlin
+sqliteNow {
+    databases {
+        create("SampleDatabase") {
+            packageName.set("com.example.app.db")
+        }
+    }
+}
+```
+
+Place SQL files under the matching database directory:
+
+```text
+src/commonMain/sql/SampleDatabase/
+  schema/
+  queries/
+  init/
+  migration/
+```
+
+Generate the database API with the task created from the database name:
+
+```shell
+./gradlew :composeApp:generateSampleDatabase
+```
+
+Replace `:composeApp` with your KMP module path and `SampleDatabase` with your
+database name. Generated Kotlin is written under `build/generated/sqlitenow/code`
+and is wired into `commonMain` by the Gradle plugin. Treat that directory as
+generated output: edit SQL/configuration and rerun the task instead of
+hand-editing the generated files.
+
+For a complete app walkthrough, follow the
+[Mood Tracker tutorial series](https://mobiletoly.github.io/sqlitenow-kmp/tutorials/)
+and browse the
+[sample project](https://github.com/mobiletoly/moodtracker-sample-kmp).
+
+### Flutter/Dart
+
+Full setup: [Flutter/Dart getting started](https://mobiletoly.github.io/sqlitenow-kmp/flutter/getting-started/)
+
+Flutter and Dart apps use `sqlitenow_runtime` plus `sqlitenow_cli`:
+
+```yaml
+dependencies:
+  sqlitenow_runtime: ^X.Y.Z
+
+dev_dependencies:
+  sqlitenow_cli: ^X.Y.Z
+```
+
+Configure generation in `sqlitenow.yaml`:
+
+```yaml
+databases:
+  AppDatabase:
+    input: lib/db/sql/AppDatabase
+    output: lib/db/generated
+    package: app.db
+    runtime: dart
+```
+
+Generate Dart code:
+
+```shell
+flutter pub run sqlitenow_cli generate
+```
+
+For pure Dart packages, use:
+
+```shell
+dart run sqlitenow_cli generate
+```
+
+Generated Dart is written to the configured `output` directory, such as
+`lib/db/generated/app_database.dart`. Edit SQL/configuration and regenerate
+instead of hand-editing generated Dart.
+
+### Native Swift Local Package
+
+Full setup: [Swift getting started](https://mobiletoly.github.io/sqlitenow-kmp/swift/getting-started/)
+
+Swift apps add the released SQLiteNow SwiftPM package to the Swift package that
+owns the SQL files, then configure generation with `SQLiteNow.json`:
+
+```json
+{
+  "schemaVersion": 1,
+  "databases": [
+    {
+      "databaseName": "AppDatabase",
+      "swiftPackageName": "AppDatabaseSQLiteNow",
+      "swiftTargetName": "AppDatabaseSQLiteNow",
+      "runtime": "core"
+    }
+  ]
+}
+```
+
+By default, SQL is read from:
+
+```text
+SQLiteNow/databases/AppDatabase/
+```
+
+Generate the local Swift package from the Swift package root:
+
+```shell
+swift package plugin --allow-writing-to-package-directory sqlitenow-generate
+```
+
+By default, the generated package is written to:
+
+```text
+SQLiteNowGenerated/AppDatabaseSQLiteNow
+```
+
+Add that generated directory as a local SwiftPM dependency, link the generated
+product to the app target, and import it from Swift:
+
+```swift
+import AppDatabaseSQLiteNow
+```
+
+Treat `SQLiteNowGenerated/` as generated output. Change SQL or
+`SQLiteNow.json`, then rerun `sqlitenow-generate`.
 
 ## Multi-Device Synchronization (optional)
 
-SQLiteNow includes a complete synchronization system for building multi-device applications.
+SQLiteNow includes Oversqlite, an optional synchronization system for
+multi-device applications with conflict resolution and offline-first behavior.
 Sync setup requires three explicit pieces on each client:
 
 - the SQLiteNow runtime package
@@ -264,6 +271,7 @@ Sync setup requires three explicit pieces on each client:
 - generated database configuration with Oversqlite enabled
 
 The sync system automatically handles:
+
 - **Change tracking** for all sync-enabled tables
 - **Conflict resolution** for concurrent writes across devices
 - **Incremental sync** to minimize bandwidth usage
@@ -353,7 +361,6 @@ automaticDownloads.cancelAndJoin()
 
 KMP sync example: [`/samplesync-kmp`](./samplesync-kmp).
 
-
 ### Flutter/Dart
 
 Add the Dart runtime packages and enable Oversqlite in `sqlitenow.yaml`.
@@ -381,6 +388,7 @@ databases:
 Then use the generated sync client in your application:
 
 ```dart
+
 final httpClient = IoOversqliteHttpClient(
   baseUri: Uri.parse('https://api.myapp.com'),
   defaultHeaders: {
@@ -393,9 +401,13 @@ final syncClient = db.newOversqliteClient(
   httpClient: httpClient,
 );
 
-await syncClient.open();
-await syncClient.attach('user123');
-await syncClient.sync();
+await
+syncClient.open
+();await
+syncClient.attach
+('user123
+'
+);await syncClient.sync();
 
 // Optional: start default-off automatic downloads.
 // Bundle-change watch is only a wake-up hint; pullToStable() remains authoritative.
@@ -403,8 +415,31 @@ final automaticDownloads = syncClient.startAutomaticDownloads();
 await automaticDownloads.stop();
 ```
 
-Dart sync package and realserver coverage: [`/dart/packages/sqlitenow_oversqlite`](./dart/packages/sqlitenow_oversqlite).
+Dart sync package and realserver coverage: [
+`/dart/packages/sqlitenow_oversqlite`](./dart/packages/sqlitenow_oversqlite).
+
+## Components
+
+Client-side framework components:
+
+- **SQLiteNow Generator** - Generates type-safe Kotlin, Dart, or native Swift
+  package code from SQL files.
+- **SQLiteNow Library** - Provides runtime APIs for database access,
+  transactions, migrations, and reactive invalidation.
+- **Oversqlite** - Adds synchronization for SQLite databases with conflict
+  resolution, change tracking, and offline-first behavior.
+
+Server-side component:
+
+- **OverSync** - Sync server adapter library for data synchronization. The
+  current implementation is
+  [go-oversync](https://github.com/mobiletoly/go-oversync), written in Go with
+  PostgreSQL as the server-side data store.
+
+SQLiteNow Generator and SQLiteNow Library can be used without Oversqlite.
+Oversqlite can also synchronize a SQLite database with PostgreSQL without using
+SQLiteNow code generation.
 
 ## Documentation
 
-Full documentation is available in the https://mobiletoly.github.io/sqlitenow-kmp/
+Full documentation is available at https://mobiletoly.github.io/sqlitenow-kmp/.

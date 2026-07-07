@@ -25,16 +25,16 @@ import dev.goquick.sqlitenow.gradle.processing.ReturningColumnsResolver
 import dev.goquick.sqlitenow.gradle.util.SqliteTypeToKotlinCodeConverter
 import dev.goquick.sqlitenow.gradle.util.pascalize
 
-internal class SwiftLegacyExportModel(
+internal class SwiftKmpExportModel(
     private val context: GeneratorContext,
     private val plan: SwiftGenerationPlan,
 ) {
     val generatedAdapterProviders: Map<String, List<UniqueAdapter>>
         get() = plan.generatedAdapterProviders
 
-    fun parameterDescriptors(statement: AnnotatedStatement): List<SwiftLegacyParameter> =
+    fun parameterDescriptors(statement: AnnotatedStatement): List<SwiftKmpParameter> =
         plan.baseParameters(statement).map { base ->
-            SwiftLegacyParameter(
+            SwiftKmpParameter(
                 propertyName = base.propertyName,
                 swiftType = base.swiftType,
                 bridgeKotlinType = base.bridgeKotlinType,
@@ -45,15 +45,15 @@ internal class SwiftLegacyExportModel(
 
     fun namespaces(): List<String> = plan.namespaces
 
-    fun resultStatements(): List<SwiftLegacyResult> {
-        val results = linkedMapOf<String, SwiftLegacyResult>()
+    fun resultStatements(): List<SwiftKmpResult> {
+        val results = linkedMapOf<String, SwiftKmpResult>()
         selectStatements().forEach { (_, statement) ->
             val name = resultClassName(statement)
-            results.putIfAbsent(name, SwiftLegacyResult(name = name, fields = resultFields(statement)))
+            results.putIfAbsent(name, SwiftKmpResult(name = name, fields = resultFields(statement)))
         }
         executeReturningStatements().forEach { (_, statement) ->
             val name = resultClassName(statement)
-            results.putIfAbsent(name, SwiftLegacyResult(name = name, fields = returningFields(statement)))
+            results.putIfAbsent(name, SwiftKmpResult(name = name, fields = returningFields(statement)))
         }
         return results.values.toList()
     }
@@ -93,7 +93,7 @@ internal class SwiftLegacyExportModel(
     fun bridgeExecuteReturningQueryClassName(statement: AnnotatedExecuteStatement): String =
         "App${pascalize(namespaceFor(statement))}${statement.getDataClassName()}Query"
 
-    private fun resultFields(statement: AnnotatedSelectStatement): List<SwiftLegacyField> =
+    private fun resultFields(statement: AnnotatedSelectStatement): List<SwiftKmpField> =
         (statement.mappingPlan.regularFields + statement.mappingPlan.includedDynamicFields).map { field ->
             val (propertyName, kotlinType) = context.selectFieldGenerator.generateFieldInfo(
                 field,
@@ -102,7 +102,7 @@ internal class SwiftLegacyExportModel(
             swiftField(propertyName = propertyName, kotlinType = kotlinType.toString())
         }
 
-    private fun returningFields(statement: AnnotatedExecuteStatement): List<SwiftLegacyField> =
+    private fun returningFields(statement: AnnotatedExecuteStatement): List<SwiftKmpField> =
         ReturningColumnsResolver.resolveColumns(context, statement).map { column ->
             val baseType = SqliteTypeToKotlinCodeConverter.mapSqlTypeToKotlinType(column.src.dataType)
             val propertyType = column.annotations[AnnotationConstants.PROPERTY_TYPE] as? String
@@ -116,9 +116,9 @@ internal class SwiftLegacyExportModel(
             swiftField(propertyName = propertyName, kotlinType = kotlinType.toString())
         }
 
-    private fun swiftField(propertyName: String, kotlinType: String): SwiftLegacyField {
+    private fun swiftField(propertyName: String, kotlinType: String): SwiftKmpField {
         val nestedResult = nestedResultReference(kotlinType)
-        return SwiftLegacyField(
+        return SwiftKmpField(
             propertyName = propertyName,
             swiftType = kotlinType.toSwiftTypeName(),
             bridgeKotlinType = nestedResult?.bridgeKotlinType ?: kotlinType.toBridgeKotlinType(),
@@ -126,7 +126,7 @@ internal class SwiftLegacyExportModel(
         )
     }
 
-    private fun nestedResultReference(kotlinType: String): SwiftLegacyNestedResult? {
+    private fun nestedResultReference(kotlinType: String): SwiftKmpNestedResult? {
         val type = kotlinType.removeSuffix("?")
         val nullable = kotlinType.endsWith("?")
         val collectionInner = listOf(
@@ -148,7 +148,7 @@ internal class SwiftLegacyExportModel(
         } else {
             bridgeResultName.withKotlinNullable(nullable)
         }
-        return SwiftLegacyNestedResult(
+        return SwiftKmpNestedResult(
             swiftType = resultName,
             bridgeType = bridgeResultName,
             bridgeKotlinType = bridgeKotlinType,
@@ -161,12 +161,12 @@ internal class SwiftLegacyExportModel(
         plan.resultModelNames()
 }
 
-internal data class SwiftLegacyResult(
+internal data class SwiftKmpResult(
     val name: String,
-    val fields: List<SwiftLegacyField>,
+    val fields: List<SwiftKmpField>,
 )
 
-internal data class SwiftLegacyNestedResult(
+internal data class SwiftKmpNestedResult(
     val swiftType: String,
     val bridgeType: String,
     val bridgeKotlinType: String,
@@ -190,11 +190,11 @@ internal data class SwiftLegacyNestedResult(
         }
 }
 
-internal data class SwiftLegacyField(
+internal data class SwiftKmpField(
     val propertyName: String,
     val swiftType: String,
     val bridgeKotlinType: String,
-    val nestedResult: SwiftLegacyNestedResult? = null,
+    val nestedResult: SwiftKmpNestedResult? = null,
 ) {
     fun bridgeResultExpression(source: String): String =
         nestedResult?.bridgeResultExpression(source) ?: source
@@ -224,7 +224,7 @@ internal data class SwiftLegacyField(
     fun supportsSwiftSendable(): Boolean = swiftType.supportsSwiftSendable()
 }
 
-internal data class SwiftLegacyParameter(
+internal data class SwiftKmpParameter(
     val propertyName: String,
     val swiftType: String,
     val bridgeKotlinType: String,

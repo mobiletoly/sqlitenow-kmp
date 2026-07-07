@@ -83,6 +83,68 @@ final class SQLiteNowCoreRuntimeTests: XCTestCase {
         try await db.close()
     }
 
+    func testRuntimeExceptionPayloadIsReachableFromSwift() async throws {
+        let db = SQLiteNowCoreRuntimeDatabase(
+            path: temporaryDatabaseURL().path,
+            migrationPlan: Self.migrationPlan(),
+            debug: false
+        )
+        try await db.open()
+
+        do {
+            try await db.execute(
+                sql: "INSERT INTO runtime_item (id, title, is_done, payload) VALUES (?, ?, ?, ?)",
+                bindValues: [
+                    SQLiteNowCoreRuntimeBindValue(int64Value: 1),
+                    SQLiteNowCoreRuntimeBindValue(textValue: "duplicate"),
+                    SQLiteNowCoreRuntimeBindValue(boolValue: false),
+                    SQLiteNowCoreRuntimeBindValue(),
+                ],
+                affectedTables: ["runtime_item"]
+            )
+            XCTFail("Expected duplicate primary key insert to throw SQLiteNowCoreRuntimeException")
+        } catch {
+            guard let runtimeError = Self.coreRuntimeException(from: error) else {
+                let nsError = error as NSError
+                XCTFail("Expected SQLiteNowCoreRuntimeException payload, got \(type(of: error)): \(nsError)")
+                try await db.close()
+                return
+            }
+            XCTAssertEqual(runtimeError.payload.category, "sqlite")
+            XCTAssertFalse(runtimeError.payload.code.isEmpty)
+            XCTAssertFalse(runtimeError.payload.message.isEmpty)
+        }
+
+        try await db.close()
+    }
+
+    func testMigrationFailurePayloadIsReachableFromSwift() async throws {
+        let db = SQLiteNowCoreRuntimeDatabase(
+            path: temporaryDatabaseURL().path,
+            migrationPlan: SQLiteNowCoreRuntimeMigrationPlan(
+                latestVersion: 1,
+                schemaSql: ["CREATE TABLE broken_schema ("],
+                initSql: [],
+                migrationSteps: []
+            ),
+            debug: false
+        )
+
+        do {
+            try await db.open()
+            XCTFail("Expected invalid schema migration to throw SQLiteNowCoreRuntimeException")
+        } catch {
+            guard let runtimeError = Self.coreRuntimeException(from: error) else {
+                let nsError = error as NSError
+                XCTFail("Expected SQLiteNowCoreRuntimeException payload, got \(type(of: error)): \(nsError)")
+                return
+            }
+            XCTAssertEqual(runtimeError.payload.category, "migration")
+            XCTAssertFalse(runtimeError.payload.code.isEmpty)
+            XCTAssertFalse(runtimeError.payload.message.isEmpty)
+        }
+    }
+
     private static let columnTypes = ["int64", "text", "bool", "blob"]
 
     private static func migrationPlan() -> SQLiteNowCoreRuntimeMigrationPlan {
@@ -111,6 +173,13 @@ final class SQLiteNowCoreRuntimeTests: XCTestCase {
     private func temporaryDatabaseURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("sqlitenow-core-runtime-smoke-\(UUID().uuidString).db")
+    }
+
+    private static func coreRuntimeException(from error: Error) -> SQLiteNowCoreRuntimeException? {
+        if let runtimeError = error as? SQLiteNowCoreRuntimeException {
+            return runtimeError
+        }
+        return (error as NSError).userInfo["K" + "otlinException"] as? SQLiteNowCoreRuntimeException
     }
 }
 
