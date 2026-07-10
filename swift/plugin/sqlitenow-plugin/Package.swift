@@ -12,10 +12,6 @@ let package = Package(
             name: "SQLiteNowGeneratePlugin",
             targets: ["SQLiteNowGeneratePlugin"]
         ),
-        .executable(
-            name: "sqlite-now-generate",
-            targets: ["SQLiteNowGenerateTool"]
-        ),
     ],
     targets: [
         .target(
