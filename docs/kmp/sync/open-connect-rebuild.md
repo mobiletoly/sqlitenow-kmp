@@ -58,7 +58,9 @@ Important points:
 
 ## `rebuild()`
 
-`rebuild()` is the explicit recovery entry point.
+`rebuild()` is an optional explicit recovery entry point. Ordinary checkpoint recovery is resumed
+automatically by `sync()` and `pullToStable()` after `history_pruned`, `checkpoint_ahead`, or an
+interrupted snapshot. Source-identity recovery remains explicit.
 
 ```kotlin
 val report = client.rebuild().getOrThrow()

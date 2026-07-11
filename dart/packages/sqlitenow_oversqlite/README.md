@@ -114,6 +114,10 @@ with the Oversqlite source identity managed by the local database.
 - `rebuild()` restores the local synchronized state from a server snapshot.
 - `syncThenDetach()` synchronizes and disconnects the current account.
 
+Normal `sync()` and `pullToStable()` automatically recover checkpoints when server history no
+longer matches local state. See the [sync documentation](https://mobiletoly.github.io/sqlitenow-kmp/sync/core-concepts/)
+for recovery behavior and pending-work handling.
+
 Generated SQLiteNow writes are captured automatically. Remote changes applied by Oversqlite also
 invalidate generated reactive queries, so active query streams receive the updated rows.
 

@@ -108,6 +108,18 @@ final class OversqliteDownloadRuntime {
     try {
       return await _pullIncremental(validated: validated, sourceId: sourceId);
     } on HistoryPrunedException {
+      await _clientStateStore.persistCheckpointRecoveryRequiredState(
+        'history_pruned',
+      );
+      return rebuildFromSnapshot(
+        validated: validated,
+        sourceId: sourceId,
+        userId: userId,
+      );
+    } on CheckpointAheadException {
+      await _clientStateStore.persistCheckpointRecoveryRequiredState(
+        'checkpoint_ahead',
+      );
       return rebuildFromSnapshot(
         validated: validated,
         sourceId: sourceId,
@@ -125,6 +137,13 @@ final class OversqliteDownloadRuntime {
     SnapshotRebuildOutboxMode outboxMode = SnapshotRebuildOutboxMode.clearAll,
     bool persistRemoteReplaceOperation = false,
   }) async {
+    if (rotatedSourceId == null &&
+        outboxMode == SnapshotRebuildOutboxMode.clearAll &&
+        !persistRemoteReplaceOperation) {
+      await _clientStateStore.persistCheckpointRecoveryRequiredState(
+        'explicit_rebuild',
+      );
+    }
     await _requireSnapshotRebuildState(outboxMode);
     if (persistRemoteReplaceOperation) {
       final operation = await _clientStateStore.loadOperationState();

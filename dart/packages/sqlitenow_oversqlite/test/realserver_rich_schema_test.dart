@@ -6,6 +6,22 @@ import 'package:test/test.dart';
 import 'generated/rich_real_server_db.dart';
 import 'realserver_support.dart';
 
+final _richSyncTables = [
+  for (final table in RichRealServerDb.syncTables)
+    if (table.tableName == 'typed_rows')
+      const SyncTable(
+        tableName: 'typed_rows',
+        syncKeyColumnName: 'id',
+        numericColumns: {
+          'count_value': NumericColumnKind.exactInt64,
+          'enabled_flag': NumericColumnKind.exactInt64,
+          'rating': NumericColumnKind.approximate,
+        },
+      )
+    else
+      table,
+];
+
 void main() {
   final realserverEnabled = flagEnabled('OVERSQLITE_REALSERVER_TESTS');
   group(
@@ -254,6 +270,7 @@ DefaultOversqliteClient _newGeneratedClient(
   return database.newOversqliteClient(
     schema: 'business',
     httpClient: http,
+    syncTables: _richSyncTables,
     uploadLimit: uploadLimit,
     downloadLimit: downloadLimit,
   );
@@ -264,6 +281,7 @@ Future<String> _bootstrapSource(RichRealServerDb database) async {
     database: database.runtimeDatabase,
     config: database.buildOversqliteConfig(
       schema: 'business',
+      syncTables: _richSyncTables,
       uploadLimit: 8,
       downloadLimit: 8,
     ),

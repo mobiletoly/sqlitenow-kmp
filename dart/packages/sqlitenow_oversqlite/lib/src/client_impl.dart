@@ -89,7 +89,11 @@ final class DefaultOversqliteClient implements OversqliteClient {
           operation.kind == oversqliteOperationKindSourceRecovery,
       sourceRecoveryRequired:
           operation.kind == oversqliteOperationKindSourceRecovery,
-      sourceRecoveryReason: operation.reason.isEmpty ? null : operation.reason,
+      sourceRecoveryReason:
+          operation.kind == oversqliteOperationKindSourceRecovery &&
+              operation.reason.isNotEmpty
+          ? operation.reason
+          : null,
     );
   }
 
@@ -340,7 +344,16 @@ final class DefaultOversqliteClient implements OversqliteClient {
           );
         }
         if (attachment.rebuildRequired) {
-          throw const RebuildRequiredException();
+          final remoteResult = await _executeCheckpointRecovery();
+          if (remoteResult.updatedTables.isNotEmpty) {
+            _runtime.reportManagedTableChanges(remoteResult.updatedTables);
+          }
+          return SyncReport(
+            pushOutcome: PushOutcome.noChange,
+            remoteOutcome: remoteResult.outcome,
+            status: await _syncStatusInternal(),
+            restore: remoteResult.restore,
+          );
         }
         final pushReport = await _executePush(attachment);
         _setProgress(
@@ -378,14 +391,30 @@ final class DefaultOversqliteClient implements OversqliteClient {
         SyncReport? lastReport;
         for (var round = 1; round <= 3; round++) {
           final attachment = await _clientStateStore.loadAttachmentState();
-          final pushReport = await _executePush(attachment);
-          _setProgress(
-            const OversqliteActive(
-              operation: OversqliteOperation.syncThenDetach,
-              phase: OversqlitePhase.pulling,
-            ),
-          );
-          final remoteResult = await _executePullToStable();
+          final operation = await _clientStateStore.loadOperationState();
+          if (operation.kind == oversqliteOperationKindSourceRecovery) {
+            throw SourceRecoveryRequiredException(
+              _sourceRecoveryReasonFromPersisted(operation.reason),
+            );
+          }
+          final PushReport pushReport;
+          final DownloadResult remoteResult;
+          if (attachment.rebuildRequired) {
+            remoteResult = await _executeCheckpointRecovery();
+            pushReport = PushReport(
+              outcome: PushOutcome.noChange,
+              updatedTables: const {},
+            );
+          } else {
+            pushReport = await _executePush(attachment);
+            _setProgress(
+              const OversqliteActive(
+                operation: OversqliteOperation.syncThenDetach,
+                phase: OversqlitePhase.pulling,
+              ),
+            );
+            remoteResult = await _executePullToStable();
+          }
           lastReport = SyncReport(
             pushOutcome: pushReport.outcome,
             remoteOutcome: remoteResult.outcome,
@@ -466,15 +495,16 @@ final class DefaultOversqliteClient implements OversqliteClient {
   }
 
   Future<PushReport> _executePush(
-    OversqliteClientAttachmentState attachment,
-  ) async {
+    OversqliteClientAttachmentState attachment, {
+    bool allowCheckpointRecovery = false,
+  }) async {
     final operation = await _clientStateStore.loadOperationState();
     if (operation.kind == oversqliteOperationKindSourceRecovery) {
       throw SourceRecoveryRequiredException(
         _sourceRecoveryReasonFromPersisted(operation.reason),
       );
     }
-    if (attachment.rebuildRequired) {
+    if (attachment.rebuildRequired && !allowCheckpointRecovery) {
       throw const RebuildRequiredException();
     }
     try {
@@ -497,6 +527,7 @@ final class DefaultOversqliteClient implements OversqliteClient {
       throw SourceRecoveryRequiredException(error.reason);
     } on CommittedReplayPrunedException {
       await _attachmentStore.markRebuildRequired();
+      if (allowCheckpointRecovery) rethrow;
       throw const RebuildRequiredException();
     } on SourceSequenceMismatchException {
       final rows = await _database.connection.select(
@@ -513,6 +544,11 @@ final class DefaultOversqliteClient implements OversqliteClient {
 
   Future<DownloadResult> _executePullToStable() async {
     final attachment = await _clientStateStore.loadAttachmentState();
+    final operation = await _clientStateStore.loadOperationState();
+    if (attachment.rebuildRequired &&
+        operation.kind != oversqliteOperationKindSourceRecovery) {
+      return _executeCheckpointRecovery();
+    }
     final userId = _attachedUserIdOrThrow(attachment, 'pullToStable()');
     try {
       final result =
@@ -535,6 +571,74 @@ final class DefaultOversqliteClient implements OversqliteClient {
       );
       throw SourceRecoveryRequiredException(error.reason);
     }
+  }
+
+  Future<DownloadResult> _executeCheckpointRecovery() async {
+    var dirtyCount = await _clientStateStore.scalarInt(
+      'SELECT COUNT(*) FROM _sync_dirty_rows',
+    );
+    var outboundCount = await _clientStateStore.scalarInt(
+      'SELECT COUNT(*) FROM _sync_outbox_rows',
+    );
+    var replayState = await _clientStateStore.loadOutboxState();
+    if (dirtyCount > 0 || outboundCount > 0) {
+      if (_uploadsPaused) {
+        throw CheckpointRecoveryBlockedException(
+          reason: CheckpointRecoveryBlockedReason.uploadPaused,
+          dirtyCount: dirtyCount,
+          outboundCount: outboundCount,
+          replayState: replayState,
+        );
+      }
+      try {
+        final attachment = await _clientStateStore.loadAttachmentState();
+        await _executePush(attachment, allowCheckpointRecovery: true);
+      } on SourceRecoveryRequiredException {
+        rethrow;
+      } on CommittedReplayPrunedException {
+        return _executeRebuild();
+      } catch (error) {
+        if (error is OversqliteProtocolException) rethrow;
+        if (error is OversqliteHttpException &&
+            (error.statusCode == 401 ||
+                error.statusCode == 403 ||
+                error.statusCode == 408 ||
+                error.statusCode == 429 ||
+                error.statusCode >= 500)) {
+          rethrow;
+        }
+        dirtyCount = await _clientStateStore.scalarInt(
+          'SELECT COUNT(*) FROM _sync_dirty_rows',
+        );
+        outboundCount = await _clientStateStore.scalarInt(
+          'SELECT COUNT(*) FROM _sync_outbox_rows',
+        );
+        replayState = await _clientStateStore.loadOutboxState();
+        throw CheckpointRecoveryBlockedException(
+          reason: CheckpointRecoveryBlockedReason.pushFailed,
+          dirtyCount: dirtyCount,
+          outboundCount: outboundCount,
+          replayState: replayState,
+          cause: error,
+        );
+      }
+      dirtyCount = await _clientStateStore.scalarInt(
+        'SELECT COUNT(*) FROM _sync_dirty_rows',
+      );
+      outboundCount = await _clientStateStore.scalarInt(
+        'SELECT COUNT(*) FROM _sync_outbox_rows',
+      );
+      replayState = await _clientStateStore.loadOutboxState();
+      if (dirtyCount > 0 || outboundCount > 0) {
+        throw CheckpointRecoveryBlockedException(
+          reason: CheckpointRecoveryBlockedReason.pendingWork,
+          dirtyCount: dirtyCount,
+          outboundCount: outboundCount,
+          replayState: replayState,
+        );
+      }
+    }
+    return _executeRebuild();
   }
 
   Future<DownloadResult> _executeRebuild() async {

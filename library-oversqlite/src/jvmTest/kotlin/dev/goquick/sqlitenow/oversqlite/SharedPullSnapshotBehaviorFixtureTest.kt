@@ -56,7 +56,13 @@ class SharedPullSnapshotBehaviorFixtureTest : BundleClientContractTestSupport() 
                     "rebuild" -> client.rebuild().exceptionOrNull()
                     else -> error("${case.name}: unknown action ${step.action}")
                 }
-                assertExpectedException(case.name, step.expectedException, step.expectedErrorContains, error)
+                assertExpectedException(
+                    case.name,
+                    step.expectedException,
+                    step.expectedErrorContains,
+                    step.expectedCheckpointRecoveryBlocked,
+                    error,
+                )
                 step.expectedState?.let { assertState(case.name, db, it, sourceBeforeStep) }
                 step.expectedAppState?.let { assertAppState(case.name, db, it) }
             }
@@ -108,6 +114,13 @@ class SharedPullSnapshotBehaviorFixtureTest : BundleClientContractTestSupport() 
                 ?: error("${case.name}: exhausted snapshot sessions at request ${sessionIndex + 1}")
             sessionIndex++
             respondJson(exchange, 200, session.toString())
+        }
+        createContext("/sync/push-sessions") { exchange ->
+            respondJson(
+                exchange,
+                400,
+                """{"error":"pending_work","message":"fixture keeps checkpoint recovery outbox pending"}""",
+            )
         }
         for ((snapshotId, chunkEntries) in chunks) {
             val chunksByOrdinal = chunkEntries.jsonObject
@@ -235,6 +248,7 @@ class SharedPullSnapshotBehaviorFixtureTest : BundleClientContractTestSupport() 
         caseName: String,
         expected: String,
         expectedMessage: String?,
+        expectedBlocked: ExpectedCheckpointRecoveryBlocked?,
         error: Throwable?,
     ) {
         when (expected) {
@@ -246,6 +260,14 @@ class SharedPullSnapshotBehaviorFixtureTest : BundleClientContractTestSupport() 
                         actual.message?.contains(it) == true,
                         "$caseName: expected error containing '$it' but was '${actual.message}'",
                     )
+                }
+                expectedBlocked?.let {
+                    val blocked = actual as? CheckpointRecoveryBlockedException
+                        ?: error("$caseName: expected CheckpointRecoveryBlockedException but was ${actual::class}")
+                    assertEquals(it.reason, blocked.reason.name.lowercase(), "$caseName: blocker reason")
+                    assertEquals(it.dirtyRowCount, blocked.dirtyCount, "$caseName: blocker dirty rows")
+                    assertEquals(it.outboxRowCount, blocked.outboundCount, "$caseName: blocker outbox rows")
+                    assertEquals(it.replayState, blocked.replayState, "$caseName: blocker replay state")
                 }
             }
             else -> error("$caseName: unknown expected exception $expected")
@@ -289,8 +311,17 @@ class SharedPullSnapshotBehaviorFixtureTest : BundleClientContractTestSupport() 
         val action: String,
         val expectedException: String,
         val expectedErrorContains: String? = null,
+        val expectedCheckpointRecoveryBlocked: ExpectedCheckpointRecoveryBlocked? = null,
         val expectedState: ExpectedPullState? = null,
         val expectedAppState: ExpectedAppState? = null,
+    )
+
+    @Serializable
+    private data class ExpectedCheckpointRecoveryBlocked(
+        val reason: String,
+        val dirtyRowCount: Int,
+        val outboxRowCount: Int,
+        val replayState: String,
     )
 
     @Serializable

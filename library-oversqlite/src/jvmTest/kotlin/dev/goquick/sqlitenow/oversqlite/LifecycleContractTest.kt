@@ -477,7 +477,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
-    fun rebuildRequired_survivesRestart_andResolvesViaExplicitKeepSourceRebuild() = runBlocking {
+    fun rebuildRequired_survivesRestart_andNormalSyncAutomaticallyResumes() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
         val server = newServer().apply {
@@ -553,11 +553,9 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
                 expectedOutcome = AttachOutcome.RESUMED_ATTACHED_STATE,
                 actual = restartedClient.attach("user-1").getOrThrow(),
             )
-            assertTrue(restartedClient.sync().exceptionOrNull() is RebuildRequiredException)
+            val report = restartedClient.sync().getOrThrow()
 
-            val report = restartedClient.rebuild().getOrThrow()
-
-            assertEquals(RemoteSyncOutcome.APPLIED_SNAPSHOT, report.outcome)
+            assertEquals(RemoteSyncOutcome.APPLIED_SNAPSHOT, report.remoteOutcome)
             assertEquals(sourceId, restartedClient.sourceInfo().getOrThrow().currentSourceId)
             assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_attachment_state WHERE singleton_key = 1"))
             assertEquals("none", scalarText(db, "SELECT kind FROM _sync_operation_state WHERE singleton_key = 1"))

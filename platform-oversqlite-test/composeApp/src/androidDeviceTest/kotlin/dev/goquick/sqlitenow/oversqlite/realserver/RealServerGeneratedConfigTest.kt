@@ -100,7 +100,7 @@ class RealServerGeneratedConfigTest {
                 client.openAndAttach(randomUserId()).getOrThrow()
             }.exceptionOrNull()
             assertTrue(error?.message?.contains("TEXT PRIMARY KEY or BLOB PRIMARY KEY") == true)
-            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '_sync_%'"))
         } finally {
             http.close()
             db.close()

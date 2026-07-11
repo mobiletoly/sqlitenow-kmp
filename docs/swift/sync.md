@@ -132,8 +132,9 @@ let report = try await sync.sync()
 print("Pending rows:", report.status.pending.pendingRowCount)
 ```
 
-If `sourceInfo()` reports that rebuild or source recovery is required, call
-`rebuild()` before continuing normal sync.
+If `sourceInfo()` reports checkpoint rebuild is required, normal `sync()` resumes it automatically;
+`rebuild()` remains available as an explicit control. Source recovery still requires explicit
+`rebuild()`.
 
 ## Progress And Automatic Downloads
 

@@ -116,7 +116,13 @@ Replaces local managed state from the authoritative snapshot.
 Oversqlite chooses the internal recovery mode:
 
 - ordinary rebuild-required and pull-side pruning use keep-source rebuild
+- a checkpoint ahead of current server history also uses keep-source rebuild
 - source-recovery-required cases use rebuild-plus-rotate internally
+
+Checkpoint recovery is restart-safe: the rebuild gate is durable before snapshot work begins, and
+normal sync/pull resumes it automatically. Oversqlite first reconciles pending local work. If that
+work cannot be drained safely, `CheckpointRecoveryBlockedException` preserves it and reports an
+actionable reason; snapshot replacement does not begin.
 
 ## Result Types
 
@@ -148,8 +154,14 @@ Oversqlite chooses the internal recovery mode:
 
 ### `RebuildRequiredException`
 
-The client is in a durable rebuild-required state. Ordinary sync is blocked until explicit
-`rebuild()` succeeds.
+The client is in a durable rebuild-required state. Ordinary sync and pull automatically resume
+checkpoint recovery; explicit `rebuild()` remains available.
+
+### `CheckpointRecoveryBlockedException`
+
+Checkpoint recovery found pending offline work it could not safely upload. The exception reports a
+normalized reason and counts; local rows, outbox state, checkpoint, and recovery gate remain
+durable for retry or operator action.
 
 ### `SourceRecoveryRequiredException`
 

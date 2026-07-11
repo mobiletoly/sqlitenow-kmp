@@ -2,6 +2,131 @@
   "formatVersion": 1,
   "cases": [
     {
+      "name": "nullable-text-primary-key-rejected",
+      "description": "A visible TEXT sync key must declare NOT NULL explicitly even when SQLite marks it as the primary key.",
+      "schemaSql": [
+        "CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT NOT NULL)"
+      ],
+      "config": {
+        "schema": "main",
+        "syncTables": [
+          {
+            "tableName": "users",
+            "syncKeyColumnName": "id"
+          }
+        ]
+      },
+      "expectedError": {
+        "kind": "configuration",
+        "messageContains": [
+          "users",
+          "id",
+          "NOT NULL",
+          "repair or recreate the local application database before sync initialization"
+        ]
+      },
+      "expectedQueries": [
+        {
+          "name": "no-runtime-residue",
+          "sql": "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '_sync_%'",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "name": "nullable-blob-primary-key-rejected",
+      "description": "A visible BLOB sync key must also declare NOT NULL explicitly.",
+      "schemaSql": [
+        "CREATE TABLE users (id BLOB PRIMARY KEY, name TEXT NOT NULL)"
+      ],
+      "config": {
+        "schema": "main",
+        "syncTables": [
+          {
+            "tableName": "users",
+            "syncKeyColumnName": "id"
+          }
+        ]
+      },
+      "expectedError": {
+        "kind": "configuration",
+        "messageContains": [
+          "users",
+          "id",
+          "NOT NULL",
+          "repair or recreate the local application database before sync initialization"
+        ]
+      },
+      "expectedQueries": [
+        {
+          "name": "no-runtime-residue",
+          "sql": "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '_sync_%'",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "name": "previously-initialized-nullable-drift-preserves-runtime-state",
+      "description": "A previously initialized database that drifts to a nullable visible key is rejected without rewriting application or Oversqlite runtime state.",
+      "schemaSql": [
+        "CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)"
+      ],
+      "initializeBeforeValidation": true,
+      "beforeValidationSql": [
+        "INSERT INTO users(id, name) VALUES ('keep-user', 'Ada')",
+        "UPDATE _sync_attachment_state SET last_bundle_seq_seen = 17 WHERE singleton_key = 1",
+        "CREATE TABLE users_h3_nullable (id TEXT PRIMARY KEY, name TEXT NOT NULL)",
+        "INSERT INTO users_h3_nullable SELECT id, name FROM users",
+        "DROP TABLE users",
+        "ALTER TABLE users_h3_nullable RENAME TO users"
+      ],
+      "config": {
+        "schema": "main",
+        "syncTables": [
+          {
+            "tableName": "users",
+            "syncKeyColumnName": "id"
+          }
+        ]
+      },
+      "expectedError": {
+        "kind": "configuration",
+        "messageContains": [
+          "users",
+          "id",
+          "NOT NULL",
+          "repair or recreate the local application database before sync initialization"
+        ]
+      },
+      "expectedQueries": [
+        {
+          "name": "application-row-preserved",
+          "sql": "SELECT COUNT(*) FROM users WHERE id = 'keep-user' AND name = 'Ada'",
+          "value": 1
+        },
+        {
+          "name": "managed-table-state-preserved",
+          "sql": "SELECT COUNT(*) FROM _sync_managed_tables WHERE table_name = 'users'",
+          "value": 1
+        },
+        {
+          "name": "dirty-row-state-preserved",
+          "sql": "SELECT COUNT(*) FROM _sync_dirty_rows WHERE table_name = 'users' AND key_json = '{\"id\":\"keep-user\"}'",
+          "value": 1
+        },
+        {
+          "name": "checkpoint-preserved",
+          "sql": "SELECT last_bundle_seq_seen FROM _sync_attachment_state WHERE singleton_key = 1",
+          "value": 17
+        },
+        {
+          "name": "source-preserved",
+          "sql": "SELECT CASE WHEN current_source_id <> '' THEN 1 ELSE 0 END FROM _sync_attachment_state WHERE singleton_key = 1",
+          "value": 1
+        }
+      ]
+    },
+    {
       "name": "composite-primary-key-rejected",
       "description": "Composite local primary keys are rejected because Oversqlite currently exposes exactly one sync key column.",
       "schemaSql": [

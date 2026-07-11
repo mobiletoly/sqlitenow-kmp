@@ -11,6 +11,12 @@ durable SQL rows directly. Any KMP or Dart change that intentionally changes
 local sync schema, trigger behavior, dirty-row capture, wire protocol behavior,
 or final sync state must update or add the relevant fixture in the same change.
 
+Pull/snapshot fixtures lock retained-history checkpoint recovery. `history_pruned` is reserved for
+unavailable past history, while `checkpoint_ahead` rejects a checkpoint beyond current server
+history. KMP and Dart must persist the rebuild gate before snapshot work, automatically resume
+checkpoint recovery from normal sync/pull, preserve unresolved offline work in the durable outbox,
+and change the checkpoint only in the final authoritative snapshot transaction.
+
 ## Canonical JSON and numeric contract
 
 `canonical-json/jcs-typed-numerics.json` is authoritative for KMP and Dart and is mirrored by
@@ -66,9 +72,14 @@ Local schema/config validation fixtures live in
   post-initialization SQL, expected query results, and explicit expected error
   message fragments.
 - The fixture covers composite primary keys, composite foreign keys,
-  unsupported integer-like key types, accepted BLOB primary keys,
+  unsupported integer-like key types, accepted BLOB primary keys, and rejection
+  of nullable `TEXT`/`BLOB` visible keys before any `_sync_*` runtime mutation,
   application-owned `_sync_*` tables, anonymous apply-mode suppression, and
   invalid table registrations.
+- Sync-managed local visible keys must declare `NOT NULL` explicitly even when
+  SQLite reports the column as the primary key. Existing NULL rows and schema
+  repair/recreation remain application-owned; rejection preserves prior local
+  rows, checkpoints, sources, outbox state, and triggers.
 - Runners must fail on declared message fragments or exception categories, not
   incidental stack traces. Dart does not add Dart-only runtime metadata or
   compatibility migrations; local development databases should be recreated
@@ -125,7 +136,8 @@ Push fixtures live under `push/`:
 
 Pull and snapshot fixtures live under `pull-snapshot/`:
 
-- `basic.json` records incremental pull responses, history-pruned fallback,
+- `basic.json` records populated-table adoption baseline history, incremental
+  pull responses, history-pruned fallback,
   snapshot session/chunk responses, source replacement requests, source
   replacement errors, expected post-apply state summaries, and validation-only
   wire cases. Validation-only cases declare `expectedPullErrorContains`,

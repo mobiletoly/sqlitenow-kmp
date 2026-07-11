@@ -16,6 +16,7 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import dev.goquick.sqlitenow.core.TransactionMode
 import kotlinx.serialization.json.Json
 
 internal data class DownloadWorkflowResult(
@@ -68,6 +69,7 @@ internal class OversqliteDownloadWorkflow(
             log { "oversqlite pullToStable finished successfully" }
             result
         } catch (e: HistoryPrunedException) {
+            markCheckpointRecoveryRequired("history_pruned")
             val result = rebuildFromSnapshot(
                 state = state,
                 rotatedSourceId = null,
@@ -76,6 +78,17 @@ internal class OversqliteDownloadWorkflow(
                 onPhaseChanged = onPhaseChanged,
             )
             log { "oversqlite pullToStable recovered via snapshot rebuild updatedTables=${result.updatedTables}" }
+            result
+        } catch (e: CheckpointAheadException) {
+            markCheckpointRecoveryRequired("checkpoint_ahead")
+            val result = rebuildFromSnapshot(
+                state = state,
+                rotatedSourceId = null,
+                sourceReplacementReason = null,
+                outboxMode = SnapshotRebuildOutboxMode.CLEAR_ALL,
+                onPhaseChanged = onPhaseChanged,
+            )
+            log { "oversqlite pullToStable recovered ahead checkpoint via snapshot rebuild updatedTables=${result.updatedTables}" }
             result
         }
     }
@@ -87,6 +100,9 @@ internal class OversqliteDownloadWorkflow(
         outboxMode: SnapshotRebuildOutboxMode = SnapshotRebuildOutboxMode.CLEAR_ALL,
         onPhaseChanged: suspend (OversqlitePhase) -> Unit = {},
     ): DownloadWorkflowResult {
+        if (rotatedSourceId == null && outboxMode == SnapshotRebuildOutboxMode.CLEAR_ALL) {
+            markCheckpointRecoveryRequired("explicit_rebuild")
+        }
         requireSnapshotRebuildState(outboxMode)
 
         onPhaseChanged(OversqlitePhase.STAGING_REMOTE_STATE)
@@ -342,6 +358,24 @@ internal class OversqliteDownloadWorkflow(
         }
     }
 
+    private suspend fun markCheckpointRecoveryRequired(reason: String) {
+        db.transaction(TransactionMode.IMMEDIATE) {
+            attachmentStateStore.setRebuildRequired(true)
+            val operation = operationStateStore.loadState()
+            if (operation.kind == operationKindSourceRecovery) {
+                return@transaction
+            }
+            check(operation.kind == operationKindNone) {
+                "cannot begin checkpoint recovery while ${operation.kind} is in progress"
+            }
+            operationStateStore.persistState(
+                operation.copy(
+                    reason = operation.reason.takeIf(::isCheckpointRecoveryReason) ?: reason,
+                ),
+            )
+        }
+    }
+
     private fun snapshotChunkRows(): Int = config.snapshotChunkRows.takeIf { it > 0 } ?: 1000
 
     private suspend fun requireFreshRotatedSourceState(rotatedSourceId: String) {
@@ -352,6 +386,9 @@ internal class OversqliteDownloadWorkflow(
         }
     }
 }
+
+internal fun isCheckpointRecoveryReason(reason: String): Boolean =
+    reason in setOf("history_pruned", "checkpoint_ahead", "explicit_rebuild", "resume")
 
 internal data class IncrementalPullResult(
     val updatedTables: Set<String>,

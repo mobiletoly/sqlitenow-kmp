@@ -661,15 +661,11 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
             },
         ) { client ->
             db.execSQL("UPDATE _sync_attachment_state SET rebuild_required = 1 WHERE singleton_key = 1")
-            assertTrue(client.sync().exceptionOrNull() is RebuildRequiredException)
-
-            client.rebuild().getOrThrow()
+            client.sync().getOrThrow()
             assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_attachment_state WHERE singleton_key = 1"))
             client.sync().getOrThrow()
 
             db.execSQL("UPDATE _sync_attachment_state SET rebuild_required = 1 WHERE singleton_key = 1")
-            assertTrue(client.sync().exceptionOrNull() is RebuildRequiredException)
-
             markSourceRecoveryRequired(db)
             assertTrue(client.sync().exceptionOrNull() is SourceRecoveryRequiredException)
             client.rebuild().getOrThrow()

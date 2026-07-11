@@ -106,6 +106,7 @@ final class RichRealServerDb {
 
   OversqliteConfig buildOversqliteConfig({
     required String schema,
+    List<SyncTable> syncTables = RichRealServerDb.syncTables,
     int uploadLimit = 200,
     int downloadLimit = 1000,
     bool verboseLogs = false,
@@ -130,6 +131,7 @@ final class RichRealServerDb {
   DefaultOversqliteClient newOversqliteClient({
     required String schema,
     required OversqliteHttpClient httpClient,
+    List<SyncTable> syncTables = RichRealServerDb.syncTables,
     int uploadLimit = 200,
     int downloadLimit = 1000,
     bool verboseLogs = false,
@@ -140,6 +142,7 @@ final class RichRealServerDb {
   }) {
     final config = buildOversqliteConfig(
       schema: schema,
+      syncTables: syncTables,
       uploadLimit: uploadLimit,
       downloadLimit: downloadLimit,
       verboseLogs: verboseLogs,

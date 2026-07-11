@@ -113,7 +113,9 @@ These are scope/materialization states, not authentication states.
 
 ## Rebuild And Recovery
 
-`rebuild()` is the explicit recovery entry point.
+`rebuild()` is the optional explicit recovery entry point. Pull-side `history_pruned` and
+`checkpoint_ahead` conditions durably set the rebuild gate before snapshot work begins, and normal
+`sync()` or `pullToStable()` automatically resumes checkpoint recovery after interruption.
 
 Important rules:
 
@@ -122,7 +124,10 @@ Important rules:
 - oversqlite chooses the internal mode
 - app code does not supply a replacement `sourceId`
 
-In ordinary rebuild-required cases, `rebuild()` keeps the current source.
+In ordinary checkpoint-recovery cases, recovery keeps the current source. Pending offline work is
+frozen and uploaded first when safe; an unresolved upload returns a typed actionable blocker while
+preserving the app row, outbox, checkpoint, and rebuild gate. The checkpoint advances only in the
+final atomic snapshot apply.
 
 In source-recovery-required cases, `rebuild()` preserves frozen unsynced intent, rebuilds from the
 snapshot, rotates to a fresh internally generated source, and restores the frozen intent under that

@@ -1237,7 +1237,7 @@
     },
     {
       "name": "rebuild-required-restart-keep-source",
-      "description": "A generic rebuild-required gate survives restart, blocks normal sync, and resolves through explicit keep-source snapshot rebuild.",
+      "description": "A generic rebuild-required gate survives restart and normal sync automatically resumes keep-source snapshot recovery; explicit rebuild remains available.",
       "serverScript": {
         "kind": "snapshot_rebuild",
         "snapshots": [
@@ -1478,7 +1478,8 @@
         {
           "action": "localSql",
           "sql": [
-            "UPDATE _sync_attachment_state SET rebuild_required = 1 WHERE singleton_key = 1"
+            "UPDATE _sync_attachment_state SET rebuild_required = 1 WHERE singleton_key = 1",
+            "UPDATE _sync_operation_state SET kind = 'none', reason = 'checkpoint_ahead' WHERE singleton_key = 1"
           ],
           "expectedState": {
             "formatVersion": 1,
@@ -1517,7 +1518,7 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
-                  "reason": "",
+                  "reason": "checkpoint_ahead",
                   "replacement_source_id": ""
                 }
               ],
@@ -1587,7 +1588,7 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
-                  "reason": "",
+                  "reason": "checkpoint_ahead",
                   "replacement_source_id": ""
                 }
               ],
@@ -1663,7 +1664,7 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
-                  "reason": "",
+                  "reason": "checkpoint_ahead",
                   "replacement_source_id": ""
                 }
               ],
@@ -1737,7 +1738,7 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
-                  "reason": "",
+                  "reason": "checkpoint_ahead",
                   "replacement_source_id": ""
                 }
               ],
@@ -1770,7 +1771,9 @@
         },
         {
           "action": "sync",
-          "expectedException": "rebuild_required",
+          "expectedServerState": {
+            "snapshotSessionCreateCount": 1
+          },
           "expectedState": {
             "formatVersion": 1,
             "state": {
@@ -1787,8 +1790,8 @@
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
                   "schema_name": "main",
-                  "last_bundle_seq_seen": 0,
-                  "rebuild_required": 1,
+                  "last_bundle_seq_seen": 7,
+                  "rebuild_required": 0,
                   "pending_initialization_id": ""
                 }
               ],
@@ -1828,7 +1831,16 @@
               ],
               "outbox_rows": [],
               "dirty_rows": [],
-              "row_state": [],
+              "row_state": [
+                {
+                  "schema_name": "main",
+                  "table_name": "users",
+                  "key_json": "{\"id\":\"user-1\"}",
+                  "row_version": 3,
+                  "deleted": 0,
+                  "updated_at": "<timestamp>"
+                }
+              ],
               "snapshot_stage": [],
               "managed_tables": [
                 {
@@ -1846,7 +1858,7 @@
             "outcome": "applied_snapshot"
           },
           "expectedServerState": {
-            "snapshotSessionCreateCount": 1
+            "snapshotSessionCreateCount": 2
           },
           "expectedState": {
             "formatVersion": 1,

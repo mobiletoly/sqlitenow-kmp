@@ -63,15 +63,19 @@ internal class OversqlitePushWorkflow(
     )
     private val conflictExecutor = OversqliteConflictExecutor(localStore, syncStateStore, outboxStateStore)
 
-    suspend fun pushPending(state: RuntimeState): PushWorkflowResult {
-        return pushPending(state, conflictRetryCount = 0)
+    suspend fun pushPending(
+        state: RuntimeState,
+        allowCheckpointRecovery: Boolean = false,
+    ): PushWorkflowResult {
+		return pushPending(state, conflictRetryCount = 0, allowCheckpointRecovery = allowCheckpointRecovery)
     }
 
     private suspend fun pushPending(
         state: RuntimeState,
         conflictRetryCount: Int,
+        allowCheckpointRecovery: Boolean,
     ): PushWorkflowResult {
-        if (attachmentStateStore.loadState().rebuildRequired) {
+        if (attachmentStateStore.loadState().rebuildRequired && !allowCheckpointRecovery) {
             throw RebuildRequiredException()
         }
 
@@ -122,7 +126,11 @@ internal class OversqlitePushWorkflow(
                     remainingDirtyCount = remainingDirtyCount,
                 )
             }
-            val retryResult = pushPending(state, conflictRetryCount = conflictRetryCount + 1)
+            val retryResult = pushPending(
+                state,
+                conflictRetryCount = conflictRetryCount + 1,
+                allowCheckpointRecovery = allowCheckpointRecovery,
+            )
             return PushWorkflowResult(
                 outcome = retryResult.outcome,
                 updatedTables = updatedTables + retryResult.updatedTables,

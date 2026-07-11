@@ -111,6 +111,201 @@ void main() {
     );
   });
 
+  test('checkpoint-ahead pull rebuilds from snapshot', () async {
+    final database = await _openUsersDatabase();
+    addTearDown(database.close);
+    final server = _SyncServer(checkpointAheadOnPull: true)
+      ..snapshotRows = [
+        _snapshotRow({'id': 'user-1'}, {'id': 'user-1', 'name': 'Snapshot'}),
+      ]
+      ..stableBundleSeq = 7;
+    final client = _newClient(database, server);
+    addTearDown(client.close);
+    await client.open();
+    await client.attach('user-1');
+    await database.connection.execute(
+      'UPDATE _sync_attachment_state SET last_bundle_seq_seen = 99 WHERE singleton_key = 1',
+    );
+
+    final report = await client.pullToStable();
+
+    expect(report.outcome, RemoteSyncOutcome.appliedSnapshot);
+    expect(report.restore?.bundleSeq, 7);
+    expect(
+      await _scalarInt(
+        database,
+        'SELECT rebuild_required FROM _sync_attachment_state',
+      ),
+      0,
+    );
+    expect(
+      await _scalarText(database, "SELECT name FROM users WHERE id = 'user-1'"),
+      'Snapshot',
+    );
+  });
+
+  test('normal sync automatically resumes durable checkpoint recovery', () async {
+    final database = await _openUsersDatabase();
+    addTearDown(database.close);
+    final server = _SyncServer()
+      ..snapshotRows = [
+        _snapshotRow({'id': 'user-1'}, {'id': 'user-1', 'name': 'Resumed'}),
+      ]
+      ..stableBundleSeq = 9;
+    final client = _newClient(database, server);
+    addTearDown(client.close);
+    await client.open();
+    await client.attach('user-1');
+    await database.connection.execute(
+      "UPDATE _sync_attachment_state SET last_bundle_seq_seen = 99, rebuild_required = 1 WHERE singleton_key = 1",
+    );
+    await database.connection.execute(
+      "UPDATE _sync_operation_state SET reason = 'checkpoint_ahead' WHERE singleton_key = 1",
+    );
+
+    final report = await client.sync();
+
+    expect(report.remoteOutcome, RemoteSyncOutcome.appliedSnapshot);
+    expect(report.status.lastBundleSeqSeen, 9);
+    expect(
+      await _scalarText(database, "SELECT name FROM users WHERE id = 'user-1'"),
+      'Resumed',
+    );
+  });
+
+  test(
+    'checkpoint recovery automatically preserves a remotely committed pruned replay',
+    () async {
+      final database = await _openUsersDatabase();
+      addTearDown(database.close);
+      final server = _SyncServer(committedReplayPruned: true);
+      final client = _newClient(database, server);
+      addTearDown(client.close);
+      await client.open();
+      await client.attach('user-1');
+      final sourceId = await _scalarText(
+        database,
+        'SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1',
+      );
+      await database.connection.execute(
+        "INSERT INTO users(id, name) VALUES('user-1', 'Ada')",
+      );
+      await database.connection.execute(
+        'UPDATE _sync_attachment_state SET last_bundle_seq_seen = 99, rebuild_required = 1 WHERE singleton_key = 1',
+      );
+      await database.connection.execute(
+        "UPDATE _sync_operation_state SET kind = 'none', reason = 'checkpoint_ahead' WHERE singleton_key = 1",
+      );
+
+      final report = await client.sync();
+
+      expect(report.remoteOutcome, RemoteSyncOutcome.appliedSnapshot);
+      expect(
+        await _scalarText(
+          database,
+          'SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1',
+        ),
+        sourceId,
+      );
+      expect(
+        await _scalarInt(
+          database,
+          'SELECT rebuild_required FROM _sync_attachment_state WHERE singleton_key = 1',
+        ),
+        0,
+      );
+      expect(
+        await _scalarText(
+          database,
+          'SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1',
+        ),
+        'none',
+      );
+      expect(
+        await _scalarInt(database, 'SELECT COUNT(*) FROM _sync_outbox_rows'),
+        0,
+      );
+      expect(
+        await _scalarInt(
+          database,
+          "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$sourceId'",
+        ),
+        2,
+      );
+      expect(
+        await _scalarText(
+          database,
+          "SELECT name FROM users WHERE id = 'user-1'",
+        ),
+        'Ada',
+      );
+    },
+  );
+
+  test(
+    'checkpoint recovery authentication failure remains typed and durable',
+    () async {
+      final database = await _openUsersDatabase();
+      addTearDown(database.close);
+      final server = _SyncServer(pushCreateUnauthorized: true);
+      final client = _newClient(database, server);
+      addTearDown(client.close);
+      await client.open();
+      await client.attach('user-1');
+      await database.connection.execute(
+        "INSERT INTO users(id, name) VALUES('user-1', 'Ada')",
+      );
+      await database.connection.execute(
+        'UPDATE _sync_attachment_state SET last_bundle_seq_seen = 99, rebuild_required = 1 WHERE singleton_key = 1',
+      );
+      await database.connection.execute(
+        "UPDATE _sync_operation_state SET kind = 'none', reason = 'checkpoint_ahead' WHERE singleton_key = 1",
+      );
+
+      await expectLater(
+        client.sync(),
+        throwsA(
+          isA<OversqliteHttpException>().having(
+            (error) => error.statusCode,
+            'statusCode',
+            401,
+          ),
+        ),
+      );
+
+      expect(server.createRequests, hasLength(1));
+      expect(
+        await _scalarInt(database, 'SELECT COUNT(*) FROM _sync_dirty_rows'),
+        0,
+      );
+      expect(
+        await _scalarInt(database, 'SELECT COUNT(*) FROM _sync_outbox_rows'),
+        1,
+      );
+      expect(
+        await _scalarText(
+          database,
+          'SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1',
+        ),
+        'prepared',
+      );
+      expect(
+        await _scalarInt(
+          database,
+          'SELECT rebuild_required FROM _sync_attachment_state WHERE singleton_key = 1',
+        ),
+        1,
+      );
+      expect(
+        await _scalarInt(
+          database,
+          'SELECT last_bundle_seq_seen FROM _sync_attachment_state WHERE singleton_key = 1',
+        ),
+        99,
+      );
+    },
+  );
+
   test('remote-authoritative attach hydrates snapshot', () async {
     final database = await _openUsersDatabase();
     addTearDown(database.close);
@@ -189,6 +384,40 @@ void main() {
 
     expect(result.isSuccess, isTrue);
     expect(result.syncRounds, 1);
+    expect(await _scalarInt(database, 'SELECT COUNT(*) FROM users'), 0);
+    expect(
+      await _scalarText(
+        database,
+        'SELECT binding_state FROM _sync_attachment_state',
+      ),
+      'anonymous',
+    );
+  });
+
+  test('syncThenDetach resumes checkpoint recovery before ordinary push', () async {
+    final database = await _openUsersDatabase();
+    addTearDown(database.close);
+    final server = _SyncServer()
+      ..snapshotRows = [
+        _snapshotRow({'id': 'user-1'}, {'id': 'user-1', 'name': 'Recovered'}),
+      ]
+      ..stableBundleSeq = 7;
+    final client = _newClient(database, server);
+    addTearDown(client.close);
+    await client.open();
+    await client.attach('user-1');
+    await database.connection.execute(
+      'UPDATE _sync_attachment_state SET last_bundle_seq_seen = 99, rebuild_required = 1 WHERE singleton_key = 1',
+    );
+    await database.connection.execute(
+      "UPDATE _sync_operation_state SET kind = 'none', reason = 'checkpoint_ahead' WHERE singleton_key = 1",
+    );
+
+    final result = await client.syncThenDetach();
+
+    expect(result.isSuccess, isTrue);
+    expect(result.syncRounds, 1);
+    expect(server.createRequests, isEmpty);
     expect(await _scalarInt(database, 'SELECT COUNT(*) FROM users'), 0);
     expect(
       await _scalarText(
@@ -453,6 +682,9 @@ final class _SyncServer implements OversqliteHttpClient {
   _SyncServer({
     this.connectResolution = 'initialize_empty',
     this.historyPrunedOnPull = false,
+    this.checkpointAheadOnPull = false,
+    this.committedReplayPruned = false,
+    this.pushCreateUnauthorized = false,
     this.sourceRetiredOnPushCreate = false,
     this.config = _usersConfig,
     List<Map<String, Object?>> snapshotRows = const [],
@@ -460,6 +692,9 @@ final class _SyncServer implements OversqliteHttpClient {
 
   final String connectResolution;
   final bool historyPrunedOnPull;
+  final bool checkpointAheadOnPull;
+  final bool committedReplayPruned;
+  final bool pushCreateUnauthorized;
   bool sourceRetiredOnPushCreate;
   final OversqliteConfig config;
   final bundles = <Map<String, Object?>>[];
@@ -505,6 +740,12 @@ final class _SyncServer implements OversqliteHttpClient {
           'message': 'history pruned',
         }, statusCode: 409);
       }
+      if (checkpointAheadOnPull) {
+        return _json({
+          'error': 'checkpoint_ahead',
+          'message': 'checkpoint ahead',
+        }, statusCode: 409);
+      }
       final uri = Uri.parse('http://local/$path');
       final after = int.parse(uri.queryParameters['after_bundle_seq'] ?? '0');
       final visible = bundles
@@ -530,6 +771,12 @@ final class _SyncServer implements OversqliteHttpClient {
       });
     }
     if (path.startsWith('sync/committed-bundles/')) {
+      if (committedReplayPruned) {
+        return _json({
+          'error': 'history_pruned',
+          'message': 'committed replay is below retained floor',
+        }, statusCode: 409);
+      }
       final bundleSeq = int.parse(
         path.substring('sync/committed-bundles/'.length).split('/').first,
       );
@@ -582,6 +829,12 @@ final class _SyncServer implements OversqliteHttpClient {
       final request = (body! as Map).cast<String, Object?>();
       createRequests.add(request);
       _canonicalRequestHash = request['canonical_request_hash']! as String;
+      if (pushCreateUnauthorized) {
+        return _json({
+          'error': 'unauthorized',
+          'message': 'checkpoint reconcile denied',
+        }, statusCode: 401);
+      }
       if (sourceRetiredOnPushCreate) {
         return _json({
           'error': 'source_retired',

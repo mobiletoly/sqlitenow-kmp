@@ -439,10 +439,10 @@ internal class OversqliteRemoteApi(
                 return@requireOkJson null
             }
             val error = runCatching { json.decodeFromString(ErrorResponse.serializer(), raw) }.getOrNull()
-            if (error?.error == "history_pruned") {
-                HistoryPrunedException(error.message)
-            } else {
-                null
+            when (error?.error) {
+                "history_pruned" -> HistoryPrunedException(error.message)
+                "checkpoint_ahead" -> CheckpointAheadException(error.message)
+                else -> null
             }
         }
     }
@@ -461,7 +461,10 @@ internal class OversqliteRemoteApi(
                     "status=${call.status.value} body=${raw.logExcerpt()}"
             }
             customError?.invoke(call.status, raw)?.let { throw it }
-            throw RuntimeException("$operation failed: HTTP ${call.status} - $raw")
+            if (path.startsWith("/sync/push-sessions")) {
+                throw UploadHttpException(call.status, raw)
+            }
+            throw DownloadHttpException(call.status, raw)
         }
         return try {
             call.body()

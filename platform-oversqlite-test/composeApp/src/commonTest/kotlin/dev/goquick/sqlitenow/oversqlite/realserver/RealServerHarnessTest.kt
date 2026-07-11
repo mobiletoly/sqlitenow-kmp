@@ -86,6 +86,13 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
             assertFalse(clientA.syncStatus().getOrThrow().pending.hasPendingSyncData)
             assertFalse(clientB.syncStatus().getOrThrow().pending.hasPendingSyncData)
             assertFalse(clientC.syncStatus().getOrThrow().pending.hasPendingSyncData)
+
+            dbB.execSQL("UPDATE _sync_attachment_state SET last_bundle_seq_seen = 99 WHERE singleton_key = 1")
+            val poisonedRecovery = clientB.pullToStable().getOrThrow()
+            assertEquals(RemoteSyncOutcome.APPLIED_SNAPSHOT, poisonedRecovery.outcome)
+            assertEquals(1L, clientB.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(0L, scalarLong(dbB, "SELECT rebuild_required FROM _sync_attachment_state"))
+            assertEquals(0L, scalarLong(dbB, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
         } finally {
             httpA?.close()
             httpB?.close()

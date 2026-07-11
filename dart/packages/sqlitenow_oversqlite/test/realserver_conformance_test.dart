@@ -341,6 +341,20 @@ void main() {
           ),
           0,
         );
+
+        await followerDb.connection.execute(
+          'UPDATE _sync_attachment_state SET last_bundle_seq_seen = 99 WHERE singleton_key = 1',
+        );
+        final poisonedRecovery = await follower.pullToStable();
+        expect(poisonedRecovery.outcome, RemoteSyncOutcome.appliedSnapshot);
+        expect((await follower.syncStatus()).lastBundleSeqSeen, leaderSeq);
+        expect(
+          await scalarInt(
+            followerDb,
+            'SELECT rebuild_required FROM _sync_attachment_state',
+          ),
+          0,
+        );
       });
 
       test('client-wins conflict converges through real server', () async {

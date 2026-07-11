@@ -46,6 +46,14 @@ class SharedPullSnapshotFixtureTest {
                 assertEquals(409, it.status, case.name)
                 assertEquals("history_pruned", error.error, case.name)
             }
+            case.checkpointAheadResponse?.let {
+                val error = contractJson.decodeFromString(
+                    ErrorResponse.serializer(),
+                    it.body.toString(),
+                )
+                assertEquals(409, it.status, case.name)
+                assertEquals("checkpoint_ahead", error.error, case.name)
+            }
             case.snapshotSessionCreateRequest?.let {
                 val request = contractJson.decodeFromString(
                     SnapshotSessionCreateRequest.serializer(),
@@ -122,6 +130,7 @@ class SharedPullSnapshotFixtureTest {
         val pullResponse: JsonObject? = null,
         val expectedPullErrorContains: String? = null,
         val historyPrunedResponse: FixtureHttpResponse? = null,
+        val checkpointAheadResponse: FixtureHttpResponse? = null,
         val snapshotSessionCreateRequest: JsonObject? = null,
         val snapshotSession: JsonObject? = null,
         val snapshotChunkResponse: JsonObject? = null,

@@ -29,9 +29,9 @@ final class OversqliteLocalRuntime {
     }
 
     await _connection.execute('PRAGMA foreign_keys = ON');
-    await _initializeOversqliteControlTables(_connection);
     final tableInfoByName = <String, _TableInfo>{};
     final validated = await _validateConfig(schema, tableInfoByName);
+    await _initializeOversqliteControlTables(_connection);
     await _registerManagedTables(validated);
     await _installTriggers(validated, tableInfoByName);
     await _bindLocalSource(validated, tableInfoByName);
@@ -165,6 +165,11 @@ final class OversqliteLocalRuntime {
       if (column.kind != _ColumnKind.text && !column.kind.isBlobKind) {
         throw ArgumentError(
           'configured primary key column ${column.name} for table ${syncTable.tableName} must be TEXT PRIMARY KEY or BLOB PRIMARY KEY',
+        );
+      }
+      if (!column.notNull) {
+        throw ArgumentError(
+          'configured visible sync-key column ${column.name} for table ${syncTable.tableName} must declare NOT NULL explicitly; repair or recreate the local application database before sync initialization',
         );
       }
       return column;

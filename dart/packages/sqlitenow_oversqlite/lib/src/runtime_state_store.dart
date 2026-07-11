@@ -10,6 +10,13 @@ const oversqliteOperationKindNone = 'none';
 const oversqliteOperationKindRemoteReplace = 'remote_replace';
 const oversqliteOperationKindSourceRecovery = 'source_recovery';
 
+bool _isCheckpointRecoveryReason(String reason) => const {
+  'history_pruned',
+  'checkpoint_ahead',
+  'explicit_rebuild',
+  'resume',
+}.contains(reason.trim());
+
 final class OversqliteApplyRunner {
   const OversqliteApplyRunner(this._connection);
 
@@ -247,6 +254,28 @@ WHERE singleton_key = 1''',
           kind: oversqliteOperationKindSourceRecovery,
           reason: reason.wireName,
           replacementSourceId: replacement,
+        ),
+      );
+    }, mode: TransactionMode.immediate);
+  }
+
+  Future<void> persistCheckpointRecoveryRequiredState(String reason) async {
+    await _connection.transaction(() async {
+      await _attachmentStore.markRebuildRequired();
+      final operation = await loadOperationState();
+      if (operation.kind == oversqliteOperationKindSourceRecovery) {
+        return;
+      }
+      if (operation.kind != oversqliteOperationKindNone) {
+        throw StateError(
+          'cannot begin checkpoint recovery while ${operation.kind} is in progress',
+        );
+      }
+      await persistOperationState(
+        OversqliteClientOperationState(
+          reason: _isCheckpointRecoveryReason(operation.reason)
+              ? operation.reason
+              : reason,
         ),
       );
     }, mode: TransactionMode.immediate);

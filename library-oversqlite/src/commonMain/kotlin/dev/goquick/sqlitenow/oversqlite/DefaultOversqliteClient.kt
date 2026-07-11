@@ -20,6 +20,7 @@ import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.TransactionMode
 import dev.goquick.sqlitenow.core.sqlite.use
 import io.ktor.client.HttpClient
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -765,6 +766,7 @@ class DefaultOversqliteClient(
     private suspend fun executePush(
         operationName: String,
         operation: OversqliteOperation,
+        allowCheckpointRecovery: Boolean = false,
     ): PushExecution {
         val state = requireConnectedRuntimeState(operationName)
         val durableOperation = operationStateStore.loadState()
@@ -780,12 +782,13 @@ class DefaultOversqliteClient(
             },
         )
         val workflowResult = try {
-            pushWorkflow.pushPending(state)
+            pushWorkflow.pushPending(state, allowCheckpointRecovery = allowCheckpointRecovery)
         } catch (e: SourceRecoveryRequiredHttpException) {
             persistSourceRecoveryRequiredState(state, e.reason, e.replacementSourceId)
             throw SourceRecoveryRequiredException(e.reason)
         } catch (e: CommittedReplayPrunedException) {
             attachmentStateStore.setRebuildRequired(true)
+            if (allowCheckpointRecovery) throw e
             throw RebuildRequiredException()
         } catch (e: SourceSequenceMismatchException) {
             if (outboxStateStore.loadBundleState().state == outboxStateCommittedRemote) {
@@ -816,6 +819,18 @@ class DefaultOversqliteClient(
         operation: OversqliteOperation,
     ): SyncExecution {
         ensureNoDestructiveTransition()
+        if (checkpointRecoveryRequired()) {
+            val remoteExecution = executeCheckpointRecovery(operationName, operation)
+            return SyncExecution(
+                report = SyncReport(
+                    pushOutcome = PushOutcome.NO_CHANGE,
+                    remoteOutcome = remoteExecution.report.outcome,
+                    status = remoteExecution.report.status,
+                    restore = remoteExecution.report.restore,
+                ),
+                updatedTables = remoteExecution.updatedTables,
+            )
+        }
         val pushExecution = executePush(
             operationName = operationName,
             operation = operation,
@@ -842,12 +857,94 @@ class DefaultOversqliteClient(
         operationName: String,
         operation: OversqliteOperation,
     ): RemoteExecution {
+        if (checkpointRecoveryRequired()) {
+            return executeCheckpointRecovery(operationName, operation)
+        }
         return executeRemoteDownload(operationName, operation) { state, onPhaseChanged ->
             downloadWorkflow.pullToStable(
                 state = state,
                 onPhaseChanged = onPhaseChanged,
             )
         }
+    }
+
+    private suspend fun checkpointRecoveryRequired(): Boolean {
+        val attachment = attachmentStateStore.loadState()
+        if (!attachment.rebuildRequired) return false
+        val operation = operationStateStore.loadState()
+        return !operation.isSourceRecoveryRequired()
+    }
+
+    private suspend fun executeCheckpointRecovery(
+        operationName: String,
+        operation: OversqliteOperation,
+    ): RemoteExecution {
+        var dirtyCount = syncStateStore.countDirtyRows()
+        var outboundCount = outboxStateStore.countRows()
+        var replayState = outboxStateStore.loadBundleState().state
+        if (dirtyCount > 0 || outboundCount > 0) {
+            if (uploadsPaused) {
+                throw CheckpointRecoveryBlockedException(
+                    reason = CheckpointRecoveryBlockedReason.UPLOAD_PAUSED,
+                    dirtyCount = dirtyCount,
+                    outboundCount = outboundCount,
+                    replayState = replayState,
+                )
+            }
+            try {
+                executePush(
+                    operationName = operationName,
+                    operation = operation,
+                    allowCheckpointRecovery = true,
+                )
+            } catch (e: SourceRecoveryRequiredException) {
+                throw e
+            } catch (e: CommittedReplayPrunedException) {
+                return executeSnapshotRebuild(
+                    operationName = operationName,
+                    operation = operation,
+                    rotatedSourceId = null,
+                    outboxMode = SnapshotRebuildOutboxMode.PRESERVE_COMMITTED_REMOTE,
+                    sourceReplacementReason = null,
+                )
+            } catch (e: Throwable) {
+                if (e is CancellationException) throw e
+                if (shouldRetryTransportFailure(e)) throw e
+                if (
+                    (e as? OversqliteCategorizedException)?.category == OversqliteErrorCategory.AUTH
+                ) {
+                    throw e
+                }
+                dirtyCount = syncStateStore.countDirtyRows()
+                outboundCount = outboxStateStore.countRows()
+                replayState = outboxStateStore.loadBundleState().state
+                throw CheckpointRecoveryBlockedException(
+                    reason = CheckpointRecoveryBlockedReason.PUSH_FAILED,
+                    dirtyCount = dirtyCount,
+                    outboundCount = outboundCount,
+                    replayState = replayState,
+                    cause = e,
+                )
+            }
+            dirtyCount = syncStateStore.countDirtyRows()
+            outboundCount = outboxStateStore.countRows()
+            replayState = outboxStateStore.loadBundleState().state
+            if (dirtyCount > 0 || outboundCount > 0) {
+                throw CheckpointRecoveryBlockedException(
+                    reason = CheckpointRecoveryBlockedReason.PENDING_WORK,
+                    dirtyCount = dirtyCount,
+                    outboundCount = outboundCount,
+                    replayState = replayState,
+                )
+            }
+        }
+        return executeSnapshotRebuild(
+            operationName = operationName,
+            operation = operation,
+            rotatedSourceId = null,
+            outboxMode = SnapshotRebuildOutboxMode.CLEAR_ALL,
+            sourceReplacementReason = null,
+        )
     }
 
     private suspend fun executeDetach(operationName: String): DetachExecution {

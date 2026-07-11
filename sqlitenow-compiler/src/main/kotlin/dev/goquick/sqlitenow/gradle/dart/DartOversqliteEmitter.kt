@@ -57,6 +57,7 @@ internal class DartOversqliteEmitter(
         writer.line("OversqliteConfig buildOversqliteConfig({")
         writer.indent {
             line("required String schema,")
+            line("List<SyncTable> syncTables = $databaseName.syncTables,")
             line("int uploadLimit = 200,")
             line("int downloadLimit = 1000,")
             line("bool verboseLogs = false,")
@@ -87,6 +88,7 @@ internal class DartOversqliteEmitter(
         writer.indent {
             line("required String schema,")
             line("required OversqliteHttpClient httpClient,")
+            line("List<SyncTable> syncTables = $databaseName.syncTables,")
             line("int uploadLimit = 200,")
             line("int downloadLimit = 1000,")
             line("bool verboseLogs = false,")
@@ -100,6 +102,7 @@ internal class DartOversqliteEmitter(
             line("final config = buildOversqliteConfig(")
             indent {
                 line("schema: schema,")
+                line("syncTables: syncTables,")
                 line("uploadLimit: uploadLimit,")
                 line("downloadLimit: downloadLimit,")
                 line("verboseLogs: verboseLogs,")

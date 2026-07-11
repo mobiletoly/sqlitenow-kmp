@@ -35,7 +35,7 @@ class SharedLocalConfigFixtureTest : BundleClientContractTestSupport() {
         val http = newHttpClient(server)
         try {
             executeStatements(db, case.schemaSql)
-            val client = DefaultOversqliteClient(
+            fun newClient() = DefaultOversqliteClient(
                 db = db,
                 config = OversqliteConfig(
                     schema = case.config.schema,
@@ -51,13 +51,21 @@ class SharedLocalConfigFixtureTest : BundleClientContractTestSupport() {
                 resolver = ServerWinsResolver,
             )
 
+            if (case.initializeBeforeValidation) {
+                val initializedClient = newClient()
+                assertNull(initializedClient.open().exceptionOrNull(), "${case.name}: setup initialization must succeed")
+                initializedClient.close()
+                executeStatements(db, case.beforeValidationSql)
+            }
+
+            val client = newClient()
             val error = client.open().exceptionOrNull()
             assertExpectedError(case, error)
             if (error == null) {
                 executeStatements(db, case.afterOpenSql)
-                for (query in case.expectedQueries) {
-                    assertQueryValue(case.name, db, query)
-                }
+            }
+            for (query in case.expectedQueries) {
+                assertQueryValue(case.name, db, query)
             }
         } finally {
             http.close()
@@ -113,6 +121,8 @@ class SharedLocalConfigFixtureTest : BundleClientContractTestSupport() {
         val description: String,
         val schemaSql: List<String>,
         val config: FixtureConfig,
+        val initializeBeforeValidation: Boolean = false,
+        val beforeValidationSql: List<String> = emptyList(),
         val afterOpenSql: List<String> = emptyList(),
         val expectedError: ExpectedError? = null,
         val expectedQueries: List<ExpectedQuery> = emptyList(),

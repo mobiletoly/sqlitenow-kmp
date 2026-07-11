@@ -376,7 +376,11 @@ void main() {
         final oldSourceResponse = await oldSourceHttp.postJson(
           'sync/push-sessions',
           sourceId: recover.sourceId,
-          body: {'source_bundle_id': 1, 'planned_row_count': 1},
+          body: {
+            'source_bundle_id': 1,
+            'planned_row_count': 1,
+            'canonical_request_hash': '0' * 64,
+          },
         );
         expect(oldSourceResponse.statusCode, HttpStatus.conflict);
         final oldSourceBody =

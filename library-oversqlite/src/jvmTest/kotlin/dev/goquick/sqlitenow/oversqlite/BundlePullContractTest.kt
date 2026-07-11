@@ -601,6 +601,40 @@ class BundlePullContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
+    fun pullToStable_checkpointAheadFallsBackToSnapshotHydrate() = runBlocking<Unit> {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        withConnectedClient(
+            db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+            configureServer = {
+                jsonRoute(
+                    "/sync/pull",
+                    status = 409,
+                    body = """{"error":"checkpoint_ahead","message":"requested checkpoint 99 is ahead of current committed bundle sequence 9"}""",
+                )
+                usersSnapshotRoutes(
+                    snapshotId = "snapshot-ahead",
+                    snapshotBundleSeq = 9,
+                    userId = "user-1",
+                    rowVersion = 9,
+                    payloadJson = """{"id":"user-1","name":"Ada"}""",
+                )
+            },
+        ) { client ->
+            db.execSQL("UPDATE _sync_attachment_state SET last_bundle_seq_seen = 99 WHERE singleton_key = 1")
+
+            val report = client.pullToStable().getOrThrow()
+
+            assertEquals(RemoteSyncOutcome.APPLIED_SNAPSHOT, report.outcome)
+            assertEquals(9L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_attachment_state WHERE singleton_key = 1"))
+            assertEquals("none", scalarText(db, "SELECT kind FROM _sync_operation_state WHERE singleton_key = 1"))
+            assertEquals("Ada", scalarText(db, "SELECT name FROM users WHERE id = 'user-1'"))
+        }
+    }
+
+    @Test
     fun hydrate_rejectsHiddenScopeColumnInSnapshotPayload() = runBlocking<Unit> {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)

@@ -93,6 +93,10 @@ class SqliteNowDartEmitterTest {
             .substringBefore("];")
         assertTrue(!syncTablesBlock.contains("regular_table"))
         assertTrue(code.contains("OversqliteConfig buildOversqliteConfig({"))
+        assertEquals(
+            2,
+            Regex("List<SyncTable> syncTables = SyncDartDb\\.syncTables,").findAll(code).count(),
+        )
         assertTrue(code.contains("syncTables: syncTables,"))
         assertTrue(code.contains("Duration automaticDownloadInterval = const Duration(seconds: 60),"))
         assertTrue(code.contains("BundleChangeWatchMode bundleChangeWatchMode = BundleChangeWatchMode.off,"))
@@ -100,6 +104,8 @@ class SqliteNowDartEmitterTest {
         assertTrue(code.contains("bundleChangeWatchMode: bundleChangeWatchMode,"))
         assertTrue(code.contains("DefaultOversqliteClient newOversqliteClient({"))
         assertTrue(code.contains("required OversqliteHttpClient httpClient,"))
+        val newClientBlock = code.substringAfter("DefaultOversqliteClient newOversqliteClient({")
+        assertTrue(newClientBlock.contains("syncTables: syncTables,"))
         assertTrue(code.contains("return DefaultOversqliteClient("))
         assertTrue(code.contains("database: _database,"))
         assertTrue(code.contains("httpClient: httpClient,"))

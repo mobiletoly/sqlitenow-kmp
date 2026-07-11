@@ -167,6 +167,130 @@
       ]
     },
     {
+      "name": "checkpoint-recovery-normal-sync-auto-resumes",
+      "description": "A durable checkpoint recovery gate is resumed by the next ordinary pull entry and clears only after atomic snapshot replacement.",
+      "serverScript": {
+        "kind": "snapshot_sequence",
+        "sessions": [
+          {
+            "snapshot_id": "snapshot-checkpoint-resume",
+            "snapshot_bundle_seq": 7,
+            "row_count": 1,
+            "byte_count": 32,
+            "expires_at": "2099-01-01T00:00:00Z"
+          }
+        ],
+        "chunks": {
+          "snapshot-checkpoint-resume": {
+            "0": {
+              "snapshot_id": "snapshot-checkpoint-resume",
+              "snapshot_bundle_seq": 7,
+              "next_row_ordinal": 1,
+              "has_more": false,
+              "rows": [
+                {
+                  "schema": "main",
+                  "table": "users",
+                  "key": {
+                    "id": "user-1"
+                  },
+                  "row_version": 7,
+                  "payload": {
+                    "id": "user-1",
+                    "name": "Recovered"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "action": "pullToStable",
+          "setupSql": [
+            "UPDATE _sync_attachment_state SET last_bundle_seq_seen = 99, rebuild_required = 1 WHERE singleton_key = 1",
+            "UPDATE _sync_operation_state SET kind = 'none', reason = 'checkpoint_ahead' WHERE singleton_key = 1"
+          ],
+          "expectedException": "none",
+          "expectedState": {
+            "lastBundleSeqSeen": 7,
+            "rebuildRequired": 0,
+            "dirtyRowCount": 0,
+            "snapshotStageCount": 0
+          },
+          "expectedAppState": {
+            "users": [
+              {
+                "id": "user-1",
+                "name": "Recovered"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "checkpoint-recovery-pending-work-is-actionable-and-preserved",
+      "description": "Checkpoint recovery freezes dirty work into the durable outbox, attempts safe push reconciliation, and returns a typed actionable blocker when pending work cannot be drained, without mutating the checkpoint or local row.",
+      "serverScript": {
+        "kind": "snapshot_sequence",
+        "sessions": [
+          {
+            "snapshot_id": "snapshot-blocked-unused",
+            "snapshot_bundle_seq": 7,
+            "row_count": 0,
+            "byte_count": 0,
+            "expires_at": "2099-01-01T00:00:00Z"
+          }
+        ],
+        "chunks": {
+          "snapshot-blocked-unused": {
+            "0": {
+              "snapshot_id": "snapshot-blocked-unused",
+              "snapshot_bundle_seq": 7,
+              "next_row_ordinal": 0,
+              "has_more": false,
+              "rows": []
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "action": "pullToStable",
+          "setupSql": [
+            "INSERT INTO users(id, name) VALUES('local-1', 'Local')",
+            "UPDATE _sync_attachment_state SET last_bundle_seq_seen = 99, rebuild_required = 1 WHERE singleton_key = 1",
+            "UPDATE _sync_operation_state SET kind = 'none', reason = 'checkpoint_ahead' WHERE singleton_key = 1"
+          ],
+          "expectedException": "any_error",
+          "expectedErrorContains": "checkpoint recovery is blocked",
+          "expectedCheckpointRecoveryBlocked": {
+            "reason": "push_failed",
+            "dirtyRowCount": 0,
+            "outboxRowCount": 1,
+            "replayState": "prepared"
+          },
+          "expectedState": {
+            "lastBundleSeqSeen": 99,
+            "rebuildRequired": 1,
+            "dirtyRowCount": 0,
+            "outboxRowCount": 1,
+            "snapshotStageCount": 0
+          },
+          "expectedAppState": {
+            "users": [
+              {
+                "id": "local-1",
+                "name": "Local"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "snapshot-multi-chunk-staging-invisible-until-final-apply",
       "description": "Snapshot chunks are staged durably but remain invisible to app tables until final apply succeeds.",
       "serverScript": {

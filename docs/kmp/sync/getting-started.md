@@ -260,14 +260,16 @@ if (!result.isSuccess()) {
 On successful destructive detach, the next attach starts from a fresh oversqlite source stream even
 on the same install.
 
-## Step 12: Rebuild Explicitly When Recovery Requires It
+## Step 12: Resume Checkpoint Recovery Automatically
 
 ```kotlin
 client.rebuild().getOrThrow()
 ```
 
-`rebuild()` is the explicit recovery entry point. Oversqlite decides internally whether that
-rebuild keeps the current source or performs rebuild-plus-rotate recovery.
+Ordinary `sync()` and `pullToStable()` automatically resume durable checkpoint recovery caused by
+retained history or a checkpoint ahead of the server. `rebuild()` remains an optional explicit
+control. Source-identity recovery still requires explicit `rebuild()`; Oversqlite decides
+internally whether recovery keeps the current source or performs rebuild-plus-rotate recovery.
 
 ## Step 13: Inspect Debug Diagnostics When Needed
 

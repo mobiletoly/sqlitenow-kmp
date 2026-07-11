@@ -52,6 +52,12 @@ class HistoryPrunedException(
     override val category: OversqliteErrorCategory = OversqliteErrorCategory.NETWORK
 }
 
+class CheckpointAheadException(
+    message: String,
+) : RuntimeException(message), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
+
 class CommittedReplayPrunedException(
     rawBody: String,
 ) : DownloadHttpException(HttpStatusCode.Conflict, rawBody)

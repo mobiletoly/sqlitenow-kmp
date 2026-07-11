@@ -4,6 +4,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.sqlite.use
 import dev.goquick.sqlitenow.oversqlite.*
+import dev.goquick.sqlitenow.oversqlite.platformsupport.sha256Hex
 import dev.goquick.sqlitenow.oversqlite.platform.generated.RealServerGeneratedDatabase
 import dev.goquick.sqlitenow.oversqlite.platform.generated.UserSelectAllResult
 import dev.goquick.sqlitenow.oversqlite.platform.generated.VersionBasedDatabaseMigrations
@@ -610,7 +611,11 @@ class AndroidMockWebServerParityTest {
                 """.trimIndent()
             )
 
-            val bundleHash = "dcde4c0ea8f55eea93a935cf27d9982ff4e130543ae48cb4c355928c998d7fbd"
+            val bundleHash = "ce3e9ca783254fcdaef5195149bddabc707e1d3cdf7eb8daa9e89a06894c3fc9"
+            val canonicalRequestHash = sha256Hex(
+                """[{"base_row_version":"0","key":{"id":"file-1"},"op":"INSERT","payload":{"data":"AAECAwQFBgcICQoLDA0ODw==","id":"file-1","name":"Blob File"},"row_ordinal":"0","schema":"main","table":"files"}]"""
+                    .encodeToByteArray()
+            )
             val client = DefaultOversqliteClient(
                 db = db,
                 config = OversqliteConfig(
@@ -633,7 +638,8 @@ class AndroidMockWebServerParityTest {
                           "planned_row_count": 1,
                           "next_expected_row_ordinal": 0,
                           "source_id": "$sourceId",
-                          "source_bundle_id": 1
+                          "source_bundle_id": 1,
+                          "canonical_request_hash": "$canonicalRequestHash"
                         }
                     """.trimIndent()
                 )
@@ -656,7 +662,8 @@ class AndroidMockWebServerParityTest {
                           "source_id": "$sourceId",
                           "source_bundle_id": 1,
                           "row_count": 1,
-                          "bundle_hash": "$bundleHash"
+                          "bundle_hash": "$bundleHash",
+                          "canonical_request_hash": "$canonicalRequestHash"
                         }
                     """.trimIndent()
                 )
@@ -670,6 +677,7 @@ class AndroidMockWebServerParityTest {
                           "source_bundle_id": 1,
                           "row_count": 1,
                           "bundle_hash": "$bundleHash",
+                          "canonical_request_hash": "$canonicalRequestHash",
                           "next_row_ordinal": 0,
                           "has_more": false,
                           "rows": [
@@ -711,6 +719,8 @@ class AndroidMockWebServerParityTest {
             val createPushRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(createPushRequest)
             assertEquals("/sync/push-sessions", createPushRequest?.url?.encodedPath)
+            val createPushJson = testJson.parseToJsonElement(createPushRequest!!.body!!.utf8()).jsonObject
+            assertEquals(canonicalRequestHash, createPushJson["canonical_request_hash"]!!.jsonPrimitive.content)
 
             val chunkPushRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(chunkPushRequest)

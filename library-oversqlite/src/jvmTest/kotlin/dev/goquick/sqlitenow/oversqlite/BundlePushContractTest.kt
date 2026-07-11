@@ -1723,6 +1723,167 @@ $indentedCommittedRowsJson
     }
 
     @Test
+    fun sync_checkpointRecoveryCommittedReplayPruned_automaticallyPreservesCommittedRemote() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer()
+        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson).apply {
+            committedBundleChunkError = { _, _ ->
+                409 to """{"error":"history_pruned","message":"committed replay is below retained floor"}"""
+            }
+        }
+        pushServer.install(server)
+        server.snapshotRoutes(
+            snapshotId = "snapshot-checkpoint-committed-pruned",
+            snapshotBundleSeq = 1,
+            rows = listOf(
+                SnapshotChunkRow(
+                    table = "users",
+                    keyJson = """{"id":"user-1"}""",
+                    rowVersion = 1,
+                    payloadJson = """{"id":"user-1","name":"Ada"}""",
+                )
+            ),
+        )
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.openAndConnect("user-1").getOrThrow()
+            val sourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1")
+            db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
+            db.execSQL(
+                "UPDATE _sync_attachment_state SET last_bundle_seq_seen = 99, rebuild_required = 1 " +
+                    "WHERE singleton_key = 1"
+            )
+            db.execSQL("UPDATE _sync_operation_state SET kind = 'none', reason = 'checkpoint_ahead' WHERE singleton_key = 1")
+
+            val report = client.sync().getOrThrow()
+
+            assertEquals(RemoteSyncOutcome.APPLIED_SNAPSHOT, report.remoteOutcome)
+            assertEquals(sourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state WHERE singleton_key = 1"))
+            assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_attachment_state WHERE singleton_key = 1"))
+            assertEquals("none", scalarText(db, "SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            assertEquals(2L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$sourceId'"))
+            assertEquals("Ada", scalarText(db, "SELECT name FROM users WHERE id = 'user-1'"))
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun sync_checkpointRecoveryTransientPushFailure_usesConfiguredRetry() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer()
+        var createAttempt = 0
+        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson).apply {
+            createError = {
+                createAttempt++
+                if (createAttempt == 1) {
+                    503 to """{"error":"temporarily_unavailable","message":"retry checkpoint reconcile"}"""
+                } else {
+                    null
+                }
+            }
+        }
+        pushServer.install(server)
+        server.snapshotRoutes(
+            snapshotId = "snapshot-checkpoint-transient-retry",
+            snapshotBundleSeq = 1,
+            rows = listOf(
+                SnapshotChunkRow(
+                    table = "users",
+                    keyJson = """{"id":"user-1"}""",
+                    rowVersion = 1,
+                    payloadJson = """{"id":"user-1","name":"Ada"}""",
+                )
+            ),
+        )
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(
+                db,
+                http,
+                syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+                transientRetryPolicy = OversqliteTransientRetryPolicy(maxAttempts = 2),
+            )
+            client.openAndConnect("user-1").getOrThrow()
+            db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
+            db.execSQL(
+                "UPDATE _sync_attachment_state SET last_bundle_seq_seen = 99, rebuild_required = 1 " +
+                    "WHERE singleton_key = 1"
+            )
+            db.execSQL("UPDATE _sync_operation_state SET kind = 'none', reason = 'checkpoint_ahead' WHERE singleton_key = 1")
+
+            val report = client.sync().getOrThrow()
+
+            assertEquals(2, createAttempt)
+            assertEquals(RemoteSyncOutcome.APPLIED_SNAPSHOT, report.remoteOutcome)
+            assertEquals(0L, scalarLong(db, "SELECT rebuild_required FROM _sync_attachment_state WHERE singleton_key = 1"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            assertEquals("Ada", scalarText(db, "SELECT name FROM users WHERE id = 'user-1'"))
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun sync_checkpointRecoveryAuthenticationFailure_remainsTypedAndDurable() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer()
+        val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson).apply {
+            createError = {
+                401 to """{"error":"unauthorized","message":"checkpoint reconcile denied"}"""
+            }
+        }
+        pushServer.install(server)
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(
+                db,
+                http,
+                syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+                transientRetryPolicy = OversqliteTransientRetryPolicy(maxAttempts = 2),
+            )
+            client.openAndConnect("user-1").getOrThrow()
+            db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
+            db.execSQL(
+                "UPDATE _sync_attachment_state SET last_bundle_seq_seen = 99, rebuild_required = 1 " +
+                    "WHERE singleton_key = 1"
+            )
+            db.execSQL("UPDATE _sync_operation_state SET kind = 'none', reason = 'checkpoint_ahead' WHERE singleton_key = 1")
+
+            val error = client.sync().exceptionOrNull()
+
+            assertTrue(
+                error is UploadHttpException,
+                "expected UploadHttpException but was ${error?.let { it::class }}: $error; " +
+                    "cause=${error?.cause?.let { it::class }}: ${error?.cause}",
+            )
+            assertEquals(OversqliteErrorCategory.AUTH, error.category)
+            assertEquals(1, pushServer.createRequests.size)
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            assertEquals("prepared", scalarText(db, "SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1"))
+            assertEquals(1L, scalarLong(db, "SELECT rebuild_required FROM _sync_attachment_state WHERE singleton_key = 1"))
+            assertEquals(99L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state WHERE singleton_key = 1"))
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
     fun pushPending_committedRemoteRequestHashMismatch_marksRebuildRequired_andRebuildAdvancesSourceFloor() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)

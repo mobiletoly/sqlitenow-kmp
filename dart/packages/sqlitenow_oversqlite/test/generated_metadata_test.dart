@@ -86,6 +86,23 @@ void main() {
     expect(config.uploadLimit, 8);
     expect(config.downloadLimit, 8);
 
+    const numericOverride = [
+      SyncTable(
+        tableName: 'typed_rows',
+        syncKeyColumnName: 'id',
+        numericColumns: {
+          'count_value': NumericColumnKind.exactInt64,
+          'enabled_flag': NumericColumnKind.exactInt64,
+          'rating': NumericColumnKind.approximate,
+        },
+      ),
+    ];
+    final numericConfig = database.buildOversqliteConfig(
+      schema: 'business',
+      syncTables: numericOverride,
+    );
+    expect(numericConfig.syncTables, same(numericOverride));
+
     await database.open();
     addTearDown(database.close);
     for (final table in tables) {

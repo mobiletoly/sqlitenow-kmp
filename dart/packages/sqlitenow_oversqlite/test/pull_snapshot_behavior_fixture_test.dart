@@ -54,6 +54,8 @@ Future<void> _runPullCase(Map<String, Object?> fixture) async {
         step['expectedException']! as String,
         error,
         expectedMessage: step['expectedErrorContains'] as String?,
+        expectedBlocked: (step['expectedCheckpointRecoveryBlocked'] as Map?)
+            ?.cast<String, Object?>(),
       );
       final expectedState = step['expectedState'];
       if (expectedState != null) {
@@ -193,6 +195,7 @@ void _expectException(
   String expected,
   Object? error, {
   String? expectedMessage,
+  Map<String, Object?>? expectedBlocked,
 }) {
   switch (expected) {
     case 'none':
@@ -202,10 +205,41 @@ void _expectException(
       if (expectedMessage != null) {
         expect(error.toString(), contains(expectedMessage), reason: name);
       }
+      if (expectedBlocked != null) {
+        expect(error, isA<CheckpointRecoveryBlockedException>(), reason: name);
+        final blocked = error! as CheckpointRecoveryBlockedException;
+        expect(
+          blocked.reason.name,
+          _blockedReasonName(expectedBlocked['reason']! as String),
+          reason: '$name blocker reason',
+        );
+        expect(
+          blocked.dirtyCount,
+          expectedBlocked['dirtyRowCount'],
+          reason: '$name blocker dirty rows',
+        );
+        expect(
+          blocked.outboundCount,
+          expectedBlocked['outboxRowCount'],
+          reason: '$name blocker outbox rows',
+        );
+        expect(
+          blocked.replayState,
+          expectedBlocked['replayState'],
+          reason: '$name blocker replay state',
+        );
+      }
     default:
       fail('$name: unknown expected exception $expected');
   }
 }
+
+String _blockedReasonName(String wireName) => switch (wireName) {
+  'upload_paused' => 'uploadPaused',
+  'pending_work' => 'pendingWork',
+  'push_failed' => 'pushFailed',
+  _ => throw ArgumentError.value(wireName, 'wireName'),
+};
 
 final class PullSnapshotBehaviorFixtureServer implements OversqliteHttpClient {
   PullSnapshotBehaviorFixtureServer({
@@ -282,6 +316,12 @@ final class PullSnapshotBehaviorFixtureServer implements OversqliteHttpClient {
       }
       _snapshotSessionIndex++;
       return _json(response);
+    }
+    if (path == 'sync/push-sessions') {
+      return _json({
+        'error': 'pending_work',
+        'message': 'fixture keeps checkpoint recovery outbox pending',
+      }, statusCode: 400);
     }
     return _json({'error': 'not_found', 'message': path}, statusCode: 404);
   }

@@ -54,6 +54,7 @@ final class SyncDartDb {
 
   OversqliteConfig buildOversqliteConfig({
     required String schema,
+    List<SyncTable> syncTables = SyncDartDb.syncTables,
     int uploadLimit = 200,
     int downloadLimit = 1000,
     bool verboseLogs = false,
@@ -78,6 +79,7 @@ final class SyncDartDb {
   DefaultOversqliteClient newOversqliteClient({
     required String schema,
     required OversqliteHttpClient httpClient,
+    List<SyncTable> syncTables = SyncDartDb.syncTables,
     int uploadLimit = 200,
     int downloadLimit = 1000,
     bool verboseLogs = false,
@@ -88,6 +90,7 @@ final class SyncDartDb {
   }) {
     final config = buildOversqliteConfig(
       schema: schema,
+      syncTables: syncTables,
       uploadLimit: uploadLimit,
       downloadLimit: downloadLimit,
       verboseLogs: verboseLogs,

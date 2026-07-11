@@ -82,7 +82,27 @@ class ConnectRequiredException(
 
 /** Thrown when the client must rebuild from snapshot before it can continue syncing. */
 class RebuildRequiredException : RuntimeException(
-    "client rebuild is required; run rebuild() before syncing"
+	"client checkpoint recovery is in progress"
+), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
+
+enum class CheckpointRecoveryBlockedReason {
+    UPLOAD_PAUSED,
+    PENDING_WORK,
+    PUSH_FAILED,
+}
+
+class CheckpointRecoveryBlockedException(
+    val reason: CheckpointRecoveryBlockedReason,
+    val dirtyCount: Int,
+    val outboundCount: Int,
+    val replayState: String,
+    cause: Throwable? = null,
+) : RuntimeException(
+    "checkpoint recovery is blocked ($reason): dirty_rows=$dirtyCount " +
+        "outbox_rows=$outboundCount replay_state=\"$replayState\"",
+    cause,
 ), OversqliteCategorizedException {
     override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
 }

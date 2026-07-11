@@ -209,6 +209,10 @@ final class OversqliteRemoteApi {
       if (historyPruned != null) {
         throw historyPruned;
       }
+      final checkpointAhead = _decodeCheckpointAhead(response);
+      if (checkpointAhead != null) {
+        throw checkpointAhead;
+      }
       _throwHttp(response, operation: 'pull', method: 'GET', path: '/$path');
     }
     final body = _requireOkJsonObject(
@@ -464,6 +468,19 @@ HistoryPrunedException? _decodeHistoryPruned(OversqliteHttpResponse response) {
     return null;
   }
   return HistoryPrunedException(decoded?.message ?? response.body);
+}
+
+CheckpointAheadException? _decodeCheckpointAhead(
+  OversqliteHttpResponse response,
+) {
+  if (response.statusCode != HttpStatus.conflict) {
+    return null;
+  }
+  final decoded = _decodeErrorResponse(response.body);
+  if (decoded?.error != 'checkpoint_ahead') {
+    return null;
+  }
+  return CheckpointAheadException(decoded?.message ?? response.body);
 }
 
 SourceReplacementInvalidException? _decodeSourceReplacementInvalid(

@@ -23,6 +23,22 @@ const businessSyncTables = [
   SyncTable(tableName: 'posts', syncKeyColumnName: 'id'),
 ];
 
+final richSyncTables = [
+  for (final table in RichRealServerDb.syncTables)
+    if (table.tableName == 'typed_rows')
+      const SyncTable(
+        tableName: 'typed_rows',
+        syncKeyColumnName: 'id',
+        numericColumns: {
+          'count_value': NumericColumnKind.exactInt64,
+          'enabled_flag': NumericColumnKind.exactInt64,
+          'rating': NumericColumnKind.approximate,
+        },
+      )
+    else
+      table,
+];
+
 final realserverRandom = Random();
 
 Future<RealServerConfig> requireRealServerConfig() async {
@@ -290,6 +306,7 @@ DefaultOversqliteClient newRichClient(
   return database.newOversqliteClient(
     schema: 'business',
     httpClient: http,
+    syncTables: richSyncTables,
     uploadLimit: uploadLimit,
     downloadLimit: downloadLimit,
     bundleChangeWatchMode: bundleChangeWatchMode,
@@ -311,6 +328,7 @@ Future<String> bootstrapRichSourceId(RichRealServerDb database) async {
     database: database.runtimeDatabase,
     config: database.buildOversqliteConfig(
       schema: 'business',
+      syncTables: richSyncTables,
       uploadLimit: 8,
       downloadLimit: 8,
     ),

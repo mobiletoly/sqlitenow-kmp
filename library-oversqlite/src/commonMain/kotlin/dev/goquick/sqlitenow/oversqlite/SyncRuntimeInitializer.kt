@@ -27,8 +27,8 @@ internal class SyncRuntimeInitializer(
         managedTableStore: OversqliteManagedTableStore,
     ): ValidatedConfig {
         require(config.schema.isNotBlank()) { "config.schema must be provided" }
-        initializeOversqliteControlTables(db)
         val validated = validateConfig(db)
+        initializeOversqliteControlTables(db)
         managedTableStore.registerManagedTables(validated)
         installOversqliteTriggers(db, validated, tableInfoCache)
         return validated
@@ -126,6 +126,9 @@ internal class SyncRuntimeInitializer(
             }
             require(column.kind == ColumnKind.TEXT || column.kind.isBlobKind()) {
                 "configured primary key column ${column.name} for table ${syncTable.tableName} must be TEXT PRIMARY KEY or BLOB PRIMARY KEY"
+            }
+            require(column.notNull) {
+                "configured visible sync-key column ${column.name} for table ${syncTable.tableName} must declare NOT NULL explicitly; repair or recreate the local application database before sync initialization"
             }
             return column.name
         }

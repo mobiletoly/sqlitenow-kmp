@@ -132,7 +132,7 @@
       }
     },
     {
-      "name": "remote-authoritative",
+      "name": "adopted-populated-remote-authoritative",
       "capabilities": {
         "status": 200,
         "body": {

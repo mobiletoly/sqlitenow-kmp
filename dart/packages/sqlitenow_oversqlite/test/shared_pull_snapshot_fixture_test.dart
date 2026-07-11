@@ -57,6 +57,26 @@ void main() {
           );
         }
 
+        final checkpointAhead = fixture['checkpointAheadResponse'];
+        if (checkpointAhead is Map) {
+          final http = _FixtureHttpClient(
+            getResponses: {
+              'sync/pull?after_bundle_seq=$afterBundleSeq&max_bundles=10':
+                  _fixtureResponse(checkpointAhead),
+            },
+          );
+          await expectLater(
+            OversqliteRemoteApi(http).sendPullRequest(
+              sourceId: 'source-1',
+              afterBundleSeq: afterBundleSeq,
+              maxBundles: 10,
+              targetBundleSeq: 0,
+            ),
+            throwsA(isA<CheckpointAheadException>()),
+            reason: name,
+          );
+        }
+
         final sessionJson = fixture['snapshotSession'];
         if (sessionJson is Map) {
           final createRequestJson = fixture['snapshotSessionCreateRequest'];

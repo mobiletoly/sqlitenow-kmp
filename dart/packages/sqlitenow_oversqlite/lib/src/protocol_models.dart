@@ -32,8 +32,40 @@ final class RebuildRequiredException implements Exception {
   const RebuildRequiredException();
 
   @override
+  String toString() => 'client checkpoint recovery is in progress';
+}
+
+final class CheckpointAheadException implements Exception {
+  const CheckpointAheadException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+enum CheckpointRecoveryBlockedReason { uploadPaused, pendingWork, pushFailed }
+
+final class CheckpointRecoveryBlockedException implements Exception {
+  const CheckpointRecoveryBlockedException({
+    required this.reason,
+    required this.dirtyCount,
+    required this.outboundCount,
+    required this.replayState,
+    this.cause,
+  });
+
+  final CheckpointRecoveryBlockedReason reason;
+  final int dirtyCount;
+  final int outboundCount;
+  final String replayState;
+  final Object? cause;
+
+  @override
   String toString() =>
-      'client rebuild is required; run rebuild() before syncing';
+      'checkpoint recovery is blocked ($reason): dirty_rows=$dirtyCount '
+      'outbox_rows=$outboundCount replay_state="$replayState"'
+      '${cause == null ? '' : ': $cause'}';
 }
 
 final class SourceSequenceMismatchException implements Exception {

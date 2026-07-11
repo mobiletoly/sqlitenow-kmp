@@ -29,6 +29,18 @@ Future<void> _runCase(Map<String, Object?> fixture) async {
     },
   );
   try {
+    if (fixture['initializeBeforeValidation'] == true) {
+      final initializedRuntime = OversqliteLocalRuntime(
+        database: database,
+        config: _configFor(fixture),
+      );
+      await initializedRuntime.initialize();
+      for (final statement
+          in (fixture['beforeValidationSql'] as List<Object?>? ?? const [])
+              .cast<String>()) {
+        await database.connection.execute(statement);
+      }
+    }
     Object? error;
     try {
       final runtime = OversqliteLocalRuntime(
@@ -46,19 +58,19 @@ Future<void> _runCase(Map<String, Object?> fixture) async {
               .cast<String>()) {
         await database.connection.execute(statement);
       }
-      for (final rawQuery
-          in (fixture['expectedQueries'] as List<Object?>? ?? const [])
-              .cast<Map<String, Object?>>()) {
-        final rows = await database.connection.select(
-          rawQuery['sql']! as String,
-          (row) => row.readValue(0),
-        );
-        expect(
-          rows.single,
-          rawQuery['value'],
-          reason: fixture['name']! as String,
-        );
-      }
+    }
+    for (final rawQuery
+        in (fixture['expectedQueries'] as List<Object?>? ?? const [])
+            .cast<Map<String, Object?>>()) {
+      final rows = await database.connection.select(
+        rawQuery['sql']! as String,
+        (row) => row.readValue(0),
+      );
+      expect(
+        rows.single,
+        rawQuery['value'],
+        reason: fixture['name']! as String,
+      );
     }
   } finally {
     await database.close();
