@@ -1,100 +1,139 @@
 # sqlitenow_oversqlite
 
-Dart Oversqlite runtime support for SQLiteNow generated sync metadata.
+Add offline-first synchronization to SQLiteNow databases in Dart and Flutter applications.
 
-Canonical protocol bytes use RFC 8785 JCS. Declare exact numeric columns in `SyncTable.numericColumns`:
+`sqlitenow_oversqlite` tracks local changes, pushes them to an Oversync server, applies remote
+changes to SQLite, and keeps generated reactive queries up to date. It supports explicit and
+automatic downloads, conflict resolution, snapshot recovery, and multiple devices attached to the
+same user account.
 
-- `NumericColumnKind.exactInt64`: JSON string, ordinary SQLite `INTEGER`, signed 64-bit range.
-- `NumericColumnKind.exactDecimal`: JSON string, ordinary SQLite `TEXT`, validated finite decimal text.
-- `NumericColumnKind.approximate`: finite binary64 JSON number, ordinary SQLite `REAL`.
+This package targets Dart VM and Flutter native applications. It is used with a database generated
+by [`sqlitenow_cli`](https://pub.dev/packages/sqlitenow_cli) and a compatible Oversync server.
 
-The same contract runs on Dart VM and web; exact values never depend on VM-only integer behavior
-or JavaScript number precision. Unsupported grammar, range, or affinity rejects before row mutation.
-`canonical_request_hash` associates an ambiguous committed source tuple with the frozen original
-request, while `bundle_hash` authenticates the authoritative committed rows.
+## Install
 
-C1 requires recreating existing Oversqlite databases and coordinated corrected server/client
-deployment. No legacy hash/canonicalization fallback or durable-state migration is supported;
-outboxes, checkpoints, retry state, and offline work from the old v0 contract may be discarded.
+Use the same version for all SQLiteNow packages:
 
-The package includes local sync metadata, lifecycle client state, HTTP protocol
-handshake, push, pull, snapshot rebuild, conflict resolution, and realserver
-conformance coverage for the Oversqlite protocol.
+```yaml
+dependencies:
+  sqlitenow_runtime: ^0.10.0
+  sqlitenow_oversqlite: ^0.10.0
 
-Use this package together with generated Dart code from `sqlitenow_cli`
-when the database config sets `oversqlite: true`.
-
-Run normal package coverage with:
-
-```shell
-flutter test packages/sqlitenow_oversqlite
+dev_dependencies:
+  sqlitenow_cli: ^0.10.0
 ```
 
-Run live realserver conformance after starting
-`go-oversync/examples/nethttp_server`:
+## Generate a sync-enabled database
 
-```shell
-scripts/oversqlite_realserver_all.sh
+Enable Oversqlite for your database in `sqlitenow.yaml`:
+
+```yaml
+databases:
+  AppDatabase:
+    input: lib/db/sql/AppDatabase
+    output: lib/db/generated
+    package: app.db
+    runtime: dart
+    oversqlite: true
 ```
 
-Run the opt-in heavy realserver stress suite with:
+Mark every table that should synchronize with `enableSync=true`:
 
-```shell
-scripts/oversqlite_realserver_all_heavy.sh
+```sql
+-- @@{ enableSync=true }
+CREATE TABLE person (
+  id TEXT PRIMARY KEY NOT NULL,
+  first_name TEXT NOT NULL,
+  last_name TEXT NOT NULL
+);
 ```
 
-Set `OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL` to override the default
-`http://localhost:8080`. The optional Flutter Android live-server suite uses
-`OVERSQLITE_ANDROID_REAL_SERVER_SMOKE_BASE_URL`, defaulting to
-`http://10.0.2.2:8080`, and runs when
-`OVERSQLITE_RUN_FLUTTER_ANDROID_SMOKE=true`.
-
-## Heavy Realserver Parity
-
-The Dart heavy suite targets behavior parity with the KMP realserver `*Heavy`
-wrappers, not a one-to-one copy of every KMP platform wrapper.
-
-| KMP heavy behavior group | Dart heavy coverage |
-| --- | --- |
-| Multi-chunk push, pull, committed replay, and snapshot retrieval | Covered by `small chunks and interleaved same-user writers converge` and `stale follower pruned under load rebuilds from snapshot` with intentionally small upload and download limits. Dart uses `downloadLimit` for snapshot chunk fetch size. |
-| Long-horizon writer/follower convergence | Covered by repeated writer/follower rounds in the interleaved writer and stale follower tests. |
-| Long-horizon divergent writer convergence | Covered by repeated client-wins conflict rounds after prior bundles. |
-| Stale follower after history pruning | Covered through the retained-floor test endpoint and snapshot rebuild convergence. |
-| Repeated conflict convergence | Covered by repeated `ClientWinsResolver` conflicts after prior committed bundles. |
-| Source recovery or source retirement | Covered after several committed bundles, including old-source rejection and follow-up sync through the replacement source. |
-| Same-user multi-device convergence | Covered by two Dart writers plus an observer converging through the same user scope. |
-| Shared connection or concurrent local usage stress | Covered by concurrent reads while a shared Dart database catches up through live pulls. Dart does not expose the KMP alias-star generated query surface, so that exact generated-query shape is not applicable. |
-| Rich schema, typed rows, BLOB, cascade, and FK topology stress | Covered by `realserver_rich_schema_test.dart` using generated Dart oversqlite metadata. It exercises FK topology, typed nullable rows, BLOB payloads, BLOB primary-key sync tables, and cascade behavior. |
-
-Flutter Android runtime coverage lives in the `flutter_todo` example as an
-opt-in integration suite. After starting the real server and an Android
-emulator, run from the Dart workspace:
+Generate the Dart database:
 
 ```shell
-OVERSQLITE_RUN_FLUTTER_ANDROID_SMOKE=true scripts/oversqlite_realserver_all.sh
+dart run sqlitenow_cli generate
 ```
 
-The flag name is retained for compatibility, but it now runs the expanded
-Flutter Android live-server suite: smoke, lifecycle, conflicts, rich generated
-schema, and bundle-change watch. To include scaled Android stress coverage for
-chunked push, stale follower snapshot rebuild, and concurrent reads while
-syncing, run the heavy wrapper with both flags:
+For a Flutter application, use:
 
 ```shell
-OVERSQLITE_RUN_FLUTTER_ANDROID_SMOKE=true scripts/oversqlite_realserver_all_heavy.sh
+flutter pub run sqlitenow_cli generate
 ```
 
-For a single Flutter Android test file, pass the same Dart defines directly:
+The generated database exposes `buildOversqliteConfig(...)` and
+`newOversqliteClient(...)` for the synchronized tables.
 
-```shell
-cd examples/flutter_todo
-flutter test integration_test/realserver_smoke_test.dart -d emulator-5554 \
-  --dart-define=OVERSQLITE_REALSERVER_TESTS=true \
-  --dart-define=OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL=http://10.0.2.2:8080
+## Connect and sync
+
+Open the generated database, create an authenticated HTTP transport, and create the generated
+Oversqlite client:
+
+```dart
+import 'dart:io';
+
+import 'package:sqlitenow_oversqlite/sqlitenow_oversqlite.dart';
+
+import 'db/generated/app_database.dart';
+
+final database = AppDatabase(path: databasePath);
+await database.open();
+
+final httpClient = IoOversqliteHttpClient(
+  baseUri: Uri.parse('https://api.example.com'),
+  defaultHeaders: {
+    HttpHeaders.authorizationHeader: 'Bearer $accessToken',
+  },
+);
+
+final syncClient = database.newOversqliteClient(
+  schema: 'app',
+  httpClient: httpClient,
+);
+
+await syncClient.open();
+
+final attachResult = await syncClient.attach(userId);
+if (attachResult case AttachConnected()) {
+  await syncClient.sync();
+}
 ```
 
-Flutter Android intentionally reuses host Dart realserver coverage for broad
-protocol matrix confidence. The Android suite repeats the contract families
-that exercise device runtime behavior: file-backed SQLite, generated metadata,
-IO HTTP/SSE transport, source lifecycle, conflict recovery, chunking, snapshot
-rebuild, typed/BLOB rows, cascades, and concurrent reads while syncing.
+Call `open()` on each application launch. Call `attach(userId)` after authentication establishes
+the current account, then use `sync()` whenever the application should exchange local and remote
+changes. `AttachRetryLater` indicates that the remote attachment should be retried later.
+
+Your application owns authentication. `IoOversqliteHttpClient` sends the headers you provide along
+with the Oversqlite source identity managed by the local database.
+
+## Sync operations
+
+- `sync()` pushes pending local changes and pulls remote changes until stable.
+- `pushPending()` uploads pending local changes without running a pull.
+- `pullToStable()` downloads and applies remote changes without running a push.
+- `syncStatus()` reports pending local and remote work.
+- `rebuild()` restores the local synchronized state from a server snapshot.
+- `syncThenDetach()` synchronizes and disconnects the current account.
+
+Generated SQLiteNow writes are captured automatically. Remote changes applied by Oversqlite also
+invalidate generated reactive queries, so active query streams receive the updated rows.
+
+## Automatic downloads
+
+Automatic downloads are optional and disabled by default:
+
+```dart
+final downloads = syncClient.startAutomaticDownloads();
+
+// Stop the worker when its owning application scope shuts down.
+await downloads.stop();
+```
+
+Configure polling and bundle-change watching through the generated `newOversqliteClient(...)`
+arguments.
+
+## Learn more
+
+- [Flutter and Dart sync guide](https://mobiletoly.github.io/sqlitenow-kmp/flutter/sync/)
+- [SQLiteNow Flutter and Dart documentation](https://mobiletoly.github.io/sqlitenow-kmp/flutter/)
+- [Oversync server setup](https://mobiletoly.github.io/sqlitenow-kmp/sync/server-setup/)
+- [Flutter example](https://github.com/mobiletoly/sqlitenow-kmp/tree/main/dart/examples/flutter_todo)

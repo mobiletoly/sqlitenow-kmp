@@ -11,7 +11,7 @@ durable SQL rows directly. Any KMP or Dart change that intentionally changes
 local sync schema, trigger behavior, dirty-row capture, wire protocol behavior,
 or final sync state must update or add the relevant fixture in the same change.
 
-## C1 canonical JSON and numeric contract
+## Canonical JSON and numeric contract
 
 `canonical-json/jcs-typed-numerics.json` is authoritative for KMP and Dart and is mirrored by
 equivalent Go vectors with a checksum drift guard. Canonical bytes use RFC 8785 JCS; this is not an
@@ -20,13 +20,14 @@ while approximate values are finite binary64 JSON numbers. Hash-only row ordinal
 versions are decimal strings in the logical hash input.
 
 The fixture also defines ordinary SQLite `INTEGER`/`TEXT`/`REAL` binding and rejection behavior,
-request and committed hashes, and the destructive reset disposition. No custom SQLite declared
-type, legacy canonicalizer, compatibility alias, or mixed-version fixture is permitted.
+request and committed hashes, and the fresh-database compatibility disposition. No custom SQLite
+declared type, canonicalization fallback, compatibility alias, or mixed-version fixture is
+permitted.
 
 Cross-implementation realserver conformance is part of the same drift-prevention
 workflow. Behavior changes that affect live Oversync server semantics must keep
 the shared fixtures current and must run the relevant KMP realserver wrapper
-plus the Dart opt-in realserver test before the phase is considered complete.
+plus the Dart opt-in realserver test before the contract change is accepted.
 Each required lane starts against a newly recreated PostgreSQL database and fresh local client
 databases. Client tests do not reset a running server through HTTP.
 
@@ -70,8 +71,8 @@ Local schema/config validation fixtures live in
   invalid table registrations.
 - Runners must fail on declared message fragments or exception categories, not
   incidental stack traces. Dart does not add Dart-only runtime metadata or
-  compatibility migrations for old `_sync_*` layouts; stale pre-release local
-  dev databases should be recreated when shared contracts change.
+  compatibility migrations; local development databases should be recreated
+  when shared `_sync_*` contracts change.
 
 Protocol HTTP request fixtures live under `protocol-http/`:
 
@@ -209,10 +210,10 @@ Runtime SQL-state fixtures live under `runtime-state/`:
 - Runtime-state fixtures assert internal SQL state directly. Behavior fixtures
   still own user-visible workflow outcomes. Live server semantic changes still
   require realserver coverage in addition to fixture updates.
-- Dart runtime metadata compatibility for old pre-release local DB layouts is
-  intentionally not preserved. Delete and recreate stale Dart dev databases
-  when `_sync_*` contracts change. Future metadata/versioning, if added, must
-  be shared across KMP and Dart rather than Dart-only.
+- Dart does not support in-place migration between incompatible local metadata
+  layouts. Delete and recreate Dart development databases when `_sync_*`
+  contracts change. Any metadata versioning must be shared across KMP and Dart
+  rather than Dart-only.
 
 Protocol/JSON field changes require wire fixture updates. Retry, rebuild,
 conflict, source recovery, attach/detach lifecycle, outbox, dirty-row, or

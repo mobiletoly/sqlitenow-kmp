@@ -39,9 +39,8 @@ emulator from the Dart workspace with:
 OVERSQLITE_RUN_FLUTTER_ANDROID_SMOKE=true scripts/oversqlite_realserver_all.sh
 ```
 
-The compatibility flag name is historical; it now runs the expanded Flutter
-Android live-server suite, not only the smoke test. The suite covers generated
-metadata, basic convergence, lifecycle, conflict recovery, rich-schema rows,
+The flag enables the full Flutter Android live-server suite. The suite covers
+generated metadata, basic convergence, lifecycle, conflict recovery, rich-schema rows,
 BLOB keys, cascades, bundle-change watch, and practical Android device
 transport behavior.
 

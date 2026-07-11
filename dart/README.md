@@ -2,9 +2,8 @@
 
 This workspace contains Dart-facing SQLiteNow packages.
 
-Phase 3 introduces `sqlitenow_runtime`, the low-level runtime surface that
-future generated Dart code will target. It is intentionally independent of the
-Kotlin Multiplatform generator and runtime.
+`sqlitenow_runtime` is the low-level runtime used by generated Dart code. It is
+intentionally independent of the Kotlin Multiplatform generator and runtime.
 
 ## Packages
 

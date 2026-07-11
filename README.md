@@ -282,10 +282,11 @@ For an `oversqlite = true` generated database, pass an overridden `syncTables` l
 The default remains the generated `enableSync` table list, so ordinary generated clients require no
 extra argument.
 
-C1 is a destructive pre-1.0 reset. Corrected servers and clients must be released together, and
-existing Oversqlite databases must be recreated. There is no legacy canonicalizer, hash fallback,
-durable-state migration, or mixed old/new mode; old outboxes, checkpoints, retry state, and offline
-work may be discarded.
+Only fresh Oversqlite databases using this canonicalization and numeric contract are supported.
+There is no in-place durable-state migration, canonicalization or hash fallback, or mixed-version
+mode. When aligning an existing deployment with this contract, release compatible server and
+client versions together and recreate the client databases, discarding outboxes, checkpoints,
+retry state, and offline work.
 
 The sync system automatically handles:
 
