@@ -94,6 +94,10 @@ Object? localOversqliteJsonValue(OversqliteColumnInfo column, Object? value) {
   if (value is List<int>) {
     return hexBytes(Uint8List.fromList(value));
   }
+  if (column.kind == OversqliteColumnKind.exactInt64 ||
+      column.kind == OversqliteColumnKind.exactDecimal) {
+    return value.toString();
+  }
   return value;
 }
 
@@ -128,10 +132,15 @@ Object? wireOversqlitePayloadValue(OversqliteColumnInfo column, Object? value) {
           : value is int
           ? value
           : int.parse(value.toString()),
+    OversqliteColumnKind.exactInt64 => _requireInt64(value.toString()),
     OversqliteColumnKind.real => num.parse(
       canonicalizeFiniteJsonNumber(value.toString()),
     ),
-    OversqliteColumnKind.text => value.toString(),
+    OversqliteColumnKind.exactDecimal => _requireExactDecimal(value.toString()),
+    OversqliteColumnKind.text =>
+      value is String
+          ? value
+          : throw ArgumentError('TEXT requires a string for ${column.name}'),
   };
 }
 
@@ -158,8 +167,13 @@ Object? bindOversqlitePayloadValue(
           : value is int
           ? value
           : int.parse(value.toString()),
-    OversqliteColumnKind.real => double.parse(value.toString()),
-    OversqliteColumnKind.text => value.toString(),
+    OversqliteColumnKind.exactInt64 => _requireInt64(value.toString()),
+    OversqliteColumnKind.real => _finiteDouble(value.toString(), column.name),
+    OversqliteColumnKind.exactDecimal => _requireExactDecimal(value.toString()),
+    OversqliteColumnKind.text =>
+      value is String
+          ? value
+          : throw ArgumentError('TEXT requires a string for ${column.name}'),
   };
 }
 
@@ -279,6 +293,11 @@ bool equivalentOversqlitePayloadValue(
       OversqliteColumnKind.real =>
         canonicalizeFiniteJsonNumber(left.toString()) ==
             canonicalizeFiniteJsonNumber(right.toString()),
+      OversqliteColumnKind.exactInt64 =>
+        _requireInt64(left.toString()) == _requireInt64(right.toString()),
+      OversqliteColumnKind.exactDecimal =>
+        _requireExactDecimal(left.toString()) ==
+            _requireExactDecimal(right.toString()),
       OversqliteColumnKind.blob => bytesEqual(
         decodeOversqliteBlobPayloadValue(left, leftSource),
         decodeOversqliteBlobPayloadValue(right, rightSource),
@@ -301,6 +320,42 @@ int decodeOversqliteIntegerPayloadValue(Object value) {
     return value;
   }
   return int.parse(value.toString());
+}
+
+String _requireInt64(String raw) {
+  if (!RegExp(r'^-?(0|[1-9][0-9]*)$').hasMatch(raw) || raw == '-0') {
+    throw ArgumentError('expected an exact signed 64-bit integer: $raw');
+  }
+  final negative = raw.startsWith('-');
+  final magnitude = negative ? raw.substring(1) : raw;
+  final limit = negative ? '9223372036854775808' : '9223372036854775807';
+  if (magnitude.length > limit.length ||
+      (magnitude.length == limit.length && magnitude.compareTo(limit) > 0)) {
+    throw ArgumentError('signed 64-bit integer is out of range: $raw');
+  }
+  return raw;
+}
+
+String _requireExactDecimal(String raw) {
+  if (!RegExp(
+    r'^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?(0|[1-9][0-9]*))?$',
+  ).hasMatch(raw)) {
+    throw ArgumentError('expected an exact finite decimal string: $raw');
+  }
+  final significand = raw.split(RegExp('[eE]')).first;
+  final digits = significand.replaceAll(RegExp(r'[^0-9]'), '');
+  if (raw.startsWith('-') && digits.split('').every((digit) => digit == '0')) {
+    throw ArgumentError('negative zero is not an exact decimal string: $raw');
+  }
+  return raw;
+}
+
+double _finiteDouble(String raw, String columnName) {
+  final value = double.parse(raw);
+  if (!value.isFinite) {
+    throw ArgumentError('REAL requires a finite value for $columnName');
+  }
+  return value;
 }
 
 Uint8List decodeOversqliteBlobPayloadValue(Object value, PayloadSource source) {
@@ -410,45 +465,7 @@ String hexBytes(List<int> bytes) {
 }
 
 String canonicalizeFiniteJsonNumber(String value) {
-  if (!_jsonNumberPattern.hasMatch(value)) {
-    throw ArgumentError('invalid JSON number: $value');
-  }
-  final negative = value.startsWith('-');
-  final unsigned = negative ? value.substring(1) : value;
-  final exponentIndex = unsigned.indexOf(RegExp('[eE]'));
-  final mantissa = exponentIndex >= 0
-      ? unsigned.substring(0, exponentIndex)
-      : unsigned;
-  final exponent = exponentIndex >= 0
-      ? int.parse(unsigned.substring(exponentIndex + 1))
-      : 0;
-  final dotIndex = mantissa.indexOf('.');
-  final integerPart = dotIndex >= 0
-      ? mantissa.substring(0, dotIndex)
-      : mantissa;
-  final fractionPart = dotIndex >= 0 ? mantissa.substring(dotIndex + 1) : '';
-  final rawDigits = integerPart + fractionPart;
-  var leadingZeroCount = 0;
-  while (leadingZeroCount < rawDigits.length &&
-      rawDigits.codeUnitAt(leadingZeroCount) == 0x30) {
-    leadingZeroCount++;
-  }
-  final digits = rawDigits.substring(leadingZeroCount);
-  if (digits.isEmpty) {
-    return '0';
-  }
-  final shiftedDecimalIndex = integerPart.length + exponent - leadingZeroCount;
-  final plain = shiftedDecimalIndex <= 0
-      ? '0.${zeroes(-shiftedDecimalIndex)}$digits'
-      : shiftedDecimalIndex >= digits.length
-      ? '$digits${zeroes(shiftedDecimalIndex - digits.length)}'
-      : '${digits.substring(0, shiftedDecimalIndex)}.${digits.substring(shiftedDecimalIndex)}';
-  final normalized = plain.contains('.')
-      ? trimDecimalNumber(plain)
-      : plain.replaceFirst(RegExp(r'^0+'), '').isEmpty
-      ? '0'
-      : plain.replaceFirst(RegExp(r'^0+'), '');
-  return negative && normalized != '0' ? '-$normalized' : normalized;
+  return canonicalizeOversqliteProtocolJsonNumber(value);
 }
 
 String trimDecimalNumber(String plain) {
@@ -468,7 +485,11 @@ String canonicalizeOversqliteProtocolJson(Object? value) {
   if (value == null) {
     return 'null';
   }
-  if (value is String || value is bool) {
+  if (value is String) {
+    _validateDartString(value);
+    return jsonEncode(value);
+  }
+  if (value is bool) {
     return jsonEncode(value);
   }
   if (value is num) {
@@ -482,20 +503,18 @@ String canonicalizeOversqliteProtocolJson(Object? value) {
       ..sort(
         (left, right) => left.key.toString().compareTo(right.key.toString()),
       );
-    return '{${entries.map((entry) => '${jsonEncode(entry.key.toString())}:${canonicalizeOversqliteProtocolJson(entry.value)}').join(',')}}';
+    return '{${entries.map((entry) => '${canonicalizeOversqliteProtocolJson(entry.key.toString())}:${canonicalizeOversqliteProtocolJson(entry.value)}').join(',')}}';
   }
   return jsonEncode(value);
 }
 
 String canonicalizeOversqliteProtocolJsonNumber(String raw) {
+  if (!_jsonNumberPattern.hasMatch(raw)) {
+    throw ArgumentError('invalid JSON number: $raw');
+  }
   final number = double.parse(raw);
-  if (!number.isFinite) {
-    throw ArgumentError('JSON number must be finite: $raw');
-  }
-  if (number == 0) {
-    return '0';
-  }
-
+  if (!number.isFinite) throw ArgumentError('JSON number must be finite: $raw');
+  if (number == 0) return '0';
   final absNumber = number.abs();
   final rendered = number.toString().toLowerCase();
   if (absNumber >= 1e-6 && absNumber < 1e21) {
@@ -616,4 +635,21 @@ String sha256Hex(String text) {
   return sha256.convert(utf8.encode(text)).bytes.map((byte) {
     return byte.toRadixString(16).padLeft(2, '0');
   }).join();
+}
+
+void _validateDartString(String value) {
+  for (var index = 0; index < value.length; index++) {
+    final code = value.codeUnitAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      if (index + 1 >= value.length) {
+        throw ArgumentError('invalid unpaired high surrogate');
+      }
+      final low = value.codeUnitAt(++index);
+      if (low < 0xdc00 || low > 0xdfff) {
+        throw ArgumentError('invalid unpaired high surrogate');
+      }
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      throw ArgumentError('invalid unpaired low surrogate');
+    }
+  }
 }

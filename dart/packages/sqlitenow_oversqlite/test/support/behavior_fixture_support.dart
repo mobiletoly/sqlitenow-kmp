@@ -336,10 +336,12 @@ final class PushFixtureServer implements OversqliteHttpClient {
   final Map<int, List<Map<String, Object?>>> _uploadedRowsByBundleSeq = {};
   final Map<int, int> _sourceBundleIdByBundleSeq = {};
   final Map<int, String> _bundleHashByBundleSeq = {};
+  final Map<int, String> _requestHashByBundleSeq = {};
   var _commitAttempts = 0;
   var _committedFetchAttempts = 0;
   var _conflictDelivered = false;
   var _activeSourceBundleId = 1;
+  var _activeRequestHash = '';
   var _nextBundleSeq = 1;
   var _sourceId = '';
 
@@ -381,7 +383,14 @@ final class PushFixtureServer implements OversqliteHttpClient {
         }, statusCode: 409);
       }
       if (committedRowsResponse != null) {
-        return _json({...committedRowsResponse!, 'source_id': _sourceId});
+        return _json({
+          ...committedRowsResponse!,
+          'source_id': _sourceId,
+          'canonical_request_hash':
+              committedRowsResponse!['canonical_request_hash'] ??
+              _requestHashByBundleSeq[bundleSeq] ??
+              _activeRequestHash,
+        });
       }
       final rows =
           _uploadedRowsByBundleSeq[bundleSeq] ??
@@ -396,6 +405,8 @@ final class PushFixtureServer implements OversqliteHttpClient {
             _sourceBundleIdByBundleSeq[bundleSeq] ?? _activeSourceBundleId,
         'row_count': rows.length,
         'bundle_hash': bundleHash,
+        'canonical_request_hash':
+            _requestHashByBundleSeq[bundleSeq] ?? _activeRequestHash,
         'rows': rows,
         'next_row_ordinal': rows.isEmpty ? -1 : rows.length - 1,
         'has_more': false,
@@ -418,6 +429,7 @@ final class PushFixtureServer implements OversqliteHttpClient {
       final request = (body! as Map).cast<String, Object?>();
       createRequests.add(request);
       _activeSourceBundleId = request['source_bundle_id']! as int;
+      _activeRequestHash = request['canonical_request_hash']! as String;
       if (sourceRetiredOnCreate) {
         return _json({
           'error': 'source_retired',
@@ -427,18 +439,21 @@ final class PushFixtureServer implements OversqliteHttpClient {
         }, statusCode: 409);
       }
       if (alreadyCommitted) {
-        return _json(
-          createResponse ??
-              {
-                'status': 'already_committed',
-                'bundle_seq': committedBundleSeq,
-                'source_id': sourceId,
-                'source_bundle_id': request['source_bundle_id'],
-                'row_count': uploadedRows.length,
-                'bundle_hash': 'test-hash',
-              },
-          sourceIdOverride: sourceId,
-        );
+        final response =
+            createResponse ??
+            {
+              'status': 'already_committed',
+              'bundle_seq': committedBundleSeq,
+              'source_id': sourceId,
+              'source_bundle_id': request['source_bundle_id'],
+              'row_count': uploadedRows.length,
+              'bundle_hash': 'test-hash',
+            };
+        return _json({
+          ...response,
+          'canonical_request_hash':
+              response['canonical_request_hash'] ?? _activeRequestHash,
+        }, sourceIdOverride: sourceId);
       }
       uploadedRows.clear();
       return _json({
@@ -446,6 +461,7 @@ final class PushFixtureServer implements OversqliteHttpClient {
         'push_id': 'push-1',
         'planned_row_count': request['planned_row_count'],
         'next_expected_row_ordinal': 0,
+        'canonical_request_hash': _activeRequestHash,
       });
     }
     if (path == 'sync/push-sessions/push-1/chunks') {
@@ -487,17 +503,19 @@ final class PushFixtureServer implements OversqliteHttpClient {
           ? 'bad-hash'
           : _committedBundleHashForFixtureRows(committedRows);
       _bundleHashByBundleSeq[bundleSeq] = bundleHash;
-      return _json(
-        commitResponse ??
-            {
-              'bundle_seq': bundleSeq,
-              'source_id': _sourceId,
-              'source_bundle_id': _activeSourceBundleId,
-              'row_count': uploadedRows.length,
-              'bundle_hash': bundleHash,
-            },
-        sourceIdOverride: _sourceId,
-      );
+      _requestHashByBundleSeq[bundleSeq] = _activeRequestHash;
+      return _json({
+        ...?commitResponse,
+        if (commitResponse == null) ...{
+          'bundle_seq': bundleSeq,
+          'source_id': _sourceId,
+          'source_bundle_id': _activeSourceBundleId,
+          'row_count': uploadedRows.length,
+          'bundle_hash': bundleHash,
+        },
+        'canonical_request_hash':
+            commitResponse?['canonical_request_hash'] ?? _activeRequestHash,
+      }, sourceIdOverride: _sourceId);
     }
     return _json({'error': 'not_found', 'message': path}, statusCode: 404);
   }
@@ -546,12 +564,12 @@ String committedBundleHashForFixtureRows(List<Map<String, Object?>> rows) {
           _canonicalizeFixtureJson([
             for (var i = 0; i < rows.length; i++)
               {
-                'row_ordinal': i,
+                'row_ordinal': i.toString(),
                 'schema': rows[i]['schema'],
                 'table': rows[i]['table'],
                 'key': rows[i]['key'],
                 'op': rows[i]['op'],
-                'row_version': rows[i]['row_version'],
+                'row_version': rows[i]['row_version'].toString(),
                 'payload': rows[i]['payload'],
               },
           ]),

@@ -15,7 +15,6 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
-import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import kotlinx.serialization.json.Json
 
 internal sealed class ReplayRowAction {
@@ -129,8 +128,6 @@ internal class OversqliteReplayPlanner(
 }
 
 internal class OversqlitePushReplayExecutor(
-    private val db: SafeSQLiteConnection,
-    private val tableInfoCache: TableInfoCache,
     private val syncStateStore: OversqliteSyncStateStore,
     private val bundleApplier: OversqliteBundleApplier,
     private val localStore: OversqliteLocalStore,
@@ -153,7 +150,7 @@ internal class OversqlitePushReplayExecutor(
             "committed push replay row count ${committedRows.size} does not match expected row_count ${committed.rowCount}"
         }
 
-        val plans = buildReplayPlans(uploadedRows, statementCache)
+		val plans = buildReplayPlans(state, uploadedRows, statementCache)
         val updatedTables = linkedSetOf<String>()
         for (row in committedRows) {
             val bundleRow = BundleRow(
@@ -201,12 +198,14 @@ internal class OversqlitePushReplayExecutor(
     }
 
     private suspend fun buildReplayPlans(
+		state: RuntimeState,
         uploadedRows: List<DirtyRowCapture>,
         statementCache: StatementCache,
     ): Map<DirtyRowRef, UploadedReplayPlan> {
         return buildMap {
             for (uploaded in uploadedRows) {
-                val tableInfo = tableInfoCache.get(db, uploaded.tableName)
+				val tableInfo = state.validated.tableInfoByName[uploaded.tableName.lowercase()]
+					?: error("missing validated table info for ${uploaded.tableName}")
                 val currentDirty = syncStateStore.loadDirtyUploadState(
                     schemaName = uploaded.schemaName,
                     tableName = uploaded.tableName,

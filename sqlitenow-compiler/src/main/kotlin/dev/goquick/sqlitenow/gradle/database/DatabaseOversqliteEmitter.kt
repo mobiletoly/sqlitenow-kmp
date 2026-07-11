@@ -85,6 +85,7 @@ internal class DatabaseOversqliteEmitter(
                 ParameterSpec.builder("verboseLogs", Boolean::class).defaultValue("false")
                     .build()
             )
+            .addParameter(syncTablesParameter())
             .returns(ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteConfig"))
             .addStatement(
                 "return %T(schema, syncTables, uploadLimit, downloadLimit, verboseLogs = verboseLogs)",
@@ -153,12 +154,21 @@ internal class DatabaseOversqliteEmitter(
                 ParameterSpec.builder("verboseLogs", Boolean::class).defaultValue("false")
                     .build()
             )
+            .addParameter(syncTablesParameter())
             .returns(ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteClient"))
-            .addStatement("val cfg = buildOversqliteConfig(schema, uploadLimit, downloadLimit, verboseLogs)")
+            .addStatement("val cfg = buildOversqliteConfig(schema, uploadLimit, downloadLimit, verboseLogs, syncTables)")
             .addStatement(
                 "return %T(db = this.connection(), config = cfg, http = httpClient, resolver = resolver)",
                 ClassName("dev.goquick.sqlitenow.oversqlite", "DefaultOversqliteClient"),
             )
             .build()
+    }
+
+    private fun syncTablesParameter(): ParameterSpec {
+        val syncTableType = ClassName("dev.goquick.sqlitenow.oversqlite", "SyncTable")
+        return ParameterSpec.builder(
+            "syncTables",
+            ClassName("kotlin.collections", "List").parameterizedBy(syncTableType),
+        ).defaultValue("Companion.syncTables").build()
     }
 }

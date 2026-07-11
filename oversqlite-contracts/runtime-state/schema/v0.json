@@ -237,6 +237,13 @@
           "primaryKeyPosition": 1
         },
         {
+          "name": "canonical_json_contract",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
           "name": "state",
           "type": "TEXT",
           "notNull": true,
@@ -588,6 +595,7 @@
     "outbox_bundle": [
       {
         "singleton_key": 1,
+        "canonical_json_contract": "jcs_typed_numeric_strings_v0",
         "state": "none",
         "source_id": "",
         "source_bundle_id": 0,

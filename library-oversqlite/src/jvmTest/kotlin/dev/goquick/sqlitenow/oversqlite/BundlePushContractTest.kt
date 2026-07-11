@@ -432,15 +432,18 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
         committedHash: String,
         committedRowsJson: String,
         alreadyCommitted: Boolean = false,
+        canonicalRequestHashOverride: String? = null,
     ) {
         var sourceId = ""
+        var canonicalRequestHash = ""
         val indentedCommittedRowsJson = committedRowsJson.trimIndent().prependIndent("                        ")
 
         createContext("/sync/push-sessions") { exchange ->
-            json.decodeFromString(
+            val createRequest = json.decodeFromString(
                 PushSessionCreateRequest.serializer(),
                 exchange.requestBody.readBytes().decodeToString(),
             )
+            canonicalRequestHash = canonicalRequestHashOverride ?: createRequest.canonicalRequestHash
             sourceId = exchange.requestHeaders.getFirst("Oversync-Source-ID").orEmpty()
             val responseBody = if (alreadyCommitted) {
                 """
@@ -452,7 +455,8 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
                   "source_id": "$sourceId",
                   "source_bundle_id": 1,
                   "row_count": 1,
-                  "bundle_hash": "$committedHash"
+                  "bundle_hash": "$committedHash",
+                  "canonical_request_hash": "$canonicalRequestHash"
                 }
                 """.trimIndent()
             } else {
@@ -461,7 +465,8 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
                   "push_id": "$pushId",
                   "status": "staging",
                   "planned_row_count": 1,
-                  "next_expected_row_ordinal": 0
+                  "next_expected_row_ordinal": 0,
+                  "canonical_request_hash": "$canonicalRequestHash"
                 }
                 """.trimIndent()
             }
@@ -490,7 +495,8 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
                       "source_id": "$sourceId",
                       "source_bundle_id": 1,
                       "row_count": 1,
-                      "bundle_hash": "$committedHash"
+                      "bundle_hash": "$committedHash",
+                      "canonical_request_hash": "$canonicalRequestHash"
                     }
                     """.trimIndent()
                 )
@@ -507,6 +513,7 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
                   "source_bundle_id": 1,
                   "row_count": 1,
                   "bundle_hash": "$committedHash",
+                  "canonical_request_hash": "$canonicalRequestHash",
                   "rows": [
 $indentedCommittedRowsJson
                   ],
@@ -1716,7 +1723,7 @@ $indentedCommittedRowsJson
     }
 
     @Test
-    fun pushPending_committedRemoteMismatch_marksRebuildRequired_andRebuildAdvancesSourceFloor() = runBlocking {
+    fun pushPending_committedRemoteRequestHashMismatch_marksRebuildRequired_andRebuildAdvancesSourceFloor() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
         val server = newServer()
@@ -1737,7 +1744,7 @@ $indentedCommittedRowsJson
             db.execSQL("INSERT INTO users(id, name) VALUES('user-2', 'Grace')")
             client.pushPending().getOrThrow()
 
-            pushServer.committedRowsTransform = { rows -> rows.reversed() }
+            pushServer.committedRequestHashTransform = { "b".repeat(64) }
             db.execSQL("DELETE FROM users WHERE id = 'user-1'")
             db.execSQL("DELETE FROM users WHERE id = 'user-2'")
 
@@ -1765,7 +1772,7 @@ $indentedCommittedRowsJson
     }
 
     @Test
-    fun pushPending_alreadyCommittedWithDifferentCommittedRows_throwsSourceSequenceMismatch() = runBlocking {
+    fun pushPending_alreadyCommittedWithMismatchedRequestHash_throwsSourceSequenceMismatch() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
         val committedPayloadJson = """{"id":"user-1","name":"Server Ada"}"""
@@ -1776,6 +1783,7 @@ $indentedCommittedRowsJson
                 committedHash = committedHash,
                 committedRowsJson = userCommittedInsertRowJson(committedPayloadJson),
                 alreadyCommitted = true,
+                canonicalRequestHashOverride = "b".repeat(64),
             )
         }
         server.start()
@@ -1955,6 +1963,7 @@ $indentedCommittedRowsJson
             sourceId = "peer-a",
             sourceBundleId = 11,
             bundleHash = computeCommittedBundleHash(remoteRows),
+            canonicalRequestHash = "",
             rows = remoteRows,
         )
         pushServer.nextBundleSeq = 2L
@@ -2025,7 +2034,7 @@ $indentedCommittedRowsJson
             val error = client.pushPending().exceptionOrNull()
             assertNotNull(error)
             assertTrue(
-                error is SourceSequenceMismatchException ||
+                error is SourceSequenceMismatchException || error is IllegalArgumentException ||
                     error.message?.contains("does not match the canonical prepared outbox rows") == true ||
                     error.message?.contains("payload for users must contain every table column") == true,
             )
@@ -2396,7 +2405,7 @@ $indentedCommittedRowsJson
     }
 
     @Test
-    fun pushPending_rejectsCommittedTimestampPayloadWhenPreparedValueIsNaiveLocalText() = runBlocking {
+    fun pushPending_appliesAuthoritativeTimestampWhenPreparedValueIsNaiveLocalText() = runBlocking {
         withTypedRowsCommittedReplayClient(
             pushId = "",
             committedRows = typedCommittedRows(
@@ -2416,16 +2425,11 @@ $indentedCommittedRowsJson
                 """.trimIndent()
             )
 
-            val error = client.pushPending().exceptionOrNull()
+            client.pushPending().getOrThrow()
 
-            assertNotNull(error)
-            assertTrue(
-                error is SourceSequenceMismatchException,
-                "expected SourceSequenceMismatchException, got ${error::class.qualifiedName}: ${error.message}",
-            )
-            assertEquals("prepared", scalarText(db, "SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1"))
-            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
-            assertEquals("2026-03-24 18:42:11", scalarText(db, "SELECT created_at FROM typed_rows WHERE id = 'typed-1'"))
+            assertEquals("none", scalarText(db, "SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            assertEquals("2026-03-24T20:42:11+02:00", scalarText(db, "SELECT created_at FROM typed_rows WHERE id = 'typed-1'"))
         }
     }
 

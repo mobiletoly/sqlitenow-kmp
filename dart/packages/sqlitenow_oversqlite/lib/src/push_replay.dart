@@ -166,11 +166,19 @@ final class OversqlitePushReplayExecutor {
         'committed ${row.op} row for ${row.table} must include object payload',
       );
     }
-    await _localStore.upsertPayload(
-      row.table,
-      payload.cast<String, Object?>(),
-      PayloadSource.authoritativeWire,
-    );
+    try {
+      await _localStore.upsertPayload(
+        row.table,
+        payload.cast<String, Object?>(),
+        PayloadSource.authoritativeWire,
+      );
+    } on OversqliteProtocolException {
+      rethrow;
+    } catch (error) {
+      throw OversqliteProtocolException(
+        'committed ${row.op} row for ${row.table} cannot be applied: $error',
+      );
+    }
     await _pushStateStore.updateRowState(
       schema: row.schema,
       table: row.table,

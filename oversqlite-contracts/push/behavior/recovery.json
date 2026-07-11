@@ -188,13 +188,13 @@
       ]
     },
     {
-      "name": "already-committed-mismatch-preserves-source-sequence-error",
-      "description": "A strict already_committed replay whose committed rows do not match the local prepared bundle remains a source sequence mismatch and keeps the prepared outbox replayable.",
+      "name": "already-committed-request-hash-mismatch-preserves-source-sequence-error",
+      "description": "An already_committed replay with a different canonical request hash remains a source sequence mismatch and keeps the prepared outbox replayable.",
       "localSetupSql": [
         "INSERT INTO users(id, name) VALUES('user-1', 'Local Ada')"
       ],
       "serverScript": {
-        "kind": "already_committed_mismatch",
+        "kind": "already_committed_request_hash_mismatch",
         "committedPayload": {
           "id": "user-1",
           "name": "Server Ada"
@@ -215,14 +215,14 @@
       ]
     },
     {
-      "name": "committed-remote-mismatch-requires-rebuild",
-      "description": "A committed_remote replay whose committed rows differ from the local frozen outbox marks rebuild required and preserves the committed outbox for rebuild.",
+      "name": "committed-remote-request-hash-mismatch-requires-rebuild",
+      "description": "A committed_remote replay with a different canonical request hash marks rebuild required and preserves the committed outbox for rebuild.",
       "localSetupSql": [
         "INSERT INTO users(id, name) VALUES('user-1', 'Ada')",
         "INSERT INTO users(id, name) VALUES('user-2', 'Grace')"
       ],
       "serverScript": {
-        "kind": "committed_remote_mismatch",
+        "kind": "committed_remote_request_hash_mismatch",
         "commitResponse": {
           "bundle_seq": 1,
           "source_id": "source-fixture",

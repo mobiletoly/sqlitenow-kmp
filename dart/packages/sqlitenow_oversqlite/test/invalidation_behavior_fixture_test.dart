@@ -306,6 +306,7 @@ final class _InvalidationServer implements OversqliteHttpClient {
   Map<String, Object?>? conflictOnce;
   var stableBundleSeq = 0;
   var _sourceId = '';
+  var _canonicalRequestHash = '';
   var _nextBundleSeq = 1;
   var _conflictDelivered = false;
 
@@ -388,6 +389,7 @@ final class _InvalidationServer implements OversqliteHttpClient {
         'source_bundle_id': 1,
         'row_count': rows.length,
         'bundle_hash': committedBundleHashForFixtureRows(rows),
+        'canonical_request_hash': _canonicalRequestHash,
         'rows': rows,
         'next_row_ordinal': rows.isEmpty ? -1 : rows.length - 1,
         'has_more': false,
@@ -418,11 +420,13 @@ final class _InvalidationServer implements OversqliteHttpClient {
     if (path == 'sync/push-sessions') {
       uploadedRows.clear();
       final request = (body! as Map).cast<String, Object?>();
+      _canonicalRequestHash = request['canonical_request_hash']! as String;
       return _json({
         'status': 'staging',
         'push_id': 'push-1',
         'planned_row_count': request['planned_row_count'],
         'next_expected_row_ordinal': 0,
+        'canonical_request_hash': _canonicalRequestHash,
       });
     }
     if (path == 'sync/push-sessions/push-1/chunks') {
@@ -479,6 +483,7 @@ final class _InvalidationServer implements OversqliteHttpClient {
         'source_bundle_id': 1,
         'row_count': uploadedRows.length,
         'bundle_hash': committedBundleHashForFixtureRows(committedRows),
+        'canonical_request_hash': _canonicalRequestHash,
       });
     }
     return _json({'error': 'not_found', 'message': path}, statusCode: 404);

@@ -453,6 +453,7 @@ final class PushSessionCreateResponse {
     this.sourceBundleId = 0,
     this.rowCount = 0,
     this.bundleHash = '',
+    required this.canonicalRequestHash,
   });
 
   final String status;
@@ -464,6 +465,7 @@ final class PushSessionCreateResponse {
   final int sourceBundleId;
   final int rowCount;
   final String bundleHash;
+  final String canonicalRequestHash;
 
   factory PushSessionCreateResponse.fromJson(Map<String, Object?> json) {
     return PushSessionCreateResponse(
@@ -476,6 +478,7 @@ final class PushSessionCreateResponse {
       sourceBundleId: (json['source_bundle_id'] as int?) ?? 0,
       rowCount: (json['row_count'] as int?) ?? 0,
       bundleHash: (json['bundle_hash'] as String?) ?? '',
+      canonicalRequestHash: json['canonical_request_hash']! as String,
     );
   }
 }
@@ -504,6 +507,7 @@ final class PushSessionCommitResponse {
     required this.sourceBundleId,
     required this.rowCount,
     required this.bundleHash,
+    required this.canonicalRequestHash,
   });
 
   final int bundleSeq;
@@ -511,6 +515,7 @@ final class PushSessionCommitResponse {
   final int sourceBundleId;
   final int rowCount;
   final String bundleHash;
+  final String canonicalRequestHash;
 
   factory PushSessionCommitResponse.fromJson(Map<String, Object?> json) {
     return PushSessionCommitResponse(
@@ -519,6 +524,7 @@ final class PushSessionCommitResponse {
       sourceBundleId: json['source_bundle_id']! as int,
       rowCount: json['row_count']! as int,
       bundleHash: json['bundle_hash']! as String,
+      canonicalRequestHash: json['canonical_request_hash']! as String,
     );
   }
 }
@@ -530,6 +536,7 @@ final class CommittedBundleRowsResponse {
     required this.sourceBundleId,
     required this.rowCount,
     required this.bundleHash,
+    required this.canonicalRequestHash,
     required this.rows,
     required this.nextRowOrdinal,
     required this.hasMore,
@@ -540,6 +547,7 @@ final class CommittedBundleRowsResponse {
   final int sourceBundleId;
   final int rowCount;
   final String bundleHash;
+  final String canonicalRequestHash;
   final List<BundleRow> rows;
   final int nextRowOrdinal;
   final bool hasMore;
@@ -551,6 +559,7 @@ final class CommittedBundleRowsResponse {
       sourceBundleId: json['source_bundle_id']! as int,
       rowCount: json['row_count']! as int,
       bundleHash: json['bundle_hash']! as String,
+      canonicalRequestHash: json['canonical_request_hash']! as String,
       rows: (json['rows']! as List<Object?>)
           .cast<Map<String, Object?>>()
           .map(BundleRow.fromJson)

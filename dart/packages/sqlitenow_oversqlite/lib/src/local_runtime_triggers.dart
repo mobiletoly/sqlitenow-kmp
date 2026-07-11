@@ -169,6 +169,9 @@ String _buildJsonObjectExprHexAware(_TableInfo tableInfo, String prefix) {
     final name = column.name.toLowerCase();
     final valueExpr = column.kind.isBlobKind
         ? 'CASE WHEN $prefix.${_quoteIdent(column.name)} IS NULL THEN NULL ELSE lower(hex($prefix.${_quoteIdent(column.name)})) END'
+        : column.kind == _ColumnKind.exactInt64 ||
+              column.kind == _ColumnKind.exactDecimal
+        ? 'CAST($prefix.${_quoteIdent(column.name)} AS TEXT)'
         : '$prefix.${_quoteIdent(column.name)}';
     return "'$name', $valueExpr";
   });
@@ -189,6 +192,9 @@ String _buildKeyJsonObjectExprHexAware(
   final keyName = column.name.toLowerCase();
   final valueExpr = column.kind.isBlobKind
       ? 'lower(hex($prefix.${_quoteIdent(column.name)}))'
+      : column.kind == _ColumnKind.exactInt64 ||
+            column.kind == _ColumnKind.exactDecimal
+      ? 'CAST($prefix.${_quoteIdent(column.name)} AS TEXT)'
       : '$prefix.${_quoteIdent(column.name)}';
   return "json_object('$keyName', $valueExpr)";
 }

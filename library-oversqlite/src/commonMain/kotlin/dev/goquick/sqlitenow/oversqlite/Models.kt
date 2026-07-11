@@ -59,7 +59,8 @@ data class PushRequestRow(
 @Serializable
 data class PushSessionCreateRequest(
     @SerialName("source_bundle_id") val sourceBundleId: Long,
-    @SerialName("planned_row_count") val plannedRowCount: Long,
+	@SerialName("planned_row_count") val plannedRowCount: Long,
+	@SerialName("canonical_request_hash") val canonicalRequestHash: String,
     @SerialName("initialization_id") val initializationId: String? = null,
 )
 
@@ -73,7 +74,8 @@ data class PushSessionCreateResponse(
     @SerialName("source_id") val sourceId: String = "",
     @SerialName("source_bundle_id") val sourceBundleId: Long = 0,
     @SerialName("row_count") val rowCount: Long = 0,
-    @SerialName("bundle_hash") val bundleHash: String = "",
+	@SerialName("bundle_hash") val bundleHash: String = "",
+	@SerialName("canonical_request_hash") val canonicalRequestHash: String,
 )
 
 @Serializable
@@ -107,7 +109,8 @@ data class PushSessionCommitResponse(
     @SerialName("source_id") val sourceId: String,
     @SerialName("source_bundle_id") val sourceBundleId: Long,
     @SerialName("row_count") val rowCount: Long,
-    @SerialName("bundle_hash") val bundleHash: String,
+	@SerialName("bundle_hash") val bundleHash: String,
+	@SerialName("canonical_request_hash") val canonicalRequestHash: String,
 )
 
 @Serializable
@@ -116,7 +119,8 @@ data class CommittedBundleRowsResponse(
     @SerialName("source_id") val sourceId: String,
     @SerialName("source_bundle_id") val sourceBundleId: Long,
     @SerialName("row_count") val rowCount: Long,
-    @SerialName("bundle_hash") val bundleHash: String,
+	@SerialName("bundle_hash") val bundleHash: String,
+	@SerialName("canonical_request_hash") val canonicalRequestHash: String,
     val rows: List<BundleRow>,
     @SerialName("next_row_ordinal") val nextRowOrdinal: Long,
     @SerialName("has_more") val hasMore: Boolean,
@@ -289,7 +293,15 @@ data class SyncTable(
     val tableName: String,
     val syncKeyColumnName: String? = null,
     val syncKeyColumns: List<String> = emptyList(),
+	val numericColumns: Map<String, NumericColumnKind> = emptyMap(),
 )
+
+/** Wire and SQLite representation for one numeric business column. */
+enum class NumericColumnKind {
+	EXACT_INT64,
+	EXACT_DECIMAL,
+	APPROXIMATE,
+}
 
 /** Bounded transient retry policy for transport/availability failures. */
 data class OversqliteTransientRetryPolicy(

@@ -69,22 +69,13 @@ internal data class PushOutboundSnapshot(
 internal val PushOutboundSnapshot.isRemoteCommitted: Boolean
     get() = remoteBundleSeq > 0L && remoteBundleHash.isNotBlank()
 
-internal data class CanonicalOutboxComparableRow(
-    val rowOrdinal: Long,
-    val schemaName: String,
-    val tableName: String,
-    val wireKey: SyncKey,
-    val op: String,
-    val wirePayload: String?,
-)
-
 internal data class CommittedPushBundle(
     val bundleSeq: Long,
     val sourceId: String,
     val sourceBundleId: Long,
     val rowCount: Long,
-    val bundleHash: String,
-    val requiresStrictOutboxMatch: Boolean = false,
+	val bundleHash: String,
+	val canonicalRequestHash: String,
 )
 
 internal data class CommittedReplayRow(

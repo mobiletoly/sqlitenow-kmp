@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:sqlitenow_runtime/sqlitenow_runtime.dart';
 
 import 'local_runtime.dart';
@@ -57,7 +55,7 @@ final class OversqliteDownloadStageStore {
             row.table,
             key.keyJson,
             row.rowVersion,
-            jsonEncode(row.payload),
+            canonicalizeOversqliteProtocolJson(row.payload),
           ],
         );
       }

@@ -270,6 +270,23 @@ Sync setup requires three explicit pieces on each client:
 - the Oversqlite runtime package
 - generated database configuration with Oversqlite enabled
 
+Oversqlite canonical bytes use RFC 8785 JCS. Exact signed 64-bit values are JSON strings mapped
+to ordinary SQLite `INTEGER`; exact arbitrary-precision decimals are JSON strings mapped to
+ordinary SQLite `TEXT`; explicitly approximate values use SQLite `REAL` and finite binary64 JSON
+numbers. Configure these columns with `SyncTable.numericColumns` and `NumericColumnKind.EXACT_INT64`,
+`EXACT_DECIMAL`, or `APPROXIMATE`. These rules apply only to Oversqlite: SQLiteNow library-core and
+generated output with `oversqlite = false` are unchanged.
+
+For an `oversqlite = true` generated database, pass an overridden `syncTables` list to
+`buildOversqliteConfig(...)` or `newOversqliteClient(...)` when exact numeric metadata is needed.
+The default remains the generated `enableSync` table list, so ordinary generated clients require no
+extra argument.
+
+C1 is a destructive pre-1.0 reset. Corrected servers and clients must be released together, and
+existing Oversqlite databases must be recreated. There is no legacy canonicalizer, hash fallback,
+durable-state migration, or mixed old/new mode; old outboxes, checkpoints, retry state, and offline
+work may be discarded.
+
 The sync system automatically handles:
 
 - **Change tracking** for all sync-enabled tables

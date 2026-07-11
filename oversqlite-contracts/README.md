@@ -11,6 +11,18 @@ durable SQL rows directly. Any KMP or Dart change that intentionally changes
 local sync schema, trigger behavior, dirty-row capture, wire protocol behavior,
 or final sync state must update or add the relevant fixture in the same change.
 
+## C1 canonical JSON and numeric contract
+
+`canonical-json/jcs-typed-numerics.json` is authoritative for KMP and Dart and is mirrored by
+equivalent Go vectors with a checksum drift guard. Canonical bytes use RFC 8785 JCS; this is not an
+arbitrary-precision extension to JCS. Schema-typed exact int64 and decimal values are JSON strings,
+while approximate values are finite binary64 JSON numbers. Hash-only row ordinals and row/base
+versions are decimal strings in the logical hash input.
+
+The fixture also defines ordinary SQLite `INTEGER`/`TEXT`/`REAL` binding and rejection behavior,
+request and committed hashes, and the destructive reset disposition. No custom SQLite declared
+type, legacy canonicalizer, compatibility alias, or mixed-version fixture is permitted.
+
 Cross-implementation realserver conformance is part of the same drift-prevention
 workflow. Behavior changes that affect live Oversync server semantics must keep
 the shared fixtures current and must run the relevant KMP realserver wrapper

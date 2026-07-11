@@ -115,15 +115,13 @@ class SharedPushBehaviorFixtureTest : BundleClientContractTestSupport() {
                     install(server)
                 }
             }
-            "already_committed_mismatch" -> {
-                server.installAlreadyCommittedMismatchRoutes(case)
+            "already_committed_request_hash_mismatch" -> {
+                server.installAlreadyCommittedRequestHashMismatchRoutes(case)
                 null
             }
-            "committed_remote_mismatch" -> {
+            "committed_remote_request_hash_mismatch" -> {
                 FakeChunkedSyncServer(json, ::queryParam, ::respondJson).apply {
-                    committedRowsTransform = { rows ->
-                        rows.reversed()
-                    }
+                    committedRequestHashTransform = { "b".repeat(64) }
                     install(server)
                 }
             }
@@ -241,7 +239,7 @@ class SharedPushBehaviorFixtureTest : BundleClientContractTestSupport() {
         return "${row.table}:${row.op}:$key"
     }
 
-    private fun HttpServer.installAlreadyCommittedMismatchRoutes(case: PushBehaviorCase) {
+    private fun HttpServer.installAlreadyCommittedRequestHashMismatchRoutes(case: PushBehaviorCase) {
         var sourceId = ""
         val payload = case.serverScript.committedPayload ?: error("${case.name}: missing committedPayload")
         val committedRows = listOf(
@@ -271,6 +269,7 @@ class SharedPushBehaviorFixtureTest : BundleClientContractTestSupport() {
                         sourceBundleId = 1,
                         rowCount = 1,
                         bundleHash = committedHash,
+                        canonicalRequestHash = "b".repeat(64),
                     ),
                 ),
             )
@@ -287,6 +286,7 @@ class SharedPushBehaviorFixtureTest : BundleClientContractTestSupport() {
                         sourceBundleId = 1,
                         rowCount = 1,
                         bundleHash = committedHash,
+                        canonicalRequestHash = "b".repeat(64),
                         rows = committedRows,
                         nextRowOrdinal = 0,
                         hasMore = false,
@@ -299,6 +299,7 @@ class SharedPushBehaviorFixtureTest : BundleClientContractTestSupport() {
     private fun HttpServer.installAlreadyCommittedRowsRoutes(case: PushBehaviorCase) {
         var sourceId = ""
         var sourceBundleId = 1L
+        var canonicalRequestHash = ""
         val committedRows = case.serverScript.committedRows
         require(committedRows.isNotEmpty()) { "${case.name}: missing committedRows" }
         val committedHash = computeCommittedBundleHashForTest(committedRows)
@@ -309,6 +310,7 @@ class SharedPushBehaviorFixtureTest : BundleClientContractTestSupport() {
             )
             sourceId = exchange.requestHeaders.getFirst("Oversync-Source-ID").orEmpty()
             sourceBundleId = request.sourceBundleId
+            canonicalRequestHash = request.canonicalRequestHash
             respondJson(
                 exchange,
                 200,
@@ -323,6 +325,7 @@ class SharedPushBehaviorFixtureTest : BundleClientContractTestSupport() {
                         sourceBundleId = sourceBundleId,
                         rowCount = committedRows.size.toLong(),
                         bundleHash = committedHash,
+                        canonicalRequestHash = canonicalRequestHash,
                     ),
                 ),
             )
@@ -339,6 +342,7 @@ class SharedPushBehaviorFixtureTest : BundleClientContractTestSupport() {
                         sourceBundleId = sourceBundleId,
                         rowCount = committedRows.size.toLong(),
                         bundleHash = committedHash,
+                        canonicalRequestHash = canonicalRequestHash,
                         rows = committedRows,
                         nextRowOrdinal = committedRows.size.toLong() - 1L,
                         hasMore = false,

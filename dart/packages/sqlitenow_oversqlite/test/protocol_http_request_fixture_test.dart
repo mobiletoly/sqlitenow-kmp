@@ -90,6 +90,7 @@ Future<void> _executeOperation(
         sourceId: sourceId,
         sourceBundleId: args['sourceBundleId']! as int,
         plannedRowCount: args['plannedRowCount']! as int,
+        canonicalRequestHash: 'a' * 64,
         initializationId: args['initializationId'] as String?,
       );
     case 'pushSessionChunk':
@@ -182,6 +183,7 @@ Map<String, Object?> _responseBody(Map<String, Object?> fixture) {
         'push_id': 'push-fixture',
         'planned_row_count': args['plannedRowCount'],
         'next_expected_row_ordinal': 0,
+        'canonical_request_hash': 'a' * 64,
       };
     case 'pushSessionChunk':
       return {'push_id': args['pushId'], 'next_expected_row_ordinal': 1};
@@ -192,6 +194,7 @@ Map<String, Object?> _responseBody(Map<String, Object?> fixture) {
         'source_bundle_id': 1,
         'row_count': 1,
         'bundle_hash': 'fixture-hash',
+        'canonical_request_hash': 'a' * 64,
       };
     case 'committedRows':
       return {
@@ -200,6 +203,7 @@ Map<String, Object?> _responseBody(Map<String, Object?> fixture) {
         'source_bundle_id': 1,
         'row_count': 0,
         'bundle_hash': 'fixture-hash',
+        'canonical_request_hash': 'a' * 64,
         'rows': <Object?>[],
         'next_row_ordinal': args['afterRowOrdinal'],
         'has_more': false,

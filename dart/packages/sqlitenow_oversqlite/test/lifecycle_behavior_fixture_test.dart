@@ -290,6 +290,7 @@ final class LifecycleFixtureServer implements OversqliteHttpClient {
   var stableBundleSeq = 0;
   var _sourceId = '';
   var _activeSourceBundleId = 1;
+  var _activeRequestHash = '';
   var _nextBundleSeq = 1;
   var _pullRequestCount = 0;
   var _nextSnapshotIndex = 0;
@@ -349,6 +350,7 @@ final class LifecycleFixtureServer implements OversqliteHttpClient {
             _sourceBundleIdByBundleSeq[bundleSeq] ?? _activeSourceBundleId,
         'row_count': rows.length,
         'bundle_hash': committedBundleHashForFixtureRows(rows),
+        'canonical_request_hash': _activeRequestHash,
         'rows': rows,
         'next_row_ordinal': rows.isEmpty ? -1 : rows.length - 1,
         'has_more': false,
@@ -448,12 +450,14 @@ final class LifecycleFixtureServer implements OversqliteHttpClient {
       final request = (body! as Map).cast<String, Object?>();
       createRequests.add(request);
       _activeSourceBundleId = request['source_bundle_id']! as int;
+      _activeRequestHash = request['canonical_request_hash']! as String;
       uploadedRows.clear();
       return _json({
         'status': 'staging',
         'push_id': 'push-1',
         'planned_row_count': request['planned_row_count'],
         'next_expected_row_ordinal': 0,
+        'canonical_request_hash': _activeRequestHash,
       });
     }
     if (path == 'sync/push-sessions/push-1/chunks') {
@@ -489,6 +493,7 @@ final class LifecycleFixtureServer implements OversqliteHttpClient {
         'source_bundle_id': _activeSourceBundleId,
         'row_count': uploadedRows.length,
         'bundle_hash': committedBundleHashForFixtureRows(committedRows),
+        'canonical_request_hash': _activeRequestHash,
       });
     }
     return _json({'error': 'not_found', 'message': path}, statusCode: 404);

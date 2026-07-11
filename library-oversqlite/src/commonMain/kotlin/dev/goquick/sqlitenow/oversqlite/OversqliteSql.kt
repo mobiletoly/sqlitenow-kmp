@@ -94,10 +94,12 @@ internal fun buildJsonObjectExprHexAware(
 ): String {
     val pairs = tableInfo.columns.map { column ->
         val name = column.name.lowercase()
-        val valueExpr = if (column.kind.isBlobKind()) {
-            "CASE WHEN $prefix.${quoteIdent(column.name)} IS NULL THEN NULL ELSE lower(hex($prefix.${quoteIdent(column.name)})) END"
-        } else {
-            "$prefix.${quoteIdent(column.name)}"
+        val valueExpr = when {
+            column.kind.isBlobKind() ->
+                "CASE WHEN $prefix.${quoteIdent(column.name)} IS NULL THEN NULL ELSE lower(hex($prefix.${quoteIdent(column.name)})) END"
+            column.kind == ColumnKind.EXACT_INT64 || column.kind == ColumnKind.EXACT_DECIMAL ->
+                "CASE WHEN $prefix.${quoteIdent(column.name)} IS NULL THEN NULL ELSE CAST($prefix.${quoteIdent(column.name)} AS TEXT) END"
+            else -> "$prefix.${quoteIdent(column.name)}"
         }
         "'$name', $valueExpr"
     }
@@ -112,10 +114,11 @@ internal fun buildKeyJsonObjectExprHexAware(
     val column = tableInfo.columns.firstOrNull { it.name.equals(keyColumn, ignoreCase = true) }
         ?: error("table ${tableInfo.table} is missing sync key column $keyColumn")
     val keyName = column.name.lowercase()
-    val valueExpr = if (column.kind.isBlobKind()) {
-        "lower(hex($prefix.${quoteIdent(column.name)}))"
-    } else {
-        "$prefix.${quoteIdent(column.name)}"
+    val valueExpr = when {
+        column.kind.isBlobKind() -> "lower(hex($prefix.${quoteIdent(column.name)}))"
+        column.kind == ColumnKind.EXACT_INT64 || column.kind == ColumnKind.EXACT_DECIMAL ->
+            "CAST($prefix.${quoteIdent(column.name)} AS TEXT)"
+        else -> "$prefix.${quoteIdent(column.name)}"
     }
     return "json_object('$keyName', $valueExpr)"
 }

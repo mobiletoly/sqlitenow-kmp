@@ -82,10 +82,11 @@ final class OversqliteDownloadRuntime {
   OversqliteClientStateStore get _clientStateStore =>
       OversqliteClientStateStore(_connection);
   OversqliteLocalRowStore get _localStore =>
-      OversqliteLocalRowStore(_connection);
+      OversqliteLocalRowStore(_connection, _config.syncTables);
   OversqlitePushStateStore get _pushStateStore => OversqlitePushStateStore(
     connection: _connection,
     applyRunner: _applyRunner,
+    syncTables: _config.syncTables,
   );
   OversqliteDownloadStageStore get _stageStore => OversqliteDownloadStageStore(
     connection: _connection,

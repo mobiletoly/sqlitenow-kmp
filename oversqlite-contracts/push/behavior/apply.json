@@ -368,10 +368,10 @@
       "steps": [
         {
           "action": "pushPending",
-          "expectedException": "source_sequence_mismatch",
+          "expectedException": "protocol_error",
           "expectedState": {
             "rebuildRequired": false,
-            "outboxState": "prepared",
+            "outboxState": "committed_remote",
             "outboxRowCount": 1,
             "dirtyRowCount": 0,
             "nextSourceBundleId": 1,
@@ -386,7 +386,7 @@
           "expectedException": "none",
           "expectedState": {
             "rebuildRequired": false,
-            "outboxState": "prepared",
+            "outboxState": "committed_remote",
             "outboxRowCount": 1,
             "dirtyRowCount": 1,
             "nextSourceBundleId": 1,
@@ -396,8 +396,8 @@
       ]
     },
     {
-      "name": "strict-committed-replay-accepts-rfc3339-equivalent-timestamp",
-      "description": "Strict already_committed replay compares timestamp payloads by RFC3339 instant, so offset-equivalent values do not create a source sequence mismatch.",
+      "name": "committed-replay-applies-rfc3339-timestamp",
+      "description": "An associated and hash-verified committed replay applies the authoritative RFC3339 timestamp.",
       "schema": "typed-rows",
       "syncTables": [
         {
@@ -462,8 +462,8 @@
       ]
     },
     {
-      "name": "strict-committed-replay-accepts-numeric-json-equivalence",
-      "description": "Strict committed replay compares REAL payloads semantically instead of by raw JSON spelling.",
+      "name": "committed-replay-applies-real-value",
+      "description": "An associated and hash-verified committed replay applies its authoritative approximate REAL value.",
       "schema": "typed-rows",
       "syncTables": [
         {
@@ -528,8 +528,8 @@
       ]
     },
     {
-      "name": "strict-committed-replay-accepts-null-blob-fields",
-      "description": "Strict committed replay treats NULL BLOB payload fields as semantically equal when both prepared and committed payloads are null.",
+      "name": "committed-replay-applies-null-blob-fields",
+      "description": "An associated and hash-verified committed replay applies explicit null BLOB fields.",
       "schema": "typed-rows",
       "syncTables": [
         {
@@ -594,8 +594,8 @@
       ]
     },
     {
-      "name": "strict-committed-replay-rejects-non-equivalent-typed-payload",
-      "description": "Strict already_committed replay still fails when typed payload values are not semantically equivalent.",
+      "name": "committed-replay-applies-authoritative-typed-payload",
+      "description": "The request hash associates the original request while the committed bundle hash authenticates the authoritative server-mutated payload.",
       "schema": "typed-rows",
       "syncTables": [
         {
@@ -633,14 +633,14 @@
       "steps": [
         {
           "action": "pushPending",
-          "expectedException": "source_sequence_mismatch",
+          "expectedException": "none",
           "expectedState": {
             "rebuildRequired": false,
-            "outboxState": "prepared",
-            "outboxRowCount": 1,
+            "outboxState": "none",
+            "outboxRowCount": 0,
             "dirtyRowCount": 0,
-            "nextSourceBundleId": 1,
-            "lastBundleSeqSeen": 0
+            "nextSourceBundleId": 2,
+            "lastBundleSeqSeen": 1
           },
           "expectedAppState": {
             "typedRows": [
@@ -652,7 +652,7 @@
                 "enabled_flag": 0,
                 "rating": 1.25,
                 "data": null,
-                "created_at": "2026-03-24T18:42:11Z"
+                "created_at": "2026-03-24T20:42:12+02:00"
               }
             ]
           }

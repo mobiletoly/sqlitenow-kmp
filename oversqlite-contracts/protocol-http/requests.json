@@ -76,6 +76,7 @@
         "body": {
           "source_bundle_id": 7,
           "planned_row_count": 2,
+          "canonical_request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "initialization_id": "init-1"
         },
         "bodyMustNotContain": [

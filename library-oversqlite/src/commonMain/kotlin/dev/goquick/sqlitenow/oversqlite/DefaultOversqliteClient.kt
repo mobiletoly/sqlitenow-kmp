@@ -54,7 +54,7 @@ class DefaultOversqliteClient(
     private val syncStateStore = OversqliteSyncStateStore(db)
     private val outboxStateStore = OversqliteOutboxStateStore(db)
     private val remoteApi = OversqliteRemoteApi(http, json) { message -> verboseLog(message) }
-    private val localStore = OversqliteLocalStore(db, tableInfoCache, json, ::requireConnectedStateForLocalStore)
+    private val localStore = OversqliteLocalStore(db, json, ::requireConnectedStateForLocalStore)
     private val bundleApplier = OversqliteBundleApplier(localStore, syncStateStore)
     private val stageStore = OversqliteStageStore(db, localStore, syncStateStore, json)
     private val applyExecutor = OversqliteApplyExecutor(db, applyStateStore)

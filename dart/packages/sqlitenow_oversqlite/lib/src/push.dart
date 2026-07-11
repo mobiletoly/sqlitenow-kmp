@@ -6,7 +6,6 @@ import 'config.dart';
 import 'local_runtime.dart';
 import 'local_row_store.dart';
 import 'payload_codec.dart';
-import 'payload_source.dart';
 import 'protocol.dart';
 import 'push_conflict.dart';
 import 'push_replay.dart';
@@ -48,10 +47,11 @@ final class OversqlitePushRuntime {
   SqliteNowConnection get _connection => _database.connection;
   OversqliteApplyRunner get _applyRunner => OversqliteApplyRunner(_connection);
   OversqliteLocalRowStore get _localStore =>
-      OversqliteLocalRowStore(_connection);
+      OversqliteLocalRowStore(_connection, _config.syncTables);
   OversqlitePushStateStore get _pushStateStore => OversqlitePushStateStore(
     connection: _connection,
     applyRunner: _applyRunner,
+    syncTables: _config.syncTables,
   );
   OversqlitePushReplayExecutor get _replayExecutor =>
       OversqlitePushReplayExecutor(
@@ -97,7 +97,7 @@ final class OversqlitePushRuntime {
               sourceBundleId: snapshot.sourceBundleId,
               rowCount: snapshot.rows.length,
               bundleHash: snapshot.remoteBundleHash,
-              requiresStrictOutboxMatch: false,
+              canonicalRequestHash: snapshot.canonicalRequestHash,
             )
           : await _commitSnapshot(
               snapshot: snapshot,
@@ -175,7 +175,7 @@ final class OversqlitePushRuntime {
           : canonicalizeOversqliteProtocolJson(
               wireOversqlitePayloadForUpload(
                 table,
-                jsonDecode(row.localPayload!),
+                (jsonDecode(row.localPayload!) as Map).cast<String, Object?>(),
               ),
             );
       canonicalRows.add(
@@ -249,6 +249,7 @@ final class OversqlitePushRuntime {
       sourceId: sourceId,
       sourceBundleId: snapshot.sourceBundleId,
       plannedRowCount: snapshot.rows.length,
+      canonicalRequestHash: snapshot.canonicalRequestHash,
       initializationId: pendingInitializationId,
     );
     switch (create.status) {
@@ -259,8 +260,9 @@ final class OversqlitePushRuntime {
           sourceBundleId: snapshot.sourceBundleId,
           rowCount: create.rowCount,
           bundleHash: create.bundleHash,
-          requiresStrictOutboxMatch: true,
+          canonicalRequestHash: create.canonicalRequestHash,
         );
+        await _pushStateStore.persistCommittedRemote(snapshot, committed);
         return committed;
       case 'staging':
         final pushId = create.pushId;
@@ -301,7 +303,7 @@ final class OversqlitePushRuntime {
             sourceBundleId: snapshot.sourceBundleId,
             rowCount: committed.rowCount,
             bundleHash: committed.bundleHash,
-            requiresStrictOutboxMatch: false,
+            canonicalRequestHash: committed.canonicalRequestHash,
           );
           await _pushStateStore.persistCommittedRemote(snapshot, committedPush);
           return committedPush;
@@ -352,7 +354,11 @@ final class OversqlitePushRuntime {
         'fetched committed bundle hash $bundleHash does not match expected ${committed.bundleHash}',
       );
     }
-    await _assertCommittedRowsMatchOutbox(snapshot, committed, rows);
+    if (committed.canonicalRequestHash != snapshot.canonicalRequestHash) {
+      throw const SourceSequenceMismatchException(
+        'committed bundle canonical_request_hash does not match prepared outbox',
+      );
+    }
     return rows;
   }
 
@@ -384,153 +390,6 @@ final class OversqlitePushRuntime {
       }
     }
   }
-
-  Future<void> _assertCommittedRowsMatchOutbox(
-    OversqlitePushSnapshot snapshot,
-    OversqliteCommittedPush committed,
-    List<BundleRow> committedRows,
-  ) async {
-    final requirePayloadMatch =
-        snapshot.state == pushOutboxStateCommittedRemote ||
-        committed.requiresStrictOutboxMatch;
-    int? mismatchIndex;
-    if (committedRows.length != snapshot.rows.length) {
-      mismatchIndex = committedRows.length < snapshot.rows.length
-          ? committedRows.length
-          : snapshot.rows.length;
-    } else {
-      for (var i = 0; i < committedRows.length; i++) {
-        if (!await _equivalentCommittedRow(
-          expected: snapshot.rows[i],
-          actual: committedRows[i],
-          actualRowOrdinal: i,
-          requirePayloadMatch: requirePayloadMatch,
-        )) {
-          mismatchIndex = i;
-          break;
-        }
-      }
-    }
-    if (mismatchIndex != null) {
-      final expected = mismatchIndex < snapshot.rows.length
-          ? _ComparableCommittedRow.fromOutbox(snapshot.rows[mismatchIndex])
-          : null;
-      final actual = mismatchIndex < committedRows.length
-          ? _ComparableCommittedRow.fromBundleRow(
-              committedRows[mismatchIndex],
-              mismatchIndex,
-            )
-          : null;
-      throw SourceSequenceMismatchException(
-        'committed bundle for source ${committed.sourceId} source_bundle_id ${committed.sourceBundleId} '
-        'does not match the canonical prepared outbox rows at index $mismatchIndex; '
-        'expected=$expected actual=$actual',
-      );
-    }
-  }
-
-  Future<bool> _equivalentCommittedRow({
-    required OversqliteOutboxRow expected,
-    required BundleRow actual,
-    required int actualRowOrdinal,
-    required bool requirePayloadMatch,
-  }) async {
-    if (expected.rowOrdinal != actualRowOrdinal ||
-        expected.schemaName != actual.schema ||
-        expected.tableName != actual.table ||
-        !oversqliteSyncKeysEqual(
-          syncKeyFromOversqliteJson(expected.wireKeyJson),
-          actual.key,
-        ) ||
-        expected.op != actual.op) {
-      return false;
-    }
-    if (!requirePayloadMatch) {
-      return true;
-    }
-    return _equivalentCommittedPayload(
-      tableName: expected.tableName,
-      expectedPayload: expected.wirePayload,
-      actualPayload: actual.payload,
-    );
-  }
-
-  Future<bool> _equivalentCommittedPayload({
-    required String tableName,
-    required String? expectedPayload,
-    required Object? actualPayload,
-  }) async {
-    if (expectedPayload == null && actualPayload == null) {
-      return true;
-    }
-    if (expectedPayload == null || actualPayload == null) {
-      return false;
-    }
-    final expectedObject = jsonDecode(expectedPayload);
-    if (expectedObject is! Map || actualPayload is! Map) {
-      return false;
-    }
-    final table = await _localStore.tableInfo(tableName);
-    return equivalentOversqlitePayloadObjects(
-      table,
-      expectedObject.cast<String, Object?>(),
-      actualPayload.cast<String, Object?>(),
-      PayloadSource.authoritativeWire,
-      PayloadSource.authoritativeWire,
-      allowRfc3339InstantEquivalence: true,
-    );
-  }
-}
-
-final class _ComparableCommittedRow {
-  const _ComparableCommittedRow({
-    required this.rowOrdinal,
-    required this.schemaName,
-    required this.tableName,
-    required this.wireKey,
-    required this.op,
-    required this.wirePayload,
-  });
-
-  factory _ComparableCommittedRow.fromOutbox(OversqliteOutboxRow row) {
-    return _ComparableCommittedRow(
-      rowOrdinal: row.rowOrdinal,
-      schemaName: row.schemaName,
-      tableName: row.tableName,
-      wireKey: syncKeyFromOversqliteJson(row.wireKeyJson),
-      op: row.op,
-      wirePayload: row.wirePayload == null
-          ? null
-          : canonicalizeOversqliteProtocolJson(jsonDecode(row.wirePayload!)),
-    );
-  }
-
-  factory _ComparableCommittedRow.fromBundleRow(BundleRow row, int rowOrdinal) {
-    return _ComparableCommittedRow(
-      rowOrdinal: rowOrdinal,
-      schemaName: row.schema,
-      tableName: row.table,
-      wireKey: row.key,
-      op: row.op,
-      wirePayload: row.payload == null
-          ? null
-          : canonicalizeOversqliteProtocolJson(row.payload),
-    );
-  }
-
-  final int rowOrdinal;
-  final String schemaName;
-  final String tableName;
-  final SyncKey wireKey;
-  final String op;
-  final String? wirePayload;
-
-  @override
-  String toString() {
-    return 'CanonicalOutboxComparableRow(rowOrdinal=$rowOrdinal, '
-        'schemaName=$schemaName, tableName=$tableName, wireKey=$wireKey, '
-        'op=$op, wirePayload=$wirePayload)';
-  }
 }
 
 String _computeCommittedBundleHash(List<BundleRow> rows) {
@@ -538,12 +397,12 @@ String _computeCommittedBundleHash(List<BundleRow> rows) {
     canonicalizeOversqliteProtocolJson([
       for (var i = 0; i < rows.length; i++)
         {
-          'row_ordinal': i,
+          'row_ordinal': i.toString(),
           'schema': rows[i].schema,
           'table': rows[i].table,
           'key': rows[i].key,
           'op': rows[i].op,
-          'row_version': rows[i].rowVersion,
+          'row_version': rows[i].rowVersion.toString(),
           'payload': rows[i].payload,
         },
     ]),
@@ -580,6 +439,11 @@ void _validateCommittedPush(
       'push commit response bundle_hash must be non-empty',
     );
   }
+  if (response.canonicalRequestHash.trim().isEmpty) {
+    throw const OversqliteProtocolException(
+      'push commit response canonical_request_hash must be non-empty',
+    );
+  }
 }
 
 void _validateCommittedChunk({
@@ -610,6 +474,11 @@ void _validateCommittedChunk({
   if (chunk.bundleHash != committed.bundleHash) {
     throw OversqliteProtocolException(
       'committed bundle chunk response bundle_hash ${chunk.bundleHash} does not match expected ${committed.bundleHash}',
+    );
+  }
+  if (chunk.canonicalRequestHash != committed.canonicalRequestHash) {
+    throw const SourceSequenceMismatchException(
+      'committed bundle chunk response canonical_request_hash does not match expected hash',
     );
   }
   final logicalAfter = afterRowOrdinal ?? -1;

@@ -48,7 +48,7 @@
       "type": "table",
       "name": "_sync_outbox_bundle",
       "tableName": "_sync_outbox_bundle",
-      "sql": "CREATE TABLE _sync_outbox_bundle (\n  singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),\n  state TEXT NOT NULL DEFAULT 'none' CHECK (state IN ('none', 'prepared', 'committed_remote')),\n  source_id TEXT NOT NULL DEFAULT '',\n  source_bundle_id INTEGER NOT NULL DEFAULT 0,\n  initialization_id TEXT NOT NULL DEFAULT '',\n  canonical_request_hash TEXT NOT NULL DEFAULT '',\n  row_count INTEGER NOT NULL DEFAULT 0,\n  remote_bundle_hash TEXT NOT NULL DEFAULT '',\n  remote_bundle_seq INTEGER NOT NULL DEFAULT 0\n)"
+      "sql": "CREATE TABLE _sync_outbox_bundle (\n  singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),\n  canonical_json_contract TEXT NOT NULL CHECK (canonical_json_contract = 'jcs_typed_numeric_strings_v0'),\n  state TEXT NOT NULL DEFAULT 'none' CHECK (state IN ('none', 'prepared', 'committed_remote')),\n  source_id TEXT NOT NULL DEFAULT '',\n  source_bundle_id INTEGER NOT NULL DEFAULT 0,\n  initialization_id TEXT NOT NULL DEFAULT '',\n  canonical_request_hash TEXT NOT NULL DEFAULT '',\n  row_count INTEGER NOT NULL DEFAULT 0,\n  remote_bundle_hash TEXT NOT NULL DEFAULT '',\n  remote_bundle_seq INTEGER NOT NULL DEFAULT 0\n)"
     },
     {
       "type": "table",
@@ -497,6 +497,14 @@
         },
         {
           "cid": 1,
+          "name": "canonical_json_contract",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 2,
           "name": "state",
           "type": "TEXT",
           "notNull": true,
@@ -504,7 +512,7 @@
           "primaryKeyPosition": 0
         },
         {
-          "cid": 2,
+          "cid": 3,
           "name": "source_id",
           "type": "TEXT",
           "notNull": true,
@@ -512,7 +520,7 @@
           "primaryKeyPosition": 0
         },
         {
-          "cid": 3,
+          "cid": 4,
           "name": "source_bundle_id",
           "type": "INTEGER",
           "notNull": true,
@@ -520,7 +528,7 @@
           "primaryKeyPosition": 0
         },
         {
-          "cid": 4,
+          "cid": 5,
           "name": "initialization_id",
           "type": "TEXT",
           "notNull": true,
@@ -528,7 +536,7 @@
           "primaryKeyPosition": 0
         },
         {
-          "cid": 5,
+          "cid": 6,
           "name": "canonical_request_hash",
           "type": "TEXT",
           "notNull": true,
@@ -536,7 +544,7 @@
           "primaryKeyPosition": 0
         },
         {
-          "cid": 6,
+          "cid": 7,
           "name": "row_count",
           "type": "INTEGER",
           "notNull": true,
@@ -544,7 +552,7 @@
           "primaryKeyPosition": 0
         },
         {
-          "cid": 7,
+          "cid": 8,
           "name": "remote_bundle_hash",
           "type": "TEXT",
           "notNull": true,
@@ -552,7 +560,7 @@
           "primaryKeyPosition": 0
         },
         {
-          "cid": 8,
+          "cid": 9,
           "name": "remote_bundle_seq",
           "type": "INTEGER",
           "notNull": true,

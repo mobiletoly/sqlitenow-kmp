@@ -147,12 +147,14 @@ class OversqliteRemoteApiPathResolutionTest {
                     status = "staging",
                     plannedRowCount = 2,
                     nextExpectedRowOrdinal = 0,
+                    canonicalRequestHash = "a".repeat(64),
                 ),
             ),
         ) { api ->
             api.createPushSession(
                 sourceBundleId = 7L,
                 plannedRowCount = 2L,
+                canonicalRequestHash = "a".repeat(64),
                 sourceId = "source-d",
                 initializationId = "init-1",
             )

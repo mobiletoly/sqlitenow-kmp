@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:sqlitenow_runtime/sqlitenow_runtime.dart';
 
 import 'local_runtime.dart';
+import 'config.dart';
 import 'local_row_store.dart';
 import 'payload_codec.dart';
 import 'protocol.dart';
@@ -16,9 +17,10 @@ final class OversqlitePushStateStore {
   OversqlitePushStateStore({
     required SqliteNowConnection connection,
     required OversqliteApplyRunner applyRunner,
+    List<SyncTable> syncTables = const [],
   }) : _connection = connection,
        _applyRunner = applyRunner,
-       _localStore = OversqliteLocalRowStore(connection);
+       _localStore = OversqliteLocalRowStore(connection, syncTables);
 
   final SqliteNowConnection _connection;
   final OversqliteApplyRunner _applyRunner;
@@ -447,7 +449,7 @@ final class OversqliteCommittedPush {
     required this.sourceBundleId,
     required this.rowCount,
     required this.bundleHash,
-    required this.requiresStrictOutboxMatch,
+    required this.canonicalRequestHash,
   });
 
   final int bundleSeq;
@@ -455,7 +457,7 @@ final class OversqliteCommittedPush {
   final int sourceBundleId;
   final int rowCount;
   final String bundleHash;
-  final bool requiresStrictOutboxMatch;
+  final String canonicalRequestHash;
 }
 
 final class OversqliteOutboxBundle {
@@ -518,16 +520,14 @@ final class OversqliteOutboxRow {
 
   Map<String, Object?> canonicalRequestJson() {
     final json = <String, Object?>{
-      'row_ordinal': rowOrdinal,
+      'row_ordinal': rowOrdinal.toString(),
       'schema': schemaName,
       'table': tableName,
       'key': syncKeyFromOversqliteJson(wireKeyJson),
       'op': op,
-      'base_row_version': baseRowVersion,
+      'base_row_version': baseRowVersion.toString(),
+      'payload': wirePayload == null ? null : jsonDecode(wirePayload!),
     };
-    if (wirePayload != null) {
-      json['payload'] = jsonDecode(wirePayload!);
-    }
     return json;
   }
 }

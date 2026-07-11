@@ -22,8 +22,10 @@ import dev.goquick.sqlitenow.core.sqlite.use
 enum class ColumnKind {
     TEXT,
     INTEGER,
-    REAL,
-    BLOB,
+	REAL,
+	EXACT_INT64,
+	EXACT_DECIMAL,
+	BLOB,
     UUID_BLOB,
 }
 
@@ -35,13 +37,40 @@ private fun classifyColumnKind(
     isBlobReference: Boolean,
 ): ColumnKind {
     val type = declaredType.lowercase()
-    return when {
-        type.contains("blob") && (isPrimaryKey || isBlobReference) -> ColumnKind.UUID_BLOB
+	return when {
+		type.contains("blob") && (isPrimaryKey || isBlobReference) -> ColumnKind.UUID_BLOB
         type.contains("blob") -> ColumnKind.BLOB
         type.contains("real") || type.contains("float") || type.contains("double") -> ColumnKind.REAL
         type.contains("int") -> ColumnKind.INTEGER
         else -> ColumnKind.TEXT
     }
+}
+
+internal fun TableInfo.withNumericColumnKinds(configured: Map<String, NumericColumnKind>): TableInfo {
+	if (configured.isEmpty()) return this
+	val normalized = configured.entries.associate { (name, kind) ->
+		name.trim().lowercase().also { require(it.isNotEmpty()) { "numeric column name must not be empty for $table" } } to kind
+	}
+	val known = columns.associateBy { it.name.lowercase() }
+	normalized.keys.forEach { name -> require(name in known) { "table $table numeric column $name does not exist" } }
+	return copy(columns = columns.map { column ->
+		val configuredKind = normalized[column.name.lowercase()] ?: return@map column
+		val kind = when (configuredKind) {
+			NumericColumnKind.EXACT_INT64 -> {
+				require(column.kind == ColumnKind.INTEGER) { "table $table exact-int64 column ${column.name} must have SQLite INTEGER affinity" }
+				ColumnKind.EXACT_INT64
+			}
+			NumericColumnKind.EXACT_DECIMAL -> {
+				require(column.kind == ColumnKind.TEXT) { "table $table exact-decimal column ${column.name} must have SQLite TEXT affinity" }
+				ColumnKind.EXACT_DECIMAL
+			}
+			NumericColumnKind.APPROXIMATE -> {
+				require(column.kind == ColumnKind.REAL) { "table $table approximate column ${column.name} must have SQLite REAL affinity" }
+				ColumnKind.REAL
+			}
+		}
+		column.copy(kind = kind)
+	})
 }
 
 data class ColumnInfo(

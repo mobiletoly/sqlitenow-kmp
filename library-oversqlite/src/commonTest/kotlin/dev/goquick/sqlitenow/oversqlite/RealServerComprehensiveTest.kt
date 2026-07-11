@@ -830,6 +830,7 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
                     PushSessionCreateRequest(
                         sourceBundleId = 1L,
                         plannedRowCount = 1L,
+                        canonicalRequestHash = "a".repeat(64),
                     ),
                 )
             }

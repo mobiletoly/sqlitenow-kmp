@@ -126,7 +126,8 @@ internal fun validatePushSessionCreateResponse(
     response: PushSessionCreateResponse,
     sourceBundleId: Long,
     plannedRowCount: Long,
-    sourceId: String,
+	sourceId: String,
+	canonicalRequestHash: String,
 ) {
     when (response.status) {
         "staging" -> {
@@ -137,9 +138,14 @@ internal fun validatePushSessionCreateResponse(
             require(response.nextExpectedRowOrdinal == 0L) {
                 "push session response next_expected_row_ordinal ${response.nextExpectedRowOrdinal} must be 0"
             }
+            if (response.canonicalRequestHash != canonicalRequestHash) {
+                throw SourceSequenceMismatchException(
+                    "push session response canonical_request_hash ${response.canonicalRequestHash} does not match prepared hash $canonicalRequestHash",
+                )
+            }
         }
 
-        "already_committed" -> {
+		"already_committed" -> {
             require(response.bundleSeq > 0) { "push session already_committed response missing bundle_seq" }
             require(response.sourceId == sourceId) {
                 "push session already_committed response source_id ${response.sourceId} does not match client $sourceId"
@@ -150,9 +156,14 @@ internal fun validatePushSessionCreateResponse(
             require(response.rowCount >= 0) {
                 "push session already_committed response missing row_count"
             }
-            require(response.bundleHash.isNotBlank()) {
+			require(response.bundleHash.isNotBlank()) {
                 "push session already_committed response missing bundle_hash"
-            }
+			}
+			if (response.canonicalRequestHash != canonicalRequestHash) {
+                throw SourceSequenceMismatchException(
+                    "push session already_committed response canonical_request_hash ${response.canonicalRequestHash} does not match prepared hash $canonicalRequestHash",
+                )
+			}
         }
 
         else -> error("push session response returned unsupported status ${response.status}")
@@ -164,7 +175,7 @@ internal fun committedPushBundleFromCreateResponse(
     sourceId: String,
     sourceBundleId: Long,
 ): CommittedPushBundle {
-    validatePushSessionCreateResponse(response, sourceBundleId, response.rowCount, sourceId)
+	validatePushSessionCreateResponse(response, sourceBundleId, response.rowCount, sourceId, response.canonicalRequestHash)
     require(response.status == "already_committed") {
         "unexpected push session status ${response.status}"
     }
@@ -173,8 +184,8 @@ internal fun committedPushBundleFromCreateResponse(
         sourceId = response.sourceId,
         sourceBundleId = response.sourceBundleId,
         rowCount = response.rowCount,
-        bundleHash = response.bundleHash,
-        requiresStrictOutboxMatch = true,
+		bundleHash = response.bundleHash,
+		canonicalRequestHash = response.canonicalRequestHash,
     )
 }
 
@@ -191,13 +202,15 @@ internal fun committedPushBundleFromCommitResponse(
         "push commit response source_bundle_id ${response.sourceBundleId} does not match requested $sourceBundleId"
     }
     require(response.rowCount >= 0) { "push commit response row_count must be non-negative" }
-    require(response.bundleHash.isNotBlank()) { "push commit response bundle_hash must be non-empty" }
+	require(response.bundleHash.isNotBlank()) { "push commit response bundle_hash must be non-empty" }
+	require(isCanonicalSha256(response.canonicalRequestHash)) { "push commit response canonical_request_hash must be 64 lowercase hexadecimal characters" }
     return CommittedPushBundle(
         bundleSeq = response.bundleSeq,
         sourceId = response.sourceId,
         sourceBundleId = response.sourceBundleId,
         rowCount = response.rowCount,
-        bundleHash = response.bundleHash,
+		bundleHash = response.bundleHash,
+		canonicalRequestHash = response.canonicalRequestHash,
     )
 }
 
@@ -236,9 +249,14 @@ internal fun validateCommittedBundleRowsResponse(
     require(response.rowCount == committed.rowCount) {
         "committed bundle chunk response row_count ${response.rowCount} does not match expected ${committed.rowCount}"
     }
-    require(response.bundleHash == committed.bundleHash) {
+	require(response.bundleHash == committed.bundleHash) {
         "committed bundle chunk response bundle_hash ${response.bundleHash} does not match expected ${committed.bundleHash}"
-    }
+	}
+	if (response.canonicalRequestHash != committed.canonicalRequestHash) {
+        throw SourceSequenceMismatchException(
+            "committed bundle chunk response canonical_request_hash ${response.canonicalRequestHash} does not match expected ${committed.canonicalRequestHash}",
+        )
+	}
 
     val logicalAfter = afterRowOrdinal ?: -1L
     val expectedNext = if (response.rows.isEmpty()) logicalAfter else logicalAfter + response.rows.size
@@ -250,6 +268,9 @@ internal fun validateCommittedBundleRowsResponse(
     }
     validateIndexedRows(response.rows, "committed bundle", ::validateBundleRow)
 }
+
+internal fun isCanonicalSha256(value: String): Boolean =
+	value.length == 64 && value.all { it in '0'..'9' || it in 'a'..'f' }
 
 private inline fun <T> validateIndexedRows(
     rows: List<T>,

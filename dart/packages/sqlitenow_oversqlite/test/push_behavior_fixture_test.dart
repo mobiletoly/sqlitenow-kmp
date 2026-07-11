@@ -124,7 +124,7 @@ PushFixtureServer _newPushServer(Map<String, Object?> fixture) {
       return PushFixtureServer(
         committedBundleNotFoundFailures: (script['notFoundCount'] as int?) ?? 1,
       );
-    case 'already_committed_mismatch':
+    case 'already_committed_request_hash_mismatch':
       final payload = (script['committedPayload']! as Map)
           .cast<String, Object?>();
       final committedRows = [_committedRow(payload)];
@@ -138,6 +138,8 @@ PushFixtureServer _newPushServer(Map<String, Object?> fixture) {
           'source_bundle_id': 1,
           'row_count': 1,
           'bundle_hash': committedHash,
+          'canonical_request_hash':
+              'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
         },
         committedRowsResponse: _committedRowsResponse(committedRows),
       );
@@ -159,7 +161,7 @@ PushFixtureServer _newPushServer(Map<String, Object?> fixture) {
         },
         committedRowsResponse: _committedRowsResponse(committedRows),
       );
-    case 'committed_remote_mismatch':
+    case 'committed_remote_request_hash_mismatch':
       final committedRows =
           ((script['committedRowsResponse']! as Map)['rows']! as List<Object?>)
               .cast<Map<String, Object?>>()
@@ -172,7 +174,12 @@ PushFixtureServer _newPushServer(Map<String, Object?> fixture) {
           .cast<String, Object?>();
       return PushFixtureServer(
         commitResponse: {...commitResponse, 'bundle_hash': committedHash},
-        committedRowsResponse: {...rowsResponse, 'bundle_hash': committedHash},
+        committedRowsResponse: {
+          ...rowsResponse,
+          'bundle_hash': committedHash,
+          'canonical_request_hash':
+              'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        },
       );
     case 'committed_replay_pruned':
       return PushFixtureServer(pruneFirstCommittedFetch: true);

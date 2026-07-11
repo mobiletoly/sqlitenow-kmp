@@ -50,7 +50,17 @@ private fun canonicalizeJsonPrimitive(value: JsonPrimitive): String {
 private fun canonicalizeJsonString(value: String): String {
     val out = StringBuilder(value.length + 2)
     out.append('"')
-    for (ch in value) {
+    var index = 0
+    while (index < value.length) {
+        val ch = value[index]
+        if (ch in '\uDC00'..'\uDFFF') {
+            require(index > 0 && value[index - 1] in '\uD800'..'\uDBFF') { "invalid unpaired low surrogate" }
+        }
+        if (ch in '\uD800'..'\uDBFF') {
+            require(index + 1 < value.length && value[index + 1] in '\uDC00'..'\uDFFF') {
+                "invalid unpaired high surrogate"
+            }
+        }
         when (ch) {
             '\\' -> out.append("\\\\")
             '"' -> out.append("\\\"")
@@ -68,6 +78,7 @@ private fun canonicalizeJsonString(value: String): String {
                 }
             }
         }
+        index++
     }
     out.append('"')
     return out.toString()
@@ -187,119 +198,179 @@ private fun canonicalizeJsonNumber(raw: String): String {
     if (number == 0.0) return "0"
 
     val absNumber = abs(number)
-    val rendered = number.toString().lowercase()
-    return if (absNumber >= 1e-6 && absNumber < 1e21) {
-        normalizePlainNumber(scientificToPlain(rendered))
+    return renderEcmaScriptBinary64(number, absNumber)
+}
+
+private data class ExactDecimal(val digits: String, val scale: Int)
+
+private fun renderEcmaScriptBinary64(value: Double, magnitude: Double): String {
+    val bits = magnitude.toBits()
+    val exact = exactDecimal(bits)
+    val previous = exactDecimal(bits - 1)
+    val lower = half(addDecimal(previous, exact))
+    val upper = if (bits == 0x7fefffffffffffffL) {
+        addDecimal(exact, half(subtractDecimal(exact, previous)))
     } else {
-        normalizeScientificNumber(rendered)
+        half(addDecimal(exact, exactDecimal(bits + 1)))
     }
-}
-
-private fun scientificToPlain(raw: String): String {
-    if (!raw.contains('e')) {
-        return raw
-    }
-    val sign = if (raw.startsWith('-')) "-" else ""
-    val unsigned = if (sign.isEmpty()) raw else raw.substring(1)
-    val parts = unsigned.split('e')
-    require(parts.size == 2) { "invalid scientific notation: $raw" }
-
-    val mantissa = parts[0]
-    val exponent = parts[1].toInt()
-    val dotIndex = mantissa.indexOf('.')
-    val digits = mantissa.replace(".", "")
-    val fractionalDigits = if (dotIndex >= 0) mantissa.length - dotIndex - 1 else 0
-    val decimalIndex = digits.length + exponent - fractionalDigits
-
-    return buildString(digits.length + abs(exponent) + 4) {
-        append(sign)
-        when {
-            decimalIndex <= 0 -> {
-                append("0.")
-                repeat(-decimalIndex) { append('0') }
-                append(digits)
-            }
-
-            decimalIndex >= digits.length -> {
-                append(digits)
-                repeat(decimalIndex - digits.length) { append('0') }
-            }
-
-            else -> {
-                append(digits.substring(0, decimalIndex))
-                append('.')
-                append(digits.substring(decimalIndex))
-            }
-        }
-    }
-}
-
-private fun normalizePlainNumber(raw: String): String {
-    val sign = if (raw.startsWith('-')) "-" else ""
-    val unsigned = if (sign.isEmpty()) raw else raw.substring(1)
-    val parts = unsigned.split('.', limit = 2)
-    val integerPart = parts[0].trimStart('0').ifEmpty { "0" }
-    val fractionalPart = parts.getOrElse(1) { "" }.trimEnd('0')
-    if (integerPart == "0" && fractionalPart.isEmpty()) {
-        return "0"
-    }
-    return buildString(raw.length) {
-        append(sign)
-        append(integerPart)
-        if (fractionalPart.isNotEmpty()) {
-            append('.')
-            append(fractionalPart)
-        }
-    }
-}
-
-private fun normalizeScientificNumber(raw: String): String {
-    if (!raw.contains('e')) {
-        return plainToScientific(normalizePlainNumber(raw))
-    }
-    val sign = if (raw.startsWith('-')) "-" else ""
-    val unsigned = if (sign.isEmpty()) raw else raw.substring(1)
-    val parts = unsigned.split('e')
-    require(parts.size == 2) { "invalid scientific notation: $raw" }
-
-    val mantissa = normalizePlainNumber(parts[0])
-    val exponentValue = parts[1].toInt()
-    return buildString(raw.length) {
-        append(sign)
-        append(mantissa)
-        append('e')
-        if (exponentValue >= 0) {
-            append('+')
-        }
-        append(exponentValue)
-    }
-}
-
-private fun plainToScientific(raw: String): String {
-    val sign = if (raw.startsWith('-')) "-" else ""
-    val unsigned = if (sign.isEmpty()) raw else raw.substring(1)
-    val parts = unsigned.split('.', limit = 2)
-    val integerPart = parts[0]
-    val fractionalPart = parts.getOrElse(1) { "" }
-
-    val firstNonZeroIndex = integerPart.indexOfFirst { it != '0' }
-    return if (firstNonZeroIndex >= 0) {
-        val digits = (integerPart + fractionalPart).trimStart('0')
-        val exponent = integerPart.length - 1
-        val mantissa = digits.first() + digits.drop(1).let { tail ->
-            if (tail.isEmpty()) "" else ".$tail"
-        }
-        "$sign$mantissa" + "e+$exponent"
+    val significand = if (((bits ushr 52) and 0x7ffL) == 0L) {
+        bits and 0x000fffffffffffffL
     } else {
-        val fractionIndex = fractionalPart.indexOfFirst { it != '0' }
-        require(fractionIndex >= 0) { "plainToScientific requires a non-zero number: $raw" }
-        val digits = fractionalPart.substring(fractionIndex)
-        val exponent = -(fractionIndex + 1)
-        val mantissa = digits.first() + digits.drop(1).let { tail ->
-            if (tail.isEmpty()) "" else ".$tail"
-        }
-        "$sign$mantissa" + "e$exponent"
+        (bits and 0x000fffffffffffffL) or (1L shl 52)
     }
+    val boundariesInclusive = significand and 1L == 0L
+    val scientificExponent = exact.digits.length - exact.scale - 1
+
+    for (precision in 1..17) {
+        val sourceDigits = exact.digits.padEnd(precision + 1, '0')
+        val prefix = sourceDigits.substring(0, precision).toULong()
+        val next = sourceDigits[precision]
+        val remainingNonZero = sourceDigits.drop(precision + 1).any { it != '0' }
+        val roundUp = next > '5' || (next == '5' && (remainingNonZero || prefix and 1uL == 1uL))
+        val nearest = prefix + if (roundUp) 1uL else 0uL
+        for (candidate in listOf(nearest, nearest - 1uL, nearest + 1uL).distinct()) {
+            if (candidate == 0uL) continue
+            val decimal = decimalFromSignificand(candidate.toString(), scientificExponent - precision + 1)
+            val lowerComparison = compareDecimal(decimal, lower)
+            val upperComparison = compareDecimal(decimal, upper)
+            val inside = (lowerComparison > 0 || boundariesInclusive && lowerComparison == 0) &&
+                (upperComparison < 0 || boundariesInclusive && upperComparison == 0)
+            if (inside) {
+                return renderJcsDecimal(decimal, value < 0.0)
+            }
+        }
+    }
+    error("unable to render finite binary64 value $value")
+}
+
+private fun exactDecimal(bits: Long): ExactDecimal {
+    if (bits == 0L) return ExactDecimal("0", 0)
+    val exponentBits = ((bits ushr 52) and 0x7ffL).toInt()
+    val fraction = bits and 0x000fffffffffffffL
+    val significand: Long
+    val exponent: Int
+    if (exponentBits == 0) {
+        significand = fraction
+        exponent = 1 - 1023 - 52
+    } else {
+        significand = fraction or (1L shl 52)
+        exponent = exponentBits - 1023 - 52
+    }
+    return if (exponent >= 0) {
+        normalizeDecimal(ExactDecimal(multiplyPower(significand.toString(), 2, exponent), 0))
+    } else {
+        normalizeDecimal(ExactDecimal(multiplyPower(significand.toString(), 5, -exponent), -exponent))
+    }
+}
+
+private fun decimalFromSignificand(significand: String, power10: Int): ExactDecimal =
+    normalizeDecimal(if (power10 >= 0) ExactDecimal(significand + "0".repeat(power10), 0) else ExactDecimal(significand, -power10))
+
+private fun normalizeDecimal(value: ExactDecimal): ExactDecimal {
+    var digits = value.digits.trimStart('0').ifEmpty { "0" }
+    var scale = value.scale
+    while (digits.length > 1 && digits.endsWith('0')) {
+        digits = digits.dropLast(1)
+        scale--
+    }
+    return ExactDecimal(digits, scale)
+}
+
+private fun addDecimal(left: ExactDecimal, right: ExactDecimal): ExactDecimal {
+    val scale = maxOf(left.scale, right.scale)
+    return normalizeDecimal(ExactDecimal(addUnsigned(left.digits + "0".repeat(scale - left.scale), right.digits + "0".repeat(scale - right.scale)), scale))
+}
+
+private fun subtractDecimal(left: ExactDecimal, right: ExactDecimal): ExactDecimal {
+    val scale = maxOf(left.scale, right.scale)
+    return normalizeDecimal(ExactDecimal(subtractUnsigned(left.digits + "0".repeat(scale - left.scale), right.digits + "0".repeat(scale - right.scale)), scale))
+}
+
+private fun half(value: ExactDecimal): ExactDecimal = if ((value.digits.last() - '0') % 2 == 0) {
+    normalizeDecimal(ExactDecimal(divideByTwo(value.digits), value.scale))
+} else {
+    normalizeDecimal(ExactDecimal(multiplySmall(value.digits, 5), value.scale + 1))
+}
+
+private fun compareDecimal(left: ExactDecimal, right: ExactDecimal): Int {
+    val scale = maxOf(left.scale, right.scale)
+    val leftDigits = (left.digits + "0".repeat(scale - left.scale)).trimStart('0').ifEmpty { "0" }
+    val rightDigits = (right.digits + "0".repeat(scale - right.scale)).trimStart('0').ifEmpty { "0" }
+    return leftDigits.length.compareTo(rightDigits.length).takeIf { it != 0 } ?: leftDigits.compareTo(rightDigits)
+}
+
+private fun renderJcsDecimal(value: ExactDecimal, negative: Boolean): String {
+    val exponent = value.digits.length - value.scale - 1
+    val sign = if (negative) "-" else ""
+    if (exponent in -6..20) {
+        val decimalIndex = value.digits.length - value.scale
+        return sign + when {
+            decimalIndex <= 0 -> "0." + "0".repeat(-decimalIndex) + value.digits
+            decimalIndex >= value.digits.length -> value.digits + "0".repeat(decimalIndex - value.digits.length)
+            else -> value.digits.substring(0, decimalIndex) + "." + value.digits.substring(decimalIndex)
+        }
+    }
+    val mantissa = if (value.digits.length == 1) value.digits else value.digits.first() + "." + value.digits.substring(1)
+    return "$sign$mantissa" + "e${if (exponent >= 0) "+" else ""}$exponent"
+}
+
+private fun multiplyPower(initial: String, multiplier: Int, exponent: Int): String {
+    var result = initial
+    repeat(exponent) { result = multiplySmall(result, multiplier) }
+    return result
+}
+
+private fun multiplySmall(value: String, multiplier: Int): String {
+    val out = StringBuilder(value.length + 1)
+    var carry = 0
+    for (index in value.indices.reversed()) {
+        val product = (value[index] - '0') * multiplier + carry
+        out.append(('0'.code + product % 10).toChar())
+        carry = product / 10
+    }
+    while (carry > 0) {
+        out.append(('0'.code + carry % 10).toChar())
+        carry /= 10
+    }
+    return out.reverse().toString()
+}
+
+private fun addUnsigned(left: String, right: String): String {
+    val out = StringBuilder(maxOf(left.length, right.length) + 1)
+    var carry = 0
+    var li = left.lastIndex
+    var ri = right.lastIndex
+    while (li >= 0 || ri >= 0 || carry != 0) {
+        val sum = (if (li >= 0) left[li--] - '0' else 0) + (if (ri >= 0) right[ri--] - '0' else 0) + carry
+        out.append(('0'.code + sum % 10).toChar())
+        carry = sum / 10
+    }
+    return out.reverse().toString()
+}
+
+private fun subtractUnsigned(left: String, right: String): String {
+    require(left.length > right.length || left.length == right.length && left >= right)
+    val paddedRight = right.padStart(left.length, '0')
+    val out = StringBuilder(left.length)
+    var borrow = 0
+    for (index in left.indices.reversed()) {
+        var digit = (left[index] - '0') - (paddedRight[index] - '0') - borrow
+        if (digit < 0) { digit += 10; borrow = 1 } else borrow = 0
+        out.append(('0'.code + digit).toChar())
+    }
+    return out.reverse().toString().trimStart('0').ifEmpty { "0" }
+}
+
+private fun divideByTwo(value: String): String {
+    val out = StringBuilder(value.length)
+    var carry = 0
+    for (char in value) {
+        val current = carry * 10 + (char - '0')
+        out.append(('0'.code + current / 2).toChar())
+        carry = current % 2
+    }
+    require(carry == 0)
+    return out.toString().trimStart('0').ifEmpty { "0" }
 }
 
 private val SHA256_K = intArrayOf(

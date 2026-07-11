@@ -138,9 +138,10 @@ internal class OversqliteRemoteApi(
         )
     }
 
-    suspend fun createPushSession(
+	suspend fun createPushSession(
         sourceBundleId: Long,
-        plannedRowCount: Long,
+		plannedRowCount: Long,
+		canonicalRequestHash: String,
         sourceId: String,
         initializationId: String? = null,
     ): PushSessionCreateResponse {
@@ -163,7 +164,8 @@ internal class OversqliteRemoteApi(
                     setBody(
                         PushSessionCreateRequest(
                             sourceBundleId = sourceBundleId,
-                            plannedRowCount = plannedRowCount,
+							plannedRowCount = plannedRowCount,
+							canonicalRequestHash = canonicalRequestHash,
                             initializationId = initializationId?.takeIf { it.isNotBlank() },
                         ),
                     )
@@ -173,7 +175,7 @@ internal class OversqliteRemoteApi(
             decodeSourceRecoveryRequiredExceptionOrNull(status, raw)
                 ?: decodeInitializationLeaseExceptionOrNull(status, raw)
         }
-        validatePushSessionCreateResponse(response, sourceBundleId, plannedRowCount, sourceId)
+		validatePushSessionCreateResponse(response, sourceBundleId, plannedRowCount, sourceId, canonicalRequestHash)
         log {
             "oversqlite createPushSession response status=${response.status} pushId=${response.pushId} " +
                 "nextExpected=${response.nextExpectedRowOrdinal} bundleSeq=${response.bundleSeq}"

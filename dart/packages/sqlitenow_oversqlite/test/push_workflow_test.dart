@@ -492,7 +492,7 @@ void main() {
     'already committed mismatch contract preserves source sequence error',
     () async {
       final contract = _readPushCase(
-        'already-committed-mismatch-preserves-source-sequence-error',
+        'already-committed-request-hash-mismatch-preserves-source-sequence-error',
       );
       final database = await _openUsersDatabase();
       addTearDown(database.close);
@@ -522,7 +522,7 @@ void main() {
 
   test('committed remote mismatch contract marks rebuild required', () async {
     final contract = _readPushCase(
-      'committed-remote-mismatch-requires-rebuild',
+      'committed-remote-request-hash-mismatch-requires-rebuild',
     );
     final database = await _openUsersDatabase();
     addTearDown(database.close);
@@ -785,7 +785,7 @@ void main() {
     final committedHash = sha256
         .convert(
           utf8.encode(
-            '[{"key":{"id":"$smallWireUuid"},"op":"INSERT","payload":{"created_at":"2026-05-06T12:34:56Z","data":"AQID","enabled":1,"id":"$smallWireUuid","ratio":1e-7,"title":"Small"},"row_ordinal":0,"row_version":1,"schema":"main","table":"documents"},{"key":{"id":"$largeWireUuid"},"op":"INSERT","payload":{"created_at":"2026-05-07T12:34:56Z","data":"BAUG","enabled":1,"id":"$largeWireUuid","ratio":1e+21,"title":"Large"},"row_ordinal":1,"row_version":2,"schema":"main","table":"documents"}]',
+            '[{"key":{"id":"$smallWireUuid"},"op":"INSERT","payload":{"created_at":"2026-05-06T12:34:56Z","data":"AQID","enabled":1,"id":"$smallWireUuid","ratio":1e-7,"title":"Small"},"row_ordinal":"0","row_version":"1","schema":"main","table":"documents"},{"key":{"id":"$largeWireUuid"},"op":"INSERT","payload":{"created_at":"2026-05-07T12:34:56Z","data":"BAUG","enabled":1,"id":"$largeWireUuid","ratio":1e+21,"title":"Large"},"row_ordinal":"1","row_version":"2","schema":"main","table":"documents"}]',
           ),
         )
         .bytes
@@ -1144,6 +1144,7 @@ final class _PushServer implements OversqliteHttpClient {
   var _commitAttempts = 0;
   var _committedFetchAttempts = 0;
   var _sourceId = '';
+  var _canonicalRequestHash = '';
 
   @override
   Future<OversqliteHttpResponse> get(
@@ -1185,6 +1186,7 @@ final class _PushServer implements OversqliteHttpClient {
         'source_bundle_id': 1,
         'row_count': uploadedRows.length,
         'bundle_hash': _committedBundleHashForRows(rows),
+        'canonical_request_hash': _canonicalRequestHash,
         'rows': rows,
         'next_row_ordinal': uploadedRows.isEmpty ? -1 : uploadedRows.length - 1,
         'has_more': false,
@@ -1210,6 +1212,7 @@ final class _PushServer implements OversqliteHttpClient {
     if (path == 'sync/push-sessions') {
       final request = (body! as Map).cast<String, Object?>();
       createRequests.add(request);
+      _canonicalRequestHash = request['canonical_request_hash']! as String;
       if (sourceRetiredOnCreate) {
         return _json({
           'error': 'source_retired',
@@ -1222,18 +1225,21 @@ final class _PushServer implements OversqliteHttpClient {
         final rows = committedRowsResponse == null
             ? _defaultCommittedRows()
             : _rowsFromCommittedRowsResponse(committedRowsResponse!);
-        return _json(
-          _withCommittedRowsHash(
+        final response =
             createResponse ??
-                {
-                  'status': 'already_committed',
-                  'bundle_seq': 1,
-                  'source_id': sourceId,
-                  'source_bundle_id': request['source_bundle_id'],
-                  'row_count': rows.length,
-                },
-            rows: rows,
-          ),
+            {
+              'status': 'already_committed',
+              'bundle_seq': 1,
+              'source_id': sourceId,
+              'source_bundle_id': request['source_bundle_id'],
+              'row_count': rows.length,
+            };
+        return _json(
+          _withCommittedRowsHash({
+            ...response,
+            'canonical_request_hash':
+                response['canonical_request_hash'] ?? _canonicalRequestHash,
+          }, rows: rows),
           sourceIdOverride: sourceId,
         );
       }
@@ -1243,6 +1249,7 @@ final class _PushServer implements OversqliteHttpClient {
         'push_id': 'push-1',
         'planned_row_count': request['planned_row_count'],
         'next_expected_row_ordinal': 0,
+        'canonical_request_hash': _canonicalRequestHash,
       });
     }
     if (path == 'sync/push-sessions/push-1/chunks') {
@@ -1349,6 +1356,8 @@ final class _PushServer implements OversqliteHttpClient {
           preserveConfiguredBundleHash && response['bundle_hash'] != null
           ? response['bundle_hash']
           : _committedBundleHashForRows(committedRows),
+      'canonical_request_hash':
+          response['canonical_request_hash'] ?? _canonicalRequestHash,
     };
   }
 
@@ -1373,12 +1382,12 @@ String _committedBundleHashForRows(List<Map<String, Object?>> rows) {
           _canonicalizeFixtureJson([
             for (var i = 0; i < rows.length; i++)
               {
-                'row_ordinal': i,
+                'row_ordinal': i.toString(),
                 'schema': rows[i]['schema'],
                 'table': rows[i]['table'],
                 'key': rows[i]['key'],
                 'op': rows[i]['op'],
-                'row_version': rows[i]['row_version'],
+                'row_version': rows[i]['row_version'].toString(),
                 'payload': rows[i]['payload'],
               },
           ]),

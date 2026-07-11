@@ -1,25 +1,39 @@
-import 'dart:convert';
-
 import 'package:sqlitenow_runtime/sqlitenow_runtime.dart';
 
+import 'config.dart';
 import 'payload_codec.dart';
 import 'payload_source.dart';
 import 'protocol.dart';
 import 'table_info.dart';
 
 final class OversqliteLocalRowStore {
-  const OversqliteLocalRowStore(this._connection);
+  const OversqliteLocalRowStore(
+    this._connection, [
+    this._syncTables = const [],
+  ]);
 
   final SqliteNowConnection _connection;
+  final List<SyncTable> _syncTables;
 
   Future<OversqliteTableInfo> tableInfo(String tableName) {
-    return loadOversqliteTableInfo(_connection, tableName);
+    final configured = _syncTables.where(
+      (table) =>
+          table.tableName.trim().toLowerCase() ==
+          tableName.trim().toLowerCase(),
+    );
+    return loadOversqliteTableInfo(
+      _connection,
+      tableName,
+      numericColumns: configured.isEmpty
+          ? const {}
+          : configured.single.numericColumns,
+    );
   }
 
   Future<String?> serializeExistingRow(String tableName, String localPk) async {
     final table = await tableInfo(tableName);
     final rows = await _connection.select(
-      'SELECT ${table.columns.map((column) => quoteSqlIdentifier(column.name)).join(', ')} FROM ${quoteSqlIdentifier(tableName)} WHERE ${quoteSqlIdentifier(table.primaryKey.name)} = ?',
+      'SELECT ${table.columns.map((column) => column.kind == OversqliteColumnKind.exactInt64 || column.kind == OversqliteColumnKind.exactDecimal ? 'CAST(${quoteSqlIdentifier(column.name)} AS TEXT)' : quoteSqlIdentifier(column.name)).join(', ')} FROM ${quoteSqlIdentifier(tableName)} WHERE ${quoteSqlIdentifier(table.primaryKey.name)} = ?',
       (row) => {
         for (var i = 0; i < table.columns.length; i++)
           table.columns[i].name.toLowerCase(): localOversqliteJsonValue(
@@ -32,7 +46,7 @@ final class OversqliteLocalRowStore {
     if (rows.isEmpty) {
       return null;
     }
-    return jsonEncode(rows.single);
+    return canonicalizeOversqliteProtocolJson(rows.single);
   }
 
   Future<void> upsertPayload(

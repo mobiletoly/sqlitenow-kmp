@@ -57,19 +57,20 @@ class BundlePullContractTest : BundleClientContractTestSupport() {
         val createStarted = CountDownLatch(1)
         val releaseCreate = CountDownLatch(1)
         var sourceId = ""
+        var canonicalRequestHash = ""
         val committedBundleHash = sha256Hex(
             canonicalizeJsonElement(
                 JsonArray(
                     listOf(
                         buildJsonObject {
-                            put("row_ordinal", JsonPrimitive(0))
+                            put("row_ordinal", JsonPrimitive("0"))
                             put("schema", JsonPrimitive("main"))
                             put("table", JsonPrimitive("users"))
                             put("key", buildJsonObject {
                                 put("id", JsonPrimitive("user-1"))
                             })
                             put("op", JsonPrimitive("INSERT"))
-                            put("row_version", JsonPrimitive(1))
+                            put("row_version", JsonPrimitive("1"))
                             put("payload", buildJsonObject {
                                 put("id", JsonPrimitive("user-1"))
                                 put("name", JsonPrimitive("Ada"))
@@ -81,6 +82,10 @@ class BundlePullContractTest : BundleClientContractTestSupport() {
         )
         val server = newServer().apply {
             createContext("/sync/push-sessions") { exchange ->
+                canonicalRequestHash = json.decodeFromString(
+                    PushSessionCreateRequest.serializer(),
+                    exchange.requestBody.readBytes().decodeToString(),
+                ).canonicalRequestHash
                 createStarted.countDown()
                 check(releaseCreate.await(5, TimeUnit.SECONDS))
                 respondJson(
@@ -91,7 +96,8 @@ class BundlePullContractTest : BundleClientContractTestSupport() {
                       "push_id": "push-1",
                       "status": "staging",
                       "planned_row_count": 1,
-                      "next_expected_row_ordinal": 0
+                      "next_expected_row_ordinal": 0,
+                      "canonical_request_hash": "$canonicalRequestHash"
                     }
                     """.trimIndent()
                 )
@@ -118,7 +124,8 @@ class BundlePullContractTest : BundleClientContractTestSupport() {
                       "source_id": "$sourceId",
                       "source_bundle_id": 1,
                       "row_count": 1,
-                      "bundle_hash": "$committedBundleHash"
+                      "bundle_hash": "$committedBundleHash",
+                      "canonical_request_hash": "$canonicalRequestHash"
                     }
                     """.trimIndent()
                 )
@@ -134,6 +141,7 @@ class BundlePullContractTest : BundleClientContractTestSupport() {
                       "source_bundle_id": 1,
                       "row_count": 1,
                       "bundle_hash": "$committedBundleHash",
+                      "canonical_request_hash": "$canonicalRequestHash",
                       "rows": [
                         {
                           "schema": "main",

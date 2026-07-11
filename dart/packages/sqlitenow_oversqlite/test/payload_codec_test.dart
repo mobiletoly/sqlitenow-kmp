@@ -1,12 +1,123 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:sqlitenow_runtime/sqlitenow_runtime.dart';
+import 'package:sqlitenow_oversqlite/src/config.dart';
+import 'package:sqlitenow_oversqlite/src/local_row_store.dart';
 import 'package:sqlitenow_oversqlite/src/payload_codec.dart';
 import 'package:sqlitenow_oversqlite/src/payload_source.dart';
 import 'package:sqlitenow_oversqlite/src/table_info.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('typed exact values use ordinary SQLite INTEGER and TEXT', () async {
+    final database = SqliteNowDatabase.inMemory();
+    await database.open(
+      preInit: (connection) => connection.execute('''CREATE TABLE exact_values (
+  id TEXT PRIMARY KEY,
+  min_value INTEGER NOT NULL,
+  max_value INTEGER NOT NULL,
+  amount TEXT NOT NULL
+)'''),
+    );
+    addTearDown(database.close);
+    final store = OversqliteLocalRowStore(database.connection, const [
+      SyncTable(
+        tableName: 'exact_values',
+        syncKeyColumnName: 'id',
+        numericColumns: {
+          'min_value': NumericColumnKind.exactInt64,
+          'max_value': NumericColumnKind.exactInt64,
+          'amount': NumericColumnKind.exactDecimal,
+        },
+      ),
+    ]);
+    await store.upsertPayload(
+      'exact_values',
+      const {
+        'id': 'n-1',
+        'min_value': '-9223372036854775808',
+        'max_value': '9223372036854775807',
+        'amount': '1234567890.123456789',
+      },
+      PayloadSource.authoritativeWire,
+      requireCompletePayload: true,
+    );
+    final stored = await database.connection.select(
+      '''SELECT CAST(min_value AS TEXT), CAST(max_value AS TEXT), amount,
+       typeof(min_value), typeof(max_value), typeof(amount)
+FROM exact_values''',
+      (row) => [for (var i = 0; i < 6; i++) row.readString(i)],
+    );
+    expect(stored.single, [
+      '-9223372036854775808',
+      '9223372036854775807',
+      '1234567890.123456789',
+      'integer',
+      'integer',
+      'text',
+    ]);
+    await expectLater(
+      store.upsertPayload(
+        'exact_values',
+        const {
+          'id': 'n-2',
+          'min_value': '1.5',
+          'max_value': '1',
+          'amount': '1',
+        },
+        PayloadSource.authoritativeWire,
+        requireCompletePayload: true,
+      ),
+      throwsArgumentError,
+    );
+    final count = await database.connection.select(
+      "SELECT COUNT(*) FROM exact_values WHERE id = 'n-2'",
+      (row) => row.readInt(0),
+    );
+    expect(count.single, 0);
+  });
+
+  test('typed exact numeric values stay strings and enforce int64 range', () {
+    const exactInt = OversqliteColumnInfo(
+      name: 'value',
+      kind: OversqliteColumnKind.exactInt64,
+      primaryKey: false,
+    );
+    const exactDecimal = OversqliteColumnInfo(
+      name: 'amount',
+      kind: OversqliteColumnKind.exactDecimal,
+      primaryKey: false,
+    );
+    expect(
+      bindOversqlitePayloadValue(exactInt, '-9223372036854775808'),
+      '-9223372036854775808',
+    );
+    expect(
+      wireOversqlitePayloadValue(exactInt, '9223372036854775807'),
+      '9223372036854775807',
+    );
+    expect(
+      () => bindOversqlitePayloadValue(exactInt, '9223372036854775808'),
+      throwsArgumentError,
+    );
+    expect(
+      bindOversqlitePayloadValue(exactDecimal, '1234567890.123456789'),
+      '1234567890.123456789',
+    );
+    expect(
+      () => bindOversqlitePayloadValue(exactDecimal, -0.0),
+      throwsArgumentError,
+    );
+    for (final value in ['-0', '-0.0', '-0e10', '-0.000E-9']) {
+      expect(
+        () => bindOversqlitePayloadValue(exactDecimal, value),
+        throwsArgumentError,
+        reason: value,
+      );
+    }
+  });
+
   test('canonical protocol JSON sorts keys and normalizes finite numbers', () {
     expect(
       canonicalizeOversqliteProtocolJson({
@@ -25,6 +136,25 @@ void main() {
     expect(
       () => canonicalizeOversqliteProtocolJson(double.infinity),
       throwsA(isA<ArgumentError>()),
+    );
+  });
+
+  test('C1 typed exact numeric strings and UTF-16 property order', () {
+    expect(
+      canonicalizeOversqliteProtocolJson('9007199254740993'),
+      '"9007199254740993"',
+    );
+    expect(
+      canonicalizeOversqliteProtocolJson('1234567890.123456789'),
+      '"1234567890.123456789"',
+    );
+    expect(canonicalizeOversqliteProtocolJson('1e700'), '"1e700"');
+    expect(
+      canonicalizeOversqliteProtocolJson({
+        '\ue000': 'bmp',
+        '𐀀': 'supplementary',
+      }),
+      '{"𐀀":"supplementary","":"bmp"}',
     );
   });
 

@@ -1,0 +1,69 @@
+{
+  "contract": "RFC 8785 JCS with schema-typed exact numeric strings",
+  "contract_id": "jcs_typed_numeric_strings_v0",
+  "json_cases": [
+    {
+      "name": "binary64_rounding",
+      "input": "333333333.33333329",
+      "canonical": "333333333.3333333"
+    },
+    {
+      "name": "negative_zero",
+      "input": "-0",
+      "canonical": "0"
+    },
+    {
+      "name": "exponent_boundaries",
+      "input": "[1e30,4.50e-6,1e-7]",
+      "canonical": "[1e+30,0.0000045,1e-7]"
+    },
+    {
+      "name": "rfc8785_binary64_boundaries",
+      "input": "[5e-324,-5e-324,1.7976931348623157e308,-1.7976931348623157e308,9007199254740992,-9007199254740992,295147905179352830000,9.999999999999997e22,1e23,1.0000000000000001e23,999999999999999700000,999999999999999900000,1e21,9.999999999999997e-7,0.000001,333333333.3333332,333333333.33333325,333333333.3333333,333333333.3333334,333333333.33333343,-0.0000033333333333333333,1424953923781206.2]",
+      "canonical": "[5e-324,-5e-324,1.7976931348623157e+308,-1.7976931348623157e+308,9007199254740992,-9007199254740992,295147905179352830000,9.999999999999997e+22,1e+23,1.0000000000000001e+23,999999999999999700000,999999999999999900000,1e+21,9.999999999999997e-7,0.000001,333333333.3333332,333333333.33333325,333333333.3333333,333333333.3333334,333333333.33333343,-0.0000033333333333333333,1424953923781206.2]"
+    },
+    {
+      "name": "typed_exact_values",
+      "input": "{\"max\":\"9223372036854775807\",\"above53\":\"9007199254740993\",\"amount\":\"1234567890.123456789\",\"large\":\"1e700\"}",
+      "canonical": "{\"above53\":\"9007199254740993\",\"amount\":\"1234567890.123456789\",\"large\":\"1e700\",\"max\":\"9223372036854775807\"}"
+    },
+    {
+      "name": "utf16_property_order",
+      "input": "{\"\":\"bmp\",\"𐀀\":\"supplementary\"}",
+      "canonical": "{\"𐀀\":\"supplementary\",\"\":\"bmp\"}"
+    },
+    {
+      "name": "unicode_non_normalization",
+      "input": "{\"nfd\":\"e\\u0301\",\"nfc\":\"\\u00e9\"}",
+      "canonical": "{\"nfc\":\"é\",\"nfd\":\"é\"}"
+    }
+  ],
+  "invalid_cases": [
+    {"name": "unpaired_surrogate", "input": "\"\\ud800\""}
+  ],
+  "hash_cases": {
+    "canonical_request": {
+      "canonical": "[{\"base_row_version\":\"0\",\"key\":{\"id\":\"n-1\"},\"op\":\"INSERT\",\"payload\":{\"amount\":\"1234567890.123456789\",\"id\":\"n-1\",\"max\":\"9223372036854775807\"},\"row_ordinal\":\"0\",\"schema\":\"public\",\"table\":\"exact_numbers\"}]",
+      "sha256": "f9952b89b7b7ce1f4a2b9a3ea31ee7e8ca05d19bb6cb2cd400c8d18a1043fc83"
+    },
+    "committed_bundle": {
+      "canonical": "[{\"key\":{\"id\":\"n-1\"},\"op\":\"INSERT\",\"payload\":{\"amount\":\"1234567890.123456789\",\"id\":\"n-1\",\"max\":\"9223372036854775807\"},\"row_ordinal\":\"0\",\"row_version\":\"1\",\"schema\":\"public\",\"table\":\"exact_numbers\"}]",
+      "sha256": "e012c6db4263db7fe674f7d0ebd95192eb3551e995d5e971a7e9cd3f65bf70f0"
+    }
+  },
+  "sqlite_cases": [
+    {"name": "int64_min", "numeric_kind": "exact_int64", "declared_type": "INTEGER", "wire": "-9223372036854775808", "storage_class": "integer", "stored_text": "-9223372036854775808", "outcome": "accept"},
+    {"name": "int64_max", "numeric_kind": "exact_int64", "declared_type": "INTEGER", "wire": "9223372036854775807", "storage_class": "integer", "stored_text": "9223372036854775807", "outcome": "accept"},
+    {"name": "fractional_integer", "numeric_kind": "exact_int64", "declared_type": "INTEGER", "wire": "1.5", "outcome": "reject_before_mutation"},
+    {"name": "out_of_range_integer", "numeric_kind": "exact_int64", "declared_type": "INTEGER", "wire": "9223372036854775808", "outcome": "reject_before_mutation"},
+    {"name": "explicit_real", "numeric_kind": "approximate", "declared_type": "REAL", "wire": 1.25, "storage_class": "real", "outcome": "accept_approximate"},
+    {"name": "exact_decimal_text", "numeric_kind": "exact_decimal", "declared_type": "TEXT", "wire": "1234567890.123456789", "storage_class": "text", "stored_text": "1234567890.123456789", "outcome": "accept"},
+    {"name": "exact_decimal_wrong_affinity", "numeric_kind": "exact_decimal", "declared_type": "REAL", "wire": "1e700", "outcome": "reject_before_mutation"},
+    {"name": "exact_decimal_negative_zero", "numeric_kind": "exact_decimal", "declared_type": "TEXT", "wire": "-0.0e10", "outcome": "reject_before_mutation"}
+  ],
+  "reset": {
+    "legacy_state": "recreate_database",
+    "discard": ["server_history", "server_staged_sessions", "client_outbox", "client_hashes", "client_checkpoints", "client_retry_state", "offline_work"],
+    "mixed_versions": "unsupported"
+  }
+}

@@ -25,7 +25,6 @@ import kotlinx.serialization.json.jsonPrimitive
 
 internal class OversqliteLocalStore(
     private val db: SafeSQLiteConnection,
-    private val tableInfoCache: TableInfoCache,
     private val json: Json,
     private val runtimeState: () -> RuntimeState,
 ) {
@@ -84,7 +83,7 @@ internal class OversqliteLocalStore(
         localPk: String,
         statementCache: StatementCache? = null,
     ): String? {
-        val tableInfo = tableInfoCache.get(db, tableName)
+        val tableInfo = configuredTableInfo(tableName)
         if (tableInfo.columns.isEmpty()) return null
         val pkColumn = runtimeState().validated.pkByTable[tableName]
             ?: error("table $tableName is not configured for sync")
@@ -109,7 +108,7 @@ internal class OversqliteLocalStore(
     ): JsonElement {
         val payload = json.parseToJsonElement(payloadText) as? JsonObject
             ?: error("dirty payload for $tableName must be a JSON object")
-        val tableInfo = tableInfoCache.get(db, tableName)
+        val tableInfo = configuredTableInfo(tableName)
 
         return buildJsonObject {
             for (column in tableInfo.columns) {
@@ -127,7 +126,7 @@ internal class OversqliteLocalStore(
         payloadSource: PayloadSource,
         statementCache: StatementCache? = null,
     ) {
-        val tableInfo = tableInfoCache.get(db, tableName)
+        val tableInfo = configuredTableInfo(tableName)
         val pkColumn = runtimeState().validated.pkByTable[tableName]
             ?: error("table $tableName is not configured for sync")
         val normalized = payload.entries.associate { it.key.lowercase() to it.value }
@@ -189,8 +188,12 @@ internal class OversqliteLocalStore(
     }
 
     private suspend fun isPrimaryKeyBlob(tableName: String): Boolean {
-        return tableInfoCache.get(db, tableName).primaryKeyIsBlob
+        return configuredTableInfo(tableName).primaryKeyIsBlob
     }
+
+    private fun configuredTableInfo(tableName: String): TableInfo =
+        runtimeState().validated.tableInfoByName[tableName.trim().lowercase()]
+            ?: error("table $tableName is not configured for sync")
 
     private suspend fun normalizePkForServer(tableName: String, pkValue: String): String {
         return if (isPrimaryKeyBlob(tableName)) {

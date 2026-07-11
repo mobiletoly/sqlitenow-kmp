@@ -8,6 +8,7 @@ import dev.goquick.sqlitenow.core.sqlite.use
 import dev.goquick.sqlitenow.oversqlite.DefaultOversqliteClient
 import dev.goquick.sqlitenow.oversqlite.OversqliteConfig
 import dev.goquick.sqlitenow.oversqlite.OversqliteTransientRetryPolicy
+import dev.goquick.sqlitenow.oversqlite.NumericColumnKind
 import dev.goquick.sqlitenow.oversqlite.Resolver
 import dev.goquick.sqlitenow.oversqlite.ServerWinsResolver
 import dev.goquick.sqlitenow.oversqlite.SyncTable
@@ -50,7 +51,15 @@ internal val richSchemaSyncTables = listOf(
     SyncTable("team_members", syncKeyColumnName = "id"),
     SyncTable("files", syncKeyColumnName = "id"),
     SyncTable("file_reviews", syncKeyColumnName = "id"),
-    SyncTable("typed_rows", syncKeyColumnName = "id"),
+	SyncTable(
+		"typed_rows",
+		syncKeyColumnName = "id",
+		numericColumns = mapOf(
+			"count_value" to NumericColumnKind.EXACT_INT64,
+			"enabled_flag" to NumericColumnKind.EXACT_INT64,
+			"rating" to NumericColumnKind.APPROXIMATE,
+		),
+	),
 )
 
 internal data class HotGraphIds(

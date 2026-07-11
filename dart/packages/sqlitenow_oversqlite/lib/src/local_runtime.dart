@@ -99,7 +99,10 @@ final class OversqliteLocalRuntime {
           'table ${syncTable.tableName} must declare syncKeyColumnName explicitly',
         );
       }
-      final tableInfo = await _loadTableInfo(tableName);
+      final tableInfo = _withNumericColumns(
+        await _loadTableInfo(tableName),
+        syncTable.numericColumns,
+      );
       if (tableInfo.columnNamesLower.contains(_hiddenSyncScopeColumnName)) {
         throw ArgumentError(
           'table ${syncTable.tableName} must not declare reserved server column $_hiddenSyncScopeColumnName in local oversqlite schema',

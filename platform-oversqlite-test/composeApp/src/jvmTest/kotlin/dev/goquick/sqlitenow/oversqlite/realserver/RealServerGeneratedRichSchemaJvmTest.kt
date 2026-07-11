@@ -4,6 +4,7 @@ import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.oversqlite.AttachOutcome
 import dev.goquick.sqlitenow.oversqlite.AuthorityStatus
 import dev.goquick.sqlitenow.oversqlite.OversqliteClient
+import dev.goquick.sqlitenow.oversqlite.NumericColumnKind
 import dev.goquick.sqlitenow.oversqlite.PushOutcome
 import dev.goquick.sqlitenow.oversqlite.RemoteSyncOutcome
 import dev.goquick.sqlitenow.oversqlite.platform.generated.RealServerGeneratedDatabase
@@ -105,6 +106,15 @@ internal class RealServerGeneratedRichSchemaJvmTest : RealServerHarnessSupport()
             httpClient = http,
             uploadLimit = 8,
             downloadLimit = 8,
+			syncTables = RealServerGeneratedDatabase.syncTables.map { table ->
+				if (table.tableName != "typed_rows") table else table.copy(
+					numericColumns = mapOf(
+						"count_value" to NumericColumnKind.EXACT_INT64,
+						"enabled_flag" to NumericColumnKind.EXACT_INT64,
+						"rating" to NumericColumnKind.APPROXIMATE,
+					),
+				)
+			},
         )
 
     private suspend fun insertGeneratedRichRows(db: SafeSQLiteConnection): GeneratedRichFixture {

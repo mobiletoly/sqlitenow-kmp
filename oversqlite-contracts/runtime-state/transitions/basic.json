@@ -51,6 +51,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -126,6 +127,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -195,6 +197,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -273,6 +276,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -342,6 +346,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -414,6 +419,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -495,6 +501,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "prepared",
                   "source_id": "<source-1>",
                   "source_bundle_id": 1,
@@ -586,6 +593,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -655,6 +663,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -727,6 +736,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -808,6 +818,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "committed_remote",
                   "source_id": "<source-1>",
                   "source_bundle_id": 1,
@@ -896,6 +907,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -965,6 +977,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -1037,6 +1050,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -1117,6 +1131,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -1204,6 +1219,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -1273,6 +1289,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -1345,6 +1362,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -1426,6 +1444,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "committed_remote",
                   "source_id": "<source-1>",
                   "source_bundle_id": 1,
@@ -1511,6 +1530,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "committed_remote",
                   "source_id": "<source-1>",
                   "source_bundle_id": 1,
@@ -1604,6 +1624,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -1693,6 +1714,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -1806,6 +1828,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -1875,6 +1898,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -1944,6 +1968,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -2032,6 +2057,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -2101,6 +2127,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -2173,6 +2200,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "none",
                   "source_id": "",
                   "source_bundle_id": 0,
@@ -2260,6 +2288,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "prepared",
                   "source_id": "<source-1>",
                   "source_bundle_id": 1,
@@ -2348,6 +2377,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "prepared",
                   "source_id": "<source-1>",
                   "source_bundle_id": 1,
@@ -2436,6 +2466,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "prepared",
                   "source_id": "<source-1>",
                   "source_bundle_id": 1,
@@ -2525,6 +2556,7 @@
               "outbox_bundle": [
                 {
                   "singleton_key": 1,
+                  "canonical_json_contract": "jcs_typed_numeric_strings_v0",
                   "state": "prepared",
                   "source_id": "<source-1>",
                   "source_bundle_id": 1,

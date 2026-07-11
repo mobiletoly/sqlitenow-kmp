@@ -25,8 +25,6 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
-import kotlin.time.ExperimentalTime
-import kotlin.time.Instant
 
 internal class OversqlitePushWorkflow(
     private val config: OversqliteConfig,
@@ -51,14 +49,9 @@ internal class OversqlitePushWorkflow(
         const val INITIAL_COMMITTED_BUNDLE_FETCH_BACKOFF_MILLIS = 75L
         const val MAX_COMMITTED_BUNDLE_FETCH_BACKOFF_MILLIS = 600L
 
-        val RFC3339_TIMESTAMP_REGEX = Regex(
-            "^(\\d{4}-\\d{2}-\\d{2})T(\\d{2}:\\d{2}:\\d{2})(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
-        )
     }
 
     private val replayExecutor = OversqlitePushReplayExecutor(
-        db = db,
-        tableInfoCache = tableInfoCache,
         syncStateStore = syncStateStore,
         bundleApplier = bundleApplier,
         localStore = localStore,
@@ -107,8 +100,9 @@ internal class OversqlitePushWorkflow(
                     bundleSeq = snapshot.remoteBundleSeq,
                     sourceId = state.sourceId,
                     sourceBundleId = snapshot.sourceBundleId,
-                    rowCount = snapshot.canonicalRows.size.toLong(),
-                    bundleHash = snapshot.remoteBundleHash,
+					rowCount = snapshot.canonicalRows.size.toLong(),
+					bundleHash = snapshot.remoteBundleHash,
+					canonicalRequestHash = snapshot.canonicalRequestHash,
                 )
             } else {
                 commitPushOutboundSnapshot(state, snapshot)
@@ -189,7 +183,8 @@ internal class OversqlitePushWorkflow(
 
         val createResponse = remoteApi.createPushSession(
             sourceBundleId = snapshot.sourceBundleId,
-            plannedRowCount = snapshot.canonicalRows.size.toLong(),
+			plannedRowCount = snapshot.canonicalRows.size.toLong(),
+			canonicalRequestHash = snapshot.canonicalRequestHash,
             sourceId = state.sourceId,
             initializationId = state.pendingInitializationId.takeIf { it.isNotBlank() },
         )
@@ -278,7 +273,11 @@ internal class OversqlitePushWorkflow(
         require(bundleHash == committed.bundleHash) {
             "fetched committed bundle hash $bundleHash does not match expected ${committed.bundleHash}"
         }
-        assertCommittedBundleMatchesOutbox(snapshot, committed, committedRows)
+		if (committed.canonicalRequestHash != snapshot.canonicalRequestHash) {
+            throw SourceSequenceMismatchException(
+                "committed canonical_request_hash ${committed.canonicalRequestHash} does not match prepared outbox hash ${snapshot.canonicalRequestHash}",
+            )
+		}
         return committedRows
     }
 
@@ -338,12 +337,12 @@ internal class OversqlitePushWorkflow(
     private fun computeCommittedBundleHash(rows: List<CommittedReplayRow>): String {
         val logicalRows = rows.mapIndexed { index, row ->
             buildJsonObject {
-                put("row_ordinal", JsonPrimitive(index.toLong()))
+				put("row_ordinal", JsonPrimitive(index.toString()))
                 put("schema", JsonPrimitive(row.schemaName))
                 put("table", JsonPrimitive(row.tableName))
                 put("key", syncKeyToJsonElement(row.wireKey))
                 put("op", JsonPrimitive(row.op))
-                put("row_version", JsonPrimitive(row.rowVersion))
+				put("row_version", JsonPrimitive(row.rowVersion.toString()))
                 put("payload", row.payload?.let { json.parseToJsonElement(it) } ?: JsonNull)
             }
         }
@@ -470,11 +469,16 @@ internal class OversqlitePushWorkflow(
         }
     }
 
-    private suspend fun persistRemoteCommitAcknowledgement(
+	private suspend fun persistRemoteCommitAcknowledgement(
         state: RuntimeState,
         snapshot: PushOutboundSnapshot,
         committed: CommittedPushBundle,
-    ) {
+	) {
+		if (committed.canonicalRequestHash != snapshot.canonicalRequestHash) {
+            throw SourceSequenceMismatchException(
+                "committed canonical_request_hash ${committed.canonicalRequestHash} does not match prepared outbox hash ${snapshot.canonicalRequestHash}",
+            )
+		}
         outboxStateStore.persistBundleState(
             OversqliteOutboxBundleState(
                 state = outboxStateCommittedRemote,
@@ -489,133 +493,15 @@ internal class OversqlitePushWorkflow(
         )
     }
 
-    private suspend fun assertCommittedBundleMatchesOutbox(
-        snapshot: PushOutboundSnapshot,
-        committed: CommittedPushBundle,
-        committedRows: List<CommittedReplayRow>,
-    ) {
-        val actualRows = committedRows.mapIndexed { index, row ->
-            CanonicalOutboxComparableRow(
-                rowOrdinal = index.toLong(),
-                schemaName = row.schemaName,
-                tableName = row.tableName,
-                wireKey = row.wireKey,
-                op = row.op,
-                wirePayload = row.payload?.let { canonicalizeJsonElement(json.parseToJsonElement(it)) },
-            )
-        }
-        val expectedRows = snapshot.canonicalRows.map { row ->
-            CanonicalOutboxComparableRow(
-                rowOrdinal = row.rowOrdinal,
-                schemaName = row.schemaName,
-                tableName = row.tableName,
-                wireKey = parseWireKey(row.wireKeyJson),
-                op = row.op,
-                wirePayload = row.wirePayload,
-            )
-        }
-        val requirePayloadMatch = snapshot.isRemoteCommitted || committed.requiresStrictOutboxMatch
-        val firstMismatchIndex = when {
-            actualRows.size != expectedRows.size -> minOf(actualRows.size, expectedRows.size)
-            else -> actualRows.indices.firstOrNull { index ->
-                !equivalentComparableRows(
-                    expected = expectedRows[index],
-                    actual = actualRows[index],
-                    requirePayloadMatch = requirePayloadMatch,
-                )
-            }
-        }
-        if (firstMismatchIndex != null) {
-            val expectedRow = expectedRows.getOrNull(firstMismatchIndex)
-            val actualRow = actualRows.getOrNull(firstMismatchIndex)
-            throw SourceSequenceMismatchException(
-                "committed bundle for source ${committed.sourceId} source_bundle_id ${committed.sourceBundleId} " +
-                    "does not match the canonical prepared outbox rows at index $firstMismatchIndex; " +
-                    "expected=$expectedRow actual=$actualRow"
-            )
-        }
-    }
-
-    private suspend fun equivalentComparableRows(
-        expected: CanonicalOutboxComparableRow,
-        actual: CanonicalOutboxComparableRow,
-        requirePayloadMatch: Boolean,
-    ): Boolean {
-        return expected.rowOrdinal == actual.rowOrdinal &&
-            expected.schemaName == actual.schemaName &&
-            expected.tableName == actual.tableName &&
-            expected.wireKey == actual.wireKey &&
-            expected.op == actual.op &&
-            (
-                !requirePayloadMatch ||
-                    equivalentCommittedPayload(
-                        tableName = expected.tableName,
-                        expectedPayload = expected.wirePayload,
-                        actualPayload = actual.wirePayload,
-                    )
-                )
-    }
-
-    private suspend fun equivalentCommittedPayload(
-        tableName: String,
-        expectedPayload: String?,
-        actualPayload: String?,
-    ): Boolean {
-        if (expectedPayload == null && actualPayload == null) return true
-        if (expectedPayload == null || actualPayload == null) return false
-        val tableInfo = tableInfoCache.get(db, tableName)
-        val expectedObject = json.parseToJsonElement(expectedPayload) as? JsonObject ?: return false
-        val actualObject = json.parseToJsonElement(actualPayload) as? JsonObject ?: return false
-        if (expectedObject.size != tableInfo.columns.size || actualObject.size != tableInfo.columns.size) {
-            return false
-        }
-        return tableInfo.columns.all { column ->
-            val expectedValue = expectedObject[column.name.lowercase()] ?: expectedObject[column.name] ?: return@all false
-            val actualValue = actualObject[column.name.lowercase()] ?: actualObject[column.name] ?: return@all false
-            OversqliteValueCodec.equivalent(
-                column = column,
-                left = expectedValue,
-                right = actualValue,
-                leftSource = PayloadSource.AUTHORITATIVE_WIRE,
-                rightSource = PayloadSource.AUTHORITATIVE_WIRE,
-            ) || rfc3339InstantEquivalent(expectedValue, actualValue)
-        }
-    }
-
-    /**
-     * Replay safety gives semantic equality only to explicit RFC3339 instants.
-     *
-     * Naive/local timestamp text remains opaque payload text and must not be normalized here.
-     */
-    @OptIn(ExperimentalTime::class)
-    private fun rfc3339InstantEquivalent(
-        expectedValue: JsonElement,
-        actualValue: JsonElement,
-    ): Boolean {
-        val expectedPrimitive = expectedValue as? JsonPrimitive ?: return false
-        val actualPrimitive = actualValue as? JsonPrimitive ?: return false
-        if (!expectedPrimitive.isString || !actualPrimitive.isString) return false
-        val expectedInstant = parseRfc3339InstantOrNull(expectedPrimitive.content)
-        val actualInstant = parseRfc3339InstantOrNull(actualPrimitive.content)
-        return expectedInstant != null && actualInstant != null && expectedInstant == actualInstant
-    }
-
-    @OptIn(ExperimentalTime::class)
-    private fun parseRfc3339InstantOrNull(value: String): Instant? {
-        val trimmed = value.trim()
-        if (!RFC3339_TIMESTAMP_REGEX.matches(trimmed)) return null
-        return runCatching { Instant.parse(trimmed) }.getOrNull()
-    }
-
     private fun computeCanonicalRequestHash(rows: List<OversqliteOutboxRow>): String {
         val logicalRows = rows.map { row ->
             buildJsonObject {
-                put("row_ordinal", JsonPrimitive(row.rowOrdinal))
+				put("row_ordinal", JsonPrimitive(row.rowOrdinal.toString()))
                 put("schema", JsonPrimitive(row.schemaName))
                 put("table", JsonPrimitive(row.tableName))
                 put("key", syncKeyToJsonElement(parseWireKey(row.wireKeyJson)))
                 put("op", JsonPrimitive(row.op))
-                put("base_row_version", JsonPrimitive(row.baseRowVersion))
+				put("base_row_version", JsonPrimitive(row.baseRowVersion.toString()))
                 put("payload", row.wirePayload?.let { json.parseToJsonElement(it) } ?: JsonNull)
             }
         }

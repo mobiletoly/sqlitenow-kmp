@@ -86,6 +86,7 @@ class SharedProtocolHttpRequestFixtureTest {
                 sourceId = case.sourceId,
                 sourceBundleId = case.longArg("sourceBundleId"),
                 plannedRowCount = case.longArg("plannedRowCount"),
+                canonicalRequestHash = "a".repeat(64),
                 initializationId = case.stringArg("initializationId"),
             )
             "pushSessionChunk" -> api.uploadPushChunk(
@@ -184,6 +185,7 @@ class SharedProtocolHttpRequestFixtureTest {
                     status = "staging",
                     plannedRowCount = case.longArg("plannedRowCount"),
                     nextExpectedRowOrdinal = 0,
+                    canonicalRequestHash = "a".repeat(64),
                 ),
             )
             "pushSessionChunk" -> json.encodeToString(
@@ -201,6 +203,7 @@ class SharedProtocolHttpRequestFixtureTest {
                     sourceBundleId = 1,
                     rowCount = 1,
                     bundleHash = "fixture-hash",
+                    canonicalRequestHash = "a".repeat(64),
                 ),
             )
             "committedRows" -> json.encodeToString(
@@ -211,6 +214,7 @@ class SharedProtocolHttpRequestFixtureTest {
                     sourceBundleId = 1,
                     rowCount = 0,
                     bundleHash = "fixture-hash",
+                    canonicalRequestHash = "a".repeat(64),
                     rows = emptyList(),
                     nextRowOrdinal = case.longArg("afterRowOrdinal"),
                     hasMore = false,

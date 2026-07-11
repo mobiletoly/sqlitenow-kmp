@@ -1,5 +1,7 @@
 import 'package:sqlitenow_runtime/sqlitenow_runtime.dart';
 
+import 'config.dart';
+
 final class OversqliteTableInfo {
   const OversqliteTableInfo({
     required this.name,
@@ -36,12 +38,21 @@ final class _RawColumnInfo {
   final bool primaryKey;
 }
 
-enum OversqliteColumnKind { text, integer, real, blob, uuidBlob }
+enum OversqliteColumnKind {
+  text,
+  integer,
+  real,
+  exactInt64,
+  exactDecimal,
+  blob,
+  uuidBlob,
+}
 
 Future<OversqliteTableInfo> loadOversqliteTableInfo(
   SqliteNowConnection connection,
-  String tableName,
-) async {
+  String tableName, {
+  Map<String, NumericColumnKind> numericColumns = const {},
+}) async {
   final rawColumns = await connection.select(
     'PRAGMA table_info(${quoteSqlIdentifier(tableName)})',
     (row) => _RawColumnInfo(
@@ -59,8 +70,10 @@ Future<OversqliteTableInfo> loadOversqliteTableInfo(
     for (final column in rawColumns)
       OversqliteColumnInfo(
         name: column.name,
-        kind: oversqliteColumnKind(
+        kind: _configuredOversqliteColumnKind(
           column.declaredType,
+          column.name,
+          numericColumns,
           primaryKey: column.primaryKey,
           blobReference: foreignKeyColumnSet.contains(
             column.name.toLowerCase(),
@@ -71,6 +84,48 @@ Future<OversqliteTableInfo> loadOversqliteTableInfo(
   ];
   final pk = rows.singleWhere((column) => column.primaryKey);
   return OversqliteTableInfo(name: tableName, columns: rows, primaryKey: pk);
+}
+
+OversqliteColumnKind _configuredOversqliteColumnKind(
+  String declaredType,
+  String columnName,
+  Map<String, NumericColumnKind> numericColumns, {
+  required bool primaryKey,
+  required bool blobReference,
+}) {
+  final base = oversqliteColumnKind(
+    declaredType,
+    primaryKey: primaryKey,
+    blobReference: blobReference,
+  );
+  NumericColumnKind? configured;
+  for (final entry in numericColumns.entries) {
+    if (entry.key.trim().toLowerCase() == columnName.toLowerCase()) {
+      configured = entry.value;
+      break;
+    }
+  }
+  return switch (configured) {
+    null => base,
+    NumericColumnKind.exactInt64 =>
+      base == OversqliteColumnKind.integer
+          ? OversqliteColumnKind.exactInt64
+          : throw ArgumentError(
+              'exact-int64 column $columnName must have SQLite INTEGER affinity',
+            ),
+    NumericColumnKind.exactDecimal =>
+      base == OversqliteColumnKind.text
+          ? OversqliteColumnKind.exactDecimal
+          : throw ArgumentError(
+              'exact-decimal column $columnName must have SQLite TEXT affinity',
+            ),
+    NumericColumnKind.approximate =>
+      base == OversqliteColumnKind.real
+          ? OversqliteColumnKind.real
+          : throw ArgumentError(
+              'approximate column $columnName must have SQLite REAL affinity',
+            ),
+  };
 }
 
 OversqliteColumnKind oversqliteColumnKind(

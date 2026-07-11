@@ -2,6 +2,7 @@ package dev.goquick.sqlitenow.oversqlite.realserver
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.goquick.sqlitenow.oversqlite.SyncTable
+import dev.goquick.sqlitenow.oversqlite.NumericColumnKind
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -18,7 +19,17 @@ class RealServerTypedRowsTest {
         val seedDevice = randomSourceId("typed-seed")
         val activeDevice = randomSourceId("typed-active")
         val hydrateDevice = randomSourceId("typed-hydrate")
-        val syncTables = listOf(SyncTable("typed_rows", syncKeyColumnName = "id"))
+		val syncTables = listOf(
+			SyncTable(
+				"typed_rows",
+				syncKeyColumnName = "id",
+				numericColumns = mapOf(
+					"count_value" to NumericColumnKind.EXACT_INT64,
+					"enabled_flag" to NumericColumnKind.EXACT_INT64,
+					"rating" to NumericColumnKind.APPROXIMATE,
+				),
+			),
+		)
 
         val seedToken = issueDummySigninToken(config.baseUrl, userId, seedDevice)
         val activeToken = issueDummySigninToken(config.baseUrl, userId, activeDevice)

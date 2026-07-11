@@ -833,6 +833,7 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
                     PushSessionCreateRequest(
                         sourceBundleId = 1L,
                         plannedRowCount = 1L,
+						canonicalRequestHash = "0".repeat(64),
                     ),
                 )
             }

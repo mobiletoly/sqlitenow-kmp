@@ -64,7 +64,7 @@ internal class SyncRuntimeInitializer(
                 "table ${syncTable.tableName} must declare exactly one sync key column in the current client runtime"
             }
 
-            val tableInfo = tableInfoCache.get(db, tableName)
+			val tableInfo = tableInfoCache.get(db, tableName).withNumericColumnKinds(syncTable.numericColumns)
             require(hiddenSyncScopeColumnName.lowercase() !in tableInfo.columnNamesLower) {
                 "table ${syncTable.tableName} must not declare reserved server column $hiddenSyncScopeColumnName in local oversqlite schema"
             }

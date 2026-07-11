@@ -43,7 +43,15 @@ internal open class RealServerSupport : CrossTargetSyncTestSupport() {
         SyncTable("team_members", syncKeyColumnName = "id"),
         SyncTable("files", syncKeyColumnName = "id"),
         SyncTable("file_reviews", syncKeyColumnName = "id"),
-        SyncTable("typed_rows", syncKeyColumnName = "id"),
+		SyncTable(
+			"typed_rows",
+			syncKeyColumnName = "id",
+			numericColumns = mapOf(
+				"count_value" to NumericColumnKind.EXACT_INT64,
+				"enabled_flag" to NumericColumnKind.EXACT_INT64,
+				"rating" to NumericColumnKind.APPROXIMATE,
+			),
+		),
     )
 
     protected suspend fun requireRealServerConfig(): RealServerConfig? {

@@ -355,6 +355,7 @@ internal open class PlatformCrossTargetTestSupport {
                                 sourceBundleId = existing.sourceBundleId,
                                 rowCount = existing.rows.size.toLong(),
                                 bundleHash = existing.bundleHash,
+								canonicalRequestHash = existing.canonicalRequestHash,
                             ),
                         ),
                     )
@@ -365,6 +366,7 @@ internal open class PlatformCrossTargetTestSupport {
                         sourceId = sourceId,
                         sourceBundleId = create.sourceBundleId,
                         plannedRowCount = create.plannedRowCount,
+						canonicalRequestHash = create.canonicalRequestHash,
                     )
                     jsonResponse(
                         json.encodeToString(
@@ -374,6 +376,7 @@ internal open class PlatformCrossTargetTestSupport {
                                 status = "staging",
                                 plannedRowCount = create.plannedRowCount,
                                 nextExpectedRowOrdinal = 0,
+								canonicalRequestHash = create.canonicalRequestHash,
                             ),
                         ),
                     )
@@ -426,6 +429,7 @@ internal open class PlatformCrossTargetTestSupport {
                                 sourceBundleId = existing.sourceBundleId,
                                 rowCount = existing.rows.size.toLong(),
                                 bundleHash = existing.bundleHash,
+								canonicalRequestHash = existing.canonicalRequestHash,
                             ),
                         ),
                     )
@@ -505,6 +509,7 @@ internal open class PlatformCrossTargetTestSupport {
                     sourceBundleId = session.sourceBundleId,
                     rows = committedRows,
                     bundleHash = computeCommittedBundleHash(committedRows),
+					canonicalRequestHash = session.canonicalRequestHash,
                 )
                 bundles += stored
                 committedBySourceBundle["${stored.sourceId}\u0000${stored.sourceBundleId}"] = stored
@@ -522,6 +527,7 @@ internal open class PlatformCrossTargetTestSupport {
                             sourceBundleId = stored.sourceBundleId,
                             rowCount = stored.rows.size.toLong(),
                             bundleHash = stored.bundleHash,
+							canonicalRequestHash = stored.canonicalRequestHash,
                         ),
                     ),
                 )
@@ -553,6 +559,7 @@ internal open class PlatformCrossTargetTestSupport {
                             sourceBundleId = bundle.sourceBundleId,
                             rowCount = bundle.rows.size.toLong(),
                             bundleHash = bundle.bundleHash,
+							canonicalRequestHash = bundle.canonicalRequestHash,
                             rows = rows,
                             nextRowOrdinal = nextRowOrdinal,
                             hasMore = startIndex + rows.size < bundle.rows.size,
@@ -693,7 +700,7 @@ internal open class PlatformCrossTargetTestSupport {
         private fun computeCommittedBundleHash(rows: List<BundleRow>): String {
             val logicalRows = rows.mapIndexed { index, row ->
                 buildJsonObject {
-                    put("row_ordinal", JsonPrimitive(index.toLong()))
+					put("row_ordinal", JsonPrimitive(index.toString()))
                     put("schema", JsonPrimitive(row.schema))
                     put("table", JsonPrimitive(row.table))
                     put("key", buildJsonObject {
@@ -702,7 +709,7 @@ internal open class PlatformCrossTargetTestSupport {
                         }
                     })
                     put("op", JsonPrimitive(row.op))
-                    put("row_version", JsonPrimitive(row.rowVersion))
+					put("row_version", JsonPrimitive(row.rowVersion.toString()))
                     put("payload", row.payload ?: JsonNull)
                 }
             }
@@ -783,6 +790,7 @@ internal open class PlatformCrossTargetTestSupport {
             val sourceId: String,
             val sourceBundleId: Long,
             val plannedRowCount: Long,
+			val canonicalRequestHash: String,
             val rows: MutableList<PushRequestRow> = mutableListOf(),
         )
 
@@ -792,6 +800,7 @@ internal open class PlatformCrossTargetTestSupport {
             val sourceBundleId: Long,
             val rows: List<BundleRow>,
             val bundleHash: String,
+			val canonicalRequestHash: String,
         )
 
         private data class SnapshotSessionState(

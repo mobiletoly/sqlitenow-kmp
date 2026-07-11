@@ -5,13 +5,15 @@
       "name": "single-insert-commit",
       "pushSessionCreateRequest": {
         "source_bundle_id": 1,
-        "planned_row_count": 1
+        "planned_row_count": 1,
+        "canonical_request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       },
       "pushSessionCreateResponse": {
         "status": "staging",
         "push_id": "push-1",
         "planned_row_count": 1,
-        "next_expected_row_ordinal": 0
+        "next_expected_row_ordinal": 0,
+        "canonical_request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       },
       "pushChunkRequest": {
         "start_row_ordinal": 0,
@@ -40,7 +42,8 @@
         "source_id": "source-fixture",
         "source_bundle_id": 1,
         "row_count": 1,
-        "bundle_hash": "fixture-hash"
+        "bundle_hash": "fixture-hash",
+        "canonical_request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       },
       "committedBundleRowsResponse": {
         "bundle_seq": 1,
@@ -48,6 +51,7 @@
         "source_bundle_id": 1,
         "row_count": 1,
         "bundle_hash": "fixture-hash",
+        "canonical_request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "rows": [
           {
             "schema": "main",
@@ -115,13 +119,14 @@
       }
     },
     {
-      "name": "already-committed-mismatch-preserves-source-sequence-error",
+      "name": "already-committed-request-hash-mismatch-preserves-source-sequence-error",
       "localWrite": {
         "sql": "INSERT INTO users(id, name) VALUES('user-1', 'Local Ada')"
       },
       "pushSessionCreateRequest": {
         "source_bundle_id": 1,
-        "planned_row_count": 1
+        "planned_row_count": 1,
+        "canonical_request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       },
       "pushSessionCreateResponse": {
         "status": "already_committed",
@@ -129,7 +134,8 @@
         "source_id": "source-fixture",
         "source_bundle_id": 1,
         "row_count": 1,
-        "bundle_hash": "fixture-already-committed-mismatch"
+        "bundle_hash": "fixture-already-committed-mismatch",
+        "canonical_request_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       },
       "committedBundleRowsResponse": {
         "bundle_seq": 1,
@@ -137,6 +143,7 @@
         "source_bundle_id": 1,
         "row_count": 1,
         "bundle_hash": "fixture-already-committed-mismatch",
+        "canonical_request_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "rows": [
           {
             "schema": "main",
@@ -164,7 +171,7 @@
       }
     },
     {
-      "name": "committed-remote-mismatch-requires-rebuild",
+      "name": "committed-remote-request-hash-mismatch-requires-rebuild",
       "localWrite": {
         "sql": "INSERT INTO users(id, name) VALUES('user-1', 'Local Ada')"
       },
@@ -173,7 +180,8 @@
         "source_id": "source-fixture",
         "source_bundle_id": 1,
         "row_count": 1,
-        "bundle_hash": "fixture-committed-remote-mismatch"
+        "bundle_hash": "fixture-committed-remote-mismatch",
+        "canonical_request_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       },
       "committedBundleRowsResponse": {
         "bundle_seq": 1,
@@ -181,6 +189,7 @@
         "source_bundle_id": 1,
         "row_count": 1,
         "bundle_hash": "fixture-committed-remote-mismatch",
+        "canonical_request_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "rows": [
           {
             "schema": "main",

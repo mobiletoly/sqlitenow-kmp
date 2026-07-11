@@ -54,6 +54,7 @@ final class OversqliteRemoteApi {
     required String sourceId,
     required int sourceBundleId,
     required int plannedRowCount,
+    required String canonicalRequestHash,
     String? initializationId,
   }) async {
     final response = await _http.postJson(
@@ -62,6 +63,7 @@ final class OversqliteRemoteApi {
       body: {
         'source_bundle_id': sourceBundleId,
         'planned_row_count': plannedRowCount,
+        'canonical_request_hash': canonicalRequestHash,
         if (initializationId != null && initializationId.isNotEmpty)
           'initialization_id': initializationId,
       },
@@ -90,6 +92,7 @@ final class OversqliteRemoteApi {
       sourceId: sourceId,
       sourceBundleId: sourceBundleId,
       plannedRowCount: plannedRowCount,
+      canonicalRequestHash: canonicalRequestHash,
     );
     return create;
   }
@@ -481,6 +484,7 @@ void _validatePushSessionCreateResponse(
   required String sourceId,
   required int sourceBundleId,
   required int plannedRowCount,
+  required String canonicalRequestHash,
 }) {
   switch (response.status) {
     case 'staging':
@@ -497,6 +501,11 @@ void _validatePushSessionCreateResponse(
       if (response.nextExpectedRowOrdinal != 0) {
         throw OversqliteProtocolException(
           'push session response next_expected_row_ordinal ${response.nextExpectedRowOrdinal} must be 0',
+        );
+      }
+      if (response.canonicalRequestHash != canonicalRequestHash) {
+        throw const SourceSequenceMismatchException(
+          'push session response canonical_request_hash does not match request',
         );
       }
     case 'already_committed':
@@ -523,6 +532,11 @@ void _validatePushSessionCreateResponse(
       if (response.bundleHash.trim().isEmpty) {
         throw const OversqliteProtocolException(
           'push session already_committed response missing bundle_hash',
+        );
+      }
+      if (response.canonicalRequestHash != canonicalRequestHash) {
+        throw const SourceSequenceMismatchException(
+          'push session already_committed canonical_request_hash does not match request',
         );
       }
     default:

@@ -40,9 +40,11 @@ internal sealed interface TypedValue {
 
     data class Integer(val value: Long) : TypedValue
 
-    data class Real(
-        val canonicalText: String,
-    ) : TypedValue
+	data class Real(
+		val canonicalText: String,
+	) : TypedValue
+
+	data class ExactDecimal(val value: String) : TypedValue
 
     data class Blob(val bytes: ByteArray) : TypedValue
 }
@@ -50,6 +52,8 @@ internal sealed interface TypedValue {
 private const val HEX_DIGITS = "0123456789abcdef"
 private val payloadJson = Json
 private val JSON_NUMBER_REGEX = Regex("^-?(0|[1-9]\\d*)(\\.\\d+)?([eE][+-]?\\d+)?$")
+private val EXACT_INT64_REGEX = Regex("^-?(0|[1-9][0-9]*)$")
+private val EXACT_DECIMAL_REGEX = Regex("^-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?(0|[1-9][0-9]*))?$")
 
 internal fun bytesToHexLower(bytes: ByteArray): String {
     val out = StringBuilder(bytes.size * 2)
@@ -145,53 +149,34 @@ internal fun normalizeLocalUuidAsCanonicalWire(value: String): String {
 }
 
 internal fun canonicalizeFiniteJsonNumber(value: String): String {
-    require(JSON_NUMBER_REGEX.matches(value)) { "invalid JSON number: $value" }
+	require(JSON_NUMBER_REGEX.matches(value)) { "invalid JSON number: $value" }
+	return canonicalizeJsonElement(payloadJson.parseToJsonElement(value))
+}
 
-    val negative = value.startsWith('-')
-    val unsigned = if (negative) value.substring(1) else value
-    val exponentIndex = unsigned.indexOfFirst { it == 'e' || it == 'E' }
-    val mantissa = if (exponentIndex >= 0) unsigned.substring(0, exponentIndex) else unsigned
-    val exponent = if (exponentIndex >= 0) unsigned.substring(exponentIndex + 1).toInt() else 0
+private fun requireExactInt64(value: String): Long {
+	require(EXACT_INT64_REGEX.matches(value) && value != "-0") { "invalid canonical exact-int64 string: $value" }
+	return value.toLongOrNull() ?: error("exact-int64 value is outside signed 64-bit range: $value")
+}
 
-    val dotIndex = mantissa.indexOf('.')
-    val integerPart = if (dotIndex >= 0) mantissa.substring(0, dotIndex) else mantissa
-    val fractionPart = if (dotIndex >= 0) mantissa.substring(dotIndex + 1) else ""
-    val rawDigits = integerPart + fractionPart
-    val leadingZeroCount = rawDigits.indexOfFirst { it != '0' }.let { if (it < 0) rawDigits.length else it }
-    val digits = rawDigits.drop(leadingZeroCount)
-    if (digits.isEmpty()) {
-        return "0"
-    }
-
-    val shiftedDecimalIndex = integerPart.length + exponent - leadingZeroCount
-    val plain = when {
-        shiftedDecimalIndex <= 0 -> "0." + "0".repeat(-shiftedDecimalIndex) + digits
-        shiftedDecimalIndex >= digits.length -> digits + "0".repeat(shiftedDecimalIndex - digits.length)
-        else -> digits.substring(0, shiftedDecimalIndex) + "." + digits.substring(shiftedDecimalIndex)
-    }
-
-    val normalized = if ('.' in plain) {
-        val parts = plain.split('.', limit = 2)
-        val normalizedInteger = parts[0].trimStart('0').ifEmpty { "0" }
-        val normalizedFraction = parts[1].trimEnd('0')
-        if (normalizedFraction.isEmpty()) normalizedInteger else "$normalizedInteger.$normalizedFraction"
-    } else {
-        plain.trimStart('0').ifEmpty { "0" }
-    }
-
-    return if (negative && normalized != "0") "-$normalized" else normalized
+private fun requireExactDecimal(value: String): String {
+	require(EXACT_DECIMAL_REGEX.matches(value)) { "invalid exact-decimal string: $value" }
+	val significand = value.substringBefore('e').substringBefore('E')
+	require(!(value.startsWith('-') && significand.filter(Char::isDigit).all { it == '0' })) { "negative zero is not an exact-decimal string" }
+	return value
 }
 
 private fun decodeIntegerPayloadValue(
     column: ColumnInfo,
     value: JsonElement,
 ): Long {
-    value.jsonPrimitive.content.toLongOrNull()?.let { return it }
-    return when (value.toString()) {
-        "true" -> 1L
-        "false" -> 0L
-        else -> error("expected integer for ${column.name}, got ${value.jsonPrimitive.content}")
-    }
+	val primitive = value.jsonPrimitive
+	if (primitive.isString) error("expected JSON integer for ${column.name}")
+	return when (primitive.content) {
+		"true" -> 1L
+		"false" -> 0L
+		else -> primitive.content.toLongOrNull()
+			?: error("expected signed 64-bit integer for ${column.name}, got ${primitive.content}")
+	}
 }
 
 internal object OversqliteValueCodec {
@@ -203,11 +188,13 @@ internal object OversqliteValueCodec {
         if (statement.isNull(index)) {
             return JsonNull
         }
-        return when (column.kind) {
-            ColumnKind.TEXT -> JsonPrimitive(statement.getText(index))
-            ColumnKind.INTEGER -> JsonPrimitive(statement.getLong(index))
-            ColumnKind.REAL -> payloadJson.parseToJsonElement(statement.getText(index))
-            ColumnKind.BLOB, ColumnKind.UUID_BLOB -> JsonPrimitive(bytesToHexLower(statement.getBlob(index)))
+		return when (column.kind) {
+			ColumnKind.TEXT -> JsonPrimitive(statement.getText(index))
+			ColumnKind.INTEGER -> JsonPrimitive(statement.getLong(index))
+			ColumnKind.EXACT_INT64 -> JsonPrimitive(statement.getLong(index).toString())
+			ColumnKind.REAL -> payloadJson.parseToJsonElement(statement.getText(index))
+			ColumnKind.EXACT_DECIMAL -> JsonPrimitive(requireExactDecimal(statement.getText(index)))
+			ColumnKind.BLOB, ColumnKind.UUID_BLOB -> JsonPrimitive(bytesToHexLower(statement.getBlob(index)))
         }
     }
 
@@ -219,8 +206,9 @@ internal object OversqliteValueCodec {
         return when (val typed = decodePayloadValue(column, value, PayloadSource.LOCAL_STATE)) {
             TypedValue.Null -> JsonNull
             is TypedValue.Text -> JsonPrimitive(typed.value)
-            is TypedValue.Integer -> JsonPrimitive(typed.value)
-            is TypedValue.Real -> payloadJson.parseToJsonElement(typed.canonicalText)
+			is TypedValue.Integer -> if (column.kind == ColumnKind.EXACT_INT64) JsonPrimitive(typed.value.toString()) else JsonPrimitive(typed.value)
+			is TypedValue.Real -> payloadJson.parseToJsonElement(typed.canonicalText)
+			is TypedValue.ExactDecimal -> JsonPrimitive(typed.value)
             is TypedValue.Blob -> {
                 if (column.kind == ColumnKind.UUID_BLOB) {
                     JsonPrimitive(Uuid.parseHex(bytesToHexLower(typed.bytes)).toString())
@@ -241,12 +229,24 @@ internal object OversqliteValueCodec {
         }
         val primitive = value.jsonPrimitive
         return when (column.kind) {
-            ColumnKind.TEXT -> TypedValue.Text(primitive.content)
-            ColumnKind.INTEGER -> TypedValue.Integer(decodeIntegerPayloadValue(column, value))
-            ColumnKind.REAL -> {
-                val content = primitive.content
-                TypedValue.Real(canonicalText = canonicalizeFiniteJsonNumber(content))
-            }
+			ColumnKind.TEXT -> {
+				require(primitive.isString) { "TEXT requires a JSON string for ${column.name}" }
+				TypedValue.Text(primitive.content)
+			}
+			ColumnKind.INTEGER -> TypedValue.Integer(decodeIntegerPayloadValue(column, value))
+			ColumnKind.EXACT_INT64 -> {
+				require(primitive.isString) { "exact-int64 requires a JSON string for ${column.name}" }
+				TypedValue.Integer(requireExactInt64(primitive.content))
+			}
+			ColumnKind.REAL -> {
+				require(!primitive.isString) { "REAL requires a JSON number for ${column.name}" }
+				val content = primitive.content
+				TypedValue.Real(canonicalText = canonicalizeFiniteJsonNumber(content))
+			}
+			ColumnKind.EXACT_DECIMAL -> {
+				require(primitive.isString) { "exact-decimal requires a JSON string for ${column.name}" }
+				TypedValue.ExactDecimal(requireExactDecimal(primitive.content))
+			}
             ColumnKind.BLOB -> TypedValue.Blob(
                 when (payloadSource) {
                     PayloadSource.LOCAL_STATE -> decodeLocalBlobBytes(primitive.content)
@@ -273,11 +273,12 @@ internal object OversqliteValueCodec {
             TypedValue.Null -> statement.bindNull(index)
             is TypedValue.Text -> statement.bindText(index, typed.value)
             is TypedValue.Integer -> statement.bindLong(index, typed.value)
-            is TypedValue.Real -> {
+			is TypedValue.Real -> {
                 val numericValue = typed.canonicalText.toDouble()
                 require(numericValue.isFinite()) { "expected finite real for ${column.name}, got ${typed.canonicalText}" }
-                statement.bindDouble(index, numericValue)
-            }
+				statement.bindDouble(index, numericValue)
+			}
+			is TypedValue.ExactDecimal -> statement.bindText(index, typed.value)
             is TypedValue.Blob -> statement.bindBlob(index, typed.bytes)
         }
     }
@@ -328,7 +329,9 @@ internal object OversqliteValueCodec {
             leftValue is TypedValue.Null && rightValue is TypedValue.Null -> true
             leftValue is TypedValue.Text && rightValue is TypedValue.Text -> leftValue.value == rightValue.value
             leftValue is TypedValue.Integer && rightValue is TypedValue.Integer -> leftValue.value == rightValue.value
-            leftValue is TypedValue.Real && rightValue is TypedValue.Real -> leftValue.canonicalText == rightValue.canonicalText
+			leftValue is TypedValue.Real && rightValue is TypedValue.Real -> leftValue.canonicalText == rightValue.canonicalText
+			leftValue is TypedValue.ExactDecimal && rightValue is TypedValue.ExactDecimal ->
+				leftValue.value == rightValue.value
             leftValue is TypedValue.Blob && rightValue is TypedValue.Blob -> leftValue.bytes.contentEquals(rightValue.bytes)
             else -> false
         }

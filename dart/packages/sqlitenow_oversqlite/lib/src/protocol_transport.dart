@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'payload_codec.dart';
+
 const oversyncSourceIdHeaderName = 'Oversync-Source-ID';
 
 final class OversqliteHttpResponse {
@@ -130,7 +132,7 @@ final class IoOversqliteHttpClient
     request.headers.set(oversyncSourceIdHeaderName, sourceId);
     if (body != null) {
       request.headers.contentType = ContentType.json;
-      request.write(jsonEncode(body));
+      request.write(canonicalizeOversqliteProtocolJson(body));
     }
     final response = await request.close();
     return OversqliteHttpResponse(

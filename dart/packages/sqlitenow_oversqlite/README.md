@@ -2,6 +2,21 @@
 
 Dart Oversqlite runtime support for SQLiteNow generated sync metadata.
 
+Canonical protocol bytes use RFC 8785 JCS. Declare exact numeric columns in `SyncTable.numericColumns`:
+
+- `NumericColumnKind.exactInt64`: JSON string, ordinary SQLite `INTEGER`, signed 64-bit range.
+- `NumericColumnKind.exactDecimal`: JSON string, ordinary SQLite `TEXT`, validated finite decimal text.
+- `NumericColumnKind.approximate`: finite binary64 JSON number, ordinary SQLite `REAL`.
+
+The same contract runs on Dart VM and web; exact values never depend on VM-only integer behavior
+or JavaScript number precision. Unsupported grammar, range, or affinity rejects before row mutation.
+`canonical_request_hash` associates an ambiguous committed source tuple with the frozen original
+request, while `bundle_hash` authenticates the authoritative committed rows.
+
+C1 requires recreating existing Oversqlite databases and coordinated corrected server/client
+deployment. No legacy hash/canonicalization fallback or durable-state migration is supported;
+outboxes, checkpoints, retry state, and offline work from the old v0 contract may be discarded.
+
 The package includes local sync metadata, lifecycle client state, HTTP protocol
 handshake, push, pull, snapshot rebuild, conflict resolution, and realserver
 conformance coverage for the Oversqlite protocol.
