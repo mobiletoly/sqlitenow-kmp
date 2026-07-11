@@ -135,12 +135,9 @@ internal open class RealServerSupport : CrossTargetSyncTestSupport() {
     protected suspend fun resetRealServerState(baseUrl: String) {
         val http = newRealServerHttpClient(baseUrl)
         try {
-            val response = http.post("/test/reset") {
-                header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
-                setBody("{}")
-            }
+            val response = http.get("/syncx/status")
             check(response.status == HttpStatusCode.OK) {
-                "server reset failed: HTTP ${response.status} - ${response.bodyAsText()}"
+                "fresh realserver status probe failed: HTTP ${response.status} - ${response.bodyAsText()}"
             }
         } finally {
             http.close()

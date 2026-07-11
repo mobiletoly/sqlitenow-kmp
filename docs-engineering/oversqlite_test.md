@@ -169,6 +169,9 @@ harness.
 ### Realserver
 
 Before running `realserver`, start a compatible `go-oversync/examples/nethttp_server`.
+The outer test orchestration must stop the server, recreate its PostgreSQL database, and start the
+server before each required lane. Realserver tests create fresh local client databases and do not
+call a runtime reset endpoint; the server intentionally exposes none.
 
 Use `http://10.0.2.2:8080` from Android emulator/device tasks and `http://localhost:8080` from
 JVM, macOS, JS Node, Wasm browser, and iOS simulator tasks.

@@ -27,6 +27,8 @@ Cross-implementation realserver conformance is part of the same drift-prevention
 workflow. Behavior changes that affect live Oversync server semantics must keep
 the shared fixtures current and must run the relevant KMP realserver wrapper
 plus the Dart opt-in realserver test before the phase is considered complete.
+Each required lane starts against a newly recreated PostgreSQL database and fresh local client
+databases. Client tests do not reset a running server through HTTP.
 
 Local schema fixtures live under `local-schema/<fixture-name>/`:
 

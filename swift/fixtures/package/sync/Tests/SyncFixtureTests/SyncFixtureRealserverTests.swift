@@ -98,14 +98,7 @@ final class SyncFixtureRealserverTests: XCTestCase {
     }
 
     private func resetRealserver(baseURL: URL) async throws {
-        let body = try JSONEncoder().encode(EmptyRequest())
-        _ = try await request(
-            baseURL: baseURL,
-            path: "/test/reset",
-            method: "POST",
-            body: body,
-            headers: ["Content-Type": "application/json"]
-        )
+        _ = try await request(baseURL: baseURL, path: "/syncx/status")
     }
 
     private func bootstrapSourceId(database: SyncFixtureDatabase, baseURL: URL) async throws -> String {
@@ -261,7 +254,6 @@ private struct RealserverConfig {
     let baseURL: URL
 }
 
-private struct EmptyRequest: Encodable {}
 
 private struct DummySigninRequest: Encodable {
     let user: String

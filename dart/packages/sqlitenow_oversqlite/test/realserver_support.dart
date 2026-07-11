@@ -133,10 +133,10 @@ Future<String> issueDummySigninToken(
 }
 
 Future<void> resetRealServerState(String baseUrl) async {
-  final response = await sendJson('POST', baseUrl, 'test/reset', body: {});
+  final response = await sendJson('GET', baseUrl, 'syncx/status');
   if (response.statusCode != HttpStatus.ok) {
     throw StateError(
-      'server reset failed: HTTP ${response.statusCode} ${response.body}',
+      'fresh realserver status probe failed: HTTP ${response.statusCode} ${response.body}',
     );
   }
 }

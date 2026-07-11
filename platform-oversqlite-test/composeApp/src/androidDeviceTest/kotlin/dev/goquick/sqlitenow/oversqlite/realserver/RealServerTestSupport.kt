@@ -247,10 +247,6 @@ internal suspend fun resetRealServerState(baseUrl: String) {
             "Real-server Android e2e tests require app_name='$expectedRealServerAppName' at $baseUrl, " +
                 "but server reported '$appName'. Start examples/nethttp_server instead."
         }
-        http.post("/test/reset") {
-            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
-            setBody("{}")
-        }
     } finally {
         http.close()
     }

@@ -49,5 +49,5 @@ Baseline expectations:
 - tests are local-only and opt-in
 - the suite uses `OVERSQLITE_REALSERVER_TESTS=true`
 - Android emulators should target `http://10.0.2.2:8080`
-- the suite resets the example server through `POST /test/reset`
+- the outer lane recreates PostgreSQL before server startup; the suite has no runtime reset endpoint
 - local sync keys remain covered for `TEXT PRIMARY KEY` and `BLOB PRIMARY KEY`
