@@ -98,7 +98,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -676,7 +676,7 @@ fun App() {
         appLog.i { "Sync worker active" }
         syncTrigger
             .debounce(700)
-            .collectLatest {
+            .collect {
                 try {
                     ensureSampleSyncServer(baseUrl)
                     logLocalSyncState("before sync")
@@ -684,7 +684,7 @@ fun App() {
                         .onFailure {
                             appLog.e(it) { "sync failed" }
                             errorMessage = "Sync failed: ${it.message ?: "unknown"}"
-                            return@collectLatest
+                            return@collect
                         }
                     logLocalSyncState("after sync")
                     appLog.i { "Sync cycle complete" }

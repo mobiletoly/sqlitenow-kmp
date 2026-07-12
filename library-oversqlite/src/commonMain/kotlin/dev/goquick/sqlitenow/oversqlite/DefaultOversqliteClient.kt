@@ -1281,6 +1281,9 @@ class DefaultOversqliteClient(
             try {
                 return block()
             } catch (error: Throwable) {
+                if (error is CancellationException) {
+                    throw error
+                }
                 val retryable = shouldRetryTransportFailure(error)
                 verboseLog {
                     "oversqlite operation failure op=$operation attempt=${attemptIndex + 1}/$maxAttempts " +
@@ -1306,14 +1309,20 @@ class DefaultOversqliteClient(
         throw lastError ?: error("unreachable $operation retry state")
     }
 
-    private suspend fun <T> runExclusiveOperation(block: suspend () -> T): Result<T> = runCatching {
-        if (!syncGate.tryLock()) {
-            throw SyncOperationInProgressException()
-        }
-        try {
-            block()
-        } finally {
-            syncGate.unlock()
+    private suspend fun <T> runExclusiveOperation(block: suspend () -> T): Result<T> {
+        return try {
+            if (!syncGate.tryLock()) {
+                throw SyncOperationInProgressException()
+            }
+            try {
+                Result.success(block())
+            } finally {
+                syncGate.unlock()
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            Result.failure(error)
         }
     }
 

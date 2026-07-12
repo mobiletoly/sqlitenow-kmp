@@ -12,6 +12,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.Json
@@ -19,6 +20,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class OversqliteRemoteApiPathResolutionTest {
     private data class CapturedJsonRequest(
@@ -28,6 +31,42 @@ class OversqliteRemoteApiPathResolutionTest {
     )
 
     private val json = Json { ignoreUnknownKeys = true }
+
+    @Test
+    fun createPushSession_cancellationPropagates_withoutFailureLog() = runTest {
+        val logs = mutableListOf<String>()
+        val http = HttpClient(
+            MockEngine {
+                throw CancellationException("cancelled push session request")
+            },
+        ) {
+            install(ContentNegotiation) {
+                json(json)
+            }
+            defaultRequest {
+                url("https://sync.test")
+            }
+        }
+
+        try {
+            val api = OversqliteRemoteApi(http, json) { message -> logs += message() }
+
+            assertFailsWith<CancellationException> {
+                api.createPushSession(
+                    sourceBundleId = 1L,
+                    plannedRowCount = 1L,
+                    canonicalRequestHash = "a".repeat(64),
+                    sourceId = "source-a",
+                    initializationId = null,
+                )
+            }
+
+            assertTrue(logs.any { "http start" in it })
+            assertFalse(logs.any { "http failure" in it || "decode failure" in it })
+        } finally {
+            http.close()
+        }
+    }
 
     @Test
     fun fetchCapabilities_preserves_base_path_prefix() = runTest {

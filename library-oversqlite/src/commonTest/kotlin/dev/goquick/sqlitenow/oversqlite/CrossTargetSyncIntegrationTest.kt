@@ -1,6 +1,7 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -40,6 +41,42 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             MergeResult.KeepLocal
         } else {
             MergeResult.AcceptServer
+        }
+    }
+
+    @Test
+    fun sync_cancellationPropagates_releasesGate_andRecoversFrozenBundle() = runTest {
+        val db = newDb()
+        val server = MockSyncServer()
+        val http = server.newHttpClient()
+        try {
+            createUsersAndPostsTables(db)
+            val client = newClient(db, http)
+            val unopenedResult = client.sourceInfo()
+            assertTrue(unopenedResult.isFailure)
+            assertTrue(unopenedResult.exceptionOrNull() is OpenRequiredException)
+
+            client.open().getOrThrow()
+            client.attach("user-1").getOrThrow()
+            insertUser(db, "user-1", "Ada")
+
+            server.cancelNextPushSessionCreate = true
+            assertFailsWith<CancellationException> {
+                client.sync()
+            }
+
+            assertEquals(1, server.pushSessionCreateRequestCount)
+            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+
+            client.sync().getOrThrow()
+
+            assertEquals(2, server.pushSessionCreateRequestCount)
+            assertEquals(1, server.uploadedChunkCount)
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+        } finally {
+            http.close()
+            db.close()
         }
     }
 

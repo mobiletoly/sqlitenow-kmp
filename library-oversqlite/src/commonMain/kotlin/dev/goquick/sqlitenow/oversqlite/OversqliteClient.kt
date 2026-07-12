@@ -27,6 +27,10 @@ import kotlinx.coroutines.flow.StateFlow
  *
  * Create at most one client instance per local database at a time. Sync serialization is enforced
  * per client instance, not across multiple client objects that point at the same database.
+ *
+ * Suspend operations with a [Result] return type report ordinary failures through that result.
+ * Coroutine cancellation is propagated to the caller as
+ * [kotlinx.coroutines.CancellationException] instead.
  */
 interface OversqliteClient {
     /** Coarse UI-oriented progress for the active lifecycle-aware operation, if any. */

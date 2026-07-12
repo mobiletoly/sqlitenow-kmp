@@ -18,6 +18,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.writeStringUtf8
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -173,6 +174,8 @@ internal open class CrossTargetSyncTestSupport {
         var sourceReplacementInvalidOnSnapshotCreate: ErrorResponse? = null
         var bundleChangeWatchSupported: Boolean = false
         var pullRequestCount: Int = 0
+        var pushSessionCreateRequestCount: Int = 0
+        var cancelNextPushSessionCreate: Boolean = false
         var watchCloseCount: Int = 0
         val capabilitySourceIds = mutableListOf<String>()
         val watchSourceIds = mutableListOf<String>()
@@ -415,6 +418,11 @@ internal open class CrossTargetSyncTestSupport {
             request: HttpRequestData,
         ): io.ktor.client.request.HttpResponseData {
             return try {
+                pushSessionCreateRequestCount++
+                if (cancelNextPushSessionCreate) {
+                    cancelNextPushSessionCreate = false
+                    throw CancellationException("cancelled push session request")
+                }
                 val body = request.bodyText()
                 val create = json.decodeFromString(PushSessionCreateRequest.serializer(), body)
                 val sourceId = request.headers[sourceIdHeaderName].orEmpty()
@@ -471,6 +479,9 @@ internal open class CrossTargetSyncTestSupport {
                     )
                 }
             } catch (t: Throwable) {
+                if (t is CancellationException) {
+                    throw t
+                }
                 errorResponse("invalid_request", t.message ?: "push create failed")
             }
         }

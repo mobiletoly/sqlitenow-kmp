@@ -32,6 +32,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.utils.io.readLine
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 
 internal class OversqliteRemoteApi(
@@ -83,7 +84,7 @@ internal class OversqliteRemoteApi(
                         "status=${response.status.value}"
                 }
                 if (response.status != HttpStatusCode.OK) {
-                    val raw = runCatching { response.bodyAsText() }.getOrDefault("")
+                    val raw = response.bodyAsTextOrEmptyPreservingCancellation()
                     log {
                         "oversqlite http non-ok op=bundle change watch method=GET path=$path " +
                             "status=${response.status.value} body=${raw.logExcerpt()}"
@@ -101,6 +102,9 @@ internal class OversqliteRemoteApi(
                 parser.finish()
             }
         } catch (error: Throwable) {
+            if (error is CancellationException) {
+                throw error
+            }
             log {
                 "oversqlite http failure op=bundle change watch method=GET path=$path " +
                     "error=${error.logSummary()}"
@@ -455,7 +459,7 @@ internal class OversqliteRemoteApi(
         noinline customError: ((HttpStatusCode, String) -> Throwable?)? = null,
     ): T {
         if (call.status != HttpStatusCode.OK) {
-            val raw = runCatching { call.bodyAsText() }.getOrDefault("")
+            val raw = call.bodyAsTextOrEmptyPreservingCancellation()
             log {
                 "oversqlite http non-ok op=$operation method=$method path=$path " +
                     "status=${call.status.value} body=${raw.logExcerpt()}"
@@ -469,6 +473,9 @@ internal class OversqliteRemoteApi(
         return try {
             call.body()
         } catch (error: Throwable) {
+            if (error is CancellationException) {
+                throw error
+            }
             log {
                 "oversqlite http decode failure op=$operation method=$method path=$path " +
                     "status=${call.status.value} error=${error.logSummary()}"
@@ -492,6 +499,9 @@ internal class OversqliteRemoteApi(
             }
             response
         } catch (error: Throwable) {
+            if (error is CancellationException) {
+                throw error
+            }
             log {
                 "oversqlite http failure op=$operation method=$method path=$path " +
                     "error=${error.logSummary()}"
@@ -513,6 +523,16 @@ internal class OversqliteRemoteApi(
             "initialization_stale", "initialization_expired" -> InitializationLeaseInvalidException(error.error)
             else -> null
         }
+    }
+}
+
+private suspend fun HttpResponse.bodyAsTextOrEmptyPreservingCancellation(): String {
+    return try {
+        bodyAsText()
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Throwable) {
+        ""
     }
 }
 
