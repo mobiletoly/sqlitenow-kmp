@@ -77,10 +77,10 @@ sqliteNow {
 `oversqlite = true` enables oversqlite bridge code generation for that database. Table-level
 `enableSync=true` still decides which tables participate in sync.
 
-Exact `BIGINT` and decimal server columns need explicit `SyncTable.numericColumns` metadata. The
-generated `buildOversqliteConfig(...)` and `newOversqliteClient(...)` functions accept an optional
-`syncTables` override for this Oversqlite-only metadata; generation with `oversqlite=false` is
-unchanged.
+The generated `buildOversqliteConfig(...)` and `newOversqliteClient(...)` functions use the
+generated `enableSync` table list directly. Numeric wire handling is automatic from SQLite affinity;
+there is no per-column numeric metadata or `syncTables` override required for numeric values.
+Generation with `oversqlite=false` is unchanged.
 
 ## Step 4: Mark Sync-Managed Tables
 

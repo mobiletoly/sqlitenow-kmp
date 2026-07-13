@@ -2,10 +2,11 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:sqlitenow_runtime/sqlitenow_runtime.dart';
-import 'package:sqlitenow_oversqlite/src/config.dart';
 import 'package:sqlitenow_oversqlite/src/local_row_store.dart';
 import 'package:sqlitenow_oversqlite/src/payload_codec.dart';
 import 'package:sqlitenow_oversqlite/src/payload_source.dart';
+import 'package:sqlitenow_oversqlite/src/protocol_models.dart';
+import 'package:sqlitenow_oversqlite/src/watch_protocol.dart';
 import 'package:sqlitenow_oversqlite/src/table_info.dart';
 import 'package:test/test.dart';
 
@@ -21,17 +22,7 @@ void main() {
 )'''),
     );
     addTearDown(database.close);
-    final store = OversqliteLocalRowStore(database.connection, const [
-      SyncTable(
-        tableName: 'exact_values',
-        syncKeyColumnName: 'id',
-        numericColumns: {
-          'min_value': NumericColumnKind.exactInt64,
-          'max_value': NumericColumnKind.exactInt64,
-          'amount': NumericColumnKind.exactDecimal,
-        },
-      ),
-    ]);
+    final store = OversqliteLocalRowStore(database.connection);
     await store.upsertPayload(
       'exact_values',
       const {
@@ -78,15 +69,50 @@ FROM exact_values''',
     expect(count.single, 0);
   });
 
-  test('typed exact numeric values stay strings and enforce int64 range', () {
+  test('SQLite affinity encodes every numeric wire value as a string', () {
+    const integer = OversqliteColumnInfo(
+      name: 'value',
+      kind: OversqliteColumnKind.integer,
+      primaryKey: false,
+    );
+    const real = OversqliteColumnInfo(
+      name: 'score',
+      kind: OversqliteColumnKind.real,
+      primaryKey: false,
+    );
+
+    expect(
+      wireOversqlitePayloadValue(integer, '9007199254740993'),
+      '9007199254740993',
+    );
+    expect(wireOversqlitePayloadValue(real, -0.0), '0');
+    expect(wireOversqlitePayloadValue(real, 1.25), '1.25');
+  });
+
+  test('protocol gate rejects v1, empty, and unknown versions', () {
+    for (final actual in ['v1', '', 'v-next']) {
+      expect(
+        () => requireOversqliteProtocol(
+          CapabilitiesResponse(protocolVersion: actual),
+        ),
+        throwsA(
+          isA<ProtocolVersionMismatchException>()
+              .having((error) => error.expected, 'expected', 'v0')
+              .having((error) => error.actual, 'actual', actual),
+        ),
+      );
+    }
+  });
+
+  test('affinity integer strings enforce int64 range and text stays text', () {
     const exactInt = OversqliteColumnInfo(
       name: 'value',
-      kind: OversqliteColumnKind.exactInt64,
+      kind: OversqliteColumnKind.integer,
       primaryKey: false,
     );
     const exactDecimal = OversqliteColumnInfo(
       name: 'amount',
-      kind: OversqliteColumnKind.exactDecimal,
+      kind: OversqliteColumnKind.text,
       primaryKey: false,
     );
     expect(
@@ -109,13 +135,6 @@ FROM exact_values''',
       () => bindOversqlitePayloadValue(exactDecimal, -0.0),
       throwsArgumentError,
     );
-    for (final value in ['-0', '-0.0', '-0e10', '-0.000E-9']) {
-      expect(
-        () => bindOversqlitePayloadValue(exactDecimal, value),
-        throwsArgumentError,
-        reason: value,
-      );
-    }
   });
 
   test('canonical protocol JSON sorts keys and normalizes finite numbers', () {
@@ -139,7 +158,7 @@ FROM exact_values''',
     );
   });
 
-  test('C1 typed exact numeric strings and UTF-16 property order', () {
+  test('C1 uniform numeric strings and UTF-16 property order', () {
     expect(
       canonicalizeOversqliteProtocolJson('9007199254740993'),
       '"9007199254740993"',

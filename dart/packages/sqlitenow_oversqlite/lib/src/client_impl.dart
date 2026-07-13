@@ -173,23 +173,6 @@ final class DefaultOversqliteClient implements OversqliteClient {
               'pending remote_replace belongs to scope "${operation.targetUserId}"',
             );
           }
-          final result = await _executeSnapshotRebuild(
-            userId: requestedUserId,
-            sourceId: attachment.currentSourceId,
-            rotatedSourceId: null,
-            sourceReplacementReason: null,
-            outboxMode: SnapshotRebuildOutboxMode.clearAll,
-            persistRemoteReplaceOperation: true,
-          );
-          if (result.updatedTables.isNotEmpty) {
-            _runtime.reportManagedTableChanges(result.updatedTables);
-          }
-          _sessionConnected = true;
-          _currentUserId = requestedUserId;
-          return AttachConnected(
-            outcome: AttachOutcome.usedRemoteState,
-            status: await _syncStatusInternal(),
-          );
         }
         if (attachment.bindingState == oversqliteAttachmentBindingAttached &&
             attachment.attachedUserId == requestedUserId) {
@@ -210,6 +193,26 @@ final class DefaultOversqliteClient implements OversqliteClient {
 
         final sourceId = attachment.currentSourceId;
         await _fetchCapabilitiesInternal(sourceId);
+        if (operation.kind == oversqliteOperationKindRemoteReplace) {
+          final result = await _executeSnapshotRebuild(
+            userId: requestedUserId,
+            sourceId: sourceId,
+            rotatedSourceId: null,
+            sourceReplacementReason: null,
+            outboxMode: SnapshotRebuildOutboxMode.clearAll,
+            persistRemoteReplaceOperation: true,
+          );
+          if (result.updatedTables.isNotEmpty) {
+            _runtime.reportManagedTableChanges(result.updatedTables);
+          }
+          _sessionConnected = true;
+          _currentUserId = requestedUserId;
+          return AttachConnected(
+            outcome: AttachOutcome.usedRemoteState,
+            status: await _syncStatusInternal(),
+          );
+        }
+
         final connect = await _remoteApiOrThrow().connect(
           sourceId: sourceId,
           hasLocalPendingRows: (await _pendingSyncStatus()).hasPendingSyncData,
@@ -290,6 +293,7 @@ final class DefaultOversqliteClient implements OversqliteClient {
       phase: OversqlitePhase.pushing,
       block: () async {
         _ensureConnected('pushPending()');
+        await _fetchCapabilitiesInternal(await _currentSourceId());
         final attachment = await _clientStateStore.loadAttachmentState();
         final operation = await _clientStateStore.loadOperationState();
         if (operation.kind == oversqliteOperationKindSourceRecovery) {
@@ -316,6 +320,7 @@ final class DefaultOversqliteClient implements OversqliteClient {
       phase: OversqlitePhase.pulling,
       block: () async {
         _ensureConnected('pullToStable()');
+        await _fetchCapabilitiesInternal(await _currentSourceId());
         final result = await _executePullToStable();
         if (result.updatedTables.isNotEmpty) {
           _runtime.reportManagedTableChanges(result.updatedTables);
@@ -336,6 +341,7 @@ final class DefaultOversqliteClient implements OversqliteClient {
       phase: OversqlitePhase.pushing,
       block: () async {
         _ensureConnected('sync()');
+        await _fetchCapabilitiesInternal(await _currentSourceId());
         final attachment = await _clientStateStore.loadAttachmentState();
         final operation = await _clientStateStore.loadOperationState();
         if (operation.kind == oversqliteOperationKindSourceRecovery) {
@@ -387,6 +393,7 @@ final class DefaultOversqliteClient implements OversqliteClient {
       phase: OversqlitePhase.pushing,
       block: () async {
         _ensureConnected('syncThenDetach()');
+        await _fetchCapabilitiesInternal(await _currentSourceId());
         var previousPendingRowCount = 0x7fffffffffffffff;
         SyncReport? lastReport;
         for (var round = 1; round <= 3; round++) {
@@ -466,6 +473,7 @@ final class DefaultOversqliteClient implements OversqliteClient {
       phase: OversqlitePhase.stagingRemoteState,
       block: () async {
         _ensureConnected('rebuild()');
+        await _fetchCapabilitiesInternal(await _currentSourceId());
         final result = await _executeRebuild();
         if (result.updatedTables.isNotEmpty) {
           _runtime.reportManagedTableChanges(result.updatedTables);

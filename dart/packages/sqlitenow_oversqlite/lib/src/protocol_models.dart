@@ -1,4 +1,19 @@
 const _hiddenSyncScopeColumnName = '_sync_scope_id';
+const oversqliteProtocolVersion = 'v0';
+
+final class ProtocolVersionMismatchException implements Exception {
+  const ProtocolVersionMismatchException({
+    this.expected = oversqliteProtocolVersion,
+    required this.actual,
+  });
+
+  final String expected;
+  final String actual;
+
+  @override
+  String toString() =>
+      'oversqlite protocol version mismatch: expected "$expected", actual "$actual"';
+}
 
 final class OversqliteProtocolException implements Exception {
   const OversqliteProtocolException(this.message);

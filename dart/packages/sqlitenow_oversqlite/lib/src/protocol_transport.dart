@@ -106,10 +106,19 @@ final class IoOversqliteHttpClient
         close: () async {},
       );
     }
+    Future<void>? closeFuture;
+    Future<void> closeResponse() {
+      return closeFuture ??= () async {
+        request.abort();
+        final socket = await response.detachSocket();
+        socket.destroy();
+      }();
+    }
+
     return OversqliteBundleChangeWatchResponse(
       statusCode: response.statusCode,
       lines: response.transform(utf8.decoder).transform(const LineSplitter()),
-      close: () async {},
+      close: closeResponse,
     );
   }
 

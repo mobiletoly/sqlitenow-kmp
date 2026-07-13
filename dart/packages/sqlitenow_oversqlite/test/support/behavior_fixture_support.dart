@@ -353,7 +353,7 @@ final class PushFixtureServer implements OversqliteHttpClient {
     _sourceId = sourceId;
     if (path == 'sync/capabilities') {
       return _json({
-        'protocol_version': 'v1',
+        'protocol_version': 'v0',
         'schema_version': 1,
         'features': {'connect_lifecycle': true},
       });
@@ -765,7 +765,7 @@ final class PullFixtureServer implements OversqliteHttpClient {
   }) async {
     if (path == 'sync/capabilities') {
       return _json({
-        'protocol_version': 'v1',
+        'protocol_version': 'v0',
         'schema_version': 1,
         'features': {'connect_lifecycle': true},
       });
@@ -904,7 +904,7 @@ final class WatchFixtureServer
     if (path == 'sync/capabilities') {
       capabilitySourceIds.add(sourceId);
       return _json({
-        'protocol_version': 'v1',
+        'protocol_version': 'v0',
         'schema_version': 1,
         'features': {
           'connect_lifecycle': true,

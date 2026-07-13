@@ -90,7 +90,7 @@ VALUES(1, 'none', '', '', 0, 0, '', '')
 ON CONFLICT(singleton_key) DO NOTHING''');
   await connection.execute('''CREATE TABLE IF NOT EXISTS _sync_outbox_bundle (
   singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),
-  canonical_json_contract TEXT NOT NULL CHECK (canonical_json_contract = 'jcs_typed_numeric_strings_v0'),
+  canonical_json_contract TEXT NOT NULL CHECK (canonical_json_contract = 'jcs_uniform_numeric_strings_v1'),
   state TEXT NOT NULL DEFAULT 'none' CHECK (state IN ('none', 'prepared', 'committed_remote')),
   source_id TEXT NOT NULL DEFAULT '',
   source_bundle_id INTEGER NOT NULL DEFAULT 0,
@@ -112,7 +112,7 @@ ON CONFLICT(singleton_key) DO NOTHING''');
   remote_bundle_hash,
   remote_bundle_seq
 )
-VALUES(1, 'jcs_typed_numeric_strings_v0', 'none', '', 0, '', '', 0, '', 0)
+VALUES(1, 'jcs_uniform_numeric_strings_v1', 'none', '', 0, '', '', 0, '', 0)
 ON CONFLICT(singleton_key) DO NOTHING''');
   await connection.execute('''CREATE TABLE IF NOT EXISTS _sync_outbox_rows (
   source_bundle_id INTEGER NOT NULL,

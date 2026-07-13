@@ -1,16 +1,9 @@
 final class SyncTable {
-  const SyncTable({
-    required this.tableName,
-    required this.syncKeyColumnName,
-    this.numericColumns = const {},
-  });
+  const SyncTable({required this.tableName, required this.syncKeyColumnName});
 
   final String tableName;
   final String syncKeyColumnName;
-  final Map<String, NumericColumnKind> numericColumns;
 }
-
-enum NumericColumnKind { exactInt64, exactDecimal, approximate }
 
 enum BundleChangeWatchMode { off, auto }
 

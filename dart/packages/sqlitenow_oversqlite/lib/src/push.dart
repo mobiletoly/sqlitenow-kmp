@@ -47,11 +47,10 @@ final class OversqlitePushRuntime {
   SqliteNowConnection get _connection => _database.connection;
   OversqliteApplyRunner get _applyRunner => OversqliteApplyRunner(_connection);
   OversqliteLocalRowStore get _localStore =>
-      OversqliteLocalRowStore(_connection, _config.syncTables);
+      OversqliteLocalRowStore(_connection);
   OversqlitePushStateStore get _pushStateStore => OversqlitePushStateStore(
     connection: _connection,
     applyRunner: _applyRunner,
-    syncTables: _config.syncTables,
   );
   OversqlitePushReplayExecutor get _replayExecutor =>
       OversqlitePushReplayExecutor(

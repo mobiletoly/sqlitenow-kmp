@@ -42,7 +42,7 @@
       "type": "table",
       "name": "_sync_outbox_bundle",
       "tableName": "_sync_outbox_bundle",
-      "sql": "CREATE TABLE _sync_outbox_bundle (\n  singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),\n  canonical_json_contract TEXT NOT NULL CHECK (canonical_json_contract = 'jcs_typed_numeric_strings_v0'),\n  state TEXT NOT NULL DEFAULT 'none' CHECK (state IN ('none', 'prepared', 'committed_remote')),\n  source_id TEXT NOT NULL DEFAULT '',\n  source_bundle_id INTEGER NOT NULL DEFAULT 0,\n  initialization_id TEXT NOT NULL DEFAULT '',\n  canonical_request_hash TEXT NOT NULL DEFAULT '',\n  row_count INTEGER NOT NULL DEFAULT 0,\n  remote_bundle_hash TEXT NOT NULL DEFAULT '',\n  remote_bundle_seq INTEGER NOT NULL DEFAULT 0\n)"
+      "sql": "CREATE TABLE _sync_outbox_bundle (\n  singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),\n  canonical_json_contract TEXT NOT NULL CHECK (canonical_json_contract = 'jcs_uniform_numeric_strings_v1'),\n  state TEXT NOT NULL DEFAULT 'none' CHECK (state IN ('none', 'prepared', 'committed_remote')),\n  source_id TEXT NOT NULL DEFAULT '',\n  source_bundle_id INTEGER NOT NULL DEFAULT 0,\n  initialization_id TEXT NOT NULL DEFAULT '',\n  canonical_request_hash TEXT NOT NULL DEFAULT '',\n  row_count INTEGER NOT NULL DEFAULT 0,\n  remote_bundle_hash TEXT NOT NULL DEFAULT '',\n  remote_bundle_seq INTEGER NOT NULL DEFAULT 0\n)"
     },
     {
       "type": "table",

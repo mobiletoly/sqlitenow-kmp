@@ -125,6 +125,15 @@ internal open class PlatformCrossTargetTestSupport {
         }
     }
 
+    protected suspend fun scalarDouble(db: SafeSQLiteConnection, sql: String): Double {
+        return db.withExclusiveAccess {
+            db.prepare(sql).use { statement ->
+                check(statement.step()) { "query returned no rows: $sql" }
+                statement.getDouble(0)
+            }
+        }
+    }
+
     protected suspend fun insertUser(db: SafeSQLiteConnection, id: String, name: String) {
         db.execSQL("INSERT INTO users(id, name) VALUES('$id', '$name')")
     }
@@ -181,7 +190,7 @@ internal open class PlatformCrossTargetTestSupport {
                     json.encodeToString(
                         CapabilitiesResponse.serializer(),
                         CapabilitiesResponse(
-                            protocolVersion = "v1",
+                            protocolVersion = "v0",
                             schemaVersion = 1,
                             features = mapOf("connect_lifecycle" to true),
                         ),

@@ -696,8 +696,8 @@ void main() {
       'id': wireUuid,
       'title': 'Doc',
       'data': base64Encode(dataBytes),
-      'ratio': 1,
-      'enabled': 1,
+      'ratio': '1',
+      'enabled': '1',
       'created_at': '2026-05-06T12:34:56Z',
     });
     expect(
@@ -761,8 +761,8 @@ void main() {
           'id': smallWireUuid,
           'title': 'Small',
           'data': base64Encode(smallData),
-          'ratio': 1e-7,
-          'enabled': 1,
+          'ratio': '1e-7',
+          'enabled': true,
           'created_at': '2026-05-06T12:34:56Z',
         },
       },
@@ -776,8 +776,8 @@ void main() {
           'id': largeWireUuid,
           'title': 'Large',
           'data': base64Encode(largeData),
-          'ratio': 1e21,
-          'enabled': 1,
+          'ratio': '1e+21',
+          'enabled': true,
           'created_at': '2026-05-07T12:34:56Z',
         },
       },
@@ -785,7 +785,7 @@ void main() {
     final committedHash = sha256
         .convert(
           utf8.encode(
-            '[{"key":{"id":"$smallWireUuid"},"op":"INSERT","payload":{"created_at":"2026-05-06T12:34:56Z","data":"AQID","enabled":1,"id":"$smallWireUuid","ratio":1e-7,"title":"Small"},"row_ordinal":"0","row_version":"1","schema":"main","table":"documents"},{"key":{"id":"$largeWireUuid"},"op":"INSERT","payload":{"created_at":"2026-05-07T12:34:56Z","data":"BAUG","enabled":1,"id":"$largeWireUuid","ratio":1e+21,"title":"Large"},"row_ordinal":"1","row_version":"2","schema":"main","table":"documents"}]',
+            '[{"key":{"id":"$smallWireUuid"},"op":"INSERT","payload":{"created_at":"2026-05-06T12:34:56Z","data":"AQID","enabled":true,"id":"$smallWireUuid","ratio":"1e-7","title":"Small"},"row_ordinal":"0","row_version":"1","schema":"main","table":"documents"},{"key":{"id":"$largeWireUuid"},"op":"INSERT","payload":{"created_at":"2026-05-07T12:34:56Z","data":"BAUG","enabled":true,"id":"$largeWireUuid","ratio":"1e+21","title":"Large"},"row_ordinal":"1","row_version":"2","schema":"main","table":"documents"}]',
           ),
         )
         .bytes
@@ -1154,7 +1154,7 @@ final class _PushServer implements OversqliteHttpClient {
     _sourceId = sourceId;
     if (path == 'sync/capabilities') {
       return _json({
-        'protocol_version': 'v1',
+        'protocol_version': 'v0',
         'schema_version': 1,
         'features': {'connect_lifecycle': true},
       });

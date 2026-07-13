@@ -43,6 +43,7 @@ class AndroidMockWebServerParityTest {
         try {
             enqueueCapabilities(server)
             enqueueInitializeEmptyConnect(server)
+            enqueueCapabilities(server)
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -122,8 +123,12 @@ class AndroidMockWebServerParityTest {
 
             val pullRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(pullRequest)
-            assertEquals("/sync/pull", pullRequest?.url?.encodedPath)
-            assertEquals("0", pullRequest?.url?.queryParameter("after_bundle_seq"))
+            assertEquals("/sync/capabilities", pullRequest?.url?.encodedPath)
+
+            val gatedPullRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(gatedPullRequest)
+            assertEquals("/sync/pull", gatedPullRequest?.url?.encodedPath)
+            assertEquals("0", gatedPullRequest?.url?.queryParameter("after_bundle_seq"))
         } finally {
             http.close()
             server.close()
@@ -140,7 +145,11 @@ class AndroidMockWebServerParityTest {
         val http = newMockWebServerHttpClient(server)
         try {
             db.execSQL("CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)")
-            val committedBundleHash = "334a3338e0a497a647a6eb263d78db3b5df06702597ce166111603e9395956ba"
+            val committedBundleHash = "29d27bd2015db825f6b2af4c08cf81883ad20d75584918caedd859d2270c9266"
+            val canonicalRequestHash = sha256Hex(
+                """[{"base_row_version":"0","key":{"id":"user-1"},"op":"INSERT","payload":{"id":"user-1","name":"Ada Local"},"row_ordinal":"0","schema":"main","table":"users"}]"""
+                    .encodeToByteArray()
+            )
             val client = DefaultOversqliteClient(
                 db = db,
                 config = OversqliteConfig(
@@ -153,6 +162,7 @@ class AndroidMockWebServerParityTest {
             val sourceId = client.sourceInfo().getOrThrow().currentSourceId
             enqueueCapabilities(server)
             enqueueInitializeEmptyConnect(server)
+            enqueueCapabilities(server)
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -162,7 +172,8 @@ class AndroidMockWebServerParityTest {
                           "planned_row_count": 1,
                           "next_expected_row_ordinal": 0,
                           "source_id": "$sourceId",
-                          "source_bundle_id": 1
+                          "source_bundle_id": 1,
+                          "canonical_request_hash": "$canonicalRequestHash"
                         }
                     """.trimIndent()
                 )
@@ -185,7 +196,8 @@ class AndroidMockWebServerParityTest {
                           "source_id": "$sourceId",
                           "source_bundle_id": 1,
                           "row_count": 1,
-                          "bundle_hash": "$committedBundleHash"
+                          "bundle_hash": "$committedBundleHash",
+                          "canonical_request_hash": "$canonicalRequestHash"
                         }
                     """.trimIndent()
                 )
@@ -199,6 +211,7 @@ class AndroidMockWebServerParityTest {
                           "source_bundle_id": 1,
                           "row_count": 1,
                           "bundle_hash": "$committedBundleHash",
+                          "canonical_request_hash": "$canonicalRequestHash",
                           "next_row_ordinal": 0,
                           "has_more": false,
                           "rows": [
@@ -215,6 +228,7 @@ class AndroidMockWebServerParityTest {
                     """.trimIndent()
                 )
             )
+            enqueueCapabilities(server)
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -242,6 +256,7 @@ class AndroidMockWebServerParityTest {
                     """.trimIndent()
                 )
             )
+            enqueueCapabilities(server)
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -305,8 +320,12 @@ class AndroidMockWebServerParityTest {
 
             val createPushRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(createPushRequest)
-            assertEquals("/sync/push-sessions", createPushRequest?.url?.encodedPath)
-            val createPushJson = testJson.parseToJsonElement(createPushRequest!!.body!!.utf8()).jsonObject
+            assertEquals("/sync/capabilities", createPushRequest?.url?.encodedPath)
+
+            val gatedCreatePushRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(gatedCreatePushRequest)
+            assertEquals("/sync/push-sessions", gatedCreatePushRequest?.url?.encodedPath)
+            val createPushJson = testJson.parseToJsonElement(gatedCreatePushRequest!!.body!!.utf8()).jsonObject
             assertEquals("1", createPushJson["source_bundle_id"]?.jsonPrimitive?.content)
             assertEquals("1", createPushJson["planned_row_count"]?.jsonPrimitive?.content)
 
@@ -332,12 +351,20 @@ class AndroidMockWebServerParityTest {
 
             val pullRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(pullRequest)
-            assertEquals("/sync/pull", pullRequest?.url?.encodedPath)
-            assertEquals("1", pullRequest?.url?.queryParameter("after_bundle_seq"))
+            assertEquals("/sync/capabilities", pullRequest?.url?.encodedPath)
+
+            val gatedPullRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(gatedPullRequest)
+            assertEquals("/sync/pull", gatedPullRequest?.url?.encodedPath)
+            assertEquals("1", gatedPullRequest?.url?.queryParameter("after_bundle_seq"))
 
             val snapshotCreateRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(snapshotCreateRequest)
-            assertEquals("/sync/snapshot-sessions", snapshotCreateRequest?.url?.encodedPath)
+            assertEquals("/sync/capabilities", snapshotCreateRequest?.url?.encodedPath)
+
+            val gatedSnapshotCreateRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(gatedSnapshotCreateRequest)
+            assertEquals("/sync/snapshot-sessions", gatedSnapshotCreateRequest?.url?.encodedPath)
 
             val snapshotChunkRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(snapshotChunkRequest)
@@ -365,6 +392,7 @@ class AndroidMockWebServerParityTest {
             db.execSQL("CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)")
             enqueueCapabilities(server)
             enqueueInitializeEmptyConnect(server)
+            enqueueCapabilities(server)
             server.enqueue(
                 MockResponse.Builder()
                     .code(409)
@@ -433,8 +461,12 @@ class AndroidMockWebServerParityTest {
 
             val pullRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(pullRequest)
-            assertEquals("/sync/pull", pullRequest?.url?.encodedPath)
-            assertEquals("0", pullRequest?.url?.queryParameter("after_bundle_seq"))
+            assertEquals("/sync/capabilities", pullRequest?.url?.encodedPath)
+
+            val gatedPullRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(gatedPullRequest)
+            assertEquals("/sync/pull", gatedPullRequest?.url?.encodedPath)
+            assertEquals("0", gatedPullRequest?.url?.queryParameter("after_bundle_seq"))
 
             val snapshotCreateRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(snapshotCreateRequest)
@@ -487,6 +519,7 @@ class AndroidMockWebServerParityTest {
             enqueueInitializeEmptyConnect(server)
             enqueueCapabilities(server)
             enqueueInitializeEmptyConnect(server)
+            enqueueCapabilities(server)
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -518,6 +551,7 @@ class AndroidMockWebServerParityTest {
                     """.trimIndent()
                 )
             )
+            enqueueCapabilities(server)
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -629,6 +663,7 @@ class AndroidMockWebServerParityTest {
 
             enqueueCapabilities(server)
             enqueueInitializeEmptyConnect(server)
+            enqueueCapabilities(server)
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -718,8 +753,12 @@ class AndroidMockWebServerParityTest {
 
             val createPushRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(createPushRequest)
-            assertEquals("/sync/push-sessions", createPushRequest?.url?.encodedPath)
-            val createPushJson = testJson.parseToJsonElement(createPushRequest!!.body!!.utf8()).jsonObject
+            assertEquals("/sync/capabilities", createPushRequest?.url?.encodedPath)
+
+            val gatedCreatePushRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(gatedCreatePushRequest)
+            assertEquals("/sync/push-sessions", gatedCreatePushRequest?.url?.encodedPath)
+            val createPushJson = testJson.parseToJsonElement(gatedCreatePushRequest!!.body!!.utf8()).jsonObject
             assertEquals(canonicalRequestHash, createPushJson["canonical_request_hash"]!!.jsonPrimitive.content)
 
             val chunkPushRequest = server.takeRequest(5, TimeUnit.SECONDS)
@@ -770,7 +809,7 @@ class AndroidMockWebServerParityTest {
             jsonMockResponse(
                 """
                     {
-                      "protocol_version": "v1",
+                      "protocol_version":"v0",
                       "schema_version": 1,
                       "features": {
                         "connect_lifecycle": true

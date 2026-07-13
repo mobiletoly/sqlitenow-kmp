@@ -14,6 +14,10 @@ void main() {
         )!
         as Map<String, Object?>,
     readRuntimeStateFixture(
+          'oversqlite-contracts/lifecycle/behavior/protocol-gates.json',
+        )!
+        as Map<String, Object?>,
+    readRuntimeStateFixture(
           'oversqlite-contracts/lifecycle/behavior/source-recovery-replacement.json',
         )!
         as Map<String, Object?>,
@@ -199,6 +203,8 @@ void _expectException(String name, String expected, Object? error) {
       expect(error, isA<SourceReplacementDivergedException>(), reason: name);
     case 'source_replacement_invalid':
       expect(error, isA<SourceReplacementInvalidException>(), reason: name);
+    case 'protocol_version_mismatch':
+      expect(error, isA<ProtocolVersionMismatchException>(), reason: name);
     case 'invalid_source_recovery_reason':
       expect(error, isA<StateError>(), reason: name);
     default:
@@ -255,6 +261,9 @@ final class LifecycleFixtureServer implements OversqliteHttpClient {
     required this.database,
     required Map<String, Object?> script,
   }) : connectResolution = script['connectResolution'] as String? ?? 'default',
+       protocolVersions =
+           (script['protocolVersions'] as List<Object?>? ?? const ['v0'])
+               .cast<String>(),
        lateWritesByPull =
            (script['lateWritesByPull'] as List<Object?>? ?? const [])
                .map((entry) => (entry as List<Object?>).cast<String>())
@@ -277,6 +286,7 @@ final class LifecycleFixtureServer implements OversqliteHttpClient {
 
   final SqliteNowDatabase database;
   final String connectResolution;
+  final List<String> protocolVersions;
   final List<List<String>> lateWritesByPull;
   final List<LifecycleSnapshot> snapshots;
   final List<LifecycleSnapshotSessionError> snapshotSessionErrors;
@@ -294,6 +304,7 @@ final class LifecycleFixtureServer implements OversqliteHttpClient {
   var _nextBundleSeq = 1;
   var _pullRequestCount = 0;
   var _nextSnapshotIndex = 0;
+  var _capabilityRequestCount = 0;
 
   @override
   Future<OversqliteHttpResponse> get(
@@ -302,8 +313,13 @@ final class LifecycleFixtureServer implements OversqliteHttpClient {
   }) async {
     _sourceId = sourceId;
     if (path == 'sync/capabilities') {
+      final protocolVersion =
+          protocolVersions[_capabilityRequestCount < protocolVersions.length
+              ? _capabilityRequestCount
+              : protocolVersions.length - 1];
+      _capabilityRequestCount++;
       return _json({
-        'protocol_version': 'v1',
+        'protocol_version': protocolVersion,
         'schema_version': 1,
         'features': {'connect_lifecycle': true},
       });

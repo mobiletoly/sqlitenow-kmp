@@ -885,7 +885,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
         createUsersTable(db)
         val server = newLifecycleServer(
             capabilitiesBody = """
-                {"protocol_version":"v1","schema_version":1,"features":{"connect_lifecycle":true}}
+                {"protocol_version":"v0","schema_version":1,"features":{"connect_lifecycle":true}}
             """.trimIndent(),
             connectHandler = { _ ->
                 200 to """
@@ -942,7 +942,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
         createUsersTable(db)
         val server = newLifecycleServer(
             capabilitiesBody = """
-                {"protocol_version":"v1","schema_version":1,"features":{"connect_lifecycle":false}}
+                {"protocol_version":"v0","schema_version":1,"features":{"connect_lifecycle":false}}
             """.trimIndent(),
             connectHandler = { _ -> error("connect should not be called without capability") },
         )
@@ -1037,7 +1037,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
         var sessionAttempts = 0
         val server = newLifecycleServer(
             capabilitiesBody = """
-                {"protocol_version":"v1","schema_version":1,"features":{"connect_lifecycle":true}}
+                {"protocol_version":"v0","schema_version":1,"features":{"connect_lifecycle":true}}
             """.trimIndent(),
             connectHandler = { _ ->
                 200 to """{"resolution":"remote_authoritative"}"""

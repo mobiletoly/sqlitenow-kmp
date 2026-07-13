@@ -81,6 +81,22 @@ Runs the standard interactive flow:
 
 Returns `SyncReport`.
 
+## Numeric Wire Contract
+
+Oversqlite uses RFC 8785 JCS plus `jcs_uniform_numeric_strings_v1`. Every synchronized SQLite
+`INTEGER` and finite `REAL` business value is a canonical JSON string on push, pull, conflict,
+committed replay, and snapshot surfaces. Exact decimal values remain SQLite `TEXT` and JSON
+strings. Floating values use the shortest finite binary64 spelling, and negative zero becomes
+`"0"`.
+
+SQLite Boolean affinity uploads only the strict strings `"0"` and `"1"`; authoritative server
+responses use JSON Booleans. Invalid signed-64, non-finite, or non-canonical numeric values fail
+before row or retry-state mutation. Numeric behavior is affinity-driven and has no per-column
+configuration surface.
+
+This is a fresh-database contract. In-place migration, hash fallback, mixed-version operation, and
+wire-profile negotiation are not supported.
+
 ## Automatic Downloads And Watch
 
 Automatic downloads are optional and default-off. Starting the worker is explicit; `open()` and

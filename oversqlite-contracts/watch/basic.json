@@ -6,7 +6,7 @@
       "response": {
         "status": 200,
         "body": {
-          "protocol_version": "v1",
+          "protocol_version":"v0",
           "schema_version": 1,
           "features": {
             "connect_lifecycle": true,
@@ -21,7 +21,7 @@
       "response": {
         "status": 200,
         "body": {
-          "protocol_version": "v1",
+          "protocol_version":"v0",
           "schema_version": 1,
           "features": {
             "connect_lifecycle": true,
@@ -36,7 +36,7 @@
       "response": {
         "status": 200,
         "body": {
-          "protocol_version": "v1",
+          "protocol_version":"v0",
           "schema_version": 1,
           "features": {
             "connect_lifecycle": true

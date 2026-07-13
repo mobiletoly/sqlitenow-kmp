@@ -169,9 +169,10 @@ String _buildJsonObjectExprHexAware(_TableInfo tableInfo, String prefix) {
     final name = column.name.toLowerCase();
     final valueExpr = column.kind.isBlobKind
         ? 'CASE WHEN $prefix.${_quoteIdent(column.name)} IS NULL THEN NULL ELSE lower(hex($prefix.${_quoteIdent(column.name)})) END'
-        : column.kind == _ColumnKind.exactInt64 ||
-              column.kind == _ColumnKind.exactDecimal
-        ? 'CAST($prefix.${_quoteIdent(column.name)} AS TEXT)'
+        : column.kind == _ColumnKind.integer
+        ? 'CASE WHEN $prefix.${_quoteIdent(column.name)} IS NULL THEN NULL ELSE CAST($prefix.${_quoteIdent(column.name)} AS TEXT) END'
+        : column.kind == _ColumnKind.real
+        ? "CASE WHEN $prefix.${_quoteIdent(column.name)} IS NULL THEN NULL ELSE printf('%!.17g', $prefix.${_quoteIdent(column.name)}) END"
         : '$prefix.${_quoteIdent(column.name)}';
     return "'$name', $valueExpr";
   });
@@ -192,8 +193,7 @@ String _buildKeyJsonObjectExprHexAware(
   final keyName = column.name.toLowerCase();
   final valueExpr = column.kind.isBlobKind
       ? 'lower(hex($prefix.${_quoteIdent(column.name)}))'
-      : column.kind == _ColumnKind.exactInt64 ||
-            column.kind == _ColumnKind.exactDecimal
+      : column.kind == _ColumnKind.integer
       ? 'CAST($prefix.${_quoteIdent(column.name)} AS TEXT)'
       : '$prefix.${_quoteIdent(column.name)}';
   return "json_object('$keyName', $valueExpr)";

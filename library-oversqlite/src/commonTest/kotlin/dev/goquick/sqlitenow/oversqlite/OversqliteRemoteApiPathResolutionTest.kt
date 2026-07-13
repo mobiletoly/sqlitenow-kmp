@@ -80,7 +80,7 @@ class OversqliteRemoteApiPathResolutionTest {
                     body = json.encodeToString(
                         CapabilitiesResponse.serializer(),
                         CapabilitiesResponse(
-                            protocolVersion = "v1",
+                            protocolVersion = "v0",
                             schemaVersion = 1,
                             features = mapOf("connect_lifecycle" to true),
                         ),

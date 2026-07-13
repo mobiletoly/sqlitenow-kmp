@@ -4,9 +4,11 @@ import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import io.ktor.http.HttpStatusCode
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -67,6 +69,44 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
             } finally {
                 worker.cancelAndJoin()
             }
+        } finally {
+            env.close()
+        }
+    }
+
+    @Test
+    fun automaticDownloads_pollingModePropagatesProtocolMismatchWithoutRetry() = runTest {
+        val env = newTwoClientEnv()
+        try {
+            env.server.protocolVersion = "v1"
+            val initialCapabilityAttempts = env.server.capabilitySourceIds.size
+            val initialPullAttempts = env.server.pullRequestCount
+
+            supervisorScope {
+                val worker = async(Dispatchers.Default) {
+                    env.follower.runAutomaticDownloads(
+                        OversqliteAutomaticDownloadConfig(
+                            automaticDownloadIntervalMillis = 25,
+                            bundleChangeWatchReconnectMinMillis = 10,
+                            bundleChangeWatchReconnectMaxMillis = 20,
+                        ),
+                    )
+                }
+
+                val mismatch = assertFailsWith<ProtocolVersionMismatchException> {
+                    withContext(Dispatchers.Default) {
+                        withTimeout(5_000) {
+                            worker.await()
+                        }
+                    }
+                }
+                assertEquals("v0", mismatch.expected)
+                assertEquals("v1", mismatch.actual)
+            }
+
+            assertEquals(initialCapabilityAttempts + 1, env.server.capabilitySourceIds.size)
+            assertEquals(initialPullAttempts, env.server.pullRequestCount)
+            assertTrue(env.server.watchAfterBundleSeqs.isEmpty())
         } finally {
             env.close()
         }

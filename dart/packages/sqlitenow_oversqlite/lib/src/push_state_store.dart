@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:sqlitenow_runtime/sqlitenow_runtime.dart';
 
 import 'local_runtime.dart';
-import 'config.dart';
 import 'local_row_store.dart';
 import 'payload_codec.dart';
 import 'protocol.dart';
@@ -17,10 +16,9 @@ final class OversqlitePushStateStore {
   OversqlitePushStateStore({
     required SqliteNowConnection connection,
     required OversqliteApplyRunner applyRunner,
-    List<SyncTable> syncTables = const [],
   }) : _connection = connection,
        _applyRunner = applyRunner,
-       _localStore = OversqliteLocalRowStore(connection, syncTables);
+       _localStore = OversqliteLocalRowStore(connection);
 
   final SqliteNowConnection _connection;
   final OversqliteApplyRunner _applyRunner;

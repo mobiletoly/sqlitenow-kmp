@@ -18,6 +18,21 @@ internal class SharedRichSchemaManifestFixtureTest : RealServerSupport() {
         assertEquals(1, manifest.formatVersion)
         assertEquals("business-rich-v0", manifest.fixture)
         assertEquals("business", manifest.schema)
+        assertEquals(
+            listOf(
+                "signed-64-min",
+                "signed-64-max",
+                "above-javascript-safe-range",
+                "binary64-negative-zero",
+                "binary64-subnormal",
+                "binary64-ordinary",
+                "binary64-maximum-finite",
+                "postgres-float4-authoritative-spelling",
+                "boolean-false",
+                "boolean-true",
+            ),
+            manifest.numericScenarios.map { it.name },
+        )
 
         val expectedSyncTables = manifest.tables
             .map { it.name to it.syncKeyColumnName }
@@ -118,6 +133,14 @@ internal class SharedRichSchemaManifestFixtureTest : RealServerSupport() {
         val fixture: String,
         val schema: String,
         val tables: List<RichSchemaTable>,
+        val numericScenarios: List<NumericScenario>,
+    )
+
+    @Serializable
+    private data class NumericScenario(
+        val name: String,
+        val local: Map<String, String>,
+        val committed: Map<String, String>,
     )
 
     @Serializable

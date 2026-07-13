@@ -293,15 +293,7 @@ data class SyncTable(
     val tableName: String,
     val syncKeyColumnName: String? = null,
     val syncKeyColumns: List<String> = emptyList(),
-	val numericColumns: Map<String, NumericColumnKind> = emptyMap(),
 )
-
-/** Wire and SQLite representation for one numeric business column. */
-enum class NumericColumnKind {
-	EXACT_INT64,
-	EXACT_DECIMAL,
-	APPROXIMATE,
-}
 
 /** Bounded transient retry policy for transport/availability failures. */
 data class OversqliteTransientRetryPolicy(

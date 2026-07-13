@@ -3,12 +3,8 @@ package dev.goquick.sqlitenow.oversqlite.realserver
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.oversqlite.AttachOutcome
 import dev.goquick.sqlitenow.oversqlite.AuthorityStatus
-import dev.goquick.sqlitenow.oversqlite.OversqliteClient
-import dev.goquick.sqlitenow.oversqlite.NumericColumnKind
 import dev.goquick.sqlitenow.oversqlite.PushOutcome
 import dev.goquick.sqlitenow.oversqlite.RemoteSyncOutcome
-import dev.goquick.sqlitenow.oversqlite.platform.generated.RealServerGeneratedDatabase
-import dev.goquick.sqlitenow.oversqlite.platform.generated.VersionBasedDatabaseMigrations
 import dev.goquick.sqlitenow.oversqlite.platformsupport.assertConnectedOutcome
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.test.runTest
@@ -23,9 +19,9 @@ internal class RealServerGeneratedRichSchemaJvmTest : RealServerHarnessSupport()
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("generated-rich-user")
-        val seedDb = newGeneratedDb()
-        val pullDb = newGeneratedDb()
-        val hydrateDb = newGeneratedDb()
+        val seedDb = newRealServerGeneratedDb()
+        val pullDb = newRealServerGeneratedDb()
+        val hydrateDb = newRealServerGeneratedDb()
         var seedHttp: HttpClient? = null
         var pullHttp: HttpClient? = null
         var hydrateHttp: HttpClient? = null
@@ -34,9 +30,9 @@ internal class RealServerGeneratedRichSchemaJvmTest : RealServerHarnessSupport()
             pullDb.open()
             hydrateDb.open()
 
-            val seedSource = bootstrapSourceId(config.baseUrl) { http -> newGeneratedClient(seedDb, http) }
-            val pullSource = bootstrapSourceId(config.baseUrl) { http -> newGeneratedClient(pullDb, http) }
-            val hydrateSource = bootstrapSourceId(config.baseUrl) { http -> newGeneratedClient(hydrateDb, http) }
+            val seedSource = bootstrapSourceId(config.baseUrl) { http -> newRealServerGeneratedClient(seedDb, http) }
+            val pullSource = bootstrapSourceId(config.baseUrl) { http -> newRealServerGeneratedClient(pullDb, http) }
+            val hydrateSource = bootstrapSourceId(config.baseUrl) { http -> newRealServerGeneratedClient(hydrateDb, http) }
             seedHttp = newRealServerHttpClient(
                 config.baseUrl,
                 issueDummySigninToken(config.baseUrl, userId, seedSource),
@@ -50,9 +46,9 @@ internal class RealServerGeneratedRichSchemaJvmTest : RealServerHarnessSupport()
                 issueDummySigninToken(config.baseUrl, userId, hydrateSource),
             )
 
-            val seed = newGeneratedClient(seedDb, seedHttp)
-            val pull = newGeneratedClient(pullDb, pullHttp)
-            val hydrate = newGeneratedClient(hydrateDb, hydrateHttp)
+            val seed = newRealServerGeneratedClient(seedDb, seedHttp)
+            val pull = newRealServerGeneratedClient(pullDb, pullHttp)
+            val hydrate = newRealServerGeneratedClient(hydrateDb, hydrateHttp)
 
             seed.open().getOrThrow()
             assertConnectedOutcome(
@@ -89,33 +85,6 @@ internal class RealServerGeneratedRichSchemaJvmTest : RealServerHarnessSupport()
             hydrateDb.close()
         }
     }
-
-    private fun newGeneratedDb(): RealServerGeneratedDatabase =
-        RealServerGeneratedDatabase(
-            dbName = ":memory:",
-            migration = VersionBasedDatabaseMigrations(),
-            debug = true,
-        )
-
-    private fun newGeneratedClient(
-        db: RealServerGeneratedDatabase,
-        http: HttpClient,
-    ): OversqliteClient =
-        db.newOversqliteClient(
-            schema = "business",
-            httpClient = http,
-            uploadLimit = 8,
-            downloadLimit = 8,
-			syncTables = RealServerGeneratedDatabase.syncTables.map { table ->
-				if (table.tableName != "typed_rows") table else table.copy(
-					numericColumns = mapOf(
-						"count_value" to NumericColumnKind.EXACT_INT64,
-						"enabled_flag" to NumericColumnKind.EXACT_INT64,
-						"rating" to NumericColumnKind.APPROXIMATE,
-					),
-				)
-			},
-        )
 
     private suspend fun insertGeneratedRichRows(db: SafeSQLiteConnection): GeneratedRichFixture {
         val fixture = GeneratedRichFixture(

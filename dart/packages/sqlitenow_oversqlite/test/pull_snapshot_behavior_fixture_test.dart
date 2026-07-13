@@ -261,7 +261,7 @@ final class PullSnapshotBehaviorFixtureServer implements OversqliteHttpClient {
   }) async {
     if (path == 'sync/capabilities') {
       return _json({
-        'protocol_version': 'v1',
+        'protocol_version': 'v0',
         'schema_version': 1,
         'features': {'connect_lifecycle': true},
       });

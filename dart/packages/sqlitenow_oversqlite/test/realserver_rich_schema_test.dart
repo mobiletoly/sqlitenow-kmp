@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:sqlitenow_oversqlite/sqlitenow_oversqlite.dart';
@@ -6,21 +8,7 @@ import 'package:test/test.dart';
 import 'generated/rich_real_server_db.dart';
 import 'realserver_support.dart';
 
-final _richSyncTables = [
-  for (final table in RichRealServerDb.syncTables)
-    if (table.tableName == 'typed_rows')
-      const SyncTable(
-        tableName: 'typed_rows',
-        syncKeyColumnName: 'id',
-        numericColumns: {
-          'count_value': NumericColumnKind.exactInt64,
-          'enabled_flag': NumericColumnKind.exactInt64,
-          'rating': NumericColumnKind.approximate,
-        },
-      )
-    else
-      table,
-];
+final _richSyncTables = RichRealServerDb.syncTables;
 
 void main() {
   final realserverEnabled = flagEnabled('OVERSQLITE_REALSERVER_TESTS');
@@ -131,11 +119,15 @@ void main() {
             data: null,
             createdAt: null,
           );
+          final numericScenarios = await _loadNumericScenarios();
 
           await _insertCategoryGraph(seedDb, 'rich-topology');
           await _insertTeamGraph(seedDb, 'rich-topology');
           await _insertBlobKeyPair(seedDb, blob);
           await _insertTypedRow(seedDb, typedSeed);
+          for (final row in numericScenarios) {
+            await _insertTypedRow(seedDb, row);
+          }
           expect((await seed.pushPending()).outcome, PushOutcome.committed);
 
           await _insertTypedRow(pullDb, typedActive);
@@ -160,6 +152,10 @@ void main() {
           await _assertTypedRowState(pullDb, typedActive);
           await _assertTypedRowState(hydrateDb, typedSeed);
           await _assertTypedRowState(hydrateDb, typedActive);
+          for (final row in numericScenarios) {
+            await _assertTypedRowState(pullDb, row);
+            await _assertTypedRowState(hydrateDb, row);
+          }
           await expectCleanSyncTables(pullDb.runtimeDatabase);
           await expectCleanSyncTables(hydrateDb.runtimeDatabase);
         },
@@ -339,15 +335,19 @@ Future<void> _insertTypedRow(
   _TypedRowFixture row,
 ) async {
   await database.connection.execute(
-    '''INSERT INTO typed_rows(id, name, note, count_value, enabled_flag, rating, data, created_at)
-VALUES(?, ?, ?, ?, ?, ?, ?, ?)''',
+    '''INSERT INTO typed_rows(id, name, note, count_value, small_count, medium_count, exact_amount, enabled_flag, rating, float4_value, data, created_at)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
     parameters: [
       row.id,
       row.name,
       row.note,
       row.countValue,
+      row.smallCount,
+      row.mediumCount,
+      row.localExactAmount,
       row.enabledFlag,
       row.rating,
+      row.float4Value,
       row.data,
       row.createdAt,
     ],
@@ -419,8 +419,12 @@ Future<void> _assertTypedRowState(
   expect(actual.name, row.name);
   expect(actual.note, row.note);
   expect(actual.countValue, row.countValue);
+  expect(actual.smallCount, row.smallCount);
+  expect(actual.mediumCount, row.mediumCount);
+  expect(actual.exactAmount, row.expectedExactAmount);
   expect(actual.enabledFlag, row.enabledFlag);
-  expect(actual.rating, row.rating);
+  expect(actual.rating, row.expectedRating ?? row.rating);
+  expect(actual.float4Value, row.expectedFloat4Value ?? row.float4Value);
   expect(actual.data, row.data);
   if (row.createdAt == null) {
     expect(actual.createdAt, isNull);
@@ -462,6 +466,64 @@ Future<void> _assertBlobKeyState(
       _hex(row.fileId),
     );
   }
+}
+
+Future<List<_TypedRowFixture>> _loadNumericScenarios() async {
+  var directory = Directory.current.absolute;
+  File? manifestFile;
+  while (true) {
+    final candidate = File(
+      '${directory.path}/oversqlite-contracts/rich-schema/business-rich-v0.json',
+    );
+    if (await candidate.exists()) {
+      manifestFile = candidate;
+      break;
+    }
+    final parent = directory.parent;
+    if (parent.path == directory.path) break;
+    directory = parent;
+  }
+  if (manifestFile == null) {
+    throw StateError('could not locate business-rich-v0.json');
+  }
+  final manifest =
+      jsonDecode(await manifestFile.readAsString()) as Map<String, Object?>;
+  return [
+    for (final raw in manifest['numericScenarios']! as List<Object?>)
+      _numericScenario(raw! as Map<String, Object?>),
+  ];
+}
+
+_TypedRowFixture _numericScenario(Map<String, Object?> raw) {
+  final local = (raw['local']! as Map).cast<String, String>();
+  final committed = (raw['committed']! as Map).cast<String, String>();
+  int? integer(String name) =>
+      local[name] == null ? null : int.parse(local[name]!);
+  double? real(String name) =>
+      local[name] == null ? null : double.parse(local[name]!);
+  return _TypedRowFixture(
+    id: realserverUuid(),
+    name: raw['name']! as String,
+    note: null,
+    countValue: integer('count_value'),
+    smallCount: integer('small_count'),
+    mediumCount: integer('medium_count'),
+    localExactAmount: local['exact_amount'],
+    expectedExactAmount: committed['exact_amount'],
+    enabledFlag: local['enabled_flag'] == null
+        ? 1
+        : int.parse(local['enabled_flag']!),
+    rating: real('rating'),
+    expectedRating: committed['rating'] == null
+        ? null
+        : double.parse(committed['rating']!),
+    float4Value: real('float4_value'),
+    expectedFloat4Value: committed['float4_value'] == null
+        ? null
+        : double.parse(committed['float4_value']!),
+    data: null,
+    createdAt: null,
+  );
 }
 
 Uint8List _uuidBytes(String value) {
@@ -512,14 +574,28 @@ final class _TypedRowFixture {
     required this.rating,
     required this.data,
     required this.createdAt,
+    this.smallCount,
+    this.mediumCount,
+    this.localExactAmount,
+    this.expectedExactAmount,
+    this.expectedRating,
+    this.float4Value,
+    this.expectedFloat4Value,
   });
 
   final String id;
   final String name;
   final String? note;
   final int? countValue;
+  final int? smallCount;
+  final int? mediumCount;
+  final String? localExactAmount;
+  final String? expectedExactAmount;
   final int enabledFlag;
   final double? rating;
+  final double? expectedRating;
+  final double? float4Value;
+  final double? expectedFloat4Value;
   final Uint8List? data;
   final String? createdAt;
 }

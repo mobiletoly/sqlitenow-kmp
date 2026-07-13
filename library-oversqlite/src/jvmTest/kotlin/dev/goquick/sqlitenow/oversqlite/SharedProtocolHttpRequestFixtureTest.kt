@@ -165,7 +165,7 @@ class SharedProtocolHttpRequestFixtureTest {
             "capabilities" -> json.encodeToString(
                 CapabilitiesResponse.serializer(),
                 CapabilitiesResponse(
-                    protocolVersion = "v1",
+                    protocolVersion = "v0",
                     schemaVersion = 1,
                     features = mapOf("connect_lifecycle" to true, "bundle_change_watch" to true),
                 ),

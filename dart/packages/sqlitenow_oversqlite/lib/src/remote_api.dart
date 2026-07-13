@@ -18,7 +18,7 @@ final class OversqliteRemoteApi {
       method: 'GET',
       path: '/sync/capabilities',
     );
-    return CapabilitiesResponse.fromJson(body);
+    return requireOversqliteProtocol(CapabilitiesResponse.fromJson(body));
   }
 
   Future<ConnectResponse> connect({

@@ -165,7 +165,7 @@ Map<String, Object?> _responseBody(Map<String, Object?> fixture) {
   switch (fixture['operation']) {
     case 'capabilities':
       return {
-        'protocol_version': 'v1',
+        'protocol_version': 'v0',
         'schema_version': 1,
         'features': {'connect_lifecycle': true, 'bundle_change_watch': true},
       };

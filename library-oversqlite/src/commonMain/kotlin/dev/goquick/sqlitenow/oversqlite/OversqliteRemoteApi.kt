@@ -45,7 +45,7 @@ internal class OversqliteRemoteApi(
     }
 
     suspend fun fetchCapabilities(sourceId: String): CapabilitiesResponse {
-        return requireOkJson(
+        return requireOkJson<CapabilitiesResponse>(
             operation = "capabilities request",
             method = "GET",
             path = "/sync/capabilities",
@@ -58,7 +58,7 @@ internal class OversqliteRemoteApi(
                     header(sourceIdHeaderName, sourceId)
                 }
             },
-        )
+        ).requireSupportedProtocol()
     }
 
     suspend fun watchBundleChanges(

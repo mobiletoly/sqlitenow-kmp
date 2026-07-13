@@ -63,6 +63,10 @@ flutter pub run sqlitenow_cli generate
 The generated database exposes `buildOversqliteConfig(...)` and
 `newOversqliteClient(...)` for the synchronized tables.
 
+Numeric wire handling is automatic. SQLite `INTEGER` and finite `REAL` values synchronize as
+canonical JSON strings, exact decimals remain SQLite `TEXT` strings, and SQLite Boolean affinity
+uses strict `"0"`/`"1"` ingress strings. No per-column numeric configuration is required.
+
 ## Connect and sync
 
 Open the generated database, create an authenticated HTTP transport, and create the generated

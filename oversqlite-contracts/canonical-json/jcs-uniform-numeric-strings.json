@@ -1,0 +1,230 @@
+{
+  "contract": "Oversqlite uniform numeric-string wire contract",
+  "contract_id": "jcs_uniform_numeric_strings_v1",
+  "fixture_schema_version": 1,
+  "required_protocol_version": "v0",
+  "integer_cases": [
+    {
+      "name": "int64_min",
+      "local_sqlite": {"storage_class": "integer", "value_text": "-9223372036854775808"},
+      "uploaded_wire": "-9223372036854775808",
+      "postgres_destination": "int8",
+      "committed_server": "-9223372036854775808"
+    },
+    {
+      "name": "int64_max",
+      "local_sqlite": {"storage_class": "integer", "value_text": "9223372036854775807"},
+      "uploaded_wire": "9223372036854775807",
+      "postgres_destination": "int8",
+      "committed_server": "9223372036854775807"
+    },
+    {
+      "name": "above_javascript_safe_integer",
+      "local_sqlite": {"storage_class": "integer", "value_text": "9007199254740993"},
+      "uploaded_wire": "9007199254740993",
+      "postgres_destination": "int8",
+      "committed_server": "9007199254740993"
+    },
+    {
+      "name": "int2_min",
+      "local_sqlite": {"storage_class": "integer", "value_text": "-32768"},
+      "uploaded_wire": "-32768",
+      "postgres_destination": "int2",
+      "committed_server": "-32768"
+    },
+    {
+      "name": "int2_max",
+      "local_sqlite": {"storage_class": "integer", "value_text": "32767"},
+      "uploaded_wire": "32767",
+      "postgres_destination": "int2",
+      "committed_server": "32767"
+    },
+    {
+      "name": "int4_min",
+      "local_sqlite": {"storage_class": "integer", "value_text": "-2147483648"},
+      "uploaded_wire": "-2147483648",
+      "postgres_destination": "int4",
+      "committed_server": "-2147483648"
+    },
+    {
+      "name": "int4_max",
+      "local_sqlite": {"storage_class": "integer", "value_text": "2147483647"},
+      "uploaded_wire": "2147483647",
+      "postgres_destination": "int4",
+      "committed_server": "2147483647"
+    }
+  ],
+  "decimal_cases": [
+    {
+      "name": "decimal_precision_and_scale",
+      "local_sqlite": {"storage_class": "text", "value_text": "1234567890.123456789"},
+      "uploaded_wire": "1234567890.123456789",
+      "postgres_destination": "numeric(30,9)",
+      "committed_server": "1234567890.123456789"
+    },
+    {
+      "name": "decimal_exponent",
+      "local_sqlite": {"storage_class": "text", "value_text": "1.25e3"},
+      "uploaded_wire": "1.25e3",
+      "postgres_destination": "numeric(10,2)",
+      "committed_server": "1250.00"
+    },
+    {
+      "name": "decimal_postgresql_authoritative_scale",
+      "local_sqlite": {"storage_class": "text", "value_text": "12.3"},
+      "uploaded_wire": "12.3",
+      "postgres_destination": "decimal(8,4)",
+      "committed_server": "12.3000"
+    }
+  ],
+  "float_cases": [
+    {
+      "name": "binary64_min_subnormal",
+      "local_sqlite": {"storage_class": "real", "value_text": "5e-324"},
+      "uploaded_wire": "5e-324",
+      "postgres_destination": "float8",
+      "committed_server": "5e-324"
+    },
+    {
+      "name": "binary64_max_finite",
+      "local_sqlite": {"storage_class": "real", "value_text": "1.7976931348623157e+308"},
+      "uploaded_wire": "1.7976931348623157e+308",
+      "postgres_destination": "float8",
+      "committed_server": "1.7976931348623157e+308"
+    },
+    {
+      "name": "binary64_negative_max_finite",
+      "local_sqlite": {"storage_class": "real", "value_text": "-1.7976931348623157e+308"},
+      "uploaded_wire": "-1.7976931348623157e+308",
+      "postgres_destination": "float8",
+      "committed_server": "-1.7976931348623157e+308"
+    },
+    {
+      "name": "float4_rounding",
+      "local_sqlite": {"storage_class": "real", "value_text": "1.2345678901234567"},
+      "uploaded_wire": "1.2345678901234567",
+      "postgres_destination": "float4",
+      "committed_server": "1.2345678806304932"
+    },
+    {
+      "name": "floating_negative_zero_normalizes",
+      "local_sqlite": {"storage_class": "real", "value_text": "-0.0"},
+      "uploaded_wire": "0",
+      "postgres_destination": "float8",
+      "committed_server": "0"
+    },
+    {
+      "name": "floating_integer_spelling",
+      "local_sqlite": {"storage_class": "real", "value_text": "1.0"},
+      "uploaded_wire": "1",
+      "postgres_destination": "float8",
+      "committed_server": "1"
+    }
+  ],
+  "boolean_cases": [
+    {
+      "name": "sqlite_boolean_false",
+      "local_sqlite": {"storage_class": "integer", "value_text": "0"},
+      "uploaded_wire": "0",
+      "postgres_destination": "boolean",
+      "committed_server": false
+    },
+    {
+      "name": "sqlite_boolean_true",
+      "local_sqlite": {"storage_class": "integer", "value_text": "1"},
+      "uploaded_wire": "1",
+      "postgres_destination": "boolean",
+      "committed_server": true
+    }
+  ],
+  "replay_cases": [
+    {
+      "name": "committed_replay_unchanged_local_intent",
+      "frozen_local": {"amount": "12.3", "ratio": 1.2345678901234567},
+      "uploaded_wire": {"amount": "12.3", "ratio": "1.2345678901234567"},
+      "committed_server": {"amount": "12.3000", "ratio": "1.2345678806304932"},
+      "live_local": {"amount": "12.3", "ratio": 1.2345678901234567},
+      "decision": "apply_committed_and_clear_dirty"
+    },
+    {
+      "name": "committed_replay_later_local_edit",
+      "frozen_local": {"amount": "12.3", "ratio": 1.2345678901234567},
+      "uploaded_wire": {"amount": "12.3", "ratio": "1.2345678901234567"},
+      "committed_server": {"amount": "12.3000", "ratio": "1.2345678806304932"},
+      "live_local": {"amount": "13.4", "ratio": 2.5},
+      "decision": "preserve_later_local_edit_and_requeue"
+    }
+  ],
+  "invalid_cases": [
+    {"name": "integer_leading_plus", "family": "integer", "input": "+1", "input_json_type": "string", "category": "leading_plus", "outcome": "reject_before_mutation"},
+    {"name": "integer_leading_zero", "family": "integer", "input": "01", "input_json_type": "string", "category": "leading_zero", "outcome": "reject_before_mutation"},
+    {"name": "integer_negative_zero", "family": "integer", "input": "-0", "input_json_type": "string", "category": "negative_zero", "outcome": "reject_before_mutation"},
+    {"name": "integer_fraction", "family": "integer", "input": "1.5", "input_json_type": "string", "category": "fraction", "outcome": "reject_before_mutation"},
+    {"name": "integer_exponent", "family": "integer", "input": "1e3", "input_json_type": "string", "category": "exponent", "outcome": "reject_before_mutation"},
+    {"name": "integer_out_of_range_high", "family": "integer", "input": "9223372036854775808", "input_json_type": "string", "category": "out_of_range", "outcome": "reject_before_mutation"},
+    {"name": "integer_out_of_range_low", "family": "integer", "input": "-9223372036854775809", "input_json_type": "string", "category": "out_of_range", "outcome": "reject_before_mutation"},
+    {"name": "integer_legacy_json_number", "family": "integer", "input": 42, "input_json_type": "number", "category": "legacy_json_number", "outcome": "reject_before_mutation"},
+    {"name": "decimal_leading_plus", "family": "decimal", "input": "+1.25", "input_json_type": "string", "category": "leading_plus", "outcome": "reject_before_mutation"},
+    {"name": "decimal_leading_zero", "family": "decimal", "input": "01.25", "input_json_type": "string", "category": "leading_zero", "outcome": "reject_before_mutation"},
+    {"name": "decimal_negative_zero", "family": "decimal", "input": "-0.0e10", "input_json_type": "string", "category": "negative_zero", "outcome": "reject_before_mutation"},
+    {"name": "decimal_malformed_fraction", "family": "decimal", "input": "1.", "input_json_type": "string", "category": "malformed", "outcome": "reject_before_mutation"},
+    {"name": "decimal_malformed_exponent", "family": "decimal", "input": "1e", "input_json_type": "string", "category": "malformed", "outcome": "reject_before_mutation"},
+    {"name": "decimal_nan", "family": "decimal", "input": "NaN", "input_json_type": "string", "category": "non_finite", "outcome": "reject_before_mutation"},
+    {"name": "decimal_legacy_json_number", "family": "decimal", "input": 1.25, "input_json_type": "number", "category": "legacy_json_number", "outcome": "reject_before_mutation"},
+    {"name": "float_noncanonical_fraction", "family": "float", "input": "1.0", "input_json_type": "string", "category": "noncanonical", "outcome": "reject_before_mutation"},
+    {"name": "float_noncanonical_exponent", "family": "float", "input": "1e0", "input_json_type": "string", "category": "noncanonical", "outcome": "reject_before_mutation"},
+    {"name": "float_negative_zero", "family": "float", "input": "-0", "input_json_type": "string", "category": "noncanonical", "outcome": "reject_before_mutation"},
+    {"name": "float_malformed", "family": "float", "input": "1e", "input_json_type": "string", "category": "malformed", "outcome": "reject_before_mutation"},
+    {"name": "float_nan", "family": "float", "input": "NaN", "input_json_type": "string", "category": "non_finite", "outcome": "reject_before_mutation"},
+    {"name": "float_positive_infinity", "family": "float", "input": "Infinity", "input_json_type": "string", "category": "non_finite", "outcome": "reject_before_mutation"},
+    {"name": "float_negative_infinity", "family": "float", "input": "-Infinity", "input_json_type": "string", "category": "non_finite", "outcome": "reject_before_mutation"},
+    {"name": "float_legacy_json_number", "family": "float", "input": 1.25, "input_json_type": "number", "category": "legacy_json_number", "outcome": "reject_before_mutation"},
+    {"name": "boolean_string_true", "family": "boolean", "input": "true", "input_json_type": "string", "category": "invalid_boolean_bridge", "outcome": "reject_before_mutation"},
+    {"name": "boolean_integer_two", "family": "boolean", "input": "2", "input_json_type": "string", "category": "invalid_boolean_bridge", "outcome": "reject_before_mutation"}
+  ],
+  "canonical_examples": {
+    "push_request": {
+      "canonical_bytes": "[{\"base_row_version\":\"0\",\"key\":{\"id\":\"n-1\"},\"op\":\"INSERT\",\"payload\":{\"amount\":\"1234567890.123456789\",\"count\":\"2147483647\",\"enabled\":\"1\",\"id\":\"n-1\",\"large_count\":\"9007199254740993\",\"ratio\":\"1.2345678901234567\",\"score\":\"5e-324\",\"small_count\":\"-32768\"},\"row_ordinal\":\"0\",\"schema\":\"business\",\"table\":\"numeric_values\"}]",
+      "utf8_base64": "W3siYmFzZV9yb3dfdmVyc2lvbiI6IjAiLCJrZXkiOnsiaWQiOiJuLTEifSwib3AiOiJJTlNFUlQiLCJwYXlsb2FkIjp7ImFtb3VudCI6IjEyMzQ1Njc4OTAuMTIzNDU2Nzg5IiwiY291bnQiOiIyMTQ3NDgzNjQ3IiwiZW5hYmxlZCI6IjEiLCJpZCI6Im4tMSIsImxhcmdlX2NvdW50IjoiOTAwNzE5OTI1NDc0MDk5MyIsInJhdGlvIjoiMS4yMzQ1Njc4OTAxMjM0NTY3Iiwic2NvcmUiOiI1ZS0zMjQiLCJzbWFsbF9jb3VudCI6Ii0zMjc2OCJ9LCJyb3dfb3JkaW5hbCI6IjAiLCJzY2hlbWEiOiJidXNpbmVzcyIsInRhYmxlIjoibnVtZXJpY192YWx1ZXMifV0=",
+      "sha256": "ce9f4105cdda62a7705ef32476ebb3b3737fb44866a4bf4eedfeaaa571eb443a"
+    },
+    "committed_bundle": {
+      "canonical_bytes": "[{\"key\":{\"id\":\"n-1\"},\"op\":\"INSERT\",\"payload\":{\"amount\":\"1234567890.1234567890\",\"count\":\"2147483647\",\"enabled\":true,\"id\":\"n-1\",\"large_count\":\"9007199254740993\",\"ratio\":\"1.2345678806304932\",\"score\":\"5e-324\",\"small_count\":\"-32768\"},\"row_ordinal\":\"0\",\"row_version\":\"1\",\"schema\":\"business\",\"table\":\"numeric_values\"}]",
+      "utf8_base64": "W3sia2V5Ijp7ImlkIjoibi0xIn0sIm9wIjoiSU5TRVJUIiwicGF5bG9hZCI6eyJhbW91bnQiOiIxMjM0NTY3ODkwLjEyMzQ1Njc4OTAiLCJjb3VudCI6IjIxNDc0ODM2NDciLCJlbmFibGVkIjp0cnVlLCJpZCI6Im4tMSIsImxhcmdlX2NvdW50IjoiOTAwNzE5OTI1NDc0MDk5MyIsInJhdGlvIjoiMS4yMzQ1Njc4ODA2MzA0OTMyIiwic2NvcmUiOiI1ZS0zMjQiLCJzbWFsbF9jb3VudCI6Ii0zMjc2OCJ9LCJyb3dfb3JkaW5hbCI6IjAiLCJyb3dfdmVyc2lvbiI6IjEiLCJzY2hlbWEiOiJidXNpbmVzcyIsInRhYmxlIjoibnVtZXJpY192YWx1ZXMifV0=",
+      "sha256": "92fe0879f22de1e60f1bec5655f94cc641389e2ba5624666402a2a5cdd7150e3"
+    },
+    "pull_response": {
+      "canonical_bytes": "{\"bundles\":[{\"bundle_id\":\"b-1\",\"rows\":[{\"key\":{\"id\":\"n-1\"},\"op\":\"INSERT\",\"payload\":{\"amount\":\"1234567890.1234567890\",\"enabled\":true,\"id\":\"n-1\",\"large_count\":\"9007199254740993\",\"ratio\":\"1.2345678806304932\",\"score\":\"5e-324\"},\"row_ordinal\":\"0\",\"row_version\":\"1\",\"schema\":\"business\",\"table\":\"numeric_values\"}],\"sequence\":\"1\"}],\"next_sequence\":\"1\"}",
+      "utf8_base64": "eyJidW5kbGVzIjpbeyJidW5kbGVfaWQiOiJiLTEiLCJyb3dzIjpbeyJrZXkiOnsiaWQiOiJuLTEifSwib3AiOiJJTlNFUlQiLCJwYXlsb2FkIjp7ImFtb3VudCI6IjEyMzQ1Njc4OTAuMTIzNDU2Nzg5MCIsImVuYWJsZWQiOnRydWUsImlkIjoibi0xIiwibGFyZ2VfY291bnQiOiI5MDA3MTk5MjU0NzQwOTkzIiwicmF0aW8iOiIxLjIzNDU2Nzg4MDYzMDQ5MzIiLCJzY29yZSI6IjVlLTMyNCJ9LCJyb3dfb3JkaW5hbCI6IjAiLCJyb3dfdmVyc2lvbiI6IjEiLCJzY2hlbWEiOiJidXNpbmVzcyIsInRhYmxlIjoibnVtZXJpY192YWx1ZXMifV0sInNlcXVlbmNlIjoiMSJ9XSwibmV4dF9zZXF1ZW5jZSI6IjEifQ==",
+      "sha256": "ca861655cabeffe9f8b2a0cf34bb5e75cd7824a9d30e82dc2363220a5f446510"
+    },
+    "snapshot_response": {
+      "canonical_bytes": "{\"rows\":[{\"key\":{\"id\":\"n-1\"},\"payload\":{\"amount\":\"1234567890.1234567890\",\"enabled\":true,\"id\":\"n-1\",\"large_count\":\"9007199254740993\",\"ratio\":\"1.2345678806304932\",\"score\":\"5e-324\"},\"row_version\":\"1\",\"schema\":\"business\",\"table\":\"numeric_values\"}],\"snapshot_sequence\":\"1\"}",
+      "utf8_base64": "eyJyb3dzIjpbeyJrZXkiOnsiaWQiOiJuLTEifSwicGF5bG9hZCI6eyJhbW91bnQiOiIxMjM0NTY3ODkwLjEyMzQ1Njc4OTAiLCJlbmFibGVkIjp0cnVlLCJpZCI6Im4tMSIsImxhcmdlX2NvdW50IjoiOTAwNzE5OTI1NDc0MDk5MyIsInJhdGlvIjoiMS4yMzQ1Njc4ODA2MzA0OTMyIiwic2NvcmUiOiI1ZS0zMjQifSwicm93X3ZlcnNpb24iOiIxIiwic2NoZW1hIjoiYnVzaW5lc3MiLCJ0YWJsZSI6Im51bWVyaWNfdmFsdWVzIn1dLCJzbmFwc2hvdF9zZXF1ZW5jZSI6IjEifQ==",
+      "sha256": "a27c1bc00f78c6a6ef8b4433cf93374116c14cd4f4f8f0dd298d8763c26b93ea"
+    },
+    "conflict_response": {
+      "canonical_bytes": "{\"client_row\":{\"amount\":\"12.3\",\"enabled\":\"1\",\"id\":\"n-1\",\"ratio\":\"1.2345678901234567\"},\"server_row\":{\"amount\":\"12.3000\",\"enabled\":true,\"id\":\"n-1\",\"ratio\":\"1.2345678806304932\"},\"server_row_version\":\"2\"}",
+      "utf8_base64": "eyJjbGllbnRfcm93Ijp7ImFtb3VudCI6IjEyLjMiLCJlbmFibGVkIjoiMSIsImlkIjoibi0xIiwicmF0aW8iOiIxLjIzNDU2Nzg5MDEyMzQ1NjcifSwic2VydmVyX3JvdyI6eyJhbW91bnQiOiIxMi4zMDAwIiwiZW5hYmxlZCI6dHJ1ZSwiaWQiOiJuLTEiLCJyYXRpbyI6IjEuMjM0NTY3ODgwNjMwNDkzMiJ9LCJzZXJ2ZXJfcm93X3ZlcnNpb24iOiIyIn0=",
+      "sha256": "5c627fd68a670fe4aaed0ca9bcd863d36cf303fae0b55e649edd080d0d2f0120"
+    }
+  },
+  "protocol": {
+    "capabilities": {"protocol_version": "v0"},
+    "updated_client_rejections": [
+      {"name": "reject_non_v0", "actual": "v1", "category": "protocol_version_mismatch", "timing": "before_connect_or_outbox_freeze"},
+      {"name": "reject_empty_version", "actual": "", "category": "protocol_version_mismatch", "timing": "before_connect_or_outbox_freeze"},
+      {"name": "reject_unknown_version", "actual": "v-next", "category": "protocol_version_mismatch", "timing": "before_connect_or_outbox_freeze"}
+    ],
+    "full_reset": {
+      "client_database": "recreate",
+      "server_database": "recreate_including_business_data",
+      "preserve_frozen_outbox": false
+    },
+    "incompatible_development_build": {
+      "same_v0_may_be_incompatible": true,
+      "deployment": "deploy_together_with_recreated_client_and_server_databases",
+      "mixed_versions": "unsupported"
+    }
+  }
+}

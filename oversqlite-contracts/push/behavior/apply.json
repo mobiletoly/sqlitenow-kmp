@@ -423,9 +423,9 @@
               "id": "typed-1",
               "name": "Typed Row",
               "note": null,
-              "count_value": 1,
-              "enabled_flag": 0,
-              "rating": 1.25,
+              "count_value": "1",
+              "enabled_flag": false,
+              "rating": "1.25",
               "data": null,
               "created_at": "2026-03-24T20:42:11+02:00"
             }
@@ -489,9 +489,9 @@
               "id": "typed-1",
               "name": "Typed Row",
               "note": null,
-              "count_value": 1,
-              "enabled_flag": 0,
-              "rating": 1.2500,
+              "count_value": "1",
+              "enabled_flag": false,
+              "rating": "1.25",
               "data": null,
               "created_at": null
             }
@@ -556,7 +556,7 @@
               "name": "Typed Row",
               "note": null,
               "count_value": null,
-              "enabled_flag": 0,
+              "enabled_flag": false,
               "rating": null,
               "data": null,
               "created_at": null
@@ -621,9 +621,9 @@
               "id": "typed-1",
               "name": "Typed Row",
               "note": null,
-              "count_value": 1,
-              "enabled_flag": 0,
-              "rating": 1.25,
+              "count_value": "1",
+              "enabled_flag": false,
+              "rating": "1.25",
               "data": null,
               "created_at": "2026-03-24T20:42:12+02:00"
             }

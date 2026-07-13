@@ -139,6 +139,10 @@ open class SharedRuntimeStateFixtureSupport : BundleClientContractTestSupport() 
                 error,
                 "$caseName: expected source replacement invalid",
             )
+            "protocol_version_mismatch" -> assertIs<ProtocolVersionMismatchException>(
+                error,
+                "$caseName: expected protocol version mismatch",
+            )
             "invalid_source_recovery_reason" -> assertIs<IllegalStateException>(
                 error,
                 "$caseName: expected invalid source recovery reason",

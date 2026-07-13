@@ -60,6 +60,23 @@ void main() {
     expect(manifest['formatVersion'], 1);
     expect(manifest['fixture'], 'business-rich-v0');
     expect(manifest['schema'], 'business');
+    expect(
+      (manifest['numericScenarios'] as List<Object?>)
+          .map((scenario) => (scenario as Map<String, Object?>)['name'])
+          .toList(),
+      <String>[
+        'signed-64-min',
+        'signed-64-max',
+        'above-javascript-safe-range',
+        'binary64-negative-zero',
+        'binary64-subnormal',
+        'binary64-ordinary',
+        'binary64-maximum-finite',
+        'postgres-float4-authoritative-spelling',
+        'boolean-false',
+        'boolean-true',
+      ],
+    );
 
     final tables = ((manifest['tables']! as List<Object?>)
         .cast<Map<String, Object?>>());
@@ -85,23 +102,6 @@ void main() {
     expect(config.syncTables, RichRealServerDb.syncTables);
     expect(config.uploadLimit, 8);
     expect(config.downloadLimit, 8);
-
-    const numericOverride = [
-      SyncTable(
-        tableName: 'typed_rows',
-        syncKeyColumnName: 'id',
-        numericColumns: {
-          'count_value': NumericColumnKind.exactInt64,
-          'enabled_flag': NumericColumnKind.exactInt64,
-          'rating': NumericColumnKind.approximate,
-        },
-      ),
-    ];
-    final numericConfig = database.buildOversqliteConfig(
-      schema: 'business',
-      syncTables: numericOverride,
-    );
-    expect(numericConfig.syncTables, same(numericOverride));
 
     await database.open();
     addTearDown(database.close);

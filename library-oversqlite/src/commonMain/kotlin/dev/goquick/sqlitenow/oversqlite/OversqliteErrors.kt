@@ -22,6 +22,7 @@ enum class OversqliteErrorCategory(
     NETWORK("network"),
     AUTH("auth"),
     CONFLICT("conflict"),
+    PROTOCOL("protocol"),
 }
 
 interface OversqliteCategorizedException {

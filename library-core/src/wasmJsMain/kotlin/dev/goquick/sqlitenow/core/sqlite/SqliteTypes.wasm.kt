@@ -165,7 +165,7 @@ actual class SqliteStatement internal constructor(
         }
         return when (jsTypeOf(value)) {
             "number" -> toNumber(value).toLong()
-            "string" -> toNumber(value).toLong()
+            "string" -> toStringValue(value).toLong()
             else -> throw SqliteException("Column $index cannot convert to Long (type=${jsTypeOf(value)})")
         }
     }

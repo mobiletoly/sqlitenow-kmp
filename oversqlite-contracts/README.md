@@ -19,11 +19,11 @@ and change the checkpoint only in the final authoritative snapshot transaction.
 
 ## Canonical JSON and numeric contract
 
-`canonical-json/jcs-typed-numerics.json` is authoritative for KMP and Dart and is mirrored by
-equivalent Go vectors with a checksum drift guard. Canonical bytes use RFC 8785 JCS; this is not an
-arbitrary-precision extension to JCS. Schema-typed exact int64 and decimal values are JSON strings,
-while approximate values are finite binary64 JSON numbers. Hash-only row ordinals and row/base
-versions are decimal strings in the logical hash input.
+`canonical-json/jcs-uniform-numeric-strings.json` is authoritative for KMP, Dart, and Go. Every
+runtime reads that file and verifies the embedded canonical bytes and SHA-256 vector hashes. SQLite
+`INTEGER` and `REAL` business values use canonical JSON strings on the wire, while exact decimals
+remain SQLite `TEXT` and JSON strings. Hash-only row ordinals and row/base versions remain decimal
+strings in the logical hash input.
 
 The fixture also defines ordinary SQLite `INTEGER`/`TEXT`/`REAL` binding and rejection behavior,
 request and committed hashes, and the fresh-database compatibility disposition. No custom SQLite
@@ -48,7 +48,7 @@ Local schema fixtures live under `local-schema/<fixture-name>/`:
   row-count output after each declared transition.
 - `business-rich-v0` is the canonical live-server application schema contract
   used by KMP, Dart, `examples/nethttp_server`, and `examples/mobile_flow`.
-  Keep the protocol version (`protocol_version: "v1"`) and numeric
+  Keep the protocol version (`protocol_version: "v0"`) and numeric
   `schema_version` values separate from this fixture name. The fixture name
   describes application schema shape, not the wire protocol generation.
 
@@ -195,6 +195,8 @@ Lifecycle behavior fixtures live under `lifecycle/behavior/`:
 - `basic.json` executes attach, `syncThenDetach`, explicit rebuild, source-info,
   detach, restart, remote-authoritative replace, and cleanup-rollback flows that
   should not drift between runtimes.
+- `protocol-gates.json` proves incompatible capabilities stop `syncThenDetach`
+  and resumed remote-authoritative replacement before remote or local apply work.
 - `source-recovery-replacement.json` executes persisted source-recovery
   replacement flows. It pins reuse of an existing replacement source, fail-closed
   divergent remote replacements, stale or non-fresh replacement source rows,

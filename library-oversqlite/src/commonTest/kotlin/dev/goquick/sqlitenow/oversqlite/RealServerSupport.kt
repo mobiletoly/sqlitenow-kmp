@@ -46,11 +46,6 @@ internal open class RealServerSupport : CrossTargetSyncTestSupport() {
 		SyncTable(
 			"typed_rows",
 			syncKeyColumnName = "id",
-			numericColumns = mapOf(
-				"count_value" to NumericColumnKind.EXACT_INT64,
-				"enabled_flag" to NumericColumnKind.EXACT_INT64,
-				"rating" to NumericColumnKind.APPROXIMATE,
-			),
 		),
     )
 
@@ -223,9 +218,13 @@ internal open class RealServerSupport : CrossTargetSyncTestSupport() {
                 id TEXT PRIMARY KEY NOT NULL,
                 name TEXT NOT NULL,
                 note TEXT NULL,
-                count_value INTEGER NULL,
-                enabled_flag INTEGER NOT NULL,
-                rating REAL NULL,
+            count_value INTEGER NULL,
+            small_count INTEGER NULL,
+            medium_count INTEGER NULL,
+            exact_amount TEXT NULL,
+            enabled_flag INTEGER NOT NULL,
+            rating REAL NULL,
+            float4_value REAL NULL,
                 data BLOB NULL,
                 created_at TEXT NULL
             )

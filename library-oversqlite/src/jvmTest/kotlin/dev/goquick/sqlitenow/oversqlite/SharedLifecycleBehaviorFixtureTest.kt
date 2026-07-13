@@ -23,6 +23,7 @@ import kotlin.test.assertEquals
 class SharedLifecycleBehaviorFixtureTest : SharedRuntimeStateFixtureSupport() {
     private val fixtureFiles = listOf(
         oversqliteContractFixture("lifecycle/behavior/basic.json"),
+        oversqliteContractFixture("lifecycle/behavior/protocol-gates.json"),
         oversqliteContractFixture("lifecycle/behavior/source-recovery-replacement.json"),
     )
 
@@ -103,8 +104,12 @@ class SharedLifecycleBehaviorFixtureTest : SharedRuntimeStateFixtureSupport() {
     ): LifecycleServerHandle {
         val recorder = LifecycleServerRecorder()
         val customConnect = case.serverScript.connectResolution != "default"
-        val server = if (customConnect) {
-            newConnectScriptServer(case.serverScript.connectResolution)
+        val customCapabilities = case.serverScript.protocolVersions != listOf("v0")
+        val server = if (customConnect || customCapabilities) {
+            newConnectScriptServer(
+                connectResolution = case.serverScript.connectResolution,
+                protocolVersions = case.serverScript.protocolVersions,
+            )
         } else {
             newServer()
         }
@@ -132,18 +137,26 @@ class SharedLifecycleBehaviorFixtureTest : SharedRuntimeStateFixtureSupport() {
         )
     }
 
-    private fun newConnectScriptServer(connectResolution: String): HttpServer {
+    private fun newConnectScriptServer(
+        connectResolution: String,
+        protocolVersions: List<String>,
+    ): HttpServer {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        var capabilityRequestIndex = 0
         server.createContext("/sync/capabilities") { exchange ->
             if (exchange.requestMethod != "GET") {
                 exchange.sendResponseHeaders(405, -1)
                 exchange.close()
                 return@createContext
             }
+            val protocolVersion = protocolVersions.getOrElse(capabilityRequestIndex) {
+                protocolVersions.last()
+            }
+            capabilityRequestIndex += 1
             respondJson(
                 exchange,
                 200,
-                """{"protocol_version":"v1","schema_version":1,"features":{"connect_lifecycle":true}}""",
+                """{"protocol_version":"$protocolVersion","schema_version":1,"features":{"connect_lifecycle":true}}""",
             )
         }
         server.createContext("/sync/connect") { exchange ->
@@ -152,7 +165,8 @@ class SharedLifecycleBehaviorFixtureTest : SharedRuntimeStateFixtureSupport() {
                 exchange.close()
                 return@createContext
             }
-            respondJson(exchange, 200, """{"resolution":"$connectResolution"}""")
+            val resolution = connectResolution.takeUnless { it == "default" } ?: "initialize_empty"
+            respondJson(exchange, 200, """{"resolution":"$resolution"}""")
         }
         return server
     }
@@ -383,6 +397,7 @@ class SharedLifecycleBehaviorFixtureTest : SharedRuntimeStateFixtureSupport() {
     private data class LifecycleServerScript(
         val kind: String = "default",
         val connectResolution: String = "default",
+        val protocolVersions: List<String> = listOf("v0"),
         val lateWritesByPull: List<List<String>> = emptyList(),
         val snapshots: List<LifecycleSnapshot> = emptyList(),
         val snapshotSessionErrors: List<LifecycleSnapshotSessionError> = emptyList(),

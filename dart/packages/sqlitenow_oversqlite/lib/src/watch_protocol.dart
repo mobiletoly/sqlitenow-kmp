@@ -111,6 +111,17 @@ final class CapabilitiesResponse {
   }
 }
 
+CapabilitiesResponse requireOversqliteProtocol(
+  CapabilitiesResponse capabilities,
+) {
+  if (capabilities.protocolVersion != oversqliteProtocolVersion) {
+    throw ProtocolVersionMismatchException(
+      actual: capabilities.protocolVersion,
+    );
+  }
+  return capabilities;
+}
+
 final class BundleChangeEvent {
   const BundleChangeEvent({
     required this.bundleSeq,

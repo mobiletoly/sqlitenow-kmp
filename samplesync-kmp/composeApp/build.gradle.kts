@@ -108,11 +108,24 @@ kotlin {
             implementation(libs.kermit)
         }
 
+        commonTest.dependencies {
+            implementation(libs.kotlin.test)
+            implementation(libs.kotlinx.coroutines.test)
+            implementation("io.ktor:ktor-client-mock:${libs.versions.ktor.get()}")
+        }
+
         androidMain.dependencies {
             implementation(libs.androidx.activityCompose)
             implementation(libs.compose.ui.tooling)
             implementation(libs.compose.ui.toolingPreview)
             implementation(libs.ktor.client.okhttp)
+        }
+
+        getByName("androidDeviceTest").dependencies {
+            implementation(libs.androidx.test.runner)
+            implementation(libs.androidx.test.rules)
+            implementation(libs.androidx.junit)
+            implementation(libs.kotlinx.coroutines.test)
         }
 
         iosMain.dependencies {

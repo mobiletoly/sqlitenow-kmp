@@ -4,6 +4,8 @@ import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.sqlite.use
 import dev.goquick.sqlitenow.oversqlite.platform.generated.RealServerGeneratedDatabase
 import dev.goquick.sqlitenow.oversqlite.platform.generated.VersionBasedDatabaseMigrations
+import dev.goquick.sqlitenow.oversqlite.realserver.RichNumericScenario
+import dev.goquick.sqlitenow.oversqlite.realserver.richNumericScenarios
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.Serializable
 import java.nio.file.Path
@@ -23,6 +25,12 @@ class GeneratedRichSchemaManifestJvmTest {
         assertEquals(1, manifest.formatVersion)
         assertEquals("business-rich-v0", manifest.fixture)
         assertEquals("business", manifest.schema)
+        assertEquals(10, manifest.numericScenarios.size)
+        assertEquals(
+            manifest.numericScenarios.map { RichNumericScenario(it.name, it.local, it.committed) },
+            richNumericScenarios,
+            "common cross-target scenarios must stay in parity with the authoritative manifest",
+        )
 
         val expectedSyncTables = manifest.tables
             .map { it.name to it.syncKeyColumnName }
@@ -142,6 +150,14 @@ class GeneratedRichSchemaManifestJvmTest {
         val fixture: String,
         val schema: String,
         val tables: List<RichSchemaTable>,
+        val numericScenarios: List<NumericScenario>,
+    )
+
+    @Serializable
+    private data class NumericScenario(
+        val name: String,
+        val local: Map<String, String>,
+        val committed: Map<String, String>,
     )
 
     @Serializable

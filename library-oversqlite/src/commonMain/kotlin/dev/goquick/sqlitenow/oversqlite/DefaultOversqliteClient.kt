@@ -207,23 +207,6 @@ class DefaultOversqliteClient(
                         "pending remote_replace belongs to scope \"${state.operation.targetUserId}\" on source \"$sourceId\"",
                     )
                 }
-                currentUserId = requestedUserId
-                val downloadResult = finalizeRemoteReplace(
-                    validated = validated,
-                    state = state,
-                    operation = OversqliteOperation.ATTACH,
-                )
-                notifyUpdatedTables(downloadResult.updatedTables)
-                persistConnectedLifecycleState(requestedUserId, initializationId = "")
-                sessionConnected = true
-                pendingInitializationId = ""
-                val runtimeState = requireConnectedRuntimeState("attach(userId)")
-                val status = syncStatusInternal(runtimeState)
-                return@withOperationProgress AttachResult.Connected(
-                    outcome = AttachOutcome.USED_REMOTE_STATE,
-                    status = status,
-                    restore = downloadResult.restore,
-                )
             }
 
             if (state.isAttached &&
@@ -248,6 +231,26 @@ class DefaultOversqliteClient(
             }
 
             verifyConnectLifecycleSupported()
+            if (state.operation.kind == operationKindRemoteReplace) {
+                currentUserId = requestedUserId
+                val downloadResult = finalizeRemoteReplace(
+                    validated = validated,
+                    state = state,
+                    operation = OversqliteOperation.ATTACH,
+                )
+                notifyUpdatedTables(downloadResult.updatedTables)
+                persistConnectedLifecycleState(requestedUserId, initializationId = "")
+                sessionConnected = true
+                pendingInitializationId = ""
+                val runtimeState = requireConnectedRuntimeState("attach(userId)")
+                val status = syncStatusInternal(runtimeState)
+                return@withOperationProgress AttachResult.Connected(
+                    outcome = AttachOutcome.USED_REMOTE_STATE,
+                    status = status,
+                    restore = downloadResult.restore,
+                )
+            }
+
             val hasLocalPendingRows = pendingLocalChangeCount() > 0
             val response = withTransientRetry("attach() transport") {
                 remoteApi.connect(sourceId, hasLocalPendingRows)
@@ -320,6 +323,7 @@ class DefaultOversqliteClient(
     }
 
     override suspend fun pushPending(): Result<PushReport> = runSyncOperation("pushPending()") {
+        verifyProtocolGate("pushPending()")
         withOperationProgress(OversqliteOperation.PUSH_PENDING) {
             val execution = executePush(
                 operationName = "pushPending()",
@@ -331,6 +335,7 @@ class DefaultOversqliteClient(
     }
 
     override suspend fun pullToStable(): Result<RemoteSyncReport> = runSyncOperation("pullToStable()") {
+        verifyProtocolGate("pullToStable()")
         withOperationProgress(OversqliteOperation.PULL_TO_STABLE) {
             val execution = executePullToStable(
                 operationName = "pullToStable()",
@@ -342,6 +347,7 @@ class DefaultOversqliteClient(
     }
 
     override suspend fun sync(): Result<SyncReport> = runSyncOperation("sync()") {
+        verifyProtocolGate("sync()")
         withOperationProgress(OversqliteOperation.SYNC) {
             val execution = executeSyncRound(
                 operationName = "sync()",
@@ -353,6 +359,7 @@ class DefaultOversqliteClient(
     }
 
     override suspend fun syncThenDetach(): Result<SyncThenDetachResult> = runSyncOperation("syncThenDetach()") {
+        verifyProtocolGate("syncThenDetach()")
         withOperationProgress(OversqliteOperation.SYNC) {
             var previousPendingRowCount = Long.MAX_VALUE
             var lastReport: SyncReport? = null
@@ -399,6 +406,7 @@ class DefaultOversqliteClient(
     }
 
     override suspend fun rebuild(): Result<RemoteSyncReport> = runSyncOperation("rebuild()") {
+        verifyProtocolGate("rebuild()")
         val plan = selectRebuildPlan()
         withOperationProgress(plan.operation) {
             val execution = executeSnapshotRebuild(
@@ -484,6 +492,13 @@ class DefaultOversqliteClient(
         }
         if (!capabilities.features.getOrElse("connect_lifecycle") { false }) {
             throw ConnectLifecycleUnsupportedException("connect_lifecycle capability is absent")
+        }
+    }
+
+    private suspend fun verifyProtocolGate(operation: String) {
+        requireConnectedRuntimeState(operation)
+        withTransientRetry("$operation capability gate") {
+            remoteApi.fetchCapabilities(requireCurrentSourceId())
         }
     }
 
@@ -1336,6 +1351,7 @@ class DefaultOversqliteClient(
     private fun shouldRetryTransportFailure(error: Throwable): Boolean {
         if (
             error is InitializationLeaseInvalidException ||
+            error is ProtocolVersionMismatchException ||
             error is ConnectLifecycleUnsupportedException ||
             error is SourceSequenceMismatchException ||
             error is OpenRequiredException ||

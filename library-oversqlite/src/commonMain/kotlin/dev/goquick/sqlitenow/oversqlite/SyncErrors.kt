@@ -15,6 +15,25 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
+const val OVERSQLITE_PROTOCOL_VERSION: String = "v0"
+
+/** Thrown before local or remote sync work when the server protocol is incompatible. */
+class ProtocolVersionMismatchException(
+    val expected: String = OVERSQLITE_PROTOCOL_VERSION,
+    val actual: String,
+) : RuntimeException(
+    "oversqlite protocol version mismatch: expected \"$expected\", actual \"$actual\"",
+), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.PROTOCOL
+}
+
+internal fun CapabilitiesResponse.requireSupportedProtocol(): CapabilitiesResponse {
+    if (protocolVersion != OVERSQLITE_PROTOCOL_VERSION) {
+        throw ProtocolVersionMismatchException(actual = protocolVersion)
+    }
+    return this
+}
+
 /** Thrown when the server does not advertise the required connect-lifecycle capability. */
 class ConnectLifecycleUnsupportedException(
     val reason: String? = null,

@@ -10,27 +10,31 @@ import kotlin.test.assertFailsWith
 
 class OversqlitePayloadCodecTest {
     @Test
-    fun typedExactValuesBindToOrdinaryIntegerAndTextStorage() = runBlocking {
+    fun affinityNumericStringsBindToIntegerRealAndTextStorage() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         try {
-            db.execSQL("CREATE TABLE exact_values(id TEXT PRIMARY KEY, min_value INTEGER NOT NULL, max_value INTEGER NOT NULL, amount TEXT NOT NULL)")
-            val minColumn = ColumnInfo("min_value", "INTEGER", false, true, null, ColumnKind.EXACT_INT64)
-            val maxColumn = ColumnInfo("max_value", "INTEGER", false, true, null, ColumnKind.EXACT_INT64)
-            val amountColumn = ColumnInfo("amount", "TEXT", false, true, null, ColumnKind.EXACT_DECIMAL)
-            db.withPreparedStatement("INSERT INTO exact_values VALUES('n-1', ?, ?, ?)") { statement ->
+            db.execSQL("CREATE TABLE exact_values(id TEXT PRIMARY KEY, min_value INTEGER NOT NULL, max_value INTEGER NOT NULL, score REAL NOT NULL, amount TEXT NOT NULL)")
+            val minColumn = ColumnInfo("min_value", "INTEGER", false, true, null)
+            val maxColumn = ColumnInfo("max_value", "INTEGER", false, true, null)
+            val scoreColumn = ColumnInfo("score", "REAL", false, true, null)
+            val amountColumn = ColumnInfo("amount", "TEXT", false, true, null)
+            db.withPreparedStatement("INSERT INTO exact_values VALUES('n-1', ?, ?, ?, ?)") { statement ->
                 OversqliteValueCodec.bindPayloadValue(statement, 1, minColumn, JsonPrimitive("-9223372036854775808"), PayloadSource.AUTHORITATIVE_WIRE)
                 OversqliteValueCodec.bindPayloadValue(statement, 2, maxColumn, JsonPrimitive("9223372036854775807"), PayloadSource.AUTHORITATIVE_WIRE)
-                OversqliteValueCodec.bindPayloadValue(statement, 3, amountColumn, JsonPrimitive("1234567890.123456789"), PayloadSource.AUTHORITATIVE_WIRE)
+                OversqliteValueCodec.bindPayloadValue(statement, 3, scoreColumn, JsonPrimitive("1"), PayloadSource.AUTHORITATIVE_WIRE)
+                OversqliteValueCodec.bindPayloadValue(statement, 4, amountColumn, JsonPrimitive("1234567890.123456789"), PayloadSource.AUTHORITATIVE_WIRE)
                 statement.step()
             }
-            db.withPreparedStatement("SELECT CAST(min_value AS TEXT), CAST(max_value AS TEXT), amount, typeof(min_value), typeof(max_value), typeof(amount) FROM exact_values") { statement ->
+            db.withPreparedStatement("SELECT CAST(min_value AS TEXT), CAST(max_value AS TEXT), score, amount, typeof(min_value), typeof(max_value), typeof(score), typeof(amount) FROM exact_values") { statement ->
                 assertEquals(true, statement.step())
                 assertEquals("-9223372036854775808", statement.getText(0))
                 assertEquals("9223372036854775807", statement.getText(1))
-                assertEquals("1234567890.123456789", statement.getText(2))
-                assertEquals("integer", statement.getText(3))
+                assertEquals(1.0, statement.getDouble(2))
+                assertEquals("1234567890.123456789", statement.getText(3))
                 assertEquals("integer", statement.getText(4))
-                assertEquals("text", statement.getText(5))
+                assertEquals("integer", statement.getText(5))
+                assertEquals("real", statement.getText(6))
+                assertEquals("text", statement.getText(7))
             }
         } finally {
             db.close()
@@ -38,13 +42,13 @@ class OversqlitePayloadCodecTest {
     }
 
     @Test
-    fun exactDecimalRejectsEveryNegativeZeroSpelling() {
-        val column = ColumnInfo("amount", "TEXT", false, true, null, ColumnKind.EXACT_DECIMAL)
-        listOf("-0", "-0.0", "-0e10", "-0.000E-9").forEach { value ->
-            assertFailsWith<IllegalArgumentException>(value) {
-                OversqliteValueCodec.decodePayloadValue(column, JsonPrimitive(value), PayloadSource.AUTHORITATIVE_WIRE)
-            }
-        }
+    fun affinityNumericWireValuesAreCanonicalStrings() {
+        val integer = ColumnInfo("value", "INTEGER", false, true, null)
+        val real = ColumnInfo("score", "REAL", false, true, null)
+
+        assertEquals(JsonPrimitive("9007199254740993"), OversqliteValueCodec.encodeWirePayloadValue(integer, JsonPrimitive("9007199254740993")))
+        assertEquals(JsonPrimitive("0"), OversqliteValueCodec.encodeWirePayloadValue(real, JsonPrimitive(-0.0)))
+        assertEquals(JsonPrimitive("1.25"), OversqliteValueCodec.encodeWirePayloadValue(real, JsonPrimitive(1.25)))
     }
 
     @Test
@@ -117,18 +121,18 @@ class OversqlitePayloadCodecTest {
         )
 
         assertEquals(
-            TypedValue.Integer(1),
+            TypedValue.Integer("1"),
             OversqliteValueCodec.decodePayloadValue(column, JsonPrimitive(true), PayloadSource.LOCAL_STATE),
         )
         assertEquals(
-            TypedValue.Integer(0),
+            TypedValue.Integer("0"),
             OversqliteValueCodec.decodePayloadValue(column, JsonPrimitive(false), PayloadSource.AUTHORITATIVE_WIRE),
         )
         assertEquals(
-            JsonPrimitive(1),
+            JsonPrimitive("1"),
             OversqliteValueCodec.encodeWirePayloadValue(column, JsonPrimitive(true)),
         )
-        assertFailsWith<IllegalStateException> {
+        assertFailsWith<IllegalArgumentException> {
             OversqliteValueCodec.decodePayloadValue(column, JsonPrimitive("false"), PayloadSource.AUTHORITATIVE_WIRE)
         }
     }

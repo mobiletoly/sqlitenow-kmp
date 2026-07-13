@@ -3,11 +3,17 @@ package dev.goquick.sqlitenow.oversqlite
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 internal class OversqliteErrorCategoryTest {
     @Test
     fun exceptionsDeclareStableSwiftFacingCategories() {
         val scenarios = listOf(
+            Scenario(
+                name = "protocol mismatch is non-network protocol failure",
+                error = ProtocolVersionMismatchException(actual = "v1"),
+                expected = OversqliteErrorCategory.PROTOCOL,
+            ),
             Scenario(
                 name = "state precondition",
                 error = OpenRequiredException("sync"),
@@ -90,6 +96,17 @@ internal class OversqliteErrorCategoryTest {
                 actual = scenario.error.category.payloadCategory,
                 message = scenario.name,
             )
+        }
+    }
+
+    @Test
+    fun protocolGateRejectsV1EmptyAndUnknownVersions() {
+        listOf("v1", "", "v-next").forEach { actual ->
+            val error = assertFailsWith<ProtocolVersionMismatchException>(actual) {
+                CapabilitiesResponse(protocolVersion = actual).requireSupportedProtocol()
+            }
+            assertEquals("v0", error.expected)
+            assertEquals(actual, error.actual)
         }
     }
 

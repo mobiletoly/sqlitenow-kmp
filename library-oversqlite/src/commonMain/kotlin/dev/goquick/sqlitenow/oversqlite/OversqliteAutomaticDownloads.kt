@@ -50,6 +50,9 @@ internal class OversqliteAutomaticDownloads(
                 if (error is CancellationException) {
                     throw error
                 }
+                if (error is ProtocolVersionMismatchException) {
+                    throw error
+                }
                 log {
                     "oversqlite automatic downloads iteration failed " +
                         "error=${error::class.simpleName ?: "Throwable"}: ${error.message.orEmpty()}"
@@ -70,6 +73,9 @@ internal class OversqliteAutomaticDownloads(
             capabilities.bundleChangeWatchSupported
         } catch (error: Throwable) {
             if (error is CancellationException) {
+                throw error
+            }
+            if (error is ProtocolVersionMismatchException) {
                 throw error
             }
             log {
@@ -118,6 +124,9 @@ internal class OversqliteAutomaticDownloads(
         val result = pullToStable()
         val error = result.exceptionOrNull() ?: return true
         if (error is CancellationException) {
+            throw error
+        }
+        if (error is ProtocolVersionMismatchException) {
             throw error
         }
         val expectedContention = error is SyncOperationInProgressException

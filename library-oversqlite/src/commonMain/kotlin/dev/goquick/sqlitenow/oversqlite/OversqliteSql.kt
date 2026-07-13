@@ -97,8 +97,10 @@ internal fun buildJsonObjectExprHexAware(
         val valueExpr = when {
             column.kind.isBlobKind() ->
                 "CASE WHEN $prefix.${quoteIdent(column.name)} IS NULL THEN NULL ELSE lower(hex($prefix.${quoteIdent(column.name)})) END"
-            column.kind == ColumnKind.EXACT_INT64 || column.kind == ColumnKind.EXACT_DECIMAL ->
+            column.kind == ColumnKind.INTEGER ->
                 "CASE WHEN $prefix.${quoteIdent(column.name)} IS NULL THEN NULL ELSE CAST($prefix.${quoteIdent(column.name)} AS TEXT) END"
+            column.kind == ColumnKind.REAL ->
+                "CASE WHEN $prefix.${quoteIdent(column.name)} IS NULL THEN NULL ELSE printf('%!.17g', $prefix.${quoteIdent(column.name)}) END"
             else -> "$prefix.${quoteIdent(column.name)}"
         }
         "'$name', $valueExpr"
@@ -116,7 +118,7 @@ internal fun buildKeyJsonObjectExprHexAware(
     val keyName = column.name.lowercase()
     val valueExpr = when {
         column.kind.isBlobKind() -> "lower(hex($prefix.${quoteIdent(column.name)}))"
-        column.kind == ColumnKind.EXACT_INT64 || column.kind == ColumnKind.EXACT_DECIMAL ->
+        column.kind == ColumnKind.INTEGER ->
             "CAST($prefix.${quoteIdent(column.name)} AS TEXT)"
         else -> "$prefix.${quoteIdent(column.name)}"
     }

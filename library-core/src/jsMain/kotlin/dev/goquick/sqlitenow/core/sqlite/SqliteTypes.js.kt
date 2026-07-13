@@ -152,7 +152,7 @@ actual class SqliteStatement internal constructor(
             value is Double -> value.toLong()
             value is Int -> value.toLong()
             value is Number -> value.toDouble().toLong()
-            value is String -> value.toDouble().toLong()
+            value is String -> value.toLong()
             else -> throw SqliteException("Column $index cannot convert to Long (type=${jsTypeOf(value)})")
         }
     }

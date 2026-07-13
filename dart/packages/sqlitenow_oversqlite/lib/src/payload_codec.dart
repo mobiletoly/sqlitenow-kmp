@@ -94,8 +94,10 @@ Object? localOversqliteJsonValue(OversqliteColumnInfo column, Object? value) {
   if (value is List<int>) {
     return hexBytes(Uint8List.fromList(value));
   }
-  if (column.kind == OversqliteColumnKind.exactInt64 ||
-      column.kind == OversqliteColumnKind.exactDecimal) {
+  if (column.kind == OversqliteColumnKind.integer) {
+    return value.toString();
+  }
+  if (column.kind == OversqliteColumnKind.real) {
     return value.toString();
   }
   return value;
@@ -127,16 +129,8 @@ Object? wireOversqlitePayloadValue(OversqliteColumnInfo column, Object? value) {
     ),
     OversqliteColumnKind.uuidBlob => canonicalOversqliteUuid(value.toString()),
     OversqliteColumnKind.integer =>
-      value is bool
-          ? (value ? 1 : 0)
-          : value is int
-          ? value
-          : int.parse(value.toString()),
-    OversqliteColumnKind.exactInt64 => _requireInt64(value.toString()),
-    OversqliteColumnKind.real => num.parse(
-      canonicalizeFiniteJsonNumber(value.toString()),
-    ),
-    OversqliteColumnKind.exactDecimal => _requireExactDecimal(value.toString()),
+      value is bool ? (value ? '1' : '0') : _requireInt64(value.toString()),
+    OversqliteColumnKind.real => canonicalizeFiniteJsonNumber(value.toString()),
     OversqliteColumnKind.text =>
       value is String
           ? value
@@ -162,14 +156,11 @@ Object? bindOversqlitePayloadValue(
           ? decodeOversqliteWireUuid(value.toString())
           : decodeOversqliteLocalUuid(value.toString()),
     OversqliteColumnKind.integer =>
-      value is bool
-          ? (value ? 1 : 0)
-          : value is int
-          ? value
-          : int.parse(value.toString()),
-    OversqliteColumnKind.exactInt64 => _requireInt64(value.toString()),
-    OversqliteColumnKind.real => _finiteDouble(value.toString(), column.name),
-    OversqliteColumnKind.exactDecimal => _requireExactDecimal(value.toString()),
+      value is bool ? (value ? 1 : 0) : _requireInt64(value.toString()),
+    OversqliteColumnKind.real =>
+      source == PayloadSource.authoritativeWire
+          ? _canonicalFiniteDouble(value, column.name)
+          : _finiteDouble(value.toString(), column.name),
     OversqliteColumnKind.text =>
       value is String
           ? value
@@ -287,17 +278,11 @@ bool equivalentOversqlitePayloadValue(
   try {
     return switch (column.kind) {
       OversqliteColumnKind.text => left.toString() == right.toString(),
-      OversqliteColumnKind.integer =>
-        decodeOversqliteIntegerPayloadValue(left) ==
-            decodeOversqliteIntegerPayloadValue(right),
       OversqliteColumnKind.real =>
         canonicalizeFiniteJsonNumber(left.toString()) ==
             canonicalizeFiniteJsonNumber(right.toString()),
-      OversqliteColumnKind.exactInt64 =>
+      OversqliteColumnKind.integer =>
         _requireInt64(left.toString()) == _requireInt64(right.toString()),
-      OversqliteColumnKind.exactDecimal =>
-        _requireExactDecimal(left.toString()) ==
-            _requireExactDecimal(right.toString()),
       OversqliteColumnKind.blob => bytesEqual(
         decodeOversqliteBlobPayloadValue(left, leftSource),
         decodeOversqliteBlobPayloadValue(right, rightSource),
@@ -310,16 +295,6 @@ bool equivalentOversqlitePayloadValue(
   } catch (_) {
     return false;
   }
-}
-
-int decodeOversqliteIntegerPayloadValue(Object value) {
-  if (value is bool) {
-    return value ? 1 : 0;
-  }
-  if (value is int) {
-    return value;
-  }
-  return int.parse(value.toString());
 }
 
 String _requireInt64(String raw) {
@@ -336,26 +311,27 @@ String _requireInt64(String raw) {
   return raw;
 }
 
-String _requireExactDecimal(String raw) {
-  if (!RegExp(
-    r'^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?(0|[1-9][0-9]*))?$',
-  ).hasMatch(raw)) {
-    throw ArgumentError('expected an exact finite decimal string: $raw');
-  }
-  final significand = raw.split(RegExp('[eE]')).first;
-  final digits = significand.replaceAll(RegExp(r'[^0-9]'), '');
-  if (raw.startsWith('-') && digits.split('').every((digit) => digit == '0')) {
-    throw ArgumentError('negative zero is not an exact decimal string: $raw');
-  }
-  return raw;
-}
-
 double _finiteDouble(String raw, String columnName) {
   final value = double.parse(raw);
   if (!value.isFinite) {
     throw ArgumentError('REAL requires a finite value for $columnName');
   }
   return value;
+}
+
+double _canonicalFiniteDouble(Object value, String columnName) {
+  if (value is! String) {
+    throw ArgumentError(
+      'authoritative REAL requires a canonical binary64 string for $columnName',
+    );
+  }
+  final parsed = _finiteDouble(value, columnName);
+  if (canonicalizeFiniteJsonNumber(parsed.toString()) != value) {
+    throw ArgumentError(
+      'authoritative REAL requires canonical binary64 text for $columnName',
+    );
+  }
+  return parsed;
 }
 
 Uint8List decodeOversqliteBlobPayloadValue(Object value, PayloadSource source) {

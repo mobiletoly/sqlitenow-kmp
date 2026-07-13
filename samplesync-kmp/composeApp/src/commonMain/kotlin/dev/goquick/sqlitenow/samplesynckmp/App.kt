@@ -56,12 +56,7 @@ import dev.goquick.sqlitenow.core.sqlite.use
 import dev.goquick.sqlitenow.common.PlatformType
 import dev.goquick.sqlitenow.common.platform
 import dev.goquick.sqlitenow.common.resolveDatabasePath
-import dev.goquick.sqlitenow.core.util.fromSqliteDate
 import dev.goquick.sqlitenow.core.util.fromRfc3339String
-import dev.goquick.sqlitenow.core.util.jsonDecodeListFromSqlite
-import dev.goquick.sqlitenow.core.util.jsonEncodeToSqlite
-import dev.goquick.sqlitenow.core.util.toSqliteDate
-import dev.goquick.sqlitenow.core.util.toRfc3339String
 import dev.goquick.sqlitenow.oversqlite.AttachResult
 import dev.goquick.sqlitenow.oversqlite.BundleChangeWatchMode
 import dev.goquick.sqlitenow.oversqlite.MergeResult
@@ -76,11 +71,9 @@ import dev.goquick.sqlitenow.oversqlite.runAutomaticDownloads
 import dev.goquick.sqlitenow.samplesynckmp.db.AddressType
 import dev.goquick.sqlitenow.samplesynckmp.db.CommentQuery
 import dev.goquick.sqlitenow.samplesynckmp.db.CommentRow
-import dev.goquick.sqlitenow.samplesynckmp.db.NowSampleSyncDatabase
 import dev.goquick.sqlitenow.samplesynckmp.db.PersonAddressQuery
 import dev.goquick.sqlitenow.samplesynckmp.db.PersonQuery
 import dev.goquick.sqlitenow.samplesynckmp.db.PersonRow
-import dev.goquick.sqlitenow.samplesynckmp.db.VersionBasedDatabaseMigrations
 import dev.goquick.sqlitenow.samplesynckmp.model.PersonNote
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
@@ -282,29 +275,7 @@ private val lastNames = listOf(
 
 private val domains = listOf("gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "example.com")
 
-val db = NowSampleSyncDatabase(
-    resolveDatabasePath(dbName = "test05.db", appName = "SampleSync"),
-    personAdapters = NowSampleSyncDatabase.PersonAdapters(
-        birthDateToSqlValue = {
-            it?.toSqliteDate()
-        },
-        sqlValueToBirthDate = {
-            it?.let { LocalDate.fromSqliteDate(it) }
-        },
-        sqlValueToUpdatedAt = { Instant.fromRfc3339String(it) },
-    ),
-    commentAdapters = NowSampleSyncDatabase.CommentAdapters(
-        createdAtToSqlValue = { ts -> ts.toRfc3339String() },
-        tagsToSqlValue = { tags -> tags?.jsonEncodeToSqlite() },
-        sqlValueToCreatedAt = { Instant.fromRfc3339String(it) },
-        sqlValueToTags = { it?.jsonDecodeListFromSqlite() ?: emptyList() },
-    ),
-    personAddressAdapters = NowSampleSyncDatabase.PersonAddressAdapters(
-        addressTypeToSqlValue = { it.value },
-        sqlValueToAddressType = { AddressType.from(it) },
-    ),
-    migration = VersionBasedDatabaseMigrations()
-)
+val db = newSampleSyncDatabase(resolveDatabasePath(dbName = "test05.db", appName = "SampleSync"))
 
 private val updatedAtWinsResolver = Resolver { conflict ->
     val serverUpdatedAt = conflict.serverRow.updatedAtOrNull()

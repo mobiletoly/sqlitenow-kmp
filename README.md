@@ -270,17 +270,14 @@ Sync setup requires three explicit pieces on each client:
 - the Oversqlite runtime package
 - generated database configuration with Oversqlite enabled
 
-Oversqlite canonical bytes use RFC 8785 JCS. Exact signed 64-bit values are JSON strings mapped
-to ordinary SQLite `INTEGER`; exact arbitrary-precision decimals are JSON strings mapped to
-ordinary SQLite `TEXT`; explicitly approximate values use SQLite `REAL` and finite binary64 JSON
-numbers. Configure these columns with `SyncTable.numericColumns` and `NumericColumnKind.EXACT_INT64`,
-`EXACT_DECIMAL`, or `APPROXIMATE`. These rules apply only to Oversqlite: SQLiteNow library-core and
-generated output with `oversqlite = false` are unchanged.
-
-For an `oversqlite = true` generated database, pass an overridden `syncTables` list to
-`buildOversqliteConfig(...)` or `newOversqliteClient(...)` when exact numeric metadata is needed.
-The default remains the generated `enableSync` table list, so ordinary generated clients require no
-extra argument.
+Oversqlite canonical bytes use RFC 8785 JCS plus the
+`jcs_uniform_numeric_strings_v1` contract. SQLite `INTEGER` and finite `REAL` business values upload
+as canonical JSON strings; exact decimals stay SQLite `TEXT` and JSON strings. Floating strings use
+the shortest finite binary64 spelling and normalize negative zero to `"0"`. SQLite Boolean
+affinity uses strict `"0"`/`"1"` ingress strings, while authoritative server output uses JSON
+Booleans. There is no per-column numeric configuration: the generated `enableSync` table list is
+the complete client metadata surface. SQLiteNow library-core and generated output with
+`oversqlite = false` are unchanged.
 
 Only fresh Oversqlite databases using this canonicalization and numeric contract are supported.
 There is no in-place durable-state migration, canonicalization or hash fallback, or mixed-version

@@ -24,6 +24,8 @@ Future<void> _runAutomaticDownloads(
         await _runAutomaticPollingIteration(client, handle);
         backoff.reset();
       }
+    } on ProtocolVersionMismatchException {
+      rethrow;
     } catch (_) {
       await _runAutomaticPullToStable(client, 'automatic downloads fallback');
       await backoff.delayNext(handle);
@@ -51,6 +53,8 @@ Future<bool> _shouldUseBundleChangeWatch(
       block: () => client._fetchCapabilitiesInternal(state.sourceId),
     );
     return capabilities.bundleChangeWatchSupported;
+  } on ProtocolVersionMismatchException {
+    rethrow;
   } catch (_) {
     return false;
   }
@@ -136,6 +140,9 @@ Future<bool> _runAutomaticPullToStable(
     await client.pullToStable();
     return true;
   } catch (error) {
+    if (error is ProtocolVersionMismatchException) {
+      rethrow;
+    }
     if (error is SyncOperationInProgressException ||
         error is ConnectRequiredException ||
         error is OpenRequiredException ||

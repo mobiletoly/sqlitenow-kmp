@@ -173,6 +173,7 @@ internal open class CrossTargetSyncTestSupport {
         var sourceRetiredOnSnapshotCreate: SourceRetiredResponse? = null
         var sourceReplacementInvalidOnSnapshotCreate: ErrorResponse? = null
         var bundleChangeWatchSupported: Boolean = false
+        var protocolVersion: String = "v0"
         var pullRequestCount: Int = 0
         var pushSessionCreateRequestCount: Int = 0
         var cancelNextPushSessionCreate: Boolean = false
@@ -266,7 +267,7 @@ internal open class CrossTargetSyncTestSupport {
                         json.encodeToString(
                             CapabilitiesResponse.serializer(),
                             CapabilitiesResponse(
-                                protocolVersion = "v1",
+                                protocolVersion = protocolVersion,
                                 schemaVersion = 1,
                                 features = mapOf(
                                     "connect_lifecycle" to true,

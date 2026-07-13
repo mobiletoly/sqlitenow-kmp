@@ -26,8 +26,12 @@ final class TypedRowsSelectAllResult {
     required this.name,
     required this.note,
     required this.countValue,
+    required this.smallCount,
+    required this.mediumCount,
+    required this.exactAmount,
     required this.enabledFlag,
     required this.rating,
+    required this.float4Value,
     required this.data,
     required this.createdAt,
   });
@@ -36,8 +40,12 @@ final class TypedRowsSelectAllResult {
   final String name;
   final String? note;
   final int? countValue;
+  final int? smallCount;
+  final int? mediumCount;
+  final String? exactAmount;
   final int enabledFlag;
   final double? rating;
+  final double? float4Value;
   final Uint8List? data;
   final String? createdAt;
 }
@@ -198,8 +206,12 @@ final class RichRealServerDb {
   name TEXT NOT NULL,
   note TEXT NULL,
   count_value INTEGER NULL,
+  small_count INTEGER NULL,
+  medium_count INTEGER NULL,
+  exact_amount TEXT NULL,
   enabled_flag INTEGER NOT NULL,
   rating REAL NULL,
+  float4_value REAL NULL,
   data BLOB NULL,
   created_at TEXT NULL
 );''');
@@ -248,16 +260,20 @@ final class TypedRowsQueries {
       affectedTables: const <String>{'typed_rows'},
       query: () {
         return _db.connection.select(
-          r'''SELECT id, name, note, count_value, enabled_flag, rating, data, created_at FROM typed_rows ORDER BY id''',
+          r'''SELECT id, name, note, count_value, small_count, medium_count, exact_amount, enabled_flag, rating, float4_value, data, created_at FROM typed_rows ORDER BY id''',
           (row) => TypedRowsSelectAllResult(
             id: row.readString(0),
             name: row.readString(1),
             note: row.readNullableString(2),
             countValue: row.readNullableInt(3),
-            enabledFlag: row.readInt(4),
-            rating: row.readNullableDouble(5),
-            data: row.readNullableBlob(6),
-            createdAt: row.readNullableString(7),
+            smallCount: row.readNullableInt(4),
+            mediumCount: row.readNullableInt(5),
+            exactAmount: row.readNullableString(6),
+            enabledFlag: row.readInt(7),
+            rating: row.readNullableDouble(8),
+            float4Value: row.readNullableDouble(9),
+            data: row.readNullableBlob(10),
+            createdAt: row.readNullableString(11),
           ),
         );
       },

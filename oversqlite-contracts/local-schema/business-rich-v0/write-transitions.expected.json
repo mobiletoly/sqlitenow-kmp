@@ -92,7 +92,7 @@
           "keyJson": "{\"id\":\"typed-1\"}",
           "op": "INSERT",
           "baseRowVersion": 0,
-          "payload": "{\"id\":\"typed-1\",\"name\":\"Typed 1\",\"note\":null,\"count_value\":42,\"enabled_flag\":1,\"rating\":1.25,\"data\":\"cafebabe\",\"created_at\":\"2026-03-24T18:42:11Z\"}",
+          "payload": "{\"id\":\"typed-1\",\"name\":\"Typed 1\",\"note\":null,\"count_value\":\"42\",\"small_count\":null,\"medium_count\":null,\"exact_amount\":null,\"enabled_flag\":\"1\",\"rating\":\"1.25\",\"float4_value\":null,\"data\":\"cafebabe\",\"created_at\":\"2026-03-24T18:42:11Z\"}",
           "dirtyOrdinal": 10
         }
       ],

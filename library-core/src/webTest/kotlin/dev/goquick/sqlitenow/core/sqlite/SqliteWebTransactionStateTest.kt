@@ -15,6 +15,33 @@ import kotlinx.coroutines.test.runTest
 class SqliteWebTransactionStateTest {
 
     @Test
+    fun signed64IntegerReadsRemainExactBeyondJavaScriptSafeRange() = runTest {
+        val scenarios = listOf(
+            Signed64Scenario("minimum", Long.MIN_VALUE),
+            Signed64Scenario("above-javascript-safe-range", 9_007_199_254_740_993L),
+            Signed64Scenario("maximum", Long.MAX_VALUE),
+        )
+
+        withConnection("web-signed64-read") { connection ->
+            connection.execSQL("CREATE TABLE exact_integers(name TEXT PRIMARY KEY, value INTEGER NOT NULL)")
+            scenarios.forEach { scenario ->
+                connection.execSQL(
+                    "INSERT INTO exact_integers(name, value) VALUES ('${scenario.name}', ${scenario.value})",
+                )
+            }
+
+            connection.prepare("SELECT name, value FROM exact_integers ORDER BY rowid").use { statement ->
+                scenarios.forEach { scenario ->
+                    assertTrue(statement.step(), "Expected row for ${scenario.name}")
+                    assertEquals(scenario.name, statement.getText(0))
+                    assertEquals(scenario.value, statement.getLong(1), scenario.name)
+                }
+                assertFalse(statement.step(), "Only the signed-64 scenarios should be present")
+            }
+        }
+    }
+
+    @Test
     fun transactionControlStatementsUpdateInTransactionState() = runTest {
         val scenarios = listOf(
             BeginScenario("deferred", "BEGIN"),
@@ -136,6 +163,11 @@ class SqliteWebTransactionStateTest {
     private data class BeginScenario(
         val name: String,
         val sql: String,
+    )
+
+    private data class Signed64Scenario(
+        val name: String,
+        val value: Long,
     )
 
     private class RecordingPersistence : SqlitePersistence {

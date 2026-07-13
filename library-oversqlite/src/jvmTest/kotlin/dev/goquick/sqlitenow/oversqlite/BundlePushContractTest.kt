@@ -369,7 +369,7 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
                 put("note", JsonNull)
                 put("count_value", JsonNull)
                 put("enabled_flag", enabledFlag)
-                put("rating", JsonPrimitive(1.25))
+                put("rating", JsonPrimitive("1.25"))
                 put("data", JsonNull)
                 put("created_at", createdAt)
             },
@@ -392,7 +392,7 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
             "note": null,
             "count_value": null,
             "enabled_flag": $enabledFlag,
-            "rating": 1.25,
+            "rating": "1.25",
             "data": null,
             "created_at": $createdAt
           }
@@ -2115,7 +2115,7 @@ $indentedCommittedRowsJson
                 payload = buildJsonObject {
                     put("id", JsonPrimitive("remote-user"))
                     put("name", JsonPrimitive("Remote Ada"))
-                    put("score", JsonPrimitive(1.25))
+                    put("score", JsonPrimitive("1.25"))
                 },
             )
         )
@@ -2511,9 +2511,9 @@ $indentedCommittedRowsJson
             TypedRowsCommittedReplaySuccessScenario(
                 displayName = "accepts timestamp payload equivalent by instant across offsets",
                 pushId = "push-typed-offset",
-                enabledFlag = JsonPrimitive(0),
+                enabledFlag = JsonPrimitive(false),
                 createdAt = JsonPrimitive("2026-03-24T20:42:11+02:00"),
-                enabledFlagJson = "0",
+                enabledFlagJson = "false",
                 createdAtJson = "\"2026-03-24T20:42:11+02:00\"",
                 localCreatedAtSql = "'2026-03-24T18:42:11Z'",
                 assertReplayedState = { db ->
@@ -2570,11 +2570,11 @@ $indentedCommittedRowsJson
         withTypedRowsCommittedReplayClient(
             pushId = "",
             committedRows = typedCommittedRows(
-                enabledFlag = JsonPrimitive(0),
+                enabledFlag = JsonPrimitive(false),
                 createdAt = JsonPrimitive("2026-03-24T20:42:11+02:00"),
             ),
             committedRowsJson = typedCommittedRowJson(
-                enabledFlag = "0",
+                enabledFlag = "false",
                 createdAt = "\"2026-03-24T20:42:11+02:00\"",
             ),
             alreadyCommitted = true,

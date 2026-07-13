@@ -66,6 +66,34 @@ void main() {
     },
   );
 
+  test(
+    'automatic downloads polling propagates protocol mismatch without retry',
+    () async {
+      final env = await _newEnv();
+      addTearDown(env.close);
+      env.server.protocolVersion = 'v1';
+      final initialCapabilityAttempts = env.server.capabilitySourceIds.length;
+      final initialPullAttempts = env.server.pullRequestCount;
+
+      final handle = env.client.startAutomaticDownloads();
+      await expectLater(
+        handle.done,
+        throwsA(
+          isA<ProtocolVersionMismatchException>()
+              .having((error) => error.expected, 'expected', 'v0')
+              .having((error) => error.actual, 'actual', 'v1'),
+        ),
+      );
+
+      expect(
+        env.server.capabilitySourceIds.length,
+        initialCapabilityAttempts + 1,
+      );
+      expect(env.server.pullRequestCount, initialPullAttempts);
+      expect(env.server.watchAfterBundleSeqs, isEmpty);
+    },
+  );
+
   test('automatic downloads pause suppresses background pulls only', () async {
     final env = await _newEnv();
     addTearDown(env.close);
@@ -490,6 +518,7 @@ final class _WatchSyncServer
   final _watchControllers = <StreamController<String>>[];
   final _watchResponses = <_WatchResponse>[];
   var watchCloseCount = 0;
+  var protocolVersion = 'v0';
   var pullRequestCount = 0;
   var stableBundleSeq = 0;
   var _nextBundleSeq = 1;
@@ -537,7 +566,7 @@ final class _WatchSyncServer
     if (path == 'sync/capabilities') {
       capabilitySourceIds.add(sourceId);
       return _json({
-        'protocol_version': 'v1',
+        'protocol_version': protocolVersion,
         'schema_version': 1,
         'features': {
           'connect_lifecycle': true,

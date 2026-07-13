@@ -4,6 +4,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:sqlitenow_runtime/sqlitenow_runtime.dart';
 import 'package:sqlitenow_oversqlite/sqlitenow_oversqlite.dart';
 
@@ -23,21 +24,7 @@ const businessSyncTables = [
   SyncTable(tableName: 'posts', syncKeyColumnName: 'id'),
 ];
 
-final richSyncTables = [
-  for (final table in RichRealServerDb.syncTables)
-    if (table.tableName == 'typed_rows')
-      const SyncTable(
-        tableName: 'typed_rows',
-        syncKeyColumnName: 'id',
-        numericColumns: {
-          'count_value': NumericColumnKind.exactInt64,
-          'enabled_flag': NumericColumnKind.exactInt64,
-          'rating': NumericColumnKind.approximate,
-        },
-      )
-    else
-      table,
-];
+final richSyncTables = RichRealServerDb.syncTables;
 
 final realserverRandom = Random();
 
@@ -67,10 +54,13 @@ Future<RealServerConfig> requireRealServerConfig() async {
 }
 
 Future<Directory> createRealserverTempDir() async {
-  final tempDir = await Directory.systemTemp.createTemp(
-    'sqlitenow-flutter-realserver-',
-  );
-  addTearDown(() => tempDir.delete(recursive: true));
+  final supportDir = await getApplicationSupportDirectory();
+  final tempDir = await supportDir.createTemp('sqlitenow-flutter-realserver-');
+  addTearDown(() async {
+    if (await tempDir.exists()) {
+      await tempDir.delete(recursive: true);
+    }
+  });
   return tempDir;
 }
 

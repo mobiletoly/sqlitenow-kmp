@@ -34,7 +34,7 @@ final class OversqliteSourceInfo {
   final String currentSourceId;
 }
 
-enum _ColumnKind { text, integer, real, exactInt64, exactDecimal, blob, uuidBlob }
+enum _ColumnKind { text, integer, real, blob, uuidBlob }
 
 extension on _ColumnKind {
   bool get isBlobKind =>
@@ -58,30 +58,6 @@ _ColumnKind _classifyColumnKind(
   }
   if (type.contains('int')) return _ColumnKind.integer;
   return _ColumnKind.text;
-}
-
-_TableInfo _withNumericColumns(_TableInfo table, Map<String, NumericColumnKind> configured) {
-	if (configured.isEmpty) return table;
-	final normalized = {for (final entry in configured.entries) entry.key.trim().toLowerCase(): entry.value};
-	for (final name in normalized.keys) {
-		if (!table.columnNamesLower.contains(name)) throw ArgumentError('table ${table.table} numeric column $name does not exist');
-	}
-	return _TableInfo(
-		table: table.table,
-		columns: [for (final column in table.columns) _withNumericColumnKind(table.table, column, normalized[column.name.toLowerCase()])],
-		foreignKeys: table.foreignKeys,
-		foreignKeyColumnsLower: table.foreignKeyColumnsLower,
-	);
-}
-
-_ColumnInfo _withNumericColumnKind(String table, _ColumnInfo column, NumericColumnKind? configured) {
-	if (configured == null) return column;
-	final kind = switch (configured) {
-		NumericColumnKind.exactInt64 => column.kind == _ColumnKind.integer ? _ColumnKind.exactInt64 : throw ArgumentError('table $table exact-int64 column ${column.name} must have SQLite INTEGER affinity'),
-		NumericColumnKind.exactDecimal => column.kind == _ColumnKind.text ? _ColumnKind.exactDecimal : throw ArgumentError('table $table exact-decimal column ${column.name} must have SQLite TEXT affinity'),
-		NumericColumnKind.approximate => column.kind == _ColumnKind.real ? _ColumnKind.real : throw ArgumentError('table $table approximate column ${column.name} must have SQLite REAL affinity'),
-	};
-	return _ColumnInfo(name: column.name, declaredType: column.declaredType, isPrimaryKey: column.isPrimaryKey, notNull: column.notNull, defaultValue: column.defaultValue, kind: kind);
 }
 
 final class _RawColumnInfo {

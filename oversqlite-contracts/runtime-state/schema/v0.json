@@ -595,7 +595,7 @@
     "outbox_bundle": [
       {
         "singleton_key": 1,
-        "canonical_json_contract": "jcs_typed_numeric_strings_v0",
+        "canonical_json_contract": "jcs_uniform_numeric_strings_v1",
         "state": "none",
         "source_id": "",
         "source_bundle_id": 0,
