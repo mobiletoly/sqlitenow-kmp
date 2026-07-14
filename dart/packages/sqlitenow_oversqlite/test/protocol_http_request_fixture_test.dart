@@ -10,12 +10,27 @@ import 'support/behavior_fixture_support.dart';
 void main() {
   final spec = _readFixture();
   final cases = (spec['cases']! as List<Object?>).cast<Map<String, Object?>>();
-
-  test('Dart shared protocol HTTP request fixtures match runtime', () async {
-    for (final fixture in cases) {
-      await _runCase(fixture);
-    }
+  final executableCases = cases.where((fixture) {
+    if (fixture['operation'] != 'snapshotChunk') return true;
+    final args = (fixture['args']! as Map).cast<String, Object?>();
+    return !args.containsKey('maxBytes');
   });
+
+  test(
+    'Dart pre-Phase-4 shared protocol HTTP request fixtures match runtime',
+    () async {
+      for (final fixture in executableCases) {
+        await _runCase(fixture);
+      }
+    },
+  );
+
+  test(
+    'Dart snapshot max_bytes fixture remains owned by parent Phase 4',
+    () {},
+    skip:
+        'Dart production does not emit snapshot max_bytes until parent Phase 4',
+  );
 
   test('push request DELETE rows omit payload field', () {
     final deleteRow = const PushRequestRow(
@@ -180,7 +195,7 @@ Map<String, Object?> _responseBody(Map<String, Object?> fixture) {
     case 'pushSessionCreate':
       return {
         'status': 'staging',
-        'push_id': 'push-fixture',
+        'push_id': '11111111-1111-4111-8111-111111111111',
         'planned_row_count': args['plannedRowCount'],
         'next_expected_row_ordinal': 0,
         'canonical_request_hash': 'a' * 64,

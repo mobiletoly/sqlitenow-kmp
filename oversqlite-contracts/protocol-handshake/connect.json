@@ -6,10 +6,21 @@
       "capabilities": {
         "status": 200,
         "body": {
-          "protocol_version":"v0",
+          "protocol_version":"v1",
           "schema_version": 1,
           "features": {
             "connect_lifecycle": false
+          },
+          "bundle_limits": {
+            "default_rows_per_snapshot_chunk": 1000,
+            "max_rows_per_snapshot_chunk": 4000,
+            "default_bytes_per_snapshot_chunk": 4194304,
+            "max_bytes_per_snapshot_chunk": 16777216,
+            "max_bytes_per_snapshot_row": 4194304,
+            "snapshot_materialization_batch_rows": 1000,
+            "snapshot_materialization_batch_bytes": 4194304,
+            "max_concurrent_snapshot_builds": 2,
+            "max_concurrent_snapshot_chunk_requests": 8
           }
         }
       },
@@ -28,10 +39,21 @@
       "capabilities": {
         "status": 200,
         "body": {
-          "protocol_version":"v0",
+          "protocol_version":"v1",
           "schema_version": 1,
           "features": {
             "connect_lifecycle": true
+          },
+          "bundle_limits": {
+            "default_rows_per_snapshot_chunk": 1000,
+            "max_rows_per_snapshot_chunk": 4000,
+            "default_bytes_per_snapshot_chunk": 4194304,
+            "max_bytes_per_snapshot_chunk": 16777216,
+            "max_bytes_per_snapshot_row": 4194304,
+            "snapshot_materialization_batch_rows": 1000,
+            "snapshot_materialization_batch_bytes": 4194304,
+            "max_concurrent_snapshot_builds": 2,
+            "max_concurrent_snapshot_chunk_requests": 8
           }
         }
       },
@@ -58,7 +80,7 @@
       "capabilities": {
         "status": 200,
         "body": {
-          "protocol_version":"v0",
+          "protocol_version":"v1",
           "schema_version": 1,
           "features": {
             "connect_lifecycle": true
@@ -77,6 +99,13 @@
             "snapshot_session_ttl_seconds": 300,
             "max_rows_per_snapshot_session": 100000,
             "max_bytes_per_snapshot_session": 104857600,
+            "default_bytes_per_snapshot_chunk": 4194304,
+            "max_bytes_per_snapshot_chunk": 16777216,
+            "max_bytes_per_snapshot_row": 4194304,
+            "snapshot_materialization_batch_rows": 1000,
+            "snapshot_materialization_batch_bytes": 4194304,
+            "max_concurrent_snapshot_builds": 2,
+            "max_concurrent_snapshot_chunk_requests": 8,
             "initialization_lease_ttl_seconds": 600
           }
         }
@@ -104,10 +133,21 @@
       "capabilities": {
         "status": 200,
         "body": {
-          "protocol_version":"v0",
+          "protocol_version":"v1",
           "schema_version": 1,
           "features": {
             "connect_lifecycle": true
+          },
+          "bundle_limits": {
+            "default_rows_per_snapshot_chunk": 1000,
+            "max_rows_per_snapshot_chunk": 4000,
+            "default_bytes_per_snapshot_chunk": 4194304,
+            "max_bytes_per_snapshot_chunk": 16777216,
+            "max_bytes_per_snapshot_row": 4194304,
+            "snapshot_materialization_batch_rows": 1000,
+            "snapshot_materialization_batch_bytes": 4194304,
+            "max_concurrent_snapshot_builds": 2,
+            "max_concurrent_snapshot_chunk_requests": 8
           }
         }
       },
@@ -115,7 +155,7 @@
         "status": 200,
         "body": {
           "resolution": "initialize_local",
-          "initialization_id": "init-connect",
+          "initialization_id": "22222222-2222-4222-8222-222222222222",
           "lease_expires_at": "2099-01-01T00:00:00Z"
         }
       },
@@ -128,7 +168,7 @@
         "attachKind": "connected",
         "attachOutcome": "seededFromLocal",
         "bindingState": "attached",
-        "pendingInitializationId": "init-connect"
+        "pendingInitializationId": "22222222-2222-4222-8222-222222222222"
       }
     },
     {
@@ -136,10 +176,21 @@
       "capabilities": {
         "status": 200,
         "body": {
-          "protocol_version":"v0",
+          "protocol_version":"v1",
           "schema_version": 1,
           "features": {
             "connect_lifecycle": true
+          },
+          "bundle_limits": {
+            "default_rows_per_snapshot_chunk": 1000,
+            "max_rows_per_snapshot_chunk": 4000,
+            "default_bytes_per_snapshot_chunk": 4194304,
+            "max_bytes_per_snapshot_chunk": 16777216,
+            "max_bytes_per_snapshot_row": 4194304,
+            "snapshot_materialization_batch_rows": 1000,
+            "snapshot_materialization_batch_bytes": 4194304,
+            "max_concurrent_snapshot_builds": 2,
+            "max_concurrent_snapshot_chunk_requests": 8
           }
         }
       },

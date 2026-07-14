@@ -17,10 +17,13 @@ package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.TransactionMode
+import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
+import dev.goquick.sqlitenow.core.sqlite.use
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 
@@ -30,6 +33,9 @@ internal class OversqliteStageStore(
     private val syncStateStore: OversqliteSyncStateStore,
     private val json: Json,
 ) {
+    internal var snapshotStatementCloseForTest: ((SqliteStatement) -> Unit)? = null
+    internal var reusableStatementCleanupForTest: ReusableStatementCleanup? = null
+
     suspend fun preparePush(
         state: RuntimeState,
         sourceBundleId: Long,
@@ -91,67 +97,160 @@ internal class OversqliteStageStore(
         afterRowOrdinal: Long,
     ) {
         db.transaction(TransactionMode.IMMEDIATE) {
-            val statementCache = StatementCache(db)
-            try {
+            db.withPreparedStatement(
+                sql = """
+                    INSERT INTO _sync_snapshot_stage (
+                      snapshot_id, row_ordinal, schema_name, table_name, key_json, row_version, payload
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """.trimIndent(),
+                closeStatement = { statement ->
+                    snapshotStatementCloseForTest?.invoke(statement) ?: statement.close()
+                },
+            ) { st ->
                 var rowOrdinal = afterRowOrdinal
+                var statementUsed = false
                 for (row in chunk.rows) {
                     require(row.schema == state.validated.schema) {
-                        "snapshot row schema ${row.schema} does not match client schema ${state.validated.schema}"
+                        "snapshot row schema does not match the configured client schema"
                     }
                     validateSnapshotRow(row)
+                    require(row.table.lowercase() in state.validated.tableInfoByName) {
+                        "snapshot row table is not configured for sync"
+                    }
+                    val payload = row.payload as? JsonObject
+                        ?: error("snapshot row payload must be a JSON object for ${row.schema}.${row.table}")
+                    val normalizedPayload = localStore.validateAndNormalizeSnapshotPayload(
+                        state = state,
+                        tableName = row.table,
+                        key = row.key,
+                        payload = payload,
+                    )
                     val (keyJson, _) = localStore.bundleRowKeyToLocalKey(state, row.table, row.key)
                     rowOrdinal++
-                    db.withPreparedStatement(
-                        sql = """
-                            INSERT INTO _sync_snapshot_stage (
-                              snapshot_id, row_ordinal, schema_name, table_name, key_json, row_version, payload
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """.trimIndent(),
-                        statementCache = statementCache,
-                    ) { st ->
-                        st.bindText(1, session.snapshotId)
-                        st.bindLong(2, rowOrdinal)
-                        st.bindText(3, row.schema)
-                        st.bindText(4, row.table)
-                        st.bindText(5, keyJson)
-                        st.bindLong(6, row.rowVersion)
-                        st.bindText(7, row.payload.toString())
-                        st.step()
+                    if (statementUsed) {
+                        (reusableStatementCleanupForTest ?: DefaultReusableStatementCleanup)(st)
+                    } else {
+                        statementUsed = true
                     }
+
+                    st.bindText(1, session.snapshotId)
+                    st.bindLong(2, rowOrdinal)
+                    st.bindText(3, row.schema)
+                    st.bindText(4, row.table)
+                    st.bindText(5, keyJson)
+                    st.bindLong(6, row.rowVersion)
+                    st.bindText(7, normalizedPayload.toString())
+                    st.step()
                 }
-            } finally {
-                statementCache.close()
             }
         }
     }
 
-    suspend fun loadStagedSnapshotRows(
+    suspend fun loadStagedSnapshotPage(
         state: RuntimeState,
         snapshotId: String,
-    ): List<StagedSnapshotRow> {
-        return db.queryList(
-            sql = """
-                SELECT schema_name, table_name, key_json, row_version, payload
+        afterRowOrdinal: Long,
+        maxRows: Int,
+        maxBytes: Long,
+    ): StagedSnapshotPage {
+        require(maxRows > 0) { "snapshot apply page row limit must be positive" }
+        require(maxBytes > 0L) { "snapshot apply page byte limit must be positive" }
+
+        var selectedBytes = 0L
+        var selectedCount = 0
+        var lastOrdinal: Long? = null
+        db.withExclusiveAccess {
+            db.prepare(
+                """
+                SELECT row_ordinal,
+                       length(CAST(schema_name AS BLOB)) +
+                       length(CAST(table_name AS BLOB)) +
+                       length(CAST(key_json AS BLOB)) +
+                       length(CAST(payload AS BLOB)) AS retained_text_bytes
                 FROM _sync_snapshot_stage
-                WHERE snapshot_id = ?
+                WHERE snapshot_id = ? AND row_ordinal > ?
                 ORDER BY row_ordinal
-            """.trimIndent(),
-            bind = { st -> st.bindText(1, snapshotId) },
-        ) { st ->
-            val schemaName = st.getText(0)
-            val tableName = st.getText(1)
-            val keyJson = st.getText(2)
-            val (localPk, wireKey) = localStore.decodeDirtyKeyForPush(state, tableName, keyJson)
-            StagedSnapshotRow(
-                schemaName = schemaName,
-                tableName = tableName,
-                keyJson = keyJson,
-                localPk = localPk,
-                wireKey = wireKey,
-                rowVersion = st.getLong(3),
-                payload = st.getText(4),
-            )
+                LIMIT ?
+                """.trimIndent(),
+            ).use { st ->
+                st.bindText(1, snapshotId)
+                st.bindLong(2, afterRowOrdinal)
+                st.bindLong(3, maxRows.toLong())
+                while (st.step()) {
+                    val rowOrdinal = st.getLong(0)
+                    val retainedTextBytes = st.getLong(1)
+                    require(retainedTextBytes >= 0L) {
+                        "snapshot staged row metadata byte count must be non-negative"
+                    }
+                    val nextBytes = checkedAddSnapshotLong(selectedBytes, retainedTextBytes) {
+                        "snapshot apply page byte total overflow"
+                    }
+                    if (nextBytes > maxBytes) {
+                        if (selectedCount == 0) {
+                            throw SnapshotApplyRowTooLargeException(
+                                rowOrdinal = rowOrdinal,
+                                retainedTextBytes = retainedTextBytes,
+                                limit = maxBytes,
+                            )
+                        }
+                        break
+                    }
+                    selectedBytes = nextBytes
+                    selectedCount++
+                    lastOrdinal = rowOrdinal
+                }
+            }
         }
+        if (selectedCount == 0) {
+            return StagedSnapshotPage(emptyList(), 0L)
+        }
+        val selectedLastOrdinal = checkNotNull(lastOrdinal) {
+            "snapshot apply page selection is missing its last row ordinal"
+        }
+
+        val rows = db.withExclusiveAccess {
+            db.prepare(
+                """
+                SELECT row_ordinal, schema_name, table_name, key_json, row_version, payload
+                FROM _sync_snapshot_stage
+                WHERE snapshot_id = ? AND row_ordinal > ? AND row_ordinal <= ?
+                ORDER BY row_ordinal
+                """.trimIndent(),
+            ).use { st ->
+                st.bindText(1, snapshotId)
+                st.bindLong(2, afterRowOrdinal)
+                st.bindLong(3, selectedLastOrdinal)
+                buildList {
+                    while (st.step()) {
+                        add(
+                            StagedSnapshotRow(
+                                rowOrdinal = st.getLong(0),
+                                schemaName = st.getText(1),
+                                tableName = st.getText(2),
+                                keyJson = st.getText(3),
+                                rowVersion = st.getLong(4),
+                                payload = st.getText(5),
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+        require(rows.size == selectedCount) {
+            "snapshot staged page row count changed between metadata and row load"
+        }
+        require(rows.last().rowOrdinal == selectedLastOrdinal) {
+            "snapshot staged page last ordinal changed between metadata and row load"
+        }
+        rows.forEach { row ->
+            require(row.schemaName == state.validated.schema) {
+                "staged snapshot row schema does not match the configured client schema"
+            }
+            require(row.tableName.lowercase() in state.validated.tableInfoByName) {
+                "staged snapshot row table is not configured for sync"
+            }
+        }
+        return StagedSnapshotPage(rows = rows, retainedTextBytes = selectedBytes)
     }
 
     suspend fun deleteSnapshotStage(

@@ -4,6 +4,8 @@ import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 
 internal class OversqliteErrorCategoryTest {
     @Test
@@ -63,8 +65,6 @@ internal class OversqliteErrorCategoryTest {
                 name = "source replacement invalid unauthorized is auth",
                 error = SourceReplacementInvalidHttpException(
                     status = HttpStatusCode.Unauthorized,
-                    rawBody = "{}",
-                    errorMessage = "unauthorized",
                 ),
                 expected = OversqliteErrorCategory.AUTH,
             ),
@@ -100,14 +100,42 @@ internal class OversqliteErrorCategoryTest {
     }
 
     @Test
-    fun protocolGateRejectsV1EmptyAndUnknownVersions() {
-        listOf("v1", "", "v-next").forEach { actual ->
+    fun protocolGateRejectsV0EmptyAndUnknownVersions() {
+        val hostileProtocolVersion = "HOSTILE_PROTOCOL_VERSION_SECRET"
+        listOf("v0", "", hostileProtocolVersion).forEach { actual ->
             val error = assertFailsWith<ProtocolVersionMismatchException>(actual) {
-                CapabilitiesResponse(protocolVersion = actual).requireSupportedProtocol()
+                CapabilitiesResponse(
+                    protocolVersion = actual,
+                    schemaVersion = 1,
+                    features = emptyMap(),
+                    bundleLimits = testBundleCapabilitiesLimits(),
+                ).requireSupportedProtocol()
             }
-            assertEquals("v0", error.expected)
-            assertEquals(actual, error.actual)
+            assertEquals("v1", error.expected)
+            assertEquals("", error.actual)
+            assertEquals("oversqlite protocol version mismatch", error.message)
+            assertFalse(error.message.orEmpty().contains(hostileProtocolVersion))
         }
+    }
+
+    @Test
+    fun sourceReplacementInvalidExceptionsCannotRetainRemoteMessages() {
+        val sentinel = "customer-secret-remote-message"
+        val decoded = assertNotNull(
+            decodeSourceReplacementInvalidExceptionOrNull(
+                status = HttpStatusCode.Conflict,
+                rawBody = """{"error":"source_replacement_invalid","message":"$sentinel"}""",
+            ),
+        )
+        assertEquals(
+            "snapshot session request failed: HTTP 409; server rejected the source replacement request",
+            decoded.message,
+        )
+        assertFalse(decoded.toString().contains(sentinel))
+
+        val publicError = SourceReplacementInvalidException()
+        assertEquals("server rejected the source replacement request", publicError.message)
+        assertFalse(publicError.toString().contains(sentinel))
     }
 
     private data class Scenario(

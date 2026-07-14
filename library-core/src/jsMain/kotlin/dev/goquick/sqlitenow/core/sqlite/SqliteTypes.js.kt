@@ -69,6 +69,10 @@ actual class SqliteStatement internal constructor(
     private val parent: SqliteConnection,
     private val statement: SqlJsStatement,
 ) {
+    actual internal var cleanupFailureObserver: ((Throwable) -> Unit)? = null
+    actual internal var beforeCloseObserver: (() -> Unit)? = null
+    actual internal var closeSuccessObserver: (() -> Unit)? = null
+
     private companion object {
         private const val JS_SAFE_INTEGER_MAX = 9_007_199_254_740_991L
         private const val JS_SAFE_INTEGER_MIN = -9_007_199_254_740_991L
@@ -187,24 +191,44 @@ actual class SqliteStatement internal constructor(
     }
 
     actual fun reset() {
-        wrapSqlite { statement.reset() }
-        bindingsDirty = true
-        currentRow = null
-        parent.invalidateExportCache()
+        observeCleanup {
+            wrapSqlite { statement.reset() }
+            bindingsDirty = true
+            currentRow = null
+            parent.invalidateExportCache()
+        }
     }
 
     actual fun clearBindings() {
-        boundValues.clear()
-        bindingsDirty = true
-        currentRow = null
-        wrapSqlite { statement.bind(emptyArray<Any?>().unsafeCast<Array<dynamic>>()) }
-        parent.invalidateExportCache()
+        observeCleanup {
+            boundValues.clear()
+            bindingsDirty = true
+            currentRow = null
+            wrapSqlite { statement.bind(emptyArray<Any?>().unsafeCast<Array<dynamic>>()) }
+            parent.invalidateExportCache()
+        }
     }
 
     actual fun close() {
-        wrapSqlite { statement.free() }
-        currentRow = null
-        parent.invalidateExportCache()
+        beforeCloseObserver?.invoke()
+        try {
+            wrapSqlite { statement.free() }
+            currentRow = null
+            parent.invalidateExportCache()
+        } catch (t: Throwable) {
+            cleanupFailureObserver?.invoke(t)
+            throw t
+        }
+        closeSuccessObserver?.invoke()
+    }
+
+    private inline fun observeCleanup(block: () -> Unit) {
+        try {
+            block()
+        } catch (t: Throwable) {
+            cleanupFailureObserver?.invoke(t)
+            throw t
+        }
     }
 }
 

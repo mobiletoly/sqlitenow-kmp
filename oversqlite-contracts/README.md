@@ -48,7 +48,7 @@ Local schema fixtures live under `local-schema/<fixture-name>/`:
   row-count output after each declared transition.
 - `business-rich-v0` is the canonical live-server application schema contract
   used by KMP, Dart, `examples/nethttp_server`, and `examples/mobile_flow`.
-  Keep the protocol version (`protocol_version: "v0"`) and numeric
+  Keep the protocol version (`protocol_version: "v1"`) and numeric
   `schema_version` values separate from this fixture name. The fixture name
   describes application schema shape, not the wire protocol generation.
 
@@ -136,6 +136,11 @@ Push fixtures live under `push/`:
 
 Pull and snapshot fixtures live under `pull-snapshot/`:
 
+Snapshot admission retry parity lives under `snapshot-capacity/retry.json`. It
+locks the 30-second elapsed budget, one-second fallback, positive-only jitter,
+delta-seconds parsing, and the two capacity error codes for Go and KMP. Dart
+consumption remains owned by the existing bounded-snapshot Phase 4.
+
 - `basic.json` records populated-table adoption baseline history, incremental
   pull responses, history-pruned fallback,
   snapshot session/chunk responses, source replacement requests, source
@@ -158,6 +163,16 @@ Pull and snapshot fixtures live under `pull-snapshot/`:
 - Runners should decode and validate the same pull, snapshot, and recovery
   bodies in KMP and Dart, with executable workflow tests proving the final
   local `_sync_*` state.
+- The canonical snapshot contract is the breaking `v1` shape. Capabilities
+  require the byte limits and both concurrency fields, every chunk request
+  sends `max_rows` and `max_bytes`, and session/chunk `byte_count` is required
+  with missing distinct from zero. `max_concurrent_snapshot_chunks` is not an
+  alias for `max_concurrent_snapshot_chunk_requests`.
+- KMP Phase 3 owns the bounded-body, ordinal/identity/empty-shape, row/byte
+  transfer, final-gate, and row-and-byte-bounded apply behavior. Dart consumes
+  these fixtures in Phase 4; expected-red Dart results during Phase 3 are
+  recorded in the ignored phase evidence and must not be hidden with fallback
+  fields or mixed-version fixtures.
 
 Watch fixtures live under `watch/`:
 
@@ -213,7 +228,7 @@ Lifecycle behavior fixtures live under `lifecycle/behavior/`:
 
 Runtime SQL-state fixtures live under `runtime-state/`:
 
-- `schema/v0.json` records the normalized `_sync_*` table catalog after opening
+- `schema/v1.json` records the normalized `_sync_*` table catalog after opening
   a fresh users database: table names, columns, indexes, dirty/guard triggers,
   singleton/default rows, managed table rows, source rows, and runtime-owned
   PRAGMA expectations.
@@ -235,8 +250,10 @@ automatic-download behavior changes require behavior fixture updates. `_sync_*`
 SQL schema, trigger, index, checkpoint, outbox, dirty-row replay, source
 recovery, or rebuild gate changes require runtime-state fixture updates.
 Server-semantic changes require realserver coverage in addition to fixture
-tests. A behavior, lifecycle, or runtime-state change is not complete until both
-KMP and Dart shared fixture runners pass.
+tests. A behavior, lifecycle, or runtime-state change is not jointly complete
+until both KMP and Dart shared fixture runners pass. During the explicitly
+phased `v1` transition, the phase-owned runtime must pass and the later
+runtime's expected-red delta must be retained until its owning phase.
 
 Run the KMP shared local contract runner with:
 

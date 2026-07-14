@@ -44,13 +44,13 @@ internal class OversqliteAttachmentStateStore(
             missingMessage = "_sync_attachment_state singleton row is missing",
         ) { st ->
             OversqliteAttachmentState(
-                currentSourceId = st.getText(0),
+                currentSourceId = requireValidOptionalOversqliteSourceId(st.getText(0)),
                 bindingState = st.getText(1),
                 attachedUserId = st.getText(2),
                 schemaName = st.getText(3),
                 lastBundleSeqSeen = st.getLong(4),
                 rebuildRequired = st.getLong(5) == 1L,
-                pendingInitializationId = st.getText(6),
+                pendingInitializationId = requireValidOptionalOversqliteSessionToken(st.getText(6)),
             )
         }
     }
@@ -59,6 +59,8 @@ internal class OversqliteAttachmentStateStore(
         state: OversqliteAttachmentState,
         statementCache: StatementCache? = null,
     ) {
+        requireValidOptionalOversqliteSourceId(state.currentSourceId)
+        requireValidOptionalOversqliteSessionToken(state.pendingInitializationId)
         db.withPreparedStatement(
             sql = """
                 UPDATE _sync_attachment_state
@@ -124,6 +126,7 @@ internal class OversqliteAttachmentStateStore(
         userId: String,
         sourceId: String,
     ): Boolean {
+        requireValidOversqliteSourceId(sourceId)
         val state = loadState()
         return state.bindingState == attachmentBindingAttached &&
             state.attachedUserId == userId &&

@@ -24,6 +24,9 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class OversqliteRemoteApiPathResolutionTest {
+    private val canonicalPushId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    private val canonicalInitializationId = "22222222-2222-4222-8222-222222222222"
+
     private data class CapturedJsonRequest(
         val encodedPath: String?,
         val headerSourceId: String?,
@@ -80,9 +83,10 @@ class OversqliteRemoteApiPathResolutionTest {
                     body = json.encodeToString(
                         CapabilitiesResponse.serializer(),
                         CapabilitiesResponse(
-                            protocolVersion = "v0",
+                            protocolVersion = "v1",
                             schemaVersion = 1,
                             features = mapOf("connect_lifecycle" to true),
+                            bundleLimits = testBundleCapabilitiesLimits(),
                         ),
                     ),
                 )
@@ -177,12 +181,39 @@ class OversqliteRemoteApiPathResolutionTest {
     }
 
     @Test
+    fun connect_rejectsInvalidInitializationLeaseWithFixedDiagnostic() = runTest {
+        val invalid = " $canonicalInitializationId "
+        val http = HttpClient(
+            MockEngine {
+                respondJson(
+                    json.encodeToString(
+                        ConnectResponse.serializer(),
+                        ConnectResponse(resolution = "initialize_local", initializationId = invalid),
+                    ),
+                )
+            },
+        ) {
+            install(ContentNegotiation) { json(json) }
+            defaultRequest { url("https://sync.test/api/v1/") }
+        }
+
+        try {
+            val error = assertFailsWith<RemoteResponseSemanticException> {
+                OversqliteRemoteApi(http, json, log = {}).connect("source-c", true)
+            }
+            assertFalse(error.message.orEmpty().contains(canonicalInitializationId))
+        } finally {
+            http.close()
+        }
+    }
+
+    @Test
     fun createPushSession_sends_source_header_and_omits_body_source_id() = runTest {
         val captured = captureJsonRequest(
             responseBody = json.encodeToString(
                 PushSessionCreateResponse.serializer(),
                 PushSessionCreateResponse(
-                    pushId = "push-1",
+                    pushId = canonicalPushId,
                     status = "staging",
                     plannedRowCount = 2,
                     nextExpectedRowOrdinal = 0,
@@ -195,7 +226,7 @@ class OversqliteRemoteApiPathResolutionTest {
                 plannedRowCount = 2L,
                 canonicalRequestHash = "a".repeat(64),
                 sourceId = "source-d",
-                initializationId = "init-1",
+                initializationId = canonicalInitializationId,
             )
         }
 
@@ -204,6 +235,72 @@ class OversqliteRemoteApiPathResolutionTest {
         assertEquals("7", captured.body?.get("source_bundle_id")?.toString()?.trim('"'))
         assertEquals("2", captured.body?.get("planned_row_count")?.toString()?.trim('"'))
         assertFalse(captured.body!!.containsKey("source_id"))
+    }
+
+    @Test
+    fun createPushSession_rejectsInvalidOutboundInitializationIdBeforeHttp() = runTest {
+        var requests = 0
+        val http = HttpClient(
+            MockEngine {
+                requests++
+                respondJson("{}")
+            },
+        ) {
+            install(ContentNegotiation) { json(json) }
+            defaultRequest { url("https://sync.test/api/v1/") }
+        }
+
+        try {
+            val error = assertFailsWith<IllegalArgumentException> {
+                OversqliteRemoteApi(http, json, log = {}).createPushSession(
+                    sourceBundleId = 1,
+                    plannedRowCount = 1,
+                    canonicalRequestHash = "a".repeat(64),
+                    sourceId = "source-d",
+                    initializationId = " $canonicalInitializationId ",
+                )
+            }
+            assertFalse(error.message.orEmpty().contains(canonicalInitializationId))
+            assertEquals(0, requests)
+        } finally {
+            http.close()
+        }
+    }
+
+    @Test
+    fun uploadPushChunk_rejectsNoncanonicalResponseAndPreservesRequestPath() = runTest {
+        var encodedPath: String? = null
+        val http = HttpClient(
+            MockEngine { request ->
+                encodedPath = request.url.encodedPath
+                respondJson(
+                    json.encodeToString(
+                        PushSessionChunkResponse.serializer(),
+                        PushSessionChunkResponse(
+                            pushId = canonicalPushId.uppercase(),
+                            nextExpectedRowOrdinal = 1,
+                        ),
+                    ),
+                )
+            },
+        ) {
+            install(ContentNegotiation) { json(json) }
+            defaultRequest { url("https://sync.test/api/v1/") }
+        }
+
+        try {
+            val error = assertFailsWith<RemoteResponseSemanticException> {
+                OversqliteRemoteApi(http, json, log = {}).uploadPushChunk(
+                    pushId = canonicalPushId,
+                    sourceId = "source-d",
+                    request = PushSessionChunkRequest(startRowOrdinal = 0, rows = emptyList()),
+                )
+            }
+            assertEquals("/api/v1/sync/push-sessions/$canonicalPushId/chunks", encodedPath)
+            assertFalse(error.message.orEmpty().contains(canonicalPushId))
+        } finally {
+            http.close()
+        }
     }
 
     private suspend fun captureJsonRequest(

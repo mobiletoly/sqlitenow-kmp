@@ -23,6 +23,44 @@ import kotlin.time.Instant
 
 internal const val hiddenSyncScopeColumnName = "_sync_scope_id"
 
+private val canonicalOversqliteSessionToken =
+    Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+internal fun requireValidOversqliteSessionToken(value: String): String {
+    require(canonicalOversqliteSessionToken.matches(value)) {
+        "oversqlite session token must be a canonical lowercase dashed UUID"
+    }
+    return value
+}
+
+internal fun requireValidOptionalOversqliteSessionToken(value: String): String =
+    if (value.isEmpty()) value else requireValidOversqliteSessionToken(value)
+
+internal fun validateConnectResponse(response: ConnectResponse) {
+    if (response.resolution == "initialize_local") {
+        requireValidOversqliteSessionToken(response.initializationId)
+    } else {
+        require(response.initializationId.isEmpty()) {
+            "connect response initialization_id must be absent"
+        }
+    }
+}
+
+internal fun requireValidOversqliteSourceId(value: String): String {
+    if (value.isEmpty() || value.any { it !in '!'..'~' }) {
+        throw InvalidOversqliteSourceIdException()
+    }
+    return value
+}
+
+internal fun requireValidOptionalOversqliteSourceId(value: String): String =
+    if (value.isEmpty()) value else requireValidOversqliteSourceId(value)
+
+internal fun validateSourceRetiredResponse(response: SourceRetiredResponse): String? {
+    requireValidOversqliteSourceId(response.sourceId)
+    return response.replacedBySourceId?.let(::requireValidOversqliteSourceId)
+}
+
 internal fun validatePullResponse(
     response: PullResponse,
     afterBundleSeq: Long,
@@ -57,7 +95,7 @@ internal fun validatePullResponse(
 
 internal fun validateBundle(bundle: Bundle) {
     require(bundle.bundleSeq > 0) { "bundle_seq ${bundle.bundleSeq} must be positive" }
-    require(bundle.sourceId.isNotBlank()) { "bundle source_id must be non-empty" }
+    requireValidOversqliteSourceId(bundle.sourceId)
     require(bundle.sourceBundleId > 0) { "bundle source_bundle_id ${bundle.sourceBundleId} must be positive" }
     validateIndexedRows(bundle.rows, "bundle", ::validateBundleRow)
 }
@@ -75,27 +113,37 @@ internal fun validateBundleRow(row: BundleRow) {
 }
 
 internal fun validateSnapshotRow(row: SnapshotRow) {
-    require(row.schema.isNotBlank()) { "snapshot row schema must be non-empty" }
-    require(row.table.isNotBlank()) { "snapshot row table must be non-empty" }
-    validateVisibleWireKey(row.key, "snapshot row key")
-    require(row.rowVersion > 0) { "snapshot row row_version ${row.rowVersion} must be positive" }
-    require(row.payload !is JsonNull) { "snapshot row payload must be present" }
-    validateVisibleWirePayload(row.payload, "snapshot row payload")
+    try {
+        require(row.schema.isNotBlank())
+        require(row.table.isNotBlank())
+        validateVisibleWireKey(row.key, "snapshot row key")
+        require(row.rowVersion > 0)
+        require(row.payload !is JsonNull)
+        validateVisibleWirePayload(row.payload, "snapshot row payload")
+    } catch (error: IllegalArgumentException) {
+        if (error is SnapshotSemanticException) throw error
+        throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_ROW)
+    } catch (_: IllegalStateException) {
+        throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_ROW)
+    }
 }
 
 @OptIn(ExperimentalTime::class)
 internal fun validateSnapshotSession(session: SnapshotSession) {
-    require(session.snapshotId.isNotBlank()) { "snapshot session response missing snapshot_id" }
-    require(session.snapshotBundleSeq >= 0) {
-        "snapshot session snapshot_bundle_seq ${session.snapshotBundleSeq} must be non-negative"
+    try {
+        require(session.snapshotId.isNotBlank())
+        require(session.snapshotBundleSeq >= 0)
+        require(session.rowCount >= 0)
+        require(session.rowCount == 0L || session.snapshotBundleSeq > 0)
+        require(session.byteCount >= 0)
+        require(session.rowCount != 0L || session.byteCount == 0L)
+        require(session.rowCount == 0L || session.byteCount > 0L)
+        require(session.expiresAt.isNotBlank())
+        parseOversqliteRfc3339Instant(session.expiresAt)
+    } catch (error: IllegalArgumentException) {
+        if (error is SnapshotSemanticException) throw error
+        throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_SESSION)
     }
-    require(session.rowCount >= 0) { "snapshot session row_count ${session.rowCount} must be non-negative" }
-    require(session.rowCount == 0L || session.snapshotBundleSeq > 0) {
-        "snapshot session missing snapshot_bundle_seq for non-empty row set"
-    }
-    require(session.byteCount >= 0) { "snapshot session byte_count ${session.byteCount} must be non-negative" }
-    require(session.expiresAt.isNotBlank()) { "snapshot session response missing expires_at" }
-    parseOversqliteRfc3339Instant(session.expiresAt)
 }
 
 internal fun validateSnapshotChunkResponse(
@@ -103,35 +151,119 @@ internal fun validateSnapshotChunkResponse(
     snapshotId: String,
     snapshotBundleSeq: Long,
     afterRowOrdinal: Long,
+    maxRows: Int,
+    maxBytes: Long,
 ) {
-    require(chunk.snapshotId == snapshotId) {
-        "snapshot chunk response snapshot_id ${chunk.snapshotId} does not match requested $snapshotId"
+    try {
+        require(chunk.snapshotId == snapshotId)
+        require(chunk.snapshotBundleSeq == snapshotBundleSeq)
+        require(chunk.rows.isEmpty() || chunk.snapshotBundleSeq > 0)
+        require(chunk.rows.size <= maxRows)
+        require(chunk.byteCount in 0..maxBytes)
+        require(chunk.rows.isNotEmpty() || chunk.byteCount == 0L)
+        require(chunk.rows.isEmpty() || chunk.byteCount > 0L)
+        val expectedOrdinal = checkedAddSnapshotLong(afterRowOrdinal, chunk.rows.size.toLong()) {
+            "snapshot chunk next ordinal overflow"
+        }
+        require(chunk.nextRowOrdinal == expectedOrdinal)
+        require(!chunk.hasMore || chunk.rows.isNotEmpty())
+        chunk.rows.forEach(::validateSnapshotRow)
+    } catch (error: IllegalArgumentException) {
+        if (error is SnapshotSemanticException) throw error
+        throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK)
+    } catch (_: IllegalStateException) {
+        throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK)
     }
-    require(chunk.snapshotBundleSeq == snapshotBundleSeq) {
-        "snapshot chunk response snapshot_bundle_seq ${chunk.snapshotBundleSeq} does not match session $snapshotBundleSeq"
+}
+
+internal fun negotiateSnapshotLimits(
+    capabilities: CapabilitiesResponse,
+    config: OversqliteConfig,
+): SnapshotNegotiation {
+    capabilities.requireSupportedProtocol()
+    val limits = capabilities.bundleLimits
+    if (limits.defaultRowsPerSnapshotChunk <= 0 || limits.maxRowsPerSnapshotChunk <= 0) {
+        throw SnapshotCapabilitiesException(
+            "snapshot capabilities require positive default_rows_per_snapshot_chunk and max_rows_per_snapshot_chunk",
+        )
     }
-    require(chunk.rows.isEmpty() || chunk.snapshotBundleSeq > 0) {
-        "snapshot chunk response missing snapshot_bundle_seq for non-empty row set"
+    if (limits.defaultRowsPerSnapshotChunk > limits.maxRowsPerSnapshotChunk) {
+        throw SnapshotCapabilitiesException(
+            "snapshot capability default_rows_per_snapshot_chunk exceeds max_rows_per_snapshot_chunk",
+        )
     }
-    require(chunk.nextRowOrdinal == afterRowOrdinal + chunk.rows.size) {
-        "snapshot chunk response next_row_ordinal ${chunk.nextRowOrdinal} does not match expected ${afterRowOrdinal + chunk.rows.size}"
+    if (
+        limits.defaultBytesPerSnapshotChunk <= 0L ||
+        limits.maxBytesPerSnapshotChunk <= 0L ||
+        limits.maxBytesPerSnapshotRow <= 0L
+    ) {
+        throw SnapshotCapabilitiesException(
+            "snapshot capabilities require positive default/max chunk byte and max row byte limits",
+        )
     }
-    require(!chunk.hasMore || chunk.rows.isNotEmpty()) {
-        "snapshot chunk response with has_more=true must include at least one row"
+    if (limits.defaultBytesPerSnapshotChunk > limits.maxBytesPerSnapshotChunk) {
+        throw SnapshotCapabilitiesException(
+            "snapshot capability default_bytes_per_snapshot_chunk exceeds max_bytes_per_snapshot_chunk",
+        )
     }
-    validateIndexedRows(chunk.rows, "snapshot", ::validateSnapshotRow)
+    if (limits.maxBytesPerSnapshotRow > limits.maxBytesPerSnapshotChunk) {
+        throw SnapshotCapabilitiesException(
+            "snapshot capability max_bytes_per_snapshot_row exceeds max_bytes_per_snapshot_chunk",
+        )
+    }
+    if (limits.maxConcurrentSnapshotBuilds <= 0 || limits.maxConcurrentSnapshotChunkRequests <= 0) {
+        throw SnapshotCapabilitiesException(
+            "snapshot capabilities require positive max_concurrent_snapshot_builds and " +
+                "max_concurrent_snapshot_chunk_requests",
+        )
+    }
+    val effectiveRows = minOf(config.snapshotChunkRows, limits.maxRowsPerSnapshotChunk)
+    val effectiveBytes = minOf(config.snapshotChunkBytes, limits.maxBytesPerSnapshotChunk)
+    if (effectiveBytes < limits.maxBytesPerSnapshotRow) {
+        throw SnapshotCapabilitiesException(
+            "effective snapshot chunk byte budget is below server max_bytes_per_snapshot_row; " +
+                "increase snapshotChunkBytes",
+        )
+    }
+    if (config.snapshotApplyBatchBytes < limits.maxBytesPerSnapshotRow) {
+        throw SnapshotCapabilitiesException(
+            "snapshot apply byte budget is below server max_bytes_per_snapshot_row; " +
+                "increase snapshotApplyBatchBytes",
+        )
+    }
+    return SnapshotNegotiation(
+        maxRows = effectiveRows,
+        maxBytes = effectiveBytes,
+        maxRowBytes = limits.maxBytesPerSnapshotRow,
+    )
+}
+
+internal inline fun checkedAddSnapshotLong(
+    left: Long,
+    right: Long,
+    message: () -> String,
+): Long {
+    if (right > 0L && left > Long.MAX_VALUE - right) {
+        throw IllegalArgumentException(message())
+    }
+    if (right < 0L && left < Long.MIN_VALUE - right) {
+        throw IllegalArgumentException(message())
+    }
+    return left + right
 }
 
 internal fun validatePushSessionCreateResponse(
     response: PushSessionCreateResponse,
     sourceBundleId: Long,
     plannedRowCount: Long,
-	sourceId: String,
-	canonicalRequestHash: String,
+    sourceId: String,
+    canonicalRequestHash: String,
 ) {
+    val expectedSourceId = requireValidOversqliteSourceId(sourceId)
+    val responseSourceId = requireValidOptionalOversqliteSourceId(response.sourceId)
     when (response.status) {
         "staging" -> {
-            require(response.pushId.isNotBlank()) { "push session response missing push_id" }
+            requireValidOversqliteSessionToken(response.pushId)
             require(response.plannedRowCount == plannedRowCount) {
                 "push session response planned_row_count ${response.plannedRowCount} does not match requested $plannedRowCount"
             }
@@ -145,10 +277,11 @@ internal fun validatePushSessionCreateResponse(
             }
         }
 
-		"already_committed" -> {
+        "already_committed" -> {
             require(response.bundleSeq > 0) { "push session already_committed response missing bundle_seq" }
-            require(response.sourceId == sourceId) {
-                "push session already_committed response source_id ${response.sourceId} does not match client $sourceId"
+            requireValidOversqliteSourceId(responseSourceId)
+            require(responseSourceId == expectedSourceId) {
+                "push session already_committed response source_id does not match expected source"
             }
             require(response.sourceBundleId == sourceBundleId) {
                 "push session already_committed response source_bundle_id ${response.sourceBundleId} does not match requested $sourceBundleId"
@@ -156,17 +289,28 @@ internal fun validatePushSessionCreateResponse(
             require(response.rowCount >= 0) {
                 "push session already_committed response missing row_count"
             }
-			require(response.bundleHash.isNotBlank()) {
+            require(response.bundleHash.isNotBlank()) {
                 "push session already_committed response missing bundle_hash"
-			}
-			if (response.canonicalRequestHash != canonicalRequestHash) {
+            }
+            if (response.canonicalRequestHash != canonicalRequestHash) {
                 throw SourceSequenceMismatchException(
                     "push session already_committed response canonical_request_hash ${response.canonicalRequestHash} does not match prepared hash $canonicalRequestHash",
                 )
-			}
+            }
         }
 
         else -> error("push session response returned unsupported status ${response.status}")
+    }
+}
+
+internal fun validatePushSessionChunkResponse(
+    response: PushSessionChunkResponse,
+    requestedPushId: String,
+) {
+    val expected = requireValidOversqliteSessionToken(requestedPushId)
+    val actual = requireValidOversqliteSessionToken(response.pushId)
+    require(actual == expected) {
+        "push chunk response push_id does not match requested session"
     }
 }
 
@@ -175,13 +319,14 @@ internal fun committedPushBundleFromCreateResponse(
     sourceId: String,
     sourceBundleId: Long,
 ): CommittedPushBundle {
-	validatePushSessionCreateResponse(response, sourceBundleId, response.rowCount, sourceId, response.canonicalRequestHash)
+    validatePushSessionCreateResponse(response, sourceBundleId, response.rowCount, sourceId, response.canonicalRequestHash)
     require(response.status == "already_committed") {
         "unexpected push session status ${response.status}"
     }
+    val committedSourceId = requireValidOversqliteSourceId(response.sourceId)
     return CommittedPushBundle(
         bundleSeq = response.bundleSeq,
-        sourceId = response.sourceId,
+        sourceId = committedSourceId,
         sourceBundleId = response.sourceBundleId,
         rowCount = response.rowCount,
 		bundleHash = response.bundleHash,
@@ -194,9 +339,11 @@ internal fun committedPushBundleFromCommitResponse(
     sourceId: String,
     sourceBundleId: Long,
 ): CommittedPushBundle {
+    val expectedSourceId = requireValidOversqliteSourceId(sourceId)
+    val committedSourceId = requireValidOversqliteSourceId(response.sourceId)
     require(response.bundleSeq > 0) { "push commit response bundle_seq must be positive" }
-    require(response.sourceId == sourceId) {
-        "push commit response source_id ${response.sourceId} does not match client $sourceId"
+    require(committedSourceId == expectedSourceId) {
+        "push commit response source_id does not match expected source"
     }
     require(response.sourceBundleId == sourceBundleId) {
         "push commit response source_bundle_id ${response.sourceBundleId} does not match requested $sourceBundleId"
@@ -206,7 +353,7 @@ internal fun committedPushBundleFromCommitResponse(
 	require(isCanonicalSha256(response.canonicalRequestHash)) { "push commit response canonical_request_hash must be 64 lowercase hexadecimal characters" }
     return CommittedPushBundle(
         bundleSeq = response.bundleSeq,
-        sourceId = response.sourceId,
+        sourceId = committedSourceId,
         sourceBundleId = response.sourceBundleId,
         rowCount = response.rowCount,
 		bundleHash = response.bundleHash,
@@ -237,11 +384,13 @@ internal fun validateCommittedBundleRowsResponse(
     committed: CommittedPushBundle,
     afterRowOrdinal: Long?,
 ) {
+    val expectedSourceId = requireValidOversqliteSourceId(committed.sourceId)
+    val responseSourceId = requireValidOversqliteSourceId(response.sourceId)
     require(response.bundleSeq == committed.bundleSeq) {
         "committed bundle chunk response bundle_seq ${response.bundleSeq} does not match expected ${committed.bundleSeq}"
     }
-    require(response.sourceId == committed.sourceId) {
-        "committed bundle chunk response source_id ${response.sourceId} does not match expected ${committed.sourceId}"
+    require(responseSourceId == expectedSourceId) {
+        "committed bundle chunk response source_id does not match expected source"
     }
     require(response.sourceBundleId == committed.sourceBundleId) {
         "committed bundle chunk response source_bundle_id ${response.sourceBundleId} does not match expected ${committed.sourceBundleId}"
@@ -290,8 +439,8 @@ private inline fun <T> validateIndexedRows(
 private fun parseOversqliteRfc3339Instant(value: String): Instant {
     return try {
         Instant.parse(value)
-    } catch (e: Exception) {
-        throw IllegalArgumentException("oversqlite timestamp must be RFC3339/ISO-8601 instant: '$value'", e)
+    } catch (_: Exception) {
+        throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_SESSION)
     }
 }
 

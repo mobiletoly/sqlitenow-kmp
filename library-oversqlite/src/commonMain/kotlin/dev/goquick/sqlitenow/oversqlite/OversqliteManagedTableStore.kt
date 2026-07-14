@@ -20,26 +20,29 @@ import dev.goquick.sqlitenow.core.sqlite.use
 
 internal class OversqliteManagedTableStore(
     private val db: SafeSQLiteConnection,
+    private val reusableStatementCleanup: ReusableStatementCleanup = DefaultReusableStatementCleanup,
 ) {
     suspend fun registerManagedTables(validated: ValidatedConfig) {
-        val statementCache = StatementCache(db)
-        try {
-            for (table in validated.tables) {
-                db.withPreparedStatement(
-                    sql = """
-                        INSERT INTO _sync_managed_tables(schema_name, table_name)
-                        VALUES(?, ?)
-                        ON CONFLICT(schema_name, table_name) DO NOTHING
-                    """.trimIndent(),
-                    statementCache = statementCache,
-                ) { st ->
-                    st.bindText(1, validated.schema)
-                    st.bindText(2, table.tableName)
-                    st.step()
+        db.withExclusiveAccess {
+            db.prepare(
+                """
+                INSERT INTO _sync_managed_tables(schema_name, table_name)
+                VALUES(?, ?)
+                ON CONFLICT(schema_name, table_name) DO NOTHING
+                """.trimIndent(),
+            ).use { statement ->
+                var used = false
+                for (table in validated.tables) {
+                    if (used) {
+                        reusableStatementCleanup(statement)
+                    } else {
+                        used = true
+                    }
+                    statement.bindText(1, validated.schema)
+                    statement.bindText(2, table.tableName)
+                    statement.step()
                 }
             }
-        } finally {
-            statementCache.close()
         }
     }
 

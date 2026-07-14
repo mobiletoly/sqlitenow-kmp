@@ -2,7 +2,7 @@
   "contract": "Oversqlite uniform numeric-string wire contract",
   "contract_id": "jcs_uniform_numeric_strings_v1",
   "fixture_schema_version": 1,
-  "required_protocol_version": "v0",
+  "required_protocol_version": "v1",
   "integer_cases": [
     {
       "name": "int64_min",
@@ -210,9 +210,9 @@
     }
   },
   "protocol": {
-    "capabilities": {"protocol_version": "v0"},
+    "capabilities": {"protocol_version": "v1"},
     "updated_client_rejections": [
-      {"name": "reject_non_v0", "actual": "v1", "category": "protocol_version_mismatch", "timing": "before_connect_or_outbox_freeze"},
+      {"name": "reject_v0", "actual": "v0", "category": "protocol_version_mismatch", "timing": "before_connect_or_outbox_freeze"},
       {"name": "reject_empty_version", "actual": "", "category": "protocol_version_mismatch", "timing": "before_connect_or_outbox_freeze"},
       {"name": "reject_unknown_version", "actual": "v-next", "category": "protocol_version_mismatch", "timing": "before_connect_or_outbox_freeze"}
     ],
@@ -222,7 +222,7 @@
       "preserve_frozen_outbox": false
     },
     "incompatible_development_build": {
-      "same_v0_may_be_incompatible": true,
+      "same_v1_may_be_incompatible": true,
       "deployment": "deploy_together_with_recreated_client_and_server_databases",
       "mixed_versions": "unsupported"
     }

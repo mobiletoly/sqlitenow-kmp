@@ -1,0 +1,22 @@
+{
+  "contract": "snapshot-capacity-retry-v1",
+  "defaults": {
+    "enabled": true,
+    "max_wait_millis": 30000,
+    "fallback_delay_millis": 1000,
+    "positive_jitter_ratio": 1.0
+  },
+  "retry_after_cases": [
+    { "wire": "1", "expected_millis": 1000 },
+    { "wire": "30", "expected_millis": 30000 },
+    { "wire": "", "expected_millis": null },
+    { "wire": "0", "expected_millis": null },
+    { "wire": "-1", "expected_millis": null },
+    { "wire": "1.5", "expected_millis": null },
+    { "wire": "Wed, 21 Oct 2015 07:28:00 GMT", "expected_millis": null }
+  ],
+  "capacity_error_codes": [
+    "snapshot_build_capacity",
+    "snapshot_chunk_capacity"
+  ]
+}

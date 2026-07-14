@@ -18,16 +18,36 @@ package dev.goquick.sqlitenow.oversqlite
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
 import dev.goquick.sqlitenow.core.sqlite.use
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 internal suspend inline fun <T> SafeSQLiteConnection.withPreparedStatement(
     sql: String,
     statementCache: StatementCache? = null,
+    crossinline closeStatement: (SqliteStatement) -> Unit = { it.close() },
     crossinline block: suspend (SqliteStatement) -> T,
 ): T {
     return withExclusiveAccess {
         val cached = statementCache?.get(sql)
         if (cached != null) {
-            return@withExclusiveAccess block(cached)
+            var failure: Throwable? = null
+            try {
+                return@withExclusiveAccess block(cached)
+            } catch (t: Throwable) {
+                failure = t
+                throw t
+            } finally {
+                try {
+                    withContext(NonCancellable) {
+                        statementCache.release(cached)
+                    }
+                } catch (releaseError: Throwable) {
+                    if (failure == null) {
+                        throw releaseError
+                    }
+                    attachSuppressedOnce(failure, releaseError)
+                }
+            }
         }
 
         val statement = prepare(sql)
@@ -39,11 +59,14 @@ internal suspend inline fun <T> SafeSQLiteConnection.withPreparedStatement(
             throw t
         } finally {
             try {
-                statement.close()
+                withContext(NonCancellable) {
+                    closeStatement(statement)
+                }
             } catch (closeError: Throwable) {
                 if (failure == null) {
                     throw closeError
                 }
+                attachSuppressedOnce(failure, closeError)
             }
         }
     }

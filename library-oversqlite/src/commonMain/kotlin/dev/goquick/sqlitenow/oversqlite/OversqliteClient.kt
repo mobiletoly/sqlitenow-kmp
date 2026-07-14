@@ -220,7 +220,12 @@ enum class AuthorityStatus {
     AUTHORITATIVE_MATERIALIZED,
 }
 
-/** Summary of a snapshot-based restore applied locally. */
+/**
+ * Summary of a snapshot-based restore applied locally.
+ *
+ * Bounded-memory counters and page high-water measurements are internal diagnostics; the public
+ * restore contract intentionally contains only the applied bundle sequence and row count.
+ */
 data class RestoreSummary(
     val bundleSeq: Long,
     val rowCount: Long,

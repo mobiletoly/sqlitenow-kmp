@@ -47,6 +47,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -122,6 +124,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -192,6 +196,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -265,6 +271,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -367,6 +375,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -451,6 +461,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -526,6 +538,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -596,6 +610,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -669,6 +685,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -772,6 +790,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -859,6 +879,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -934,6 +956,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -1004,6 +1028,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -1077,6 +1103,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -1174,6 +1202,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -1299,6 +1329,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -1374,6 +1406,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -1444,6 +1478,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -1518,6 +1554,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "checkpoint_ahead",
                   "replacement_source_id": ""
                 }
@@ -1588,6 +1626,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "checkpoint_ahead",
                   "replacement_source_id": ""
                 }
@@ -1664,6 +1704,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "checkpoint_ahead",
                   "replacement_source_id": ""
                 }
@@ -1738,6 +1780,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "checkpoint_ahead",
                   "replacement_source_id": ""
                 }
@@ -1811,6 +1855,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -1897,6 +1943,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -2032,6 +2080,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -2107,6 +2157,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -2178,6 +2230,8 @@
                   "staged_snapshot_id": "snapshot-a",
                   "snapshot_bundle_seq": 9,
                   "snapshot_row_count": 2,
+                  "snapshot_byte_count": 313,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -2258,6 +2312,8 @@
                   "staged_snapshot_id": "snapshot-a",
                   "snapshot_bundle_seq": 9,
                   "snapshot_row_count": 2,
+                  "snapshot_byte_count": 313,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -2345,6 +2401,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -2430,6 +2488,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -2505,6 +2565,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -2579,6 +2641,8 @@
                   "staged_snapshot_id": "snapshot-1",
                   "snapshot_bundle_seq": 1,
                   "snapshot_row_count": 1,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -2663,6 +2727,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -2739,6 +2805,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -2814,6 +2882,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -2884,6 +2954,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -2957,6 +3029,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -3030,6 +3104,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -3101,6 +3177,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -3174,6 +3252,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -3244,6 +3324,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -3318,6 +3400,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -3398,6 +3482,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }

@@ -34,7 +34,7 @@
         "snapshot_id": "snapshot-adoption-1",
         "snapshot_bundle_seq": 1,
         "row_count": 1,
-        "byte_count": 0,
+        "byte_count": 130,
         "expires_at": "2099-01-01T00:00:00Z"
       },
       "snapshotChunkResponse": {
@@ -55,6 +55,7 @@
           }
         ],
         "next_row_ordinal": 1,
+        "byte_count": 130,
         "has_more": false
       },
       "expectedFinalState": {
@@ -131,7 +132,7 @@
         "snapshot_id": "snapshot-1",
         "snapshot_bundle_seq": 7,
         "row_count": 1,
-        "byte_count": 0,
+        "byte_count": 115,
         "expires_at": "2099-01-01T00:00:00Z"
       },
       "snapshotChunkResponse": {
@@ -152,6 +153,7 @@
           }
         ],
         "next_row_ordinal": 1,
+        "byte_count": 115,
         "has_more": false
       },
       "expectedFinalState": {
@@ -175,7 +177,7 @@
         "snapshot_id": "snapshot-ahead",
         "snapshot_bundle_seq": 7,
         "row_count": 1,
-        "byte_count": 0,
+        "byte_count": 116,
         "expires_at": "2099-01-01T00:00:00Z"
       },
       "snapshotChunkResponse": {
@@ -196,6 +198,7 @@
           }
         ],
         "next_row_ordinal": 1,
+        "byte_count": 116,
         "has_more": false
       },
       "expectedFinalState": {
@@ -227,6 +230,7 @@
         "snapshot_bundle_seq": 9,
         "rows": [],
         "next_row_ordinal": 0,
+        "byte_count": 0,
         "has_more": false
       },
       "expectedFinalState": {
@@ -331,10 +335,11 @@
         "snapshot_id": "snapshot-invalid-expiry",
         "snapshot_bundle_seq": 9,
         "row_count": 0,
-        "byte_count": 32,
+        "byte_count": 0,
         "expires_at": "not-a-timestamp"
       },
-      "expectedSnapshotSessionErrorContains": "RFC3339/ISO-8601 instant"
+      "expectedSnapshotSessionErrorContains": "RFC3339/ISO-8601 instant",
+      "expectedKmpSnapshotSessionErrorContains": "invalid_session"
     },
     {
       "name": "snapshot-rejects-negative-row-count",
@@ -345,7 +350,8 @@
         "byte_count": 32,
         "expires_at": "2099-01-01T00:00:00Z"
       },
-      "expectedSnapshotSessionErrorContains": "row_count -1 must be non-negative"
+      "expectedSnapshotSessionErrorContains": "row_count -1 must be non-negative",
+      "expectedKmpSnapshotSessionErrorContains": "invalid_session"
     },
     {
       "name": "snapshot-rejects-non-empty-session-without-bundle-seq",
@@ -356,7 +362,8 @@
         "byte_count": 32,
         "expires_at": "2099-01-01T00:00:00Z"
       },
-      "expectedSnapshotSessionErrorContains": "missing snapshot_bundle_seq for non-empty row set"
+      "expectedSnapshotSessionErrorContains": "missing snapshot_bundle_seq for non-empty row set",
+      "expectedKmpSnapshotSessionErrorContains": "invalid_session"
     },
     {
       "name": "snapshot-rejects-hidden-scope-payload",
@@ -364,7 +371,7 @@
         "snapshot_id": "snapshot-hidden-scope",
         "snapshot_bundle_seq": 9,
         "row_count": 1,
-        "byte_count": 32,
+        "byte_count": 136,
         "expires_at": "2099-01-01T00:00:00Z"
       },
       "snapshotChunkResponse": {
@@ -386,9 +393,11 @@
           }
         ],
         "next_row_ordinal": 1,
+        "byte_count": 136,
         "has_more": false
       },
-      "expectedSnapshotChunkErrorContains": "_sync_scope_id"
+      "expectedSnapshotChunkErrorContains": "_sync_scope_id",
+      "expectedKmpSnapshotChunkErrorContains": "invalid_row"
     },
     {
       "name": "snapshot-rejects-has-more-with-empty-rows",
@@ -404,9 +413,11 @@
         "snapshot_bundle_seq": 9,
         "rows": [],
         "next_row_ordinal": 0,
+        "byte_count": 0,
         "has_more": true
       },
-      "expectedSnapshotChunkErrorContains": "has_more=true must include at least one row"
+      "expectedSnapshotChunkErrorContains": "has_more=true must include at least one row",
+      "expectedKmpSnapshotChunkErrorContains": "invalid_chunk"
     },
     {
       "name": "snapshot-rejects-next-row-ordinal-mismatch",
@@ -414,7 +425,7 @@
         "snapshot_id": "snapshot-bad-next-row",
         "snapshot_bundle_seq": 9,
         "row_count": 1,
-        "byte_count": 32,
+        "byte_count": 110,
         "expires_at": "2099-01-01T00:00:00Z"
       },
       "snapshotChunkResponse": {
@@ -435,9 +446,11 @@
           }
         ],
         "next_row_ordinal": 2,
+        "byte_count": 110,
         "has_more": false
       },
-      "expectedSnapshotChunkErrorContains": "next_row_ordinal 2 does not match expected 1"
+      "expectedSnapshotChunkErrorContains": "next_row_ordinal 2 does not match expected 1",
+      "expectedKmpSnapshotChunkErrorContains": "invalid_chunk"
     },
     {
       "name": "snapshot-rejects-non-empty-chunk-without-bundle-seq",
@@ -445,7 +458,7 @@
         "snapshot_id": "snapshot-chunk-missing-bundle-seq",
         "snapshot_bundle_seq": 0,
         "row_count": 0,
-        "byte_count": 32,
+        "byte_count": 0,
         "expires_at": "2099-01-01T00:00:00Z"
       },
       "snapshotChunkResponse": {
@@ -466,9 +479,11 @@
           }
         ],
         "next_row_ordinal": 1,
+        "byte_count": 110,
         "has_more": false
       },
-      "expectedSnapshotChunkErrorContains": "missing snapshot_bundle_seq for non-empty row set"
+      "expectedSnapshotChunkErrorContains": "missing snapshot_bundle_seq for non-empty row set",
+      "expectedKmpSnapshotChunkErrorContains": "invalid_chunk"
     },
     {
       "name": "source-replacement-invalid",

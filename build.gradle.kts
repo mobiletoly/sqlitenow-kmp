@@ -2,6 +2,8 @@ import org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsEnvSpec
 import org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsRootPlugin
 import groovy.json.JsonSlurper
 import java.io.File
+import java.security.MessageDigest
+import org.gradle.api.GradleException
 import org.gradle.api.tasks.Exec
 
 plugins {
@@ -36,14 +38,93 @@ fun registerOversqliteExecTask(
     description: String,
     env: Map<String, String> = emptyMap(),
     arguments: List<String>,
+    alwaysRun: Boolean = false,
 ) {
     tasks.register<Exec>(name) {
         group = "verification"
         this.description = description
         workingDir = rootDir
         executable = rootProject.file("gradlew").absolutePath
-        args(arguments + "--no-daemon")
+        args(arguments + "--no-daemon" + if (alwaysRun) listOf("--rerun-tasks") else emptyList())
         environment(env)
+    }
+}
+
+fun sha256(file: File): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    file.inputStream().use { input ->
+        val buffer = ByteArray(64 * 1024)
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            digest.update(buffer, 0, count)
+        }
+    }
+    return digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+}
+
+tasks.register<Exec>("oversqliteCrossRepoConformance") {
+    group = "verification"
+    description = "Runs the fail-closed Oversqlite conformance checks against Go-owned Swagger."
+    workingDir = rootDir
+
+    doFirst {
+        val propertyPath = providers.gradleProperty("goOversyncRepo").orNull
+        val environmentPath = providers.environmentVariable("GO_OVERSYNC_REPO").orNull
+        val (resolution, configuredPath) = when {
+            propertyPath != null -> "property" to propertyPath
+            environmentPath != null -> "environment" to environmentPath
+            else -> "sibling" to File(rootDir.parentFile, "go-oversync").path
+        }
+        val goRoot = File(configuredPath).absoluteFile.normalize()
+        val goMod = File(goRoot, "go.mod")
+        val swagger = File(goRoot, "swagger/two_way_sync.yaml")
+        if (!goRoot.isDirectory || !goMod.isFile || !swagger.isFile) {
+            throw GradleException(
+                "oversqliteCrossRepoConformance requires a complete go-oversync checkout containing " +
+                    "go.mod and swagger/two_way_sync.yaml; set -PgoOversyncRepo, GO_OVERSYNC_REPO, " +
+                    "or check out ../go-oversync",
+            )
+        }
+
+        logger.lifecycle("go_oversync_resolution=$resolution")
+        logger.lifecycle("go_oversync_root=${goRoot.canonicalPath}")
+        logger.lifecycle("go_mod_sha256=${sha256(goMod)}")
+        logger.lifecycle("swagger_sha256=${sha256(swagger)}")
+        logger.lifecycle("go_owned_fixture_inputs=none")
+
+        executable = rootProject.file("gradlew").absolutePath
+        args(
+            ":library-oversqlite:oversqliteCrossRepoConformanceJvm",
+            "--no-daemon",
+            "--console=plain",
+            "--rerun-tasks",
+        )
+        environment("GO_OVERSYNC_REPO", goRoot.canonicalPath)
+    }
+}
+
+val localOnlyOversqliteHeavyRealserverTaskPaths =
+    setOf(
+        ":oversqliteRealserverJvmHeavy",
+        ":oversqliteRealserverAllHeavy",
+        ":oversqliteRealserverAndroidHeavy",
+        ":oversqliteRealserverJvmHarnessHeavy",
+        ":oversqliteRealserverIosSimulatorArm64Heavy",
+        ":oversqliteRealserverMacosArm64Heavy",
+        ":oversqliteRealserverJsNodeHeavy",
+        ":oversqliteRealserverWasmBrowserHeavy",
+        ":library-oversqlite:jvmRealServerSharedConnectionStress",
+        ":library-oversqlite:jvmRealServerSharedStress",
+    )
+
+gradle.taskGraph.whenReady {
+    if (System.getenv("GITHUB_ACTIONS") != "true") return@whenReady
+    val requestedHeavyTask = allTasks.firstOrNull { it.path in localOnlyOversqliteHeavyRealserverTaskPaths }
+    if (requestedHeavyTask != null) {
+        throw GradleException(
+            "${requestedHeavyTask.path} is a local-only heavy realserver task and must not run with GITHUB_ACTIONS=true",
+        )
     }
 }
 
@@ -982,6 +1063,7 @@ val androidRealserverBaseUrl =
 registerOversqliteExecTask(
     name = "oversqliteRealserverAndroid",
     description = "Runs the Android oversqlite realserver suite.",
+    alwaysRun = true,
     arguments =
         listOf(
             ":platform-oversqlite-test:composeApp:connectedAndroidDeviceTest",
@@ -993,6 +1075,7 @@ registerOversqliteExecTask(
 registerOversqliteExecTask(
     name = "oversqliteRealserverAndroidHeavy",
     description = "Runs the Android oversqlite realserver suite in heavy mode.",
+    alwaysRun = true,
     arguments =
         listOf(
             ":platform-oversqlite-test:composeApp:connectedAndroidDeviceTest",
@@ -1005,6 +1088,7 @@ registerOversqliteExecTask(
 registerOversqliteExecTask(
     name = "oversqliteRealserverJvmHarness",
     description = "Runs the JVM oversqlite realserver harness suite.",
+    alwaysRun = true,
     env =
         mapOf(
             "OVERSQLITE_REALSERVER_TESTS" to "true",
@@ -1016,6 +1100,7 @@ registerOversqliteExecTask(
 registerOversqliteExecTask(
     name = "oversqliteRealserverJvmHarnessHeavy",
     description = "Runs the JVM oversqlite realserver harness suite in heavy mode.",
+    alwaysRun = true,
     env =
         mapOf(
             "OVERSQLITE_REALSERVER_TESTS" to "true",
@@ -1028,6 +1113,7 @@ registerOversqliteExecTask(
 registerOversqliteExecTask(
     name = "oversqliteRealserverIosSimulatorArm64",
     description = "Runs the iOS simulator oversqlite realserver suite.",
+    alwaysRun = true,
     env =
         mapOf(
             "SIMCTL_CHILD_OVERSQLITE_REALSERVER_TESTS" to "true",
@@ -1039,6 +1125,7 @@ registerOversqliteExecTask(
 registerOversqliteExecTask(
     name = "oversqliteRealserverIosSimulatorArm64Heavy",
     description = "Runs the iOS simulator oversqlite realserver suite in heavy mode.",
+    alwaysRun = true,
     env =
         mapOf(
             "SIMCTL_CHILD_OVERSQLITE_REALSERVER_TESTS" to "true",
@@ -1051,6 +1138,7 @@ registerOversqliteExecTask(
 registerOversqliteExecTask(
     name = "oversqliteRealserverMacosArm64",
     description = "Runs the macOS oversqlite realserver suite.",
+    alwaysRun = true,
     env =
         mapOf(
             "OVERSQLITE_REALSERVER_TESTS" to "true",
@@ -1062,6 +1150,7 @@ registerOversqliteExecTask(
 registerOversqliteExecTask(
     name = "oversqliteRealserverMacosArm64Heavy",
     description = "Runs the macOS oversqlite realserver suite in heavy mode.",
+    alwaysRun = true,
     env =
         mapOf(
             "OVERSQLITE_REALSERVER_TESTS" to "true",
@@ -1074,6 +1163,7 @@ registerOversqliteExecTask(
 registerOversqliteExecTask(
     name = "oversqliteRealserverJsNode",
     description = "Runs the JS Node oversqlite realserver suite.",
+    alwaysRun = true,
     env =
         mapOf(
             "OVERSQLITE_REALSERVER_TESTS" to "true",
@@ -1085,6 +1175,7 @@ registerOversqliteExecTask(
 registerOversqliteExecTask(
     name = "oversqliteRealserverJsNodeHeavy",
     description = "Runs the JS Node oversqlite realserver suite in heavy mode.",
+    alwaysRun = true,
     env =
         mapOf(
             "OVERSQLITE_REALSERVER_TESTS" to "true",
@@ -1097,6 +1188,7 @@ registerOversqliteExecTask(
 registerOversqliteExecTask(
     name = "oversqliteRealserverWasmBrowser",
     description = "Runs the Wasm browser oversqlite realserver suite.",
+    alwaysRun = true,
     env =
         mapOf(
             "OVERSQLITE_REALSERVER_TESTS" to "true",
@@ -1108,6 +1200,7 @@ registerOversqliteExecTask(
 registerOversqliteExecTask(
     name = "oversqliteRealserverWasmBrowserHeavy",
     description = "Runs the Wasm browser oversqlite realserver suite in heavy mode.",
+    alwaysRun = true,
     env =
         mapOf(
             "OVERSQLITE_REALSERVER_TESTS" to "true",

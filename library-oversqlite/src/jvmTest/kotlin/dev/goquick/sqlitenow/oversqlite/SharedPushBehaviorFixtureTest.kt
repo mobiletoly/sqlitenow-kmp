@@ -473,14 +473,11 @@ class SharedPushBehaviorFixtureTest : BundleClientContractTestSupport() {
                     error !is SourceSequenceMismatchException && error !is RebuildRequiredException,
                     "$caseName: expected protocol error, got ${error::class.simpleName}",
                 )
+                val category = (error as? OversqliteCategorizedException)?.category
                 assertTrue(
-                    error.message?.contains("bundle hash") == true ||
-                        error.message?.contains("bundle_hash") == true ||
-                        error.message?.contains("_sync_scope_id") == true ||
-                        error.message?.contains("KeepLocal is invalid") == true ||
-                        error.message?.contains("KeepMerged is invalid") == true ||
-                        error.message?.contains("must contain every table column") == true,
-                    "$caseName: expected protocol-style error, got ${error.message}",
+                    category in setOf(OversqliteErrorCategory.PROTOCOL, OversqliteErrorCategory.CONFLICT) ||
+                        (category == null && error is IllegalArgumentException),
+                    "$caseName: expected categorized protocol/conflict error, got ${error::class.simpleName}",
                 )
             }
             "http_error" -> {

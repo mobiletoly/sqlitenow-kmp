@@ -1,6 +1,7 @@
 @file:OptIn(org.jetbrains.kotlin.gradle.ExperimentalWasmDsl::class)
 
 import org.gradle.api.file.DuplicatesStrategy
+import org.gradle.api.tasks.JavaExec
 import org.gradle.api.tasks.testing.Test
 import org.gradle.language.jvm.tasks.ProcessResources
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
@@ -89,6 +90,7 @@ kotlin {
             api(libs.kermit)
             api(libs.ktor.client.core)
             api(libs.ktor.client.content.negotiation)
+            implementation("io.ktor:ktor-client-encoding:${libs.versions.ktor.get()}")
             api(libs.ktor.client.auth)
             api(libs.ktor.serialization.kotlinx.json)
         }
@@ -188,6 +190,12 @@ tasks.named<ProcessResources>("wasmJsProcessResources") {
 
 val jvmTest by tasks.existing(Test::class)
 
+jvmTest.configure {
+    filter {
+        excludeTestsMatching("dev.goquick.sqlitenow.oversqlite.GoSwaggerConformanceTest")
+    }
+}
+
 tasks.register<Test>("oversqliteComprehensiveJvm") {
     group = "verification"
     description = "Runs the host-side oversqlite comprehensive suite on the JVM target."
@@ -201,10 +209,135 @@ tasks.register<Test>("oversqliteComprehensiveJvm") {
     filter {
         includeTestsMatching("dev.goquick.sqlitenow.oversqlite.*")
         excludeTestsMatching("dev.goquick.sqlitenow.oversqlite.RealServer*")
+        excludeTestsMatching("dev.goquick.sqlitenow.oversqlite.GoSwaggerConformanceTest")
     }
 
     outputs.upToDateWhen { false }
     shouldRunAfter(jvmTest)
+}
+
+tasks.register<Test>("oversqliteCrossRepoConformanceJvm") {
+    group = "verification"
+    description = "Runs the named JVM consumer of Go-owned normative Swagger."
+
+    dependsOn(tasks.named("jvmTestClasses"))
+    testClassesDirs = jvmTest.get().testClassesDirs
+    classpath = jvmTest.get().classpath
+    useJUnit()
+    filter {
+        includeTestsMatching("dev.goquick.sqlitenow.oversqlite.GoSwaggerConformanceTest")
+        isFailOnNoMatchingTests = true
+    }
+    outputs.upToDateWhen { false }
+}
+
+data class SnapshotMemoryProfile(
+    val taskName: String,
+    val rows: Int,
+    val rowBytes: Int,
+    val runLabel: String,
+)
+
+tasks.register<Test>("oversqliteSnapshotMemorySamplerControl") {
+    group = "verification"
+    description = "Runs the local-only five-second snapshot sampler control in a fresh JVM."
+    dependsOn(tasks.named("jvmTestClasses"))
+    testClassesDirs = jvmTest.get().testClassesDirs
+    classpath = jvmTest.get().classpath
+    useJUnit()
+    filter {
+        includeTestsMatching(
+            "dev.goquick.sqlitenow.oversqlite.SnapshotMemoryBaselineTest.snapshotMemorySamplerOnlyControl",
+        )
+    }
+    environment("OVERSQLITE_MEMORY_SAMPLER_CONTROL", "true")
+    testLogging.showStandardStreams = true
+    outputs.upToDateWhen { false }
+}
+
+val snapshotMemoryProfiles = listOf(
+    SnapshotMemoryProfile("oversqliteSnapshotMemory10k256", 10_000, 256, "representative-10k-256"),
+    SnapshotMemoryProfile("oversqliteSnapshotMemory10k1k", 10_000, 1024, "representative-10k-1k"),
+    SnapshotMemoryProfile("oversqliteSnapshotMemory100k256Warmup", 100_000, 256, "warmup-100k-256"),
+    SnapshotMemoryProfile("oversqliteSnapshotMemory100k256Run1", 100_000, 256, "measured-100k-256-1"),
+    SnapshotMemoryProfile("oversqliteSnapshotMemory100k256Run2", 100_000, 256, "measured-100k-256-2"),
+    SnapshotMemoryProfile("oversqliteSnapshotMemory100k256Run3", 100_000, 256, "measured-100k-256-3"),
+    SnapshotMemoryProfile("oversqliteSnapshotMemory100k1k", 100_000, 1024, "measured-100k-1k"),
+    SnapshotMemoryProfile("oversqliteSnapshotMemory1m256", 1_000_000, 256, "measured-1m-256"),
+)
+val snapshotMemoryResultDirectory = layout.buildDirectory.dir("snapshot-memory-results")
+
+var previousSnapshotMemoryTask: String? = null
+snapshotMemoryProfiles.forEach { profile ->
+    val predecessor = previousSnapshotMemoryTask
+    val resultFile = snapshotMemoryResultDirectory.map { it.file("${profile.runLabel}.properties") }
+    tasks.register<Test>(profile.taskName) {
+        group = "verification"
+        description = "Runs the local-heavy ${profile.runLabel} bounded snapshot profile in a fresh JVM."
+        maxHeapSize = "128m"
+        dependsOn(tasks.named("jvmTestClasses"))
+        testClassesDirs = jvmTest.get().testClassesDirs
+        classpath = jvmTest.get().classpath
+        useJUnit()
+        filter {
+            includeTestsMatching(
+                "dev.goquick.sqlitenow.oversqlite.SnapshotMemoryBaselineTest.snapshotMemoryBaseline",
+            )
+        }
+        environment("OVERSQLITE_MEMORY_BASELINE_ROWS", profile.rows.toString())
+        environment("OVERSQLITE_MEMORY_ROW_BYTES", profile.rowBytes.toString())
+        environment("OVERSQLITE_MEMORY_RUN_LABEL", profile.runLabel)
+        environment("OVERSQLITE_MEMORY_RESULT_FILE", resultFile.get().asFile.absolutePath)
+        environment("OVERSQLITE_MEMORY_SERVER_CLASSPATH", jvmTest.get().classpath.asPath)
+        doFirst {
+            resultFile.get().asFile.delete()
+        }
+        outputs.file(resultFile)
+        testLogging.showStandardStreams = true
+        outputs.upToDateWhen { false }
+        predecessor?.let { mustRunAfter(tasks.named(it)) }
+    }
+    previousSnapshotMemoryTask = profile.taskName
+}
+
+val verifySnapshotMemoryResults = tasks.register<JavaExec>("verifyOversqliteSnapshotMemoryResults") {
+    group = "verification"
+    description = "Verifies completeness, the one-million-row ceiling, and snapshot-memory scaling gates."
+    dependsOn(tasks.named("jvmTestClasses"))
+    snapshotMemoryProfiles.forEach { profile ->
+        mustRunAfter(tasks.named(profile.taskName))
+    }
+    classpath = jvmTest.get().classpath
+    mainClass.set("dev.goquick.sqlitenow.oversqlite.SnapshotMemoryResultVerifier")
+    args(snapshotMemoryResultDirectory.get().asFile.absolutePath)
+    outputs.upToDateWhen { false }
+}
+
+tasks.register("oversqliteSnapshotMemoryJvmLocalHeavy") {
+    group = "verification"
+    description = "Runs all required local-heavy Phase 3 KMP JVM memory profiles; never run in GitHub Actions."
+    dependsOn(snapshotMemoryProfiles.map { tasks.named(it.taskName) })
+    dependsOn(verifySnapshotMemoryResults)
+}
+
+val localOnlySnapshotMemoryTaskPaths =
+    (snapshotMemoryProfiles.map { it.taskName } +
+        listOf(
+            "oversqliteSnapshotMemorySamplerControl",
+            "verifyOversqliteSnapshotMemoryResults",
+            "oversqliteSnapshotMemoryJvmLocalHeavy",
+        ))
+        .map { ":library-oversqlite:$it" }
+        .toSet()
+
+gradle.taskGraph.whenReady {
+    if (System.getenv("GITHUB_ACTIONS") != "true") return@whenReady
+    val requestedMemoryTask = allTasks.firstOrNull { it.path in localOnlySnapshotMemoryTaskPaths }
+    if (requestedMemoryTask != null) {
+        throw GradleException(
+            "${requestedMemoryTask.path} is a local-only snapshot-memory task and must not run with GITHUB_ACTIONS=true",
+        )
+    }
 }
 
 tasks.register<Test>("oversqliteRealserverJvm") {

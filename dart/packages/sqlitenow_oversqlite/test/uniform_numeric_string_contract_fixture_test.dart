@@ -33,7 +33,7 @@ void main() {
     });
     expect(fixture['contract_id'], 'jcs_uniform_numeric_strings_v1');
     expect(fixture['fixture_schema_version'], 1);
-    expect(fixture['required_protocol_version'], 'v0');
+    expect(fixture['required_protocol_version'], 'v1');
 
     _expectValueCases(fixture, 'integer_cases', {
       'int64_min',
@@ -218,15 +218,15 @@ void _expectCanonicalExamples(Map<String, Object?> fixture) {
 
 void _expectProtocol(Map<String, Object?> fixture) {
   final protocol = _object(fixture['protocol']);
-  expect(_object(protocol['capabilities'])['protocol_version'], 'v0');
+  expect(_object(protocol['capabilities'])['protocol_version'], 'v1');
   final rejections = _objects(protocol['updated_client_rejections']);
   expect(_names(rejections), {
-    'reject_non_v0',
+    'reject_v0',
     'reject_empty_version',
     'reject_unknown_version',
   });
   expect(rejections.map((item) => item['actual']).toSet(), {
-    'v1',
+    'v0',
     '',
     'v-next',
   });
@@ -240,7 +240,7 @@ void _expectProtocol(Map<String, Object?> fixture) {
   expect(reset['server_database'], 'recreate_including_business_data');
   expect(reset['preserve_frozen_outbox'], isFalse);
   final incompatible = _object(protocol['incompatible_development_build']);
-  expect(incompatible['same_v0_may_be_incompatible'], isTrue);
+  expect(incompatible['same_v1_may_be_incompatible'], isTrue);
   expect(incompatible['mixed_versions'], 'unsupported');
 }
 

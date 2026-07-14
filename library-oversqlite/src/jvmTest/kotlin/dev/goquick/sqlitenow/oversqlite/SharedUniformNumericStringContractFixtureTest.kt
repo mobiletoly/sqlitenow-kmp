@@ -43,7 +43,7 @@ class SharedUniformNumericStringContractFixtureTest {
         )
         assertEquals("jcs_uniform_numeric_strings_v1", fixture.string("contract_id"))
         assertEquals(1, fixture.getValue("fixture_schema_version").jsonPrimitive.int)
-        assertEquals("v0", fixture.string("required_protocol_version"))
+        assertEquals("v1", fixture.string("required_protocol_version"))
 
         assertValueCases(
             section = "integer_cases",
@@ -204,10 +204,10 @@ class SharedUniformNumericStringContractFixtureTest {
 
     private fun assertProtocolAndResetExpectations() {
         val protocol = fixture.getValue("protocol").jsonObject
-        assertEquals("v0", protocol.getValue("capabilities").jsonObject.string("protocol_version"))
+        assertEquals("v1", protocol.getValue("capabilities").jsonObject.string("protocol_version"))
         val rejections = protocol.getValue("updated_client_rejections").jsonArray.objects()
-        assertEquals(setOf("reject_non_v0", "reject_empty_version", "reject_unknown_version"), rejections.names())
-        assertEquals(setOf("v1", "", "v-next"), rejections.map { it.string("actual") }.toSet())
+        assertEquals(setOf("reject_v0", "reject_empty_version", "reject_unknown_version"), rejections.names())
+        assertEquals(setOf("v0", "", "v-next"), rejections.map { it.string("actual") }.toSet())
         rejections.forEach { case ->
             assertEquals("protocol_version_mismatch", case.string("category"))
             assertEquals("before_connect_or_outbox_freeze", case.string("timing"))
@@ -218,7 +218,7 @@ class SharedUniformNumericStringContractFixtureTest {
         assertEquals("recreate_including_business_data", reset.string("server_database"))
         assertFalse(reset.getValue("preserve_frozen_outbox").jsonPrimitive.boolean)
         val incompatible = protocol.getValue("incompatible_development_build").jsonObject
-        assertTrue(incompatible.getValue("same_v0_may_be_incompatible").jsonPrimitive.boolean)
+        assertTrue(incompatible.getValue("same_v1_may_be_incompatible").jsonPrimitive.boolean)
         assertEquals("unsupported", incompatible.string("mixed_versions"))
     }
 

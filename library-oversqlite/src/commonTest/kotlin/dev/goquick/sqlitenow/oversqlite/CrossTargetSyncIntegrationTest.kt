@@ -932,7 +932,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             val error = assertFailsWith<SourceReplacementInvalidException> {
                 client.rebuild().getOrThrow()
             }
-            assertContains(error.message.orEmpty(), "replacement source conflicts")
+            assertContains(error.message.orEmpty(), "server rejected the source replacement request")
             assertEquals(
                 listOf("local-rotated-device"),
                 server.requestedSnapshotSourceReplacements.map { it.newSourceId },
@@ -969,8 +969,9 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             val error = assertFailsWith<SourceReplacementDivergedException> {
                 client.rebuild().getOrThrow()
             }
-            assertEquals("local-rotated-device", error.localReplacementSourceId)
-            assertEquals("server-rotated-device", error.remoteReplacementSourceId)
+            assertContains(error.message.orEmpty(), "replacement source diverged")
+            assertTrue("local-rotated-device" !in error.toString())
+            assertTrue("server-rotated-device" !in error.toString())
             assertEquals(sourceBefore, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
             assertEquals("local-rotated-device", scalarText(db, "SELECT replacement_source_id FROM _sync_operation_state"))
         } finally {

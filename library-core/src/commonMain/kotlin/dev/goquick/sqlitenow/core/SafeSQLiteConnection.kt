@@ -19,11 +19,15 @@ import dev.goquick.sqlitenow.common.sqliteNowLogger
 import dev.goquick.sqlitenow.core.sqlite.SqliteConnection
 import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
 import kotlin.coroutines.AbstractCoroutineContextElement
-import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.sync.Mutex
+import kotlin.coroutines.ContinuationInterceptor
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.coroutineContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.withContext
 
 /**
  * A thread-safe wrapper around SQLiteConnection that ensures that only one coroutine
@@ -41,8 +45,14 @@ class SafeSQLiteConnection internal constructor(
 ) {
     val dispatcher: CoroutineDispatcher = executionContext.dispatcher
     private var activeTransactionDepth: Int = 0
+    private var activeTransactionToken: Any? = null
     private var tableInvalidationListener: ((Set<String>) -> Unit)? = null
     private val connectionMutex = Mutex()
+    @kotlin.concurrent.Volatile
+    private var state = ConnectionState.OPEN
+    private var fatalFailure: Throwable? = null
+    private val liveStatements = mutableListOf<LiveStatement>()
+    internal var beforeTransactionRollbackForTest: (() -> Unit)? = null
 
     internal val restoredFromSnapshot: Boolean
         get() = persistenceController.restoredFromSnapshot
@@ -54,7 +64,16 @@ class SafeSQLiteConnection internal constructor(
         val captured = hook?.capture()
         val currentOwner = coroutineContext[ConnectionOwnerContext]
         val alreadyOwnsConnection = currentOwner?.connection === this
+        val alreadyOnDispatcher = coroutineContext[ContinuationInterceptor] === dispatcher
         val ownerToken = currentOwner?.token ?: Any()
+        if (alreadyOwnsConnection && alreadyOnDispatcher) {
+            coroutineContext.ensureActive()
+            return if (hook != null) {
+                hook.withCaptured(captured, block)
+            } else {
+                block()
+            }
+        }
         if (alreadyOwnsConnection) {
             return withContext(dispatcher + ConnectionOwnerContext(this, ownerToken)) {
                 if (hook != null) {
@@ -67,15 +86,39 @@ class SafeSQLiteConnection internal constructor(
 
         connectionMutex.lock()
         try {
-            return withContext(dispatcher + ConnectionOwnerContext(this, ownerToken)) {
-                if (hook != null) {
-                    hook.withCaptured(captured, block)
-                } else {
-                    block()
+            if (state != ConnectionState.OPEN) {
+                if (state == ConnectionState.FATAL) {
+                    val failure = withContext(dispatcher + ConnectionOwnerContext(this, ownerToken)) {
+                        disposeFatalConnection(null)
+                    }
+                    throw failure ?: closedConnectionFailure()
                 }
+                throw closedConnectionFailure()
+            }
+            return withContext(dispatcher + ConnectionOwnerContext(this, ownerToken)) {
+                runOwnedBlock(hook, captured, block)
             }
         } finally {
             connectionMutex.unlock()
+        }
+    }
+
+    private suspend fun <T> runOwnedBlock(
+        hook: SqliteNowContextHook?,
+        captured: Any?,
+        block: suspend () -> T,
+    ): T {
+        var primaryFailure: Throwable? = null
+        try {
+            return if (hook != null) hook.withCaptured(captured, block) else block()
+        } catch (t: Throwable) {
+            primaryFailure = t
+            throw t
+        } finally {
+            if (state == ConnectionState.FATAL) {
+                val disposalFailure = disposeFatalConnection(primaryFailure)
+                if (primaryFailure == null && disposalFailure != null) throw disposalFailure
+            }
         }
     }
 
@@ -84,7 +127,7 @@ class SafeSQLiteConnection internal constructor(
         return try {
             withDispatcherContext {
                 val result = block()
-                persistenceController.onOperationComplete(ref, isInTransaction())
+                notifyOperationComplete()
                 result
             }
         } catch (e: Exception) {
@@ -113,28 +156,47 @@ class SafeSQLiteConnection internal constructor(
         sqliteNowLogger.d { "SafeSQLiteConnection.execSQL: $sql" }
         withDispatcherContext {
             ref.execSQL(sql)
-            persistenceController.onOperationComplete(ref, isInTransaction())
+            notifyOperationComplete()
         }
     }
 
     suspend fun prepare(sql: String): SqliteStatement {
         sqliteNowLogger.d { "SafeSQLiteConnection.prepare: $sql" }
         return withDispatcherContext {
-            val result = ref.prepare(sql)
-            result
+            ref.prepare(sql).also(::registerStatement)
         }
     }
 
     suspend fun close() {
+        if (state == ConnectionState.CLOSED) return
+        if (coroutineContext[ConnectionOwnerContext]?.connection === this) {
+            throw IllegalStateException("Cannot close SQLite connection from its active owner context")
+        }
+
+        val hook = executionContextHook
+        val captured = hook?.capture()
+        val ownerToken = Any()
+        connectionMutex.lock()
+        var primaryFailure: Throwable? = null
+        var performedClose = false
         try {
-            withDispatcherContext {
-                sqliteNowLogger.d { "SafeSQLiteConnection.close" }
-                persistenceController.onClose(ref)
-                ref.close()
+            if (state == ConnectionState.CLOSED) return
+            performedClose = true
+            primaryFailure = withContext(dispatcher + ConnectionOwnerContext(this, ownerToken)) {
+                val closeBlock: suspend () -> Throwable? = { closeOwnedResources() }
+                if (hook != null) hook.withCaptured(captured, closeBlock) else closeBlock()
             }
         } finally {
-            executionContext.close()
+            if (performedClose) {
+                try {
+                    executionContext.close()
+                } catch (executionFailure: Throwable) {
+                    primaryFailure = appendFailure(primaryFailure, executionFailure)
+                }
+            }
+            connectionMutex.unlock()
         }
+        primaryFailure?.let { throw it }
     }
 
     suspend fun inTransaction(): Boolean {
@@ -152,27 +214,42 @@ class SafeSQLiteConnection internal constructor(
     suspend fun <T> transaction(mode: TransactionMode = TransactionMode.DEFERRED, block: suspend () -> T): T {
         return withDispatcherContext {
             val alreadyInTransaction = activeTransactionDepth > 0 || ref.inTransaction()
+            val transactionToken = activeTransactionToken ?: Any()
             if (!alreadyInTransaction) {
                 when (mode) {
                     TransactionMode.DEFERRED -> ref.execSQL("BEGIN")
                     TransactionMode.IMMEDIATE -> ref.execSQL("BEGIN IMMEDIATE")
                     TransactionMode.EXCLUSIVE -> ref.execSQL("BEGIN EXCLUSIVE")
                 }
+                activeTransactionToken = transactionToken
             }
             activeTransactionDepth++
+            var committed = false
             try {
                 val result = block()
                 if (!alreadyInTransaction) {
+                    coroutineContext.ensureActive()
+                    val statementFailure = withContext(NonCancellable) {
+                        closeLiveStatements(primary = null, transactionToken = transactionToken)
+                    }
+                    if (statementFailure != null) throw statementFailure
+                    coroutineContext.ensureActive()
                     ref.execSQL("COMMIT")
-                    persistenceController.onTransactionCommitted(ref)
+                    committed = true
+                    notifyTransactionCommitted()
                 }
                 result
-            } catch (e: Exception) {
-                if (!alreadyInTransaction) {
-                    try {
-                        ref.execSQL("ROLLBACK")
-                    } catch (_: Exception) {
-                        // ignore rollback errors
+            } catch (e: Throwable) {
+                if (!alreadyInTransaction && !committed) {
+                    withContext(NonCancellable) {
+                        closeLiveStatements(primary = e, transactionToken = transactionToken)
+                        try {
+                            beforeTransactionRollbackForTest?.invoke()
+                            ref.execSQL("ROLLBACK")
+                        } catch (rollbackFailure: Throwable) {
+                            appendFailure(e, rollbackFailure)
+                            markFatal(rollbackFailure)
+                        }
                     }
                 }
                 if (debug) {
@@ -181,9 +258,136 @@ class SafeSQLiteConnection internal constructor(
                 throw e
             } finally {
                 activeTransactionDepth--
+                if (!alreadyInTransaction) activeTransactionToken = null
             }
         }
     }
+
+    private suspend fun notifyOperationComplete() {
+        try {
+            persistenceController.onOperationComplete(ref, isInTransaction())
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Throwable) {
+            sqliteNowLogger.e { "Failed to persist database snapshot" }
+        }
+    }
+
+    private suspend fun notifyTransactionCommitted() {
+        try {
+            persistenceController.onTransactionCommitted(ref)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Throwable) {
+            sqliteNowLogger.e { "Failed to persist database snapshot" }
+        }
+    }
+
+    private fun registerStatement(statement: SqliteStatement) {
+        val record = LiveStatement(
+            statement = statement,
+            transactionToken = activeTransactionToken,
+        )
+        liveStatements += record
+        statement.cleanupFailureObserver = ::markFatal
+        statement.beforeCloseObserver = { record.closeAttempted = true }
+        statement.closeSuccessObserver = {
+            liveStatements.remove(record)
+            clearStatementObservers(statement)
+        }
+    }
+
+    private fun markFatal(failure: Throwable) {
+        if (state == ConnectionState.OPEN) state = ConnectionState.FATAL
+        fatalFailure = appendFailure(fatalFailure, failure)
+    }
+
+    private fun closeLiveStatements(
+        primary: Throwable?,
+        transactionToken: Any? = null,
+    ): Throwable? {
+        var failure = primary
+        val records = liveStatements
+            .filter { transactionToken == null || it.transactionToken === transactionToken }
+            .asReversed()
+        for (record in records) {
+            if (record.closeAttempted) continue
+            try {
+                record.statement.close()
+            } catch (closeFailure: Throwable) {
+                failure = appendFailure(failure, closeFailure)
+            }
+        }
+        return failure
+    }
+
+    private suspend fun closeOwnedResources(): Throwable? {
+        val fatal = state == ConnectionState.FATAL
+        state = ConnectionState.CLOSING
+        var failure = if (fatal) fatalFailure else null
+        failure = closeLiveStatements(failure)
+        if (!fatal && failure == null) {
+            try {
+                persistenceController.onClose(ref)
+            } catch (persistenceFailure: Throwable) {
+                failure = appendFailure(failure, persistenceFailure)
+            }
+        }
+        try {
+            ref.close()
+        } catch (rawCloseFailure: Throwable) {
+            failure = appendFailure(failure, rawCloseFailure)
+        } finally {
+            state = ConnectionState.CLOSED
+            fatalFailure = null
+            clearLiveStatementObservers()
+        }
+        return failure
+    }
+
+    private fun disposeFatalConnection(primary: Throwable?): Throwable? {
+        if (state == ConnectionState.CLOSED) return primary
+        state = ConnectionState.CLOSING
+        var failure = appendFailure(primary, fatalFailure)
+        failure = closeLiveStatements(failure)
+        try {
+            ref.close()
+        } catch (rawCloseFailure: Throwable) {
+            failure = appendFailure(failure, rawCloseFailure)
+        } finally {
+            state = ConnectionState.CLOSED
+            fatalFailure = null
+            clearLiveStatementObservers()
+            try {
+                executionContext.close()
+            } catch (executionFailure: Throwable) {
+                failure = appendFailure(failure, executionFailure)
+            }
+        }
+        return failure
+    }
+
+    private fun clearLiveStatementObservers() {
+        liveStatements.forEach { clearStatementObservers(it.statement) }
+        liveStatements.clear()
+    }
+
+    private fun clearStatementObservers(statement: SqliteStatement) {
+        statement.cleanupFailureObserver = null
+        statement.beforeCloseObserver = null
+        statement.closeSuccessObserver = null
+    }
+
+    private fun closedConnectionFailure(): IllegalStateException =
+        IllegalStateException("SQLite connection is closed")
+
+    private class LiveStatement(
+        val statement: SqliteStatement,
+        val transactionToken: Any?,
+        var closeAttempted: Boolean = false,
+    )
+
+    private enum class ConnectionState { OPEN, FATAL, CLOSING, CLOSED }
 
     /**
      * Forces the current database snapshot to be persisted when persistence is configured.
@@ -216,6 +420,25 @@ class SafeSQLiteConnection internal constructor(
 
     internal fun setTableInvalidationListener(listener: ((Set<String>) -> Unit)?) {
         tableInvalidationListener = listener
+    }
+
+    private fun appendFailure(primary: Throwable?, additional: Throwable?): Throwable? {
+        if (additional == null) return primary
+        if (primary == null) return additional
+        if (primary.containsThrowableIdentity(additional)) return primary
+        primary.addSuppressed(additional)
+        return primary
+    }
+
+    private fun Throwable.containsThrowableIdentity(
+        target: Throwable,
+        visited: MutableList<Throwable> = mutableListOf(),
+    ): Boolean {
+        if (this === target) return true
+        if (visited.any { it === this }) return false
+        visited += this
+        if (cause?.containsThrowableIdentity(target, visited) == true) return true
+        return suppressedExceptions.any { it.containsThrowableIdentity(target, visited) }
     }
 }
 

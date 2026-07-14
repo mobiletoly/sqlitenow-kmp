@@ -78,6 +78,10 @@ actual class SqliteStatement internal constructor(
     private val parent: SqliteConnection,
     private val handle: SqlJsStatementHandle,
 ) {
+    actual internal var cleanupFailureObserver: ((Throwable) -> Unit)? = null
+    actual internal var beforeCloseObserver: (() -> Unit)? = null
+    actual internal var closeSuccessObserver: (() -> Unit)? = null
+
     private val boundValues = mutableMapOf<Int, BindingValue>()
     private var bindingsDirty = false
     private var currentRow: JsArray<JsAny?>? = null
@@ -204,24 +208,44 @@ actual class SqliteStatement internal constructor(
     }
 
     actual fun reset() {
-        wrapSqlite { stmtReset(handle.value) }
-        bindingsDirty = true
-        currentRow = null
-        parent.invalidateExportCache()
+        observeCleanup {
+            wrapSqlite { stmtReset(handle.value) }
+            bindingsDirty = true
+            currentRow = null
+            parent.invalidateExportCache()
+        }
     }
 
     actual fun clearBindings() {
-        boundValues.clear()
-        bindingsDirty = false
-        currentRow = null
-        wrapSqlite { stmtClearBindings(handle.value) }
-        parent.invalidateExportCache()
+        observeCleanup {
+            boundValues.clear()
+            bindingsDirty = false
+            currentRow = null
+            wrapSqlite { stmtClearBindings(handle.value) }
+            parent.invalidateExportCache()
+        }
     }
 
     actual fun close() {
-        wrapSqlite { stmtFinalize(handle.value) }
-        currentRow = null
-        parent.invalidateExportCache()
+        beforeCloseObserver?.invoke()
+        try {
+            wrapSqlite { stmtFinalize(handle.value) }
+            currentRow = null
+            parent.invalidateExportCache()
+        } catch (t: Throwable) {
+            cleanupFailureObserver?.invoke(t)
+            throw t
+        }
+        closeSuccessObserver?.invoke()
+    }
+
+    private inline fun observeCleanup(block: () -> Unit) {
+        try {
+            block()
+        } catch (t: Throwable) {
+            cleanupFailureObserver?.invoke(t)
+            throw t
+        }
     }
 
     private fun BindingValue.toJsValue(): JsAny? = when (this) {

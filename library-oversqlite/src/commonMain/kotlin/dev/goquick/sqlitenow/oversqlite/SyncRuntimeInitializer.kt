@@ -21,6 +21,7 @@ import dev.goquick.sqlitenow.core.sqlite.use
 internal class SyncRuntimeInitializer(
     private val config: OversqliteConfig,
     private val tableInfoCache: TableInfoCache,
+    private val reusableStatementCleanup: ReusableStatementCleanup = DefaultReusableStatementCleanup,
 ) {
     suspend fun prepareLocalRuntime(
         db: SafeSQLiteConnection,
@@ -234,21 +235,15 @@ internal class SyncRuntimeInitializer(
         db: SafeSQLiteConnection,
         validated: ValidatedConfig,
     ) {
-        val statementCache = StatementCache(db)
-        try {
-            var dirtyOrdinal = 0L
-            val orderedTables = validated.tables.sortedBy { validated.tableOrder[it.tableName] ?: Int.MAX_VALUE }
-            for (table in orderedTables) {
-                dirtyOrdinal = adoptExistingRowsForTable(
-                    db = db,
-                    validated = validated,
-                    table = table,
-                    startingDirtyOrdinal = dirtyOrdinal,
-                    statementCache = statementCache,
-                )
-            }
-        } finally {
-            statementCache.close()
+        var dirtyOrdinal = 0L
+        val orderedTables = validated.tables.sortedBy { validated.tableOrder[it.tableName] ?: Int.MAX_VALUE }
+        for (table in orderedTables) {
+            dirtyOrdinal = adoptExistingRowsForTable(
+                db = db,
+                validated = validated,
+                table = table,
+                startingDirtyOrdinal = dirtyOrdinal,
+            )
         }
     }
 
@@ -257,32 +252,71 @@ internal class SyncRuntimeInitializer(
         validated: ValidatedConfig,
         table: ValidatedSyncTable,
         startingDirtyOrdinal: Long,
-        statementCache: StatementCache,
     ): Long {
         val tableInfo = validated.tableInfoByName[table.tableName]
             ?: tableInfoCache.get(db, table.tableName)
         val keyExpr = buildKeyJsonObjectExprHexAware(tableInfo, table.syncKeyColumnName, "existing_row")
         val payloadExpr = buildJsonObjectExprHexAware(tableInfo, "existing_row")
+        val keyColumn = tableInfo.column(table.syncKeyColumnName)
+        require(keyColumn.kind == ColumnKind.TEXT || keyColumn.kind.isBlobKind()) {
+            "sync key column must use TEXT or BLOB affinity"
+        }
+        val quotedTable = quoteIdent(table.tableName)
+        val quotedKey = quoteIdent(keyColumn.name)
+        val firstRowSql = """
+            SELECT existing_row.$quotedKey, $keyExpr, $payloadExpr
+            FROM $quotedTable existing_row
+            ORDER BY existing_row.$quotedKey
+            LIMIT 1
+        """.trimIndent()
+        val nextRowSql = """
+            SELECT existing_row.$quotedKey, $keyExpr, $payloadExpr
+            FROM $quotedTable existing_row
+            WHERE existing_row.$quotedKey > ?
+            ORDER BY existing_row.$quotedKey
+            LIMIT 1
+        """.trimIndent()
+        val insertSql = """
+            INSERT INTO _sync_dirty_rows(
+              schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at
+            )
+            VALUES(?, ?, ?, 'INSERT', 0, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+        """.trimIndent()
         var nextDirtyOrdinal = startingDirtyOrdinal
         db.withExclusiveAccess {
-            db.prepare(
-                """
-                SELECT $keyExpr, $payloadExpr
-                FROM ${quoteIdent(table.tableName)} existing_row
-                ORDER BY existing_row.${quoteIdent(table.syncKeyColumnName)}
-                """.trimIndent()
-            ).use { st ->
-                while (st.step()) {
-                    nextDirtyOrdinal++
-                    insertDirtyRow(
-                        db = db,
-                        schemaName = validated.schema,
-                        tableName = table.tableName,
-                        keyJson = st.getText(0),
-                        payload = st.getText(1),
-                        dirtyOrdinal = nextDirtyOrdinal,
-                        statementCache = statementCache,
-                    )
+            var row = db.prepare(firstRowSql).use { statement ->
+                if (statement.step()) capturedExistingRow(statement, keyColumn) else null
+            }
+            if (row == null) return@withExclusiveAccess
+
+            db.prepare(insertSql).use { insertStatement ->
+                db.prepare(nextRowSql).use { selectStatement ->
+                    var insertUsed = false
+                    while (row != null) {
+                        val current = requireNotNull(row)
+                        if (insertUsed) {
+                            reusableStatementCleanup(insertStatement)
+                        } else {
+                            insertUsed = true
+                        }
+                        nextDirtyOrdinal++
+                        insertDirtyRow(
+                            schemaName = validated.schema,
+                            tableName = table.tableName,
+                            keyJson = current.keyJson,
+                            payload = current.payload,
+                            dirtyOrdinal = nextDirtyOrdinal,
+                            statement = insertStatement,
+                        )
+
+                        bindCapturedKey(selectStatement, current.key)
+                        row = if (selectStatement.step()) {
+                            capturedExistingRow(selectStatement, keyColumn)
+                        } else {
+                            null
+                        }
+                        reusableStatementCleanup(selectStatement)
+                    }
                 }
             }
         }
@@ -290,29 +324,41 @@ internal class SyncRuntimeInitializer(
     }
 
     private suspend fun insertDirtyRow(
-        db: SafeSQLiteConnection,
         schemaName: String,
         tableName: String,
         keyJson: String,
         payload: String,
         dirtyOrdinal: Long,
-        statementCache: StatementCache? = null,
+        statement: dev.goquick.sqlitenow.core.sqlite.SqliteStatement,
     ) {
-        db.withPreparedStatement(
-            sql = """
-                INSERT INTO _sync_dirty_rows(
-                  schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at
-                )
-                VALUES(?, ?, ?, 'INSERT', 0, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-            """.trimIndent(),
-            statementCache = statementCache,
-        ) { st ->
-            st.bindText(1, schemaName)
-            st.bindText(2, tableName)
-            st.bindText(3, keyJson)
-            st.bindText(4, payload)
-            st.bindLong(5, dirtyOrdinal)
-            st.step()
+        statement.bindText(1, schemaName)
+        statement.bindText(2, tableName)
+        statement.bindText(3, keyJson)
+        statement.bindText(4, payload)
+        statement.bindLong(5, dirtyOrdinal)
+        statement.step()
+    }
+
+    private fun capturedExistingRow(
+        statement: dev.goquick.sqlitenow.core.sqlite.SqliteStatement,
+        keyColumn: ColumnInfo,
+    ): CapturedExistingRow = CapturedExistingRow(
+        key = if (keyColumn.kind.isBlobKind()) {
+            CapturedSyncKey.Blob(statement.getBlob(0))
+        } else {
+            CapturedSyncKey.Text(statement.getText(0))
+        },
+        keyJson = statement.getText(1),
+        payload = statement.getText(2),
+    )
+
+    private fun bindCapturedKey(
+        statement: dev.goquick.sqlitenow.core.sqlite.SqliteStatement,
+        key: CapturedSyncKey,
+    ) {
+        when (key) {
+            is CapturedSyncKey.Blob -> statement.bindBlob(1, key.value)
+            is CapturedSyncKey.Text -> statement.bindText(1, key.value)
         }
     }
 
@@ -350,4 +396,15 @@ internal class SyncRuntimeInitializer(
         )
     }
 
+}
+
+private data class CapturedExistingRow(
+    val key: CapturedSyncKey,
+    val keyJson: String,
+    val payload: String,
+)
+
+private sealed interface CapturedSyncKey {
+    data class Blob(val value: ByteArray) : CapturedSyncKey
+    data class Text(val value: String) : CapturedSyncKey
 }

@@ -31,6 +31,10 @@ expect class SqliteConnection {
  * Minimal SQLite statement contract consumed by generated bindings.
  */
 expect class SqliteStatement {
+    internal var cleanupFailureObserver: ((Throwable) -> Unit)?
+    internal var beforeCloseObserver: (() -> Unit)?
+    internal var closeSuccessObserver: (() -> Unit)?
+
     fun bindBlob(index: Int, value: ByteArray)
     fun bindDouble(index: Int, value: Double)
     fun bindLong(index: Int, value: Long)
@@ -77,7 +81,12 @@ inline fun <T> SqliteStatement.use(block: (SqliteStatement) -> T): T {
         try {
             close()
         } catch (closeError: Throwable) {
-            if (exception == null) throw closeError
+            if (exception == null) {
+                throw closeError
+            }
+            if (closeError !== exception && exception.suppressedExceptions.none { it === closeError }) {
+                exception.addSuppressed(closeError)
+            }
         }
     }
 }

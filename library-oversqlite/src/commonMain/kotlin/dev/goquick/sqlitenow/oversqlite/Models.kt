@@ -135,10 +135,10 @@ data class PullResponse(
 
 @Serializable
 data class CapabilitiesResponse(
-    @SerialName("protocol_version") val protocolVersion: String = "",
-    @SerialName("schema_version") val schemaVersion: Int = 0,
-    val features: Map<String, Boolean> = emptyMap(),
-    @SerialName("bundle_limits") val bundleLimits: BundleCapabilitiesLimits? = null,
+    @SerialName("protocol_version") val protocolVersion: String,
+    @SerialName("schema_version") val schemaVersion: Int,
+    val features: Map<String, Boolean>,
+    @SerialName("bundle_limits") val bundleLimits: BundleCapabilitiesLimits,
 )
 
 val CapabilitiesResponse.bundleChangeWatchSupported: Boolean
@@ -154,11 +154,18 @@ data class BundleCapabilitiesLimits(
     @SerialName("push_session_ttl_seconds") val pushSessionTtlSeconds: Int = 0,
     @SerialName("default_rows_per_committed_bundle_chunk") val defaultRowsPerCommittedBundleChunk: Int = 0,
     @SerialName("max_rows_per_committed_bundle_chunk") val maxRowsPerCommittedBundleChunk: Int = 0,
-    @SerialName("default_rows_per_snapshot_chunk") val defaultRowsPerSnapshotChunk: Int = 0,
-    @SerialName("max_rows_per_snapshot_chunk") val maxRowsPerSnapshotChunk: Int = 0,
+    @SerialName("default_rows_per_snapshot_chunk") val defaultRowsPerSnapshotChunk: Int,
+    @SerialName("max_rows_per_snapshot_chunk") val maxRowsPerSnapshotChunk: Int,
     @SerialName("snapshot_session_ttl_seconds") val snapshotSessionTtlSeconds: Int = 0,
     @SerialName("max_rows_per_snapshot_session") val maxRowsPerSnapshotSession: Long = 0,
     @SerialName("max_bytes_per_snapshot_session") val maxBytesPerSnapshotSession: Long = 0,
+    @SerialName("default_bytes_per_snapshot_chunk") val defaultBytesPerSnapshotChunk: Long,
+    @SerialName("max_bytes_per_snapshot_chunk") val maxBytesPerSnapshotChunk: Long,
+    @SerialName("max_bytes_per_snapshot_row") val maxBytesPerSnapshotRow: Long,
+    @SerialName("snapshot_materialization_batch_rows") val snapshotMaterializationBatchRows: Int = 0,
+    @SerialName("snapshot_materialization_batch_bytes") val snapshotMaterializationBatchBytes: Long = 0,
+    @SerialName("max_concurrent_snapshot_builds") val maxConcurrentSnapshotBuilds: Int,
+    @SerialName("max_concurrent_snapshot_chunk_requests") val maxConcurrentSnapshotChunkRequests: Int,
     @SerialName("initialization_lease_ttl_seconds") val initializationLeaseTtlSeconds: Int = 0,
 )
 
@@ -176,7 +183,7 @@ data class SnapshotSession(
     @SerialName("snapshot_id") val snapshotId: String,
     @SerialName("snapshot_bundle_seq") val snapshotBundleSeq: Long,
     @SerialName("row_count") val rowCount: Long,
-    @SerialName("byte_count") val byteCount: Long = 0,
+    @SerialName("byte_count") val byteCount: Long,
     @SerialName("expires_at") val expiresAt: String,
 )
 
@@ -199,12 +206,14 @@ data class SnapshotChunkResponse(
     val rows: List<SnapshotRow>,
     @SerialName("next_row_ordinal") val nextRowOrdinal: Long,
     @SerialName("has_more") val hasMore: Boolean,
+    @SerialName("byte_count") val byteCount: Long,
 )
 
 @Serializable
 data class ErrorResponse(
     val error: String,
     val message: String,
+    @SerialName("required_byte_count") val requiredByteCount: Long? = null,
 )
 
 @Serializable
@@ -246,9 +255,21 @@ data class OversqliteConfig(
     val uploadLimit: Int = 200,
     val downloadLimit: Int = 1000,
     val snapshotChunkRows: Int = 1000,
+    val snapshotChunkBytes: Long = 4L * 1024L * 1024L,
+    val snapshotApplyBatchRows: Int = 256,
+    val snapshotApplyBatchBytes: Long = 4L * 1024L * 1024L,
     val verboseLogs: Boolean = false,
     val transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy(),
-)
+    val snapshotCapacityRetryPolicy: OversqliteSnapshotCapacityRetryPolicy =
+        OversqliteSnapshotCapacityRetryPolicy(),
+) {
+    init {
+        require(snapshotChunkRows > 0) { "snapshotChunkRows must be positive" }
+        require(snapshotChunkBytes > 0) { "snapshotChunkBytes must be positive" }
+        require(snapshotApplyBatchRows > 0) { "snapshotApplyBatchRows must be positive" }
+        require(snapshotApplyBatchBytes > 0) { "snapshotApplyBatchBytes must be positive" }
+    }
+}
 
 enum class BundleChangeWatchMode {
     OFF,
@@ -302,3 +323,17 @@ data class OversqliteTransientRetryPolicy(
     val maxBackoffMillis: Long = 1_500,
     val jitterRatio: Double = 0.2,
 )
+
+/** Elapsed-time retry policy for snapshot build/chunk admission capacity. */
+data class OversqliteSnapshotCapacityRetryPolicy(
+    val enabled: Boolean = true,
+    val maxWaitMillis: Long = 30_000,
+    val fallbackDelayMillis: Long = 1_000,
+    val jitterRatio: Double = 1.0,
+) {
+    init {
+        require(maxWaitMillis > 0) { "maxWaitMillis must be positive" }
+        require(fallbackDelayMillis > 0) { "fallbackDelayMillis must be positive" }
+        require(jitterRatio in 0.0..1.0) { "jitterRatio must be between 0 and 1" }
+    }
+}

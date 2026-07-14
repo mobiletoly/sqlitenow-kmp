@@ -36,7 +36,7 @@
       "type": "table",
       "name": "_sync_operation_state",
       "tableName": "_sync_operation_state",
-      "sql": "CREATE TABLE _sync_operation_state (\n  singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),\n  kind TEXT NOT NULL DEFAULT 'none' CHECK (kind IN ('none', 'remote_replace', 'source_recovery')),\n  target_user_id TEXT NOT NULL DEFAULT '',\n  staged_snapshot_id TEXT NOT NULL DEFAULT '',\n  snapshot_bundle_seq INTEGER NOT NULL DEFAULT 0,\n  snapshot_row_count INTEGER NOT NULL DEFAULT 0,\n  reason TEXT NOT NULL DEFAULT '',\n  replacement_source_id TEXT NOT NULL DEFAULT ''\n)"
+      "sql": "CREATE TABLE _sync_operation_state (\n  singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),\n  kind TEXT NOT NULL DEFAULT 'none' CHECK (kind IN ('none', 'remote_replace', 'source_recovery')),\n  target_user_id TEXT NOT NULL DEFAULT '',\n  staged_snapshot_id TEXT NOT NULL DEFAULT '',\n  snapshot_bundle_seq INTEGER NOT NULL DEFAULT 0,\n  snapshot_row_count INTEGER NOT NULL DEFAULT 0,\n  snapshot_byte_count INTEGER NOT NULL DEFAULT 0,\n  snapshot_stage_complete INTEGER NOT NULL DEFAULT 0,\n  reason TEXT NOT NULL DEFAULT '',\n  replacement_source_id TEXT NOT NULL DEFAULT ''\n)"
     },
     {
       "type": "table",
@@ -60,7 +60,7 @@
       "type": "table",
       "name": "_sync_snapshot_stage",
       "tableName": "_sync_snapshot_stage",
-      "sql": "CREATE TABLE _sync_snapshot_stage (\n  snapshot_id TEXT NOT NULL,\n  row_ordinal INTEGER NOT NULL,\n  schema_name TEXT NOT NULL,\n  table_name TEXT NOT NULL,\n  key_json TEXT NOT NULL,\n  row_version INTEGER NOT NULL,\n  payload TEXT NOT NULL,\n  PRIMARY KEY (snapshot_id, row_ordinal)\n)"
+      "sql": "CREATE TABLE _sync_snapshot_stage (\n  snapshot_id TEXT NOT NULL,\n  row_ordinal INTEGER NOT NULL,\n  schema_name TEXT NOT NULL,\n  table_name TEXT NOT NULL,\n  key_json TEXT NOT NULL,\n  row_version INTEGER NOT NULL,\n  payload TEXT NOT NULL,\n  PRIMARY KEY (snapshot_id, row_ordinal),\n  UNIQUE (snapshot_id, schema_name, table_name, key_json)\n)"
     },
     {
       "type": "table",
@@ -748,6 +748,22 @@
         },
         {
           "cid": 6,
+          "name": "snapshot_byte_count",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 7,
+          "name": "snapshot_stage_complete",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "cid": 8,
           "name": "reason",
           "type": "TEXT",
           "notNull": true,
@@ -755,7 +771,7 @@
           "primaryKeyPosition": 0
         },
         {
-          "cid": 7,
+          "cid": 9,
           "name": "replacement_source_id",
           "type": "TEXT",
           "notNull": true,
@@ -1135,6 +1151,55 @@
       "indexes": [
         {
           "seq": 0,
+          "name": "sqlite_autoindex__sync_snapshot_stage_2",
+          "unique": true,
+          "origin": "u",
+          "partial": false,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "snapshot_id",
+              "desc": false,
+              "collation": "BINARY",
+              "key": true
+            },
+            {
+              "seqno": 1,
+              "cid": 2,
+              "name": "schema_name",
+              "desc": false,
+              "collation": "BINARY",
+              "key": true
+            },
+            {
+              "seqno": 2,
+              "cid": 3,
+              "name": "table_name",
+              "desc": false,
+              "collation": "BINARY",
+              "key": true
+            },
+            {
+              "seqno": 3,
+              "cid": 4,
+              "name": "key_json",
+              "desc": false,
+              "collation": "BINARY",
+              "key": true
+            },
+            {
+              "seqno": 4,
+              "cid": -1,
+              "name": null,
+              "desc": false,
+              "collation": "BINARY",
+              "key": false
+            }
+          ]
+        },
+        {
+          "seq": 1,
           "name": "sqlite_autoindex__sync_snapshot_stage_1",
           "unique": true,
           "origin": "pk",

@@ -176,7 +176,7 @@
             "snapshot_id": "snapshot-checkpoint-resume",
             "snapshot_bundle_seq": 7,
             "row_count": 1,
-            "byte_count": 32,
+            "byte_count": 116,
             "expires_at": "2099-01-01T00:00:00Z"
           }
         ],
@@ -185,6 +185,7 @@
             "0": {
               "snapshot_id": "snapshot-checkpoint-resume",
               "snapshot_bundle_seq": 7,
+              "byte_count": 116,
               "next_row_ordinal": 1,
               "has_more": false,
               "rows": [
@@ -249,6 +250,7 @@
             "0": {
               "snapshot_id": "snapshot-blocked-unused",
               "snapshot_bundle_seq": 7,
+              "byte_count": 0,
               "next_row_ordinal": 0,
               "has_more": false,
               "rows": []
@@ -300,7 +302,7 @@
             "snapshot_id": "snapshot-multi",
             "snapshot_bundle_seq": 9,
             "row_count": 2,
-            "byte_count": 64,
+            "byte_count": 207,
             "expires_at": "2099-01-01T00:00:00Z"
           }
         ],
@@ -309,6 +311,7 @@
             "0": {
               "snapshot_id": "snapshot-multi",
               "snapshot_bundle_seq": 9,
+              "byte_count": 110,
               "next_row_ordinal": 1,
               "has_more": true,
               "rows": [
@@ -329,6 +332,7 @@
             "1": {
               "snapshot_id": "snapshot-multi",
               "snapshot_bundle_seq": 9,
+              "byte_count": 97,
               "next_row_ordinal": 2,
               "has_more": false,
               "rows": [
@@ -353,9 +357,15 @@
           "action": "rebuild",
           "expectedException": "any_error",
           "expectedErrorContains": "payload for users must contain every table column",
+          "expectedKmpErrorContains": "invalid_payload_shape",
           "expectedState": {
             "lastBundleSeqSeen": 0,
             "snapshotStageCount": 2,
+            "dirtyRowCount": 0
+          },
+          "expectedKmpState": {
+            "lastBundleSeqSeen": 0,
+            "snapshotStageCount": 1,
             "dirtyRowCount": 0
           },
           "expectedAppState": {
@@ -374,14 +384,14 @@
             "snapshot_id": "snapshot-restart-a",
             "snapshot_bundle_seq": 9,
             "row_count": 2,
-            "byte_count": 64,
+            "byte_count": 220,
             "expires_at": "2099-01-01T00:00:00Z"
           },
           {
             "snapshot_id": "snapshot-restart-b",
             "snapshot_bundle_seq": 12,
             "row_count": 1,
-            "byte_count": 32,
+            "byte_count": 112,
             "expires_at": "2099-01-01T00:00:00Z"
           }
         ],
@@ -390,6 +400,7 @@
             "0": {
               "snapshot_id": "snapshot-restart-a",
               "snapshot_bundle_seq": 9,
+              "byte_count": 110,
               "next_row_ordinal": 1,
               "has_more": true,
               "rows": [
@@ -419,6 +430,7 @@
             "0": {
               "snapshot_id": "snapshot-restart-b",
               "snapshot_bundle_seq": 12,
+              "byte_count": 112,
               "next_row_ordinal": 1,
               "has_more": false,
               "rows": [
@@ -480,7 +492,7 @@
             "snapshot_id": "snapshot-recover-fail",
             "snapshot_bundle_seq": 9,
             "row_count": 1,
-            "byte_count": 32,
+            "byte_count": 97,
             "expires_at": "2099-01-01T00:00:00Z"
           }
         ],
@@ -489,6 +501,7 @@
             "0": {
               "snapshot_id": "snapshot-recover-fail",
               "snapshot_bundle_seq": 9,
+              "byte_count": 97,
               "next_row_ordinal": 1,
               "has_more": false,
               "rows": [
@@ -518,9 +531,16 @@
           "action": "rebuild",
           "expectedException": "any_error",
           "expectedErrorContains": "payload for users must contain every table column",
+          "expectedKmpErrorContains": "invalid_payload_shape",
           "expectedState": {
             "lastBundleSeqSeen": 0,
             "snapshotStageCount": 1,
+            "currentSourceChangedFromStepStart": false,
+            "dirtyRowCount": 0
+          },
+          "expectedKmpState": {
+            "lastBundleSeqSeen": 0,
+            "snapshotStageCount": 0,
             "currentSourceChangedFromStepStart": false,
             "dirtyRowCount": 0
           },
@@ -551,7 +571,7 @@
             "snapshot_id": "snapshot-cycle",
             "snapshot_bundle_seq": 6,
             "row_count": 2,
-            "byte_count": 64,
+            "byte_count": 288,
             "expires_at": "2099-01-01T00:00:00Z"
           }
         ],
@@ -560,6 +580,7 @@
             "0": {
               "snapshot_id": "snapshot-cycle",
               "snapshot_bundle_seq": 6,
+              "byte_count": 144,
               "next_row_ordinal": 1,
               "has_more": true,
               "rows": [
@@ -581,6 +602,7 @@
             "1": {
               "snapshot_id": "snapshot-cycle",
               "snapshot_bundle_seq": 6,
+              "byte_count": 144,
               "next_row_ordinal": 2,
               "has_more": false,
               "rows": [
@@ -640,7 +662,7 @@
             "snapshot_id": "snapshot-recover-reset",
             "snapshot_bundle_seq": 11,
             "row_count": 1,
-            "byte_count": 32,
+            "byte_count": 113,
             "expires_at": "2099-01-01T00:00:00Z"
           }
         ],
@@ -649,6 +671,7 @@
             "0": {
               "snapshot_id": "snapshot-recover-reset",
               "snapshot_bundle_seq": 11,
+              "byte_count": 113,
               "next_row_ordinal": 1,
               "has_more": false,
               "rows": [
@@ -715,7 +738,7 @@
             "snapshot_id": "snapshot-row-count-mismatch",
             "snapshot_bundle_seq": 13,
             "row_count": 2,
-            "byte_count": 32,
+            "byte_count": 111,
             "expires_at": "2099-01-01T00:00:00Z"
           }
         ],
@@ -724,6 +747,7 @@
             "0": {
               "snapshot_id": "snapshot-row-count-mismatch",
               "snapshot_bundle_seq": 13,
+              "byte_count": 111,
               "next_row_ordinal": 1,
               "has_more": false,
               "rows": [
@@ -748,7 +772,9 @@
         {
           "action": "rebuild",
           "expectedException": "any_error",
-          "expectedErrorContains": "staged snapshot row count 1 does not match expected row_count 2",
+          "expectedErrorContains": "snapshot final row total 1 does not match session row_count 2",
+          "expectedKmpErrorContains": "invalid_chunk",
+          "expectedDartErrorContains": "staged snapshot row count 1 does not match expected row_count 2",
           "expectedState": {
             "lastBundleSeqSeen": 0,
             "snapshotStageCount": 1,

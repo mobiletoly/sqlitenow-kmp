@@ -146,8 +146,8 @@ internal class OversqliteSyncStateStore(
         }
     }
 
-    suspend fun countDirtyRows(): Int {
-        return db.scalarLong("SELECT COUNT(*) FROM _sync_dirty_rows").toInt()
+    suspend fun countDirtyRows(): Long {
+        return db.scalarLong("SELECT COUNT(*) FROM _sync_dirty_rows")
     }
 
     suspend fun loadDirtyUploadState(
@@ -247,14 +247,7 @@ internal class OversqliteSyncStateStore(
         statementCache: StatementCache? = null,
     ) {
         db.withPreparedStatement(
-            sql = """
-                INSERT INTO _sync_row_state(schema_name, table_name, key_json, row_version, deleted, updated_at)
-                VALUES(?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-                ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET
-                  row_version = excluded.row_version,
-                  deleted = excluded.deleted,
-                  updated_at = excluded.updated_at
-            """.trimIndent(),
+            sql = updateStructuredRowStateSql,
             statementCache = statementCache,
         ) { st ->
             st.bindText(1, schemaName)
@@ -266,7 +259,53 @@ internal class OversqliteSyncStateStore(
         }
     }
 
+    suspend fun prepareSnapshotRowStatePlan(
+        statementCache: StatementCache,
+    ): SnapshotRowStatePlan = SnapshotRowStatePlan(statementCache.get(updateStructuredRowStateSql))
+
     suspend fun clearDirtyRows() {
         db.execSQL("DELETE FROM _sync_dirty_rows")
     }
 }
+
+internal class SnapshotRowStatePlan(
+    private val statement: SqliteStatement,
+    private val reusableStatementCleanup: ReusableStatementCleanup = DefaultReusableStatementCleanup,
+) {
+    private var used = false
+
+    fun update(
+        schemaName: String,
+        tableName: String,
+        keyJson: String,
+        rowVersion: Long,
+    ) {
+        if (used) {
+            reusableStatementCleanup(statement)
+        } else {
+            used = true
+        }
+        statement.bindText(1, schemaName)
+        statement.bindText(2, tableName)
+        statement.bindText(3, keyJson)
+        statement.bindLong(4, rowVersion)
+        statement.bindLong(5, 0L)
+        statement.step()
+    }
+
+    fun finish() {
+        if (used) {
+            reusableStatementCleanup(statement)
+            used = false
+        }
+    }
+}
+
+private val updateStructuredRowStateSql = """
+    INSERT INTO _sync_row_state(schema_name, table_name, key_json, row_version, deleted, updated_at)
+    VALUES(?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET
+      row_version = excluded.row_version,
+      deleted = excluded.deleted,
+      updated_at = excluded.updated_at
+""".trimIndent()

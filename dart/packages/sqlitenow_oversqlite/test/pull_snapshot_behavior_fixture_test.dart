@@ -53,7 +53,9 @@ Future<void> _runPullCase(Map<String, Object?> fixture) async {
         fixture['name']! as String,
         step['expectedException']! as String,
         error,
-        expectedMessage: step['expectedErrorContains'] as String?,
+        expectedMessage:
+            (step['expectedDartErrorContains'] ?? step['expectedErrorContains'])
+                as String?,
         expectedBlocked: (step['expectedCheckpointRecoveryBlocked'] as Map?)
             ?.cast<String, Object?>(),
       );

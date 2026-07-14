@@ -22,28 +22,36 @@ import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.asCoroutineDispatcher
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 private val sqliteConnectionThreadIds = AtomicInteger(0)
 
 internal actual fun createSqliteConnectionExecutionContext(nameHint: String): SqliteConnectionExecutionContext {
+    val executionThread = AtomicReference<Thread?>()
     val dispatcher = Executors.newSingleThreadExecutor { runnable ->
         Thread(
             runnable,
             "SqliteNow-${sanitizeSqliteConnectionName(nameHint)}-${sqliteConnectionThreadIds.incrementAndGet()}",
         ).apply {
             isDaemon = true
+            executionThread.set(this)
         }
     }.asCoroutineDispatcher()
-    return CloseableSqliteConnectionExecutionContext(dispatcher)
+    return CloseableSqliteConnectionExecutionContext(dispatcher, executionThread)
 }
 
 internal actual fun sqliteNetworkDispatcher(): CoroutineDispatcher = Dispatchers.IO
 
 private class CloseableSqliteConnectionExecutionContext(
     override val dispatcher: ExecutorCoroutineDispatcher,
+    private val executionThread: AtomicReference<Thread?>,
 ) : SqliteConnectionExecutionContext {
     override fun close() {
-        dispatcher.close()
+        if (Thread.currentThread() === executionThread.get()) {
+            dispatcher.executor.execute { dispatcher.close() }
+        } else {
+            dispatcher.close()
+        }
     }
 }
 

@@ -173,7 +173,7 @@ internal open class CrossTargetSyncTestSupport {
         var sourceRetiredOnSnapshotCreate: SourceRetiredResponse? = null
         var sourceReplacementInvalidOnSnapshotCreate: ErrorResponse? = null
         var bundleChangeWatchSupported: Boolean = false
-        var protocolVersion: String = "v0"
+        var protocolVersion: String = "v1"
         var pullRequestCount: Int = 0
         var pushSessionCreateRequestCount: Int = 0
         var cancelNextPushSessionCreate: Boolean = false
@@ -273,6 +273,7 @@ internal open class CrossTargetSyncTestSupport {
                                     "connect_lifecycle" to true,
                                     "bundle_change_watch" to bundleChangeWatchSupported,
                                 ),
+                                bundleLimits = testBundleCapabilitiesLimits(),
                             ),
                         ),
                     )
@@ -386,7 +387,7 @@ internal open class CrossTargetSyncTestSupport {
                     }
 
                     connect.hasLocalPendingRows -> {
-                        val nextId = "init-${nextInitializationId++}"
+                        val nextId = "00000000-0000-4000-8001-${(nextInitializationId++).toString().padStart(12, '0')}"
                         initializingSourceId = sourceId
                         initializationId = nextId
                         jsonResponse(
@@ -432,13 +433,13 @@ internal open class CrossTargetSyncTestSupport {
                 }
                 val expectedInitializationId = initializationId
                 if (expectedInitializationId != null) {
-                    if (create.initializationId.isNullOrBlank()) {
+                    if (create.initializationId == null) {
                         return errorResponse("initialization_stale", "initialization_id is required", HttpStatusCode.Conflict)
                     }
                     if (create.initializationId != expectedInitializationId) {
                         return errorResponse("initialization_stale", "initialization_id does not match active lease", HttpStatusCode.Conflict)
                     }
-                } else if (!create.initializationId.isNullOrBlank()) {
+                } else if (create.initializationId != null) {
                     return errorResponse("initialization_stale", "scope is no longer initializing", HttpStatusCode.Conflict)
                 }
                 val existing = committedBySourceBundle["$sourceId\u0000${create.sourceBundleId}"]
@@ -458,7 +459,7 @@ internal open class CrossTargetSyncTestSupport {
                         ),
                     )
                 } else {
-                    val pushId = "push-${nextPushId++}"
+                    val pushId = "00000000-0000-4000-8002-${(nextPushId++).toString().padStart(12, '0')}"
                     pushSessions[pushId] = PushSession(
                         pushId = pushId,
                         sourceId = sourceId,
@@ -702,7 +703,7 @@ internal open class CrossTargetSyncTestSupport {
                         snapshotId = snapshotId,
                         snapshotBundleSeq = stableBundleSeq,
                         rowCount = snapshotRows.size.toLong(),
-                        byteCount = 0,
+                        byteCount = snapshotRowsWireBytes(json, snapshotRows),
                         expiresAt = "2099-01-01T00:00:00Z",
                     ),
                 ),
@@ -729,6 +730,7 @@ internal open class CrossTargetSyncTestSupport {
                             rows = rows,
                             nextRowOrdinal = afterRowOrdinal + rows.size,
                             hasMore = startIndex + rows.size < session.rows.size,
+                            byteCount = snapshotRowsWireBytes(json, rows),
                         ),
                     ),
                 )

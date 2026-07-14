@@ -59,11 +59,12 @@ class SharedPullSnapshotBehaviorFixtureTest : BundleClientContractTestSupport() 
                 assertExpectedException(
                     case.name,
                     step.expectedException,
-                    step.expectedErrorContains,
+                    step.expectedKmpErrorContains ?: step.expectedErrorContains,
                     step.expectedCheckpointRecoveryBlocked,
                     error,
                 )
-                step.expectedState?.let { assertState(case.name, db, it, sourceBeforeStep) }
+                (step.expectedKmpState ?: step.expectedState)
+                    ?.let { assertState(case.name, db, it, sourceBeforeStep) }
                 step.expectedAppState?.let { assertAppState(case.name, db, it) }
             }
         } finally {
@@ -311,8 +312,10 @@ class SharedPullSnapshotBehaviorFixtureTest : BundleClientContractTestSupport() 
         val action: String,
         val expectedException: String,
         val expectedErrorContains: String? = null,
+        val expectedKmpErrorContains: String? = null,
         val expectedCheckpointRecoveryBlocked: ExpectedCheckpointRecoveryBlocked? = null,
         val expectedState: ExpectedPullState? = null,
+        val expectedKmpState: ExpectedPullState? = null,
         val expectedAppState: ExpectedAppState? = null,
     )
 

@@ -27,6 +27,8 @@ internal data class OversqliteOperationState(
     val stagedSnapshotId: String = "",
     val snapshotBundleSeq: Long = 0,
     val snapshotRowCount: Long = 0,
+    val snapshotByteCount: Long = 0,
+    val snapshotStageComplete: Boolean = false,
     val reason: String = "",
     val replacementSourceId: String = "",
 )
@@ -66,7 +68,7 @@ internal class OversqliteOperationStateStore(
         return db.queryRequiredSingle(
             sql = """
                 SELECT kind, target_user_id, staged_snapshot_id, snapshot_bundle_seq, snapshot_row_count,
-                       reason, replacement_source_id
+                       snapshot_byte_count, snapshot_stage_complete, reason, replacement_source_id
                 FROM _sync_operation_state
                 WHERE singleton_key = 1
             """.trimIndent(),
@@ -78,8 +80,16 @@ internal class OversqliteOperationStateStore(
                 stagedSnapshotId = st.getText(2),
                 snapshotBundleSeq = st.getLong(3),
                 snapshotRowCount = st.getLong(4),
-                reason = st.getText(5),
-                replacementSourceId = st.getText(6),
+                snapshotByteCount = st.getLong(5),
+                snapshotStageComplete = st.getLong(6) == 1L,
+                reason = st.getText(7),
+                replacementSourceId = st.getText(8).let { sourceId ->
+                    if (st.getText(0) == operationKindSourceRecovery) {
+                        requireValidOversqliteSourceId(sourceId)
+                    } else {
+                        requireValidOptionalOversqliteSourceId(sourceId)
+                    }
+                },
             )
         }
     }
@@ -88,6 +98,11 @@ internal class OversqliteOperationStateStore(
         state: OversqliteOperationState,
         statementCache: StatementCache? = null,
     ) {
+        if (state.kind == operationKindSourceRecovery) {
+            requireValidOversqliteSourceId(state.replacementSourceId)
+        } else {
+            requireValidOptionalOversqliteSourceId(state.replacementSourceId)
+        }
         db.withPreparedStatement(
             sql = """
                 UPDATE _sync_operation_state
@@ -96,6 +111,8 @@ internal class OversqliteOperationStateStore(
                     staged_snapshot_id = ?,
                     snapshot_bundle_seq = ?,
                     snapshot_row_count = ?,
+                    snapshot_byte_count = ?,
+                    snapshot_stage_complete = ?,
                     reason = ?,
                     replacement_source_id = ?
                 WHERE singleton_key = 1
@@ -107,8 +124,10 @@ internal class OversqliteOperationStateStore(
             st.bindText(3, state.stagedSnapshotId)
             st.bindLong(4, state.snapshotBundleSeq)
             st.bindLong(5, state.snapshotRowCount)
-            st.bindText(6, state.reason)
-            st.bindText(7, state.replacementSourceId)
+            st.bindLong(6, state.snapshotByteCount)
+            st.bindLong(7, if (state.snapshotStageComplete) 1L else 0L)
+            st.bindText(8, state.reason)
+            st.bindText(9, state.replacementSourceId)
             st.step()
         }
     }

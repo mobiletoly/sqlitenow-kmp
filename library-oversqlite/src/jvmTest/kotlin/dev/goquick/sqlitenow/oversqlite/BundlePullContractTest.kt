@@ -12,6 +12,9 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class BundlePullContractTest : BundleClientContractTestSupport() {
@@ -93,7 +96,7 @@ class BundlePullContractTest : BundleClientContractTestSupport() {
                     200,
                     """
                     {
-                      "push_id": "push-1",
+                      "push_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
                       "status": "staging",
                       "planned_row_count": 1,
                       "next_expected_row_ordinal": 0,
@@ -102,19 +105,19 @@ class BundlePullContractTest : BundleClientContractTestSupport() {
                     """.trimIndent()
                 )
             }
-            createContext("/sync/push-sessions/push-1/chunks") { exchange ->
+            createContext("/sync/push-sessions/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/chunks") { exchange ->
                 respondJson(
                     exchange,
                     200,
                     """
                     {
-                      "push_id": "push-1",
+                      "push_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
                       "next_expected_row_ordinal": 1
                     }
                     """.trimIndent()
                 )
             }
-            createContext("/sync/push-sessions/push-1/commit") { exchange ->
+            createContext("/sync/push-sessions/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/commit") { exchange ->
                 respondJson(
                     exchange,
                     200,
@@ -658,8 +661,9 @@ class BundlePullContractTest : BundleClientContractTestSupport() {
             },
         ) { client ->
             val error = client.rebuild().exceptionOrNull()
-            assertTrue(error != null)
-            assertTrue(error.message?.contains("_sync_scope_id") == true)
+            val semanticError = assertIs<SnapshotSemanticException>(assertNotNull(error))
+            assertFalse(semanticError.message.orEmpty().contains("_sync_scope_id"))
+            assertEquals(SnapshotSemanticFailure.INVALID_ROW, semanticError.failure)
         }
     }
 

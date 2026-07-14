@@ -114,6 +114,7 @@ class SharedProtocolHttpRequestFixtureTest {
                 snapshotBundleSeq = case.longArg("snapshotBundleSeq"),
                 afterRowOrdinal = case.longArg("afterRowOrdinal"),
                 maxRows = case.intArg("maxRows"),
+                maxBytes = case.longArg("maxBytes"),
             )
             "sourceReplacement" -> api.createSnapshotSession(
                 sourceId = case.sourceId,
@@ -165,9 +166,10 @@ class SharedProtocolHttpRequestFixtureTest {
             "capabilities" -> json.encodeToString(
                 CapabilitiesResponse.serializer(),
                 CapabilitiesResponse(
-                    protocolVersion = "v0",
+                    protocolVersion = "v1",
                     schemaVersion = 1,
                     features = mapOf("connect_lifecycle" to true, "bundle_change_watch" to true),
+                    bundleLimits = testBundleCapabilitiesLimits(),
                 ),
             )
             "connect" -> json.encodeToString(
@@ -181,7 +183,7 @@ class SharedProtocolHttpRequestFixtureTest {
             "pushSessionCreate" -> json.encodeToString(
                 PushSessionCreateResponse.serializer(),
                 PushSessionCreateResponse(
-                    pushId = "push-fixture",
+                    pushId = "11111111-1111-4111-8111-111111111111",
                     status = "staging",
                     plannedRowCount = case.longArg("plannedRowCount"),
                     nextExpectedRowOrdinal = 0,
@@ -238,6 +240,7 @@ class SharedProtocolHttpRequestFixtureTest {
                     rows = emptyList(),
                     nextRowOrdinal = case.longArg("afterRowOrdinal"),
                     hasMore = false,
+                    byteCount = 0,
                 ),
             )
             "watch" -> ""

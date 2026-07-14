@@ -20,6 +20,7 @@ import dev.goquick.sqlitenow.core.PersistenceController
 import dev.goquick.sqlitenow.core.SqlitePersistence
 import dev.goquick.sqlitenow.core.exportConnectionBytes
 import dev.goquick.sqlitenow.core.sqlite.SqliteConnection
+import kotlinx.coroutines.CancellationException
 
 /**
  * Persists database snapshots using a [SqlitePersistence] implementation.
@@ -50,11 +51,13 @@ internal class SnapshotPersistenceController(
     }
 
     private suspend fun persistSnapshot(connection: SqliteConnection, force: Boolean) {
-        val bytes = exportConnectionBytes(connection) ?: return
         try {
+            val bytes = exportConnectionBytes(connection) ?: return
             persistence.persist(dbName, bytes)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
         } catch (t: Throwable) {
-            sqliteNowLogger.e(t) { "Failed to persist database snapshot for $dbName" }
+            sqliteNowLogger.e { "Failed to persist database snapshot" }
             if (force) throw t
         }
     }

@@ -190,9 +190,10 @@ internal open class PlatformCrossTargetTestSupport {
                     json.encodeToString(
                         CapabilitiesResponse.serializer(),
                         CapabilitiesResponse(
-                            protocolVersion = "v0",
+                            protocolVersion = "v1",
                             schemaVersion = 1,
                             features = mapOf("connect_lifecycle" to true),
+                            bundleLimits = testBundleCapabilitiesLimits(),
                         ),
                     ),
                 )
@@ -302,7 +303,7 @@ internal open class PlatformCrossTargetTestSupport {
                     }
 
                     connect.hasLocalPendingRows -> {
-                        val nextId = "init-${nextInitializationId++}"
+                        val nextId = "00000000-0000-4000-8001-${(nextInitializationId++).toString().padStart(12, '0')}"
                         initializingSourceId = sourceId
                         initializationId = nextId
                         jsonResponse(
@@ -340,13 +341,13 @@ internal open class PlatformCrossTargetTestSupport {
                 val sourceId = request.headers[sourceIdHeaderName].orEmpty()
                 val expectedInitializationId = initializationId
                 if (expectedInitializationId != null) {
-                    if (create.initializationId.isNullOrBlank()) {
+                    if (create.initializationId == null) {
                         return errorResponse("initialization_stale", "initialization_id is required", HttpStatusCode.Conflict)
                     }
                     if (create.initializationId != expectedInitializationId) {
                         return errorResponse("initialization_stale", "initialization_id does not match active lease", HttpStatusCode.Conflict)
                     }
-                } else if (!create.initializationId.isNullOrBlank()) {
+                } else if (create.initializationId != null) {
                     return errorResponse("initialization_stale", "scope is no longer initializing", HttpStatusCode.Conflict)
                 }
                 sourceRetiredOnPushCreate?.let { retired ->
@@ -369,7 +370,7 @@ internal open class PlatformCrossTargetTestSupport {
                         ),
                     )
                 } else {
-                    val pushId = "push-${nextPushId++}"
+                    val pushId = "00000000-0000-4000-8002-${(nextPushId++).toString().padStart(12, '0')}"
                     pushSessions[pushId] = PushSession(
                         pushId = pushId,
                         sourceId = sourceId,
@@ -613,7 +614,7 @@ internal open class PlatformCrossTargetTestSupport {
                         snapshotId = snapshotId,
                         snapshotBundleSeq = stableBundleSeq,
                         rowCount = snapshotRows.size.toLong(),
-                        byteCount = 0,
+                        byteCount = snapshotRowsWireBytes(snapshotRows),
                         expiresAt = "2099-01-01T00:00:00Z",
                     ),
                 ),
@@ -640,6 +641,7 @@ internal open class PlatformCrossTargetTestSupport {
                             rows = rows,
                             nextRowOrdinal = afterRowOrdinal + rows.size,
                             hasMore = startIndex + rows.size < session.rows.size,
+                            byteCount = snapshotRowsWireBytes(rows),
                         ),
                     ),
                 )
@@ -647,6 +649,11 @@ internal open class PlatformCrossTargetTestSupport {
                 errorResponse("invalid_request", t.message ?: "snapshot fetch failed")
             }
         }
+
+        private fun snapshotRowsWireBytes(rows: List<SnapshotRow>): Long =
+            rows.fold(0L) { total, row ->
+                total + json.encodeToString(SnapshotRow.serializer(), row).encodeToByteArray().size.toLong()
+            }
 
         private suspend fun MockRequestHandleScope.handlePull(request: HttpRequestData) : io.ktor.client.request.HttpResponseData {
             return try {

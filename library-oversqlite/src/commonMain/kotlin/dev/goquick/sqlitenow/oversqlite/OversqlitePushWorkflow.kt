@@ -82,8 +82,7 @@ internal class OversqlitePushWorkflow(
         val initialDirtyCount = syncStateStore.countDirtyRows()
         val initialOutboundCount = outboxStateStore.countRows()
         log {
-            "oversqlite pushPending start user=${state.userId} source=${state.sourceId} " +
-                "pendingDirty=$initialDirtyCount pendingOutbound=$initialOutboundCount"
+            pushPendingStartDiagnostic(state, initialDirtyCount, initialOutboundCount)
         }
         val snapshot = ensurePushOutboundSnapshot(state)
         if (snapshot.rows.isEmpty()) {
@@ -96,7 +95,7 @@ internal class OversqlitePushWorkflow(
 
         log {
             "oversqlite pushPending snapshot sourceBundleId=${snapshot.sourceBundleId} " +
-                "rows=${snapshot.rows.size} ${snapshot.rows.joinToString(" | ") { it.toVerboseSummary() }}"
+                "rows=${snapshot.rows.size}"
         }
         val committed = try {
             if (snapshot.isRemoteCommitted) {
@@ -114,7 +113,7 @@ internal class OversqlitePushWorkflow(
         } catch (e: PushConflictException) {
             val updatedTables = resolvePushConflict(state, snapshot, e)
             val remainingDirtyCount = syncStateStore.countDirtyRows()
-            if (remainingDirtyCount == 0) {
+            if (remainingDirtyCount == 0L) {
                 return PushWorkflowResult(
                     outcome = PushOutcome.NO_CHANGE,
                     updatedTables = updatedTables,
@@ -123,7 +122,7 @@ internal class OversqlitePushWorkflow(
             if (conflictRetryCount >= MAX_PUSH_CONFLICT_AUTO_RETRIES) {
                 throw PushConflictRetryExhaustedException(
                     retryCount = MAX_PUSH_CONFLICT_AUTO_RETRIES,
-                    remainingDirtyCount = remainingDirtyCount,
+                    remainingDirtyCount = saturatingLegacyCount(remainingDirtyCount),
                 )
             }
             val retryResult = pushPending(
@@ -171,8 +170,7 @@ internal class OversqlitePushWorkflow(
 
         val prepared = stageStore.preparePush(state, sourceStateStore.loadNextSourceBundleId(state.sourceId))
         log {
-            "oversqlite collectDirtyRows prepared=${prepared.rows.size} noOps=${prepared.discardedRows.size} " +
-                prepared.rows.joinToString(" | ") { it.toVerboseSummary() }
+            "oversqlite collectDirtyRows prepared=${prepared.rows.size} noOps=${prepared.discardedRows.size}"
         }
         val frozen = persistPreparedOutboxSnapshot(state, prepared)
         if (frozen.rows.isNotEmpty()) {
@@ -191,10 +189,10 @@ internal class OversqlitePushWorkflow(
 
         val createResponse = remoteApi.createPushSession(
             sourceBundleId = snapshot.sourceBundleId,
-			plannedRowCount = snapshot.canonicalRows.size.toLong(),
-			canonicalRequestHash = snapshot.canonicalRequestHash,
+            plannedRowCount = snapshot.canonicalRows.size.toLong(),
+            canonicalRequestHash = snapshot.canonicalRequestHash,
             sourceId = state.sourceId,
-            initializationId = state.pendingInitializationId.takeIf { it.isNotBlank() },
+            initializationId = state.pendingInitializationId.ifEmpty { null },
         )
         return when (createResponse.status) {
             "already_committed" -> committedPushBundleFromCreateResponse(
@@ -203,8 +201,7 @@ internal class OversqlitePushWorkflow(
                 snapshot.sourceBundleId,
             )
             "staging" -> {
-                val pushId = createResponse.pushId.trim()
-                require(pushId.isNotEmpty()) { "push session response missing push_id" }
+                val pushId = requireValidOversqliteSessionToken(createResponse.pushId)
                 try {
                     val chunkSize = pushChunkRows()
                     var start = 0
@@ -218,8 +215,8 @@ internal class OversqlitePushWorkflow(
                                 rows = buildPushRequestRows(snapshot.canonicalRows.subList(start, end)),
                             ),
                         )
-                        require(chunkResponse.pushId == pushId) {
-                            "push chunk response push_id ${chunkResponse.pushId} does not match requested $pushId"
+                        if (chunkResponse.pushId != pushId) {
+                            throw RemoteResponseSemanticException("push chunk request")
                         }
                         require(chunkResponse.nextExpectedRowOrdinal == end.toLong()) {
                             "push chunk response next_expected_row_ordinal ${chunkResponse.nextExpectedRowOrdinal} does not match expected $end"
@@ -361,9 +358,7 @@ internal class OversqlitePushWorkflow(
         state: RuntimeState,
         outboxState: OversqliteOutboxBundleState,
     ): PushOutboundSnapshot {
-        require(outboxState.sourceId == state.sourceId) {
-            "persisted outbox source ${outboxState.sourceId} does not match current source ${state.sourceId}"
-        }
+        requireMatchingOutboxSourceId(outboxState.sourceId, state.sourceId)
         if (outboxState.state == outboxStateCommittedRemote) {
             require(outboxState.remoteBundleSeq > 0L) {
                 "committed_remote outbox is missing remote_bundle_seq"
@@ -418,8 +413,7 @@ internal class OversqlitePushWorkflow(
         val canonicalRequestHash = canonicalRows.takeIf { it.isNotEmpty() }?.let(::computeCanonicalRequestHash) ?: ""
         val allMovedRows = (prepared.rows.map { it.toRowRef() } + prepared.discardedRows).distinct()
         db.transaction(TransactionMode.IMMEDIATE) {
-            val statementCache = StatementCache(db)
-            try {
+            db.withStatementCache { statementCache ->
                 outboxStateStore.clearBundleAndRows(statementCache)
                 if (canonicalRows.isNotEmpty()) {
                     outboxStateStore.persistBundleState(
@@ -438,8 +432,6 @@ internal class OversqlitePushWorkflow(
                 for (row in allMovedRows) {
                     syncStateStore.deleteDirtyRow(row.schemaName, row.tableName, row.keyJson, statementCache)
                 }
-            } finally {
-                statementCache.close()
             }
         }
         return PushOutboundSnapshot(
@@ -608,6 +600,26 @@ internal class OversqlitePushWorkflow(
     private fun pushChunkRows(): Int = config.uploadLimit.takeIf { it > 0 } ?: 1000
 
     private fun committedBundleChunkRows(): Int = config.downloadLimit.takeIf { it > 0 } ?: 1000
+}
+
+internal fun pushPendingStartDiagnostic(
+    state: RuntimeState,
+    pendingDirtyCount: Long,
+    pendingOutboundCount: Long,
+): String {
+    requireValidOversqliteSourceId(state.sourceId)
+    return "oversqlite pushPending start pendingDirty=$pendingDirtyCount pendingOutbound=$pendingOutboundCount"
+}
+
+internal fun requireMatchingOutboxSourceId(
+    persistedSourceId: String,
+    currentSourceId: String,
+) {
+    val validatedPersistedSourceId = requireValidOversqliteSourceId(persistedSourceId)
+    val validatedCurrentSourceId = requireValidOversqliteSourceId(currentSourceId)
+    require(validatedPersistedSourceId == validatedCurrentSourceId) {
+        "persisted outbox source does not match current source"
+    }
 }
 
 internal data class PushWorkflowResult(

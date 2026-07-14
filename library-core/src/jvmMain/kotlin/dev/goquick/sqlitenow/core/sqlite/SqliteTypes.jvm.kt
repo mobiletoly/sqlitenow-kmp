@@ -31,6 +31,10 @@ actual class SqliteConnection internal constructor(
 actual class SqliteStatement internal constructor(
     internal val delegate: SQLiteStatement,
 ) {
+    actual internal var cleanupFailureObserver: ((Throwable) -> Unit)? = null
+    actual internal var beforeCloseObserver: (() -> Unit)? = null
+    actual internal var closeSuccessObserver: (() -> Unit)? = null
+
     actual fun bindBlob(index: Int, value: ByteArray) = wrapSqliteCall { delegate.bindBlob(index, value) }
     actual fun bindDouble(index: Int, value: Double) = wrapSqliteCall { delegate.bindDouble(index, value) }
     actual fun bindLong(index: Int, value: Long) = wrapSqliteCall { delegate.bindLong(index, value) }
@@ -46,7 +50,25 @@ actual class SqliteStatement internal constructor(
     actual fun getColumnCount(): Int = wrapSqliteCall { delegate.getColumnCount() }
     actual fun getColumnName(index: Int): String = wrapSqliteCall { delegate.getColumnName(index) }
     actual fun step(): Boolean = wrapSqliteCall { delegate.step() }
-    actual fun reset() = wrapSqliteCall { delegate.reset() }
-    actual fun clearBindings() = wrapSqliteCall { delegate.clearBindings() }
-    actual fun close() = delegate.close()
+    actual fun reset() = observeCleanup { wrapSqliteCall { delegate.reset() } }
+    actual fun clearBindings() = observeCleanup { wrapSqliteCall { delegate.clearBindings() } }
+    actual fun close() {
+        beforeCloseObserver?.invoke()
+        try {
+            delegate.close()
+        } catch (t: Throwable) {
+            cleanupFailureObserver?.invoke(t)
+            throw t
+        }
+        closeSuccessObserver?.invoke()
+    }
+
+    private inline fun observeCleanup(block: () -> Unit) {
+        try {
+            block()
+        } catch (t: Throwable) {
+            cleanupFailureObserver?.invoke(t)
+            throw t
+        }
+    }
 }

@@ -70,7 +70,11 @@ class SharedPullSnapshotFixtureTest {
                     validateSnapshotSession(session)
                     session
                 }
-                assertValidationResult(case.name, case.expectedSnapshotSessionErrorContains, sessionResult)
+                assertValidationResult(
+                    case.name,
+                    case.expectedKmpSnapshotSessionErrorContains ?: case.expectedSnapshotSessionErrorContains,
+                    sessionResult,
+                )
                 sessionResult.getOrNull()?.let { session ->
                     case.snapshotChunkResponse?.let { chunkJson ->
                         val chunkResult = runCatching {
@@ -83,10 +87,16 @@ class SharedPullSnapshotFixtureTest {
                                 snapshotId = session.snapshotId,
                                 snapshotBundleSeq = session.snapshotBundleSeq,
                                 afterRowOrdinal = case.snapshotChunkAfterRowOrdinal,
+                                maxRows = 1000,
+                                maxBytes = 4L * 1024L * 1024L,
                             )
                             chunk
                         }
-                        assertValidationResult(case.name, case.expectedSnapshotChunkErrorContains, chunkResult)
+                        assertValidationResult(
+                            case.name,
+                            case.expectedKmpSnapshotChunkErrorContains ?: case.expectedSnapshotChunkErrorContains,
+                            chunkResult,
+                        )
                     }
                 }
             }
@@ -136,7 +146,9 @@ class SharedPullSnapshotFixtureTest {
         val snapshotChunkResponse: JsonObject? = null,
         val snapshotChunkAfterRowOrdinal: Long = 0,
         val expectedSnapshotSessionErrorContains: String? = null,
+        val expectedKmpSnapshotSessionErrorContains: String? = null,
         val expectedSnapshotChunkErrorContains: String? = null,
+        val expectedKmpSnapshotChunkErrorContains: String? = null,
         val sourceReplacementInvalidResponse: FixtureHttpResponse? = null,
         val expectedFinalState: JsonObject? = null,
     )

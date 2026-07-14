@@ -211,6 +211,20 @@
           "primaryKeyPosition": 0
         },
         {
+          "name": "snapshot_byte_count",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "snapshot_stage_complete",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
           "name": "reason",
           "type": "TEXT",
           "notNull": true,
@@ -588,6 +602,8 @@
         "staged_snapshot_id": "",
         "snapshot_bundle_seq": 0,
         "snapshot_row_count": 0,
+        "snapshot_byte_count": 0,
+        "snapshot_stage_complete": 0,
         "reason": "",
         "replacement_source_id": ""
       }

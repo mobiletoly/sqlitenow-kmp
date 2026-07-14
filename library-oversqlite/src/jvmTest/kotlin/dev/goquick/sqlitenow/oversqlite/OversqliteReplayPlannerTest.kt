@@ -3,6 +3,7 @@ package dev.goquick.sqlitenow.oversqlite
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -116,6 +117,52 @@ class OversqliteReplayPlannerTest {
             assertEquals(scenario.expectedRequeueOp, action.requeueOp, scenario.name)
             assertEquals(scenario.expectedRequeuePayload, action.requeuePayload, scenario.name)
         }
+    }
+
+    @Test
+    fun replayDiagnosticsDoNotDiscloseKeysPayloadsOrHostileIdentifiers() {
+        val sentinel = "customer-secret\nwire-value"
+        val uploaded = uploadedChange(
+            op = "UPDATE",
+            payload = sentinel,
+        ).copy(
+            schemaName = sentinel,
+            tableName = sentinel,
+            keyJson = sentinel,
+            localPk = sentinel,
+            wireKey = mapOf(sentinel to sentinel),
+        )
+        val plan = UploadedReplayPlan(
+            rowRef = uploaded.toRowRef(),
+            action = ReplayRowAction.PreserveLocal(
+                requeueOp = sentinel,
+                requeuePayload = sentinel,
+            ),
+            diagnostics = ReplayPlanDiagnostics(
+                pendingExists = true,
+                pendingMatches = false,
+                livePayload = sentinel,
+                liveMatches = false,
+                currentDirtyPayload = sentinel,
+            ),
+        )
+
+        val diagnostic = replayDecisionLog(uploaded, plan)
+
+        assertFalse(sentinel in diagnostic)
+        assertFalse(" key=" in diagnostic)
+        assertFalse("Payload=" in diagnostic)
+        assertTrue("table=<redacted>" in diagnostic)
+        assertTrue("requeueOp=<invalid>" in diagnostic)
+        assertEquals("missing replay plan for uploaded row", replayMissingPlanMessage)
+        assertEquals(
+            "successful push replay left an unexpected dirty row",
+            replayUnexpectedDirtyMessage,
+        )
+        assertEquals(
+            "successful push replay lost a preserved dirty row",
+            replayMissingPreservedDirtyMessage,
+        )
     }
 
     private fun uploadedChange(

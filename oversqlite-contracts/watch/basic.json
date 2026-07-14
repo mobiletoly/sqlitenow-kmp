@@ -6,11 +6,22 @@
       "response": {
         "status": 200,
         "body": {
-          "protocol_version":"v0",
+          "protocol_version":"v1",
           "schema_version": 1,
           "features": {
             "connect_lifecycle": true,
             "bundle_change_watch": true
+          },
+          "bundle_limits": {
+            "default_rows_per_snapshot_chunk": 1000,
+            "max_rows_per_snapshot_chunk": 4000,
+            "default_bytes_per_snapshot_chunk": 4194304,
+            "max_bytes_per_snapshot_chunk": 16777216,
+            "max_bytes_per_snapshot_row": 4194304,
+            "snapshot_materialization_batch_rows": 1000,
+            "snapshot_materialization_batch_bytes": 4194304,
+            "max_concurrent_snapshot_builds": 2,
+            "max_concurrent_snapshot_chunk_requests": 8
           }
         }
       },
@@ -21,11 +32,22 @@
       "response": {
         "status": 200,
         "body": {
-          "protocol_version":"v0",
+          "protocol_version":"v1",
           "schema_version": 1,
           "features": {
             "connect_lifecycle": true,
             "bundle_change_watch": false
+          },
+          "bundle_limits": {
+            "default_rows_per_snapshot_chunk": 1000,
+            "max_rows_per_snapshot_chunk": 4000,
+            "default_bytes_per_snapshot_chunk": 4194304,
+            "max_bytes_per_snapshot_chunk": 16777216,
+            "max_bytes_per_snapshot_row": 4194304,
+            "snapshot_materialization_batch_rows": 1000,
+            "snapshot_materialization_batch_bytes": 4194304,
+            "max_concurrent_snapshot_builds": 2,
+            "max_concurrent_snapshot_chunk_requests": 8
           }
         }
       },
@@ -36,10 +58,21 @@
       "response": {
         "status": 200,
         "body": {
-          "protocol_version":"v0",
+          "protocol_version":"v1",
           "schema_version": 1,
           "features": {
             "connect_lifecycle": true
+          },
+          "bundle_limits": {
+            "default_rows_per_snapshot_chunk": 1000,
+            "max_rows_per_snapshot_chunk": 4000,
+            "default_bytes_per_snapshot_chunk": 4194304,
+            "max_bytes_per_snapshot_chunk": 16777216,
+            "max_bytes_per_snapshot_row": 4194304,
+            "snapshot_materialization_batch_rows": 1000,
+            "snapshot_materialization_batch_bytes": 4194304,
+            "max_concurrent_snapshot_builds": 2,
+            "max_concurrent_snapshot_chunk_requests": 8
           }
         }
       },

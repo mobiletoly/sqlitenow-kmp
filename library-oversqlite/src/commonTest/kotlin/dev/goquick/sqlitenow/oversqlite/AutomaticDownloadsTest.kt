@@ -12,10 +12,12 @@ import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
@@ -78,7 +80,8 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
     fun automaticDownloads_pollingModePropagatesProtocolMismatchWithoutRetry() = runTest {
         val env = newTwoClientEnv()
         try {
-            env.server.protocolVersion = "v1"
+            val hostileProtocolVersion = "HOSTILE_PROTOCOL_VERSION_SECRET"
+            env.server.protocolVersion = hostileProtocolVersion
             val initialCapabilityAttempts = env.server.capabilitySourceIds.size
             val initialPullAttempts = env.server.pullRequestCount
 
@@ -100,8 +103,10 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
                         }
                     }
                 }
-                assertEquals("v0", mismatch.expected)
-                assertEquals("v1", mismatch.actual)
+                assertEquals("v1", mismatch.expected)
+                assertEquals("", mismatch.actual)
+                assertEquals("oversqlite protocol version mismatch", mismatch.message)
+                assertFalse(mismatch.message.orEmpty().contains(hostileProtocolVersion))
             }
 
             assertEquals(initialCapabilityAttempts + 1, env.server.capabilitySourceIds.size)
@@ -374,6 +379,42 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
             } finally {
                 env.close()
             }
+        }
+    }
+
+    @Test
+    fun automaticDownloadsDoNotLogThrowableMessages() = runTest {
+        val sentinel = "customer-secret-throwable-message"
+        val logs = mutableListOf<String>()
+        val server = MockSyncServer()
+        val http = server.newHttpClient()
+        val db = newDb()
+        val worker = launch(Dispatchers.Default) {
+            OversqliteAutomaticDownloads(
+                automaticDownloadConfig = OversqliteAutomaticDownloadConfig(
+                    automaticDownloadIntervalMillis = 1_000,
+                ),
+                remoteApi = OversqliteRemoteApi(
+                    http = http,
+                    json = Json { ignoreUnknownKeys = true },
+                    log = { },
+                ),
+                attachmentStateStore = OversqliteAttachmentStateStore(db),
+                downloadsPaused = { false },
+                connectedRuntimeState = { error("unused") },
+                fetchCapabilities = { error("unused") },
+                pullToStable = { Result.failure(IllegalStateException(sentinel)) },
+                log = { logs += it() },
+            ).run()
+        }
+        try {
+            eventually { logs.isNotEmpty() }
+            assertTrue(logs.none { sentinel in it })
+            assertTrue(logs.any { "error=IllegalStateException" in it })
+        } finally {
+            worker.cancelAndJoin()
+            http.close()
+            db.close()
         }
     }
 

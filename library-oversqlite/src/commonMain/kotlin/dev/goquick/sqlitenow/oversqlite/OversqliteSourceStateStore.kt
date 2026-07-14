@@ -29,6 +29,7 @@ internal class OversqliteSourceStateStore(
     internal val db: SafeSQLiteConnection,
 ) {
     suspend fun loadState(sourceId: String): OversqliteSourceState? {
+        requireValidOversqliteSourceId(sourceId)
         return db.withExclusiveAccess {
             db.prepare(
                 """
@@ -42,9 +43,9 @@ internal class OversqliteSourceStateStore(
                     null
                 } else {
                     OversqliteSourceState(
-                        sourceId = st.getText(0),
+                        sourceId = requireValidOversqliteSourceId(st.getText(0)),
                         nextSourceBundleId = st.getLong(1),
-                        replacedBySourceId = st.getText(2),
+                        replacedBySourceId = requireValidOptionalOversqliteSourceId(st.getText(2)),
                         createdAt = st.getText(3),
                     )
                 }
@@ -57,6 +58,7 @@ internal class OversqliteSourceStateStore(
         initialNextSourceBundleId: Long = 1L,
         statementCache: StatementCache? = null,
     ) {
+        requireValidOversqliteSourceId(sourceId)
         db.withPreparedStatement(
             sql = """
                 INSERT INTO _sync_source_state(source_id, next_source_bundle_id, replaced_by_source_id)
@@ -72,6 +74,7 @@ internal class OversqliteSourceStateStore(
     }
 
     suspend fun upsertNextSourceBundleIdFloor(sourceId: String, nextSourceBundleId: Long) {
+        requireValidOversqliteSourceId(sourceId)
         db.withExclusiveAccess {
             db.prepare(
                 """
@@ -97,6 +100,8 @@ internal class OversqliteSourceStateStore(
         replacementSourceId: String,
         statementCache: StatementCache? = null,
     ) {
+        requireValidOversqliteSourceId(previousSourceId)
+        requireValidOversqliteSourceId(replacementSourceId)
         db.withPreparedStatement(
             sql = """
                 UPDATE _sync_source_state
@@ -114,7 +119,7 @@ internal class OversqliteSourceStateStore(
     suspend fun loadNextSourceBundleId(sourceId: String): Long {
         ensureSource(sourceId)
         return loadState(sourceId)?.nextSourceBundleId
-            ?: error("_sync_source_state missing for source $sourceId")
+            ?: error("_sync_source_state is missing for the requested source")
     }
 
     suspend fun advanceAfterCommittedPush(

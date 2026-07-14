@@ -13,6 +13,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import java.net.InetSocketAddress
+import java.nio.file.Files
 import kotlin.io.path.createDirectories
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
@@ -55,6 +56,10 @@ class SharedLifecycleBehaviorFixtureTest : SharedRuntimeStateFixtureSupport() {
             for (step in case.steps) {
                 val (error, actualResult) = runStep(step)
                 assertRuntimeStateExpectedException(case.name, step.expectedException, error)
+                if (error != null && runCatching { db.execSQL("SELECT 1") }.isFailure) {
+                    db = BundledSqliteConnectionProvider.openConnection(databasePath, debug = false)
+                    client = newRuntimeStateClient(db, http)
+                }
                 step.expectedResult?.let { expected ->
                     assertEquals(expected, actualResult, "${case.name}/${step.action}: result")
                 }
@@ -78,23 +83,25 @@ class SharedLifecycleBehaviorFixtureTest : SharedRuntimeStateFixtureSupport() {
         case: LifecycleBehaviorCase,
         block: suspend LifecycleUsersEnv.() -> Unit,
     ) {
-        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        val databasePath = Files.createTempDirectory("oversqlite-lifecycle-fixture-").resolve("client.sqlite")
+        val db = BundledSqliteConnectionProvider.openConnection(databasePath.toString(), debug = false)
         createUsersTable(db)
         val serverHandle = newLifecycleServer(case, db)
         serverHandle.server.start()
+        val env = LifecycleUsersEnv(
+            db = db,
+            databasePath = databasePath.toString(),
+            http = serverHandle.http,
+            client = newRuntimeStateClient(db, serverHandle.http),
+            chunkedServer = serverHandle.chunkedServer,
+            recorder = serverHandle.recorder,
+        )
         try {
-            val client = newRuntimeStateClient(db, serverHandle.http)
-            LifecycleUsersEnv(
-                db = db,
-                http = serverHandle.http,
-                client = client,
-                chunkedServer = serverHandle.chunkedServer,
-                recorder = serverHandle.recorder,
-            ).block()
+            env.block()
         } finally {
             serverHandle.http.close()
             serverHandle.server.stop(0)
-            db.close()
+            env.db.close()
         }
     }
 
@@ -104,7 +111,7 @@ class SharedLifecycleBehaviorFixtureTest : SharedRuntimeStateFixtureSupport() {
     ): LifecycleServerHandle {
         val recorder = LifecycleServerRecorder()
         val customConnect = case.serverScript.connectResolution != "default"
-        val customCapabilities = case.serverScript.protocolVersions != listOf("v0")
+        val customCapabilities = case.serverScript.protocolVersions != listOf("v1")
         val server = if (customConnect || customCapabilities) {
             newConnectScriptServer(
                 connectResolution = case.serverScript.connectResolution,
@@ -156,7 +163,10 @@ class SharedLifecycleBehaviorFixtureTest : SharedRuntimeStateFixtureSupport() {
             respondJson(
                 exchange,
                 200,
-                """{"protocol_version":"$protocolVersion","schema_version":1,"features":{"connect_lifecycle":true}}""",
+                capabilitiesJson(
+                    features = mapOf("connect_lifecycle" to true),
+                    protocolVersion = protocolVersion,
+                ),
             )
         }
         server.createContext("/sync/connect") { exchange ->
@@ -211,6 +221,7 @@ class SharedLifecycleBehaviorFixtureTest : SharedRuntimeStateFixtureSupport() {
             }
             val snapshot = script.snapshots[min(nextSnapshotIndex, script.snapshots.lastIndex)]
             nextSnapshotIndex += 1
+            val snapshotByteCount = snapshot.rows.sumOf { snapshotRowJson(it).encodeToByteArray().size.toLong() }
             respondJson(
                 exchange,
                 200,
@@ -219,7 +230,7 @@ class SharedLifecycleBehaviorFixtureTest : SharedRuntimeStateFixtureSupport() {
                   "snapshot_id": "${snapshot.id}",
                   "snapshot_bundle_seq": ${snapshot.bundleSeq},
                   "row_count": ${snapshot.rows.size},
-                  "byte_count": 0,
+                  "byte_count": $snapshotByteCount,
                   "expires_at": "2099-01-01T00:00:00Z"
                 }
                 """.trimIndent(),
@@ -240,17 +251,9 @@ class SharedLifecycleBehaviorFixtureTest : SharedRuntimeStateFixtureSupport() {
                     val rowLimit = min(maxRows, snapshot.rowsPerChunk ?: maxRows)
                     val rows = snapshot.rows.drop(after.toInt()).take(rowLimit)
                     val nextRowOrdinal = after + rows.size
-                    val rowsJson = rows.joinToString(separator = ",") { row ->
-                        """
-                        {
-                          "schema": "main",
-                          "table": "users",
-                          "key": ${row.key},
-                          "row_version": ${row.rowVersion},
-                          "payload": ${row.payload}
-                        }
-                        """.trimIndent()
-                    }
+                    val encodedRows = rows.map(::snapshotRowJson)
+                    val rowsJson = encodedRows.joinToString(separator = ",")
+                    val chunkByteCount = encodedRows.sumOf { it.encodeToByteArray().size.toLong() }
                     respondJson(
                         exchange,
                         200,
@@ -258,6 +261,7 @@ class SharedLifecycleBehaviorFixtureTest : SharedRuntimeStateFixtureSupport() {
                         {
                           "snapshot_id": "${snapshot.id}",
                           "snapshot_bundle_seq": ${snapshot.bundleSeq},
+                          "byte_count": $chunkByteCount,
                           "rows": [$rowsJson],
                           "next_row_ordinal": $nextRowOrdinal,
                           "has_more": ${nextRowOrdinal < snapshot.rows.size}
@@ -276,6 +280,17 @@ class SharedLifecycleBehaviorFixtureTest : SharedRuntimeStateFixtureSupport() {
             }
         }
     }
+
+    private fun snapshotRowJson(row: LifecycleSnapshotRow): String = contractJson.encodeToString(
+        JsonElement.serializer(),
+        buildJsonObject {
+            put("schema", JsonPrimitive("main"))
+            put("table", JsonPrimitive("users"))
+            put("key", row.key)
+            put("row_version", JsonPrimitive(row.rowVersion))
+            put("payload", row.payload)
+        },
+    )
 
     private suspend fun LifecycleUsersEnv.runStep(step: LifecycleBehaviorStep): StepResult {
         var actualResult: JsonObject? = null
@@ -397,7 +412,7 @@ class SharedLifecycleBehaviorFixtureTest : SharedRuntimeStateFixtureSupport() {
     private data class LifecycleServerScript(
         val kind: String = "default",
         val connectResolution: String = "default",
-        val protocolVersions: List<String> = listOf("v0"),
+        val protocolVersions: List<String> = listOf("v1"),
         val lateWritesByPull: List<List<String>> = emptyList(),
         val snapshots: List<LifecycleSnapshot> = emptyList(),
         val snapshotSessionErrors: List<LifecycleSnapshotSessionError> = emptyList(),
@@ -464,7 +479,8 @@ class SharedLifecycleBehaviorFixtureTest : SharedRuntimeStateFixtureSupport() {
     )
 
     private data class LifecycleUsersEnv(
-        val db: SafeSQLiteConnection,
+        var db: SafeSQLiteConnection,
+        val databasePath: String,
         val http: HttpClient,
         var client: DefaultOversqliteClient,
         val chunkedServer: FakeChunkedSyncServer?,

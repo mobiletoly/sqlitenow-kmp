@@ -10,7 +10,7 @@
       },
       "pushSessionCreateResponse": {
         "status": "staging",
-        "push_id": "push-1",
+        "push_id": "11111111-1111-4111-8111-111111111111",
         "planned_row_count": 1,
         "next_expected_row_ordinal": 0,
         "canonical_request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -34,7 +34,7 @@
         ]
       },
       "pushChunkResponse": {
-        "push_id": "push-1",
+        "push_id": "11111111-1111-4111-8111-111111111111",
         "next_expected_row_ordinal": 1
       },
       "pushCommitResponse": {

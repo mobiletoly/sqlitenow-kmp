@@ -46,6 +46,14 @@ internal data class OversqliteOutboxRow(
     val wirePayload: String?,
 )
 
+internal data class PreparedOutboxReplayRow(
+    val rowOrdinal: Long,
+    val tableName: String,
+    val keyJson: String,
+    val op: String,
+    val localPayload: String?,
+)
+
 internal class OversqliteOutboxStateStore(
     internal val db: SafeSQLiteConnection,
 ) {
@@ -67,9 +75,15 @@ internal class OversqliteOutboxStateStore(
         ) { st ->
             OversqliteOutboxBundleState(
                 state = st.getText(0),
-                sourceId = st.getText(1),
+                sourceId = st.getText(1).let { sourceId ->
+                    if (st.getText(0) == outboxStateNone) {
+                        requireValidOptionalOversqliteSourceId(sourceId)
+                    } else {
+                        requireValidOversqliteSourceId(sourceId)
+                    }
+                },
                 sourceBundleId = st.getLong(2),
-                initializationId = st.getText(3),
+                initializationId = requireValidOptionalOversqliteSessionToken(st.getText(3)),
                 canonicalRequestHash = st.getText(4),
                 rowCount = st.getLong(5),
                 remoteBundleHash = st.getText(6),
@@ -82,6 +96,12 @@ internal class OversqliteOutboxStateStore(
         state: OversqliteOutboxBundleState,
         statementCache: StatementCache? = null,
     ) {
+        if (state.state == outboxStateNone) {
+            requireValidOptionalOversqliteSourceId(state.sourceId)
+        } else {
+            requireValidOversqliteSourceId(state.sourceId)
+        }
+        requireValidOptionalOversqliteSessionToken(state.initializationId)
         db.withPreparedStatement(
             sql = """
                 UPDATE _sync_outbox_bundle
@@ -149,8 +169,52 @@ internal class OversqliteOutboxStateStore(
         }
     }
 
-    suspend fun countRows(): Int {
-        return db.scalarLong("SELECT COUNT(*) FROM _sync_outbox_rows").toInt()
+    suspend fun loadReplayRowAfter(
+        sourceBundleId: Long,
+        afterRowOrdinal: Long,
+        statementCache: StatementCache,
+    ): PreparedOutboxReplayRow? {
+        return db.withPreparedStatement(
+            sql = """
+                SELECT row_ordinal,
+                       table_name,
+                       key_json,
+                       op,
+                       local_payload
+                FROM _sync_outbox_rows
+                WHERE source_bundle_id = ? AND row_ordinal > ?
+                ORDER BY row_ordinal
+                LIMIT 1
+            """.trimIndent(),
+            statementCache = statementCache,
+        ) { st ->
+            st.bindLong(1, sourceBundleId)
+            st.bindLong(2, afterRowOrdinal)
+            if (!st.step()) return@withPreparedStatement null
+            PreparedOutboxReplayRow(
+                rowOrdinal = st.getLong(0),
+                tableName = st.getText(1),
+                keyJson = st.getText(2),
+                op = st.getText(3),
+                localPayload = if (st.isNull(4)) null else st.getText(4),
+            )
+        }
+    }
+
+    suspend fun countRows(): Long {
+        return db.scalarLong("SELECT COUNT(*) FROM _sync_outbox_rows")
+    }
+
+    suspend fun countRowsForSourceBundle(sourceBundleId: Long): Long {
+        return db.withExclusiveAccess {
+            db.prepare(
+                "SELECT COUNT(*) FROM _sync_outbox_rows WHERE source_bundle_id = ?",
+            ).use { st ->
+                st.bindLong(1, sourceBundleId)
+                check(st.step())
+                st.getLong(0)
+            }
+        }
     }
 
     suspend fun clearRows(statementCache: StatementCache? = null) {
@@ -175,6 +239,7 @@ internal class OversqliteOutboxStateStore(
         sourceBundleId: Long,
         statementCache: StatementCache? = null,
     ) {
+        requireValidOversqliteSourceId(sourceId)
         db.withPreparedStatement(
             sql = """
                 UPDATE _sync_outbox_bundle

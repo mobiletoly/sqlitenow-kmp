@@ -150,7 +150,7 @@ internal class OversqlitePushReplayExecutor(
             "committed push replay row count ${committedRows.size} does not match expected row_count ${committed.rowCount}"
         }
 
-		val plans = buildReplayPlans(state, uploadedRows, statementCache)
+        val plans = buildReplayPlans(state, uploadedRows, statementCache)
         val updatedTables = linkedSetOf<String>()
         for (row in committedRows) {
             val bundleRow = BundleRow(
@@ -198,14 +198,17 @@ internal class OversqlitePushReplayExecutor(
     }
 
     private suspend fun buildReplayPlans(
-		state: RuntimeState,
+        state: RuntimeState,
         uploadedRows: List<DirtyRowCapture>,
         statementCache: StatementCache,
     ): Map<DirtyRowRef, UploadedReplayPlan> {
         return buildMap {
             for (uploaded in uploadedRows) {
-				val tableInfo = state.validated.tableInfoByName[uploaded.tableName.lowercase()]
-					?: error("missing validated table info for ${uploaded.tableName}")
+                val tableInfo = state.validated.tableInfoByName[uploaded.tableName.lowercase()]
+                    ?: error(
+                        "missing validated table info for " +
+                            safeSnapshotDiagnosticIdentifier(uploaded.tableName),
+                    )
                 val currentDirty = syncStateStore.loadDirtyUploadState(
                     schemaName = uploaded.schemaName,
                     tableName = uploaded.tableName,
@@ -236,7 +239,7 @@ internal class OversqlitePushReplayExecutor(
     ) {
         for (uploaded in uploadedRows) {
             val plan = plans[uploaded.toRowRef()]
-                ?: error("missing replay plan for ${uploaded.tableName} key=${uploaded.wireKey}")
+                ?: error(replayMissingPlanMessage)
             val dirty = syncStateStore.loadDirtyUploadState(
                 schemaName = uploaded.schemaName,
                 tableName = uploaded.tableName,
@@ -245,50 +248,48 @@ internal class OversqlitePushReplayExecutor(
             )
             when (plan.action) {
                 ReplayRowAction.AcceptAuthoritative -> require(!dirty.exists) {
-                    "successful push replay left unexpected dirty row for ${uploaded.tableName} key=${uploaded.wireKey} " +
-                        "uploadedOp=${uploaded.op} uploadedPayload=${uploaded.localPayload ?: "null"} " +
-                        "currentDirtyOp=${dirty.op} currentDirtyPayload=${dirty.payload ?: "null"}"
+                    replayUnexpectedDirtyMessage
                 }
 
                 is ReplayRowAction.PreserveLocal -> require(dirty.exists) {
-                    "successful push replay lost preserved dirty row for ${uploaded.tableName} key=${uploaded.wireKey} " +
-                        "requeueOp=${plan.action.requeueOp} expectedPayload=${plan.action.requeuePayload ?: "null"}"
+                    replayMissingPreservedDirtyMessage
                 }
-            }
-        }
-    }
-
-    private fun replayDecisionLog(
-        uploaded: DirtyRowCapture,
-        plan: UploadedReplayPlan,
-    ): String {
-        val diagnostics = plan.diagnostics
-        return buildString {
-            append("oversqlite replay decision ")
-            append("table=").append(uploaded.tableName)
-            append(" key=").append(uploaded.wireKey)
-            append(" pendingExists=").append(diagnostics.pendingExists)
-            append(" pendingMatches=").append(diagnostics.pendingMatches)
-            append(" liveExists=").append(diagnostics.livePayload != null)
-            append(" liveMatches=").append(diagnostics.liveMatches)
-            when (val action = plan.action) {
-                ReplayRowAction.AcceptAuthoritative -> {
-                    append(" needsRequeue=false")
-                    append(" requeueOp=<none>")
-                }
-                is ReplayRowAction.PreserveLocal -> {
-                    append(" needsRequeue=true")
-                    append(" requeueOp=").append(action.requeueOp)
-                }
-            }
-            append(" uploadedPayload=").append(uploaded.localPayload ?: "null")
-            append(" livePayload=").append(diagnostics.livePayload ?: "null")
-            if (diagnostics.pendingExists) {
-                append(" currentDirtyPayload=").append(diagnostics.currentDirtyPayload ?: "null")
             }
         }
     }
 }
+
+internal const val replayMissingPlanMessage = "missing replay plan for uploaded row"
+internal const val replayUnexpectedDirtyMessage = "successful push replay left an unexpected dirty row"
+internal const val replayMissingPreservedDirtyMessage = "successful push replay lost a preserved dirty row"
+
+internal fun replayDecisionLog(
+    uploaded: DirtyRowCapture,
+    plan: UploadedReplayPlan,
+): String {
+    val diagnostics = plan.diagnostics
+    return buildString {
+        append("oversqlite replay decision ")
+        append("table=").append(safeSnapshotDiagnosticIdentifier(uploaded.tableName))
+        append(" pendingExists=").append(diagnostics.pendingExists)
+        append(" pendingMatches=").append(diagnostics.pendingMatches)
+        append(" liveExists=").append(diagnostics.livePayload != null)
+        append(" liveMatches=").append(diagnostics.liveMatches)
+        when (val action = plan.action) {
+            ReplayRowAction.AcceptAuthoritative -> {
+                append(" needsRequeue=false")
+                append(" requeueOp=<none>")
+            }
+            is ReplayRowAction.PreserveLocal -> {
+                append(" needsRequeue=true")
+                append(" requeueOp=").append(safeReplayOperation(action.requeueOp))
+            }
+        }
+    }
+}
+
+private fun safeReplayOperation(value: String): String =
+    value.takeIf { it == "INSERT" || it == "UPDATE" || it == "DELETE" } ?: "<invalid>"
 
 internal fun DirtyRowCapture.toRowRef(): DirtyRowRef =
     DirtyRowRef(schemaName = schemaName, tableName = tableName, keyJson = keyJson)

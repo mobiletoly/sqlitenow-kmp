@@ -55,7 +55,7 @@ internal class OversqliteAutomaticDownloads(
                 }
                 log {
                     "oversqlite automatic downloads iteration failed " +
-                        "error=${error::class.simpleName ?: "Throwable"}: ${error.message.orEmpty()}"
+                        "error=${error::class.simpleName ?: "Throwable"}"
                 }
                 runAutomaticPullToStable("automatic downloads fallback after failure")
                 backoff.delayNext()
@@ -80,7 +80,7 @@ internal class OversqliteAutomaticDownloads(
             }
             log {
                 "oversqlite automatic downloads capability check failed; polling fallback will run " +
-                    "error=${error::class.simpleName ?: "Throwable"}: ${error.message.orEmpty()}"
+                    "error=${error::class.simpleName ?: "Throwable"}"
             }
             false
         }
@@ -115,7 +115,10 @@ internal class OversqliteAutomaticDownloads(
         val runtimeState = connectedRuntimeState(operation)
         val attachment = attachmentStateStore.loadState()
         return AutomaticDownloadState(
-            sourceId = attachment.currentSourceId.ifBlank { runtimeState.sourceId },
+            sourceId = attachment.currentSourceId
+                .takeIf { it.isNotEmpty() }
+                ?.let(::requireValidOversqliteSourceId)
+                ?: requireValidOversqliteSourceId(runtimeState.sourceId),
             lastBundleSeqSeen = attachment.lastBundleSeqSeen,
         )
     }
@@ -133,7 +136,7 @@ internal class OversqliteAutomaticDownloads(
         log {
             "oversqlite automatic downloads pull skipped op=$operation " +
                 "expectedContention=$expectedContention " +
-                "error=${error::class.simpleName ?: "Throwable"}: ${error.message.orEmpty()}"
+                "error=${error::class.simpleName ?: "Throwable"}"
         }
         return false
     }

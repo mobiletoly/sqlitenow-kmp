@@ -13,6 +13,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.nio.file.Files
 import java.time.OffsetDateTime
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -86,6 +87,25 @@ class BundlePushContractTest : BundleClientContractTestSupport() {
     private enum class CommittedReplayRetryMode {
         SAME_CLIENT,
         RESTARTED_CLIENT,
+    }
+
+    @Test
+    fun pushPending_invalidCreatePushIdPerformsNoFollowUpIo() = runBlocking {
+        withUsersPushServerClient(
+            configurePushServer = {
+                createPushIdTransform = { " $it " }
+            },
+        ) { db, client, pushServer ->
+            db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
+
+            val error = client.pushPending().exceptionOrNull()
+
+            assertTrue(error is RemoteResponseSemanticException)
+            assertEquals(1, pushServer.createRequests.size)
+            assertTrue(pushServer.uploadedChunks.isEmpty())
+            assertEquals(0, pushServer.commitRequestCount)
+            assertTrue(pushServer.deletedPushIds.isEmpty())
+        }
     }
 
     private fun keepMergedUserResolver(): Resolver = Resolver {
@@ -622,7 +642,8 @@ $indentedCommittedRowsJson
 
     @Test
     fun pushPending_freezesDirtyRowsIntoOutboundAtomically() = runBlocking {
-        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        val databasePath = Files.createTempDirectory("oversqlite-freeze-failure-").resolve("client.sqlite")
+        val db = BundledSqliteConnectionProvider.openConnection(databasePath.toString(), debug = false)
         createUsersTable(db)
         val server = newServer()
         server.start()
@@ -647,9 +668,16 @@ $indentedCommittedRowsJson
             val error = client.pushPending().exceptionOrNull()
             assertNotNull(error)
             assertTrue(error.message?.contains("freeze abort") == true)
-            assertEquals(listOf("user-1:INSERT", "user-2:INSERT"), dirtyKeysAndOps(db))
-            assertEquals(2L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            assertTrue(runCatching { db.execSQL("SELECT 1") }.isFailure)
+
+            val reopened = BundledSqliteConnectionProvider.openConnection(databasePath.toString(), debug = false)
+            try {
+                assertEquals(listOf("user-1:INSERT", "user-2:INSERT"), dirtyKeysAndOps(reopened))
+                assertEquals(2L, scalarLong(reopened, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+                assertEquals(0L, scalarLong(reopened, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            } finally {
+                reopened.close()
+            }
         } finally {
             http.close()
             server.stop(0)
@@ -1166,7 +1194,8 @@ $indentedCommittedRowsJson
 
             val error = client.pushPending().exceptionOrNull()
             assertNotNull(error)
-            assertTrue(error.message?.contains("_sync_scope_id") == true)
+            assertTrue(error is RemoteResponseSemanticException)
+            assertFalse(error.message.orEmpty().contains("_sync_scope_id"))
         } finally {
             http.close()
             server.stop(0)
@@ -1554,7 +1583,7 @@ $indentedCommittedRowsJson
     }
 
     @Test
-    fun pushPending_sourceRecoveryPreservesFrozenOutboxAcrossRebuildRestartAndFollowupPush() = runBlocking {
+    fun pushPending_sourceRecoveryReplaysInsertUpdateDeleteAndRejectsCountMismatch() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
         val server = newServer()
@@ -1572,10 +1601,16 @@ $indentedCommittedRowsJson
         pushServer.install(server)
         server.snapshotRoutes(
             snapshotId = "snapshot-recover",
-            snapshotBundleSeq = 0,
-            rows = emptyList(),
-            rowCount = 0,
-            byteCount = 0,
+            snapshotBundleSeq = 1,
+            rows = listOf(
+                SnapshotChunkRow(
+                    table = "users",
+                    keyJson = """{"id":"remote"}""",
+                    rowVersion = 1,
+                    payloadJson = """{"id":"remote","name":"Remote"}""",
+                ),
+            ),
+            byteCount = 32,
         )
         server.start()
         val http = newHttpClient(server)
@@ -1583,7 +1618,22 @@ $indentedCommittedRowsJson
             val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
             client.openAndConnect("user-1").getOrThrow()
             val originalSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
-            db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
+            db.execSQL("UPDATE _sync_apply_state SET apply_mode = 1 WHERE singleton_key = 1")
+            db.execSQL(
+                "INSERT INTO users(id, name) VALUES('update-user', 'Before'), ('delete-user', 'Delete me')",
+            )
+            db.execSQL("UPDATE _sync_apply_state SET apply_mode = 0 WHERE singleton_key = 1")
+            db.execSQL(
+                """
+                INSERT INTO _sync_row_state(schema_name, table_name, key_json, row_version, deleted)
+                VALUES
+                  ('main', 'users', '{"id":"update-user"}', 4, 0),
+                  ('main', 'users', '{"id":"delete-user"}', 5, 0)
+                """.trimIndent(),
+            )
+            db.execSQL("INSERT INTO users(id, name) VALUES('insert-user', 'Inserted')")
+            db.execSQL("UPDATE users SET name = 'Updated' WHERE id = 'update-user'")
+            db.execSQL("DELETE FROM users WHERE id = 'delete-user'")
 
             val firstError = client.pushPending().exceptionOrNull()
 
@@ -1600,7 +1650,34 @@ $indentedCommittedRowsJson
             assertNotEquals(originalSourceId, reservedReplacementSourceId)
             assertEquals("prepared", scalarText(db, "SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1"))
             assertEquals(1L, scalarLong(db, "SELECT source_bundle_id FROM _sync_outbox_bundle WHERE singleton_key = 1"))
-            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            assertEquals(3L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows WHERE op = 'INSERT'"))
+            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows WHERE op = 'UPDATE'"))
+            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows WHERE op = 'DELETE'"))
+            db.execSQL(
+                """
+                UPDATE _sync_outbox_rows
+                SET row_ordinal = 0
+                WHERE row_ordinal = (SELECT MIN(row_ordinal) FROM _sync_outbox_rows)
+                """.trimIndent(),
+            )
+
+            client.setSnapshotApplyFaultInjectorForTest(
+                SnapshotApplyFaultInjector(
+                    afterAppliedRow = {
+                        db.execSQL("DELETE FROM _sync_outbox_rows WHERE op = 'UPDATE'")
+                    },
+                ),
+            )
+            val mismatch = client.rebuild().exceptionOrNull()
+            assertTrue(
+                mismatch?.message.orEmpty().contains("does not match expected row_count 3"),
+                mismatch?.stackTraceToString() ?: "source-recovery mismatch rebuild unexpectedly succeeded",
+            )
+            assertEquals(3L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            assertEquals("Updated", scalarText(db, "SELECT name FROM users WHERE id = 'update-user'"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users WHERE id = 'remote'"))
+            client.setSnapshotApplyFaultInjectorForTest(null)
 
             client.rebuild().getOrThrow()
 
@@ -1610,7 +1687,11 @@ $indentedCommittedRowsJson
             assertEquals("prepared", scalarText(db, "SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1"))
             assertEquals(rotatedSourceId, scalarText(db, "SELECT source_id FROM _sync_outbox_bundle WHERE singleton_key = 1"))
             assertEquals(1L, scalarLong(db, "SELECT source_bundle_id FROM _sync_outbox_bundle WHERE singleton_key = 1"))
-            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            assertEquals(3L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            assertEquals("Remote", scalarText(db, "SELECT name FROM users WHERE id = 'remote'"))
+            assertEquals("Inserted", scalarText(db, "SELECT name FROM users WHERE id = 'insert-user'"))
+            assertEquals("Updated", scalarText(db, "SELECT name FROM users WHERE id = 'update-user'"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users WHERE id = 'delete-user'"))
             assertEquals(
                 2L,
                 scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$rotatedSourceId'"),
@@ -2180,7 +2261,7 @@ $indentedCommittedRowsJson
         val committedHash = userCommittedInsertHash(committedPayloadJson)
         val server = newServer().apply {
             installCommittedReplayRoutes(
-                pushId = "push-bad-replay",
+                pushId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
                 committedHash = committedHash,
                 committedRowsJson = userCommittedInsertRowJson(committedPayloadJson),
             )
@@ -2412,7 +2493,7 @@ $indentedCommittedRowsJson
         val committedBundleHash = userCommittedInsertHash(committedPayloadJson)
         val server = newServer().apply {
             installCommittedReplayRoutes(
-                pushId = "push-1",
+                pushId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
                 committedHash = committedBundleHash,
                 committedRowsJson = userCommittedInsertRowJson(committedPayloadJson),
             )
@@ -2510,7 +2591,7 @@ $indentedCommittedRowsJson
         val scenarios = listOf(
             TypedRowsCommittedReplaySuccessScenario(
                 displayName = "accepts timestamp payload equivalent by instant across offsets",
-                pushId = "push-typed-offset",
+                pushId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
                 enabledFlag = JsonPrimitive(false),
                 createdAt = JsonPrimitive("2026-03-24T20:42:11+02:00"),
                 enabledFlagJson = "false",
@@ -2525,7 +2606,7 @@ $indentedCommittedRowsJson
             ),
             TypedRowsCommittedReplaySuccessScenario(
                 displayName = "replays boolean payload into integer column",
-                pushId = "push-typed-bool",
+                pushId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
                 enabledFlag = JsonPrimitive(false),
                 createdAt = JsonNull,
                 enabledFlagJson = "false",

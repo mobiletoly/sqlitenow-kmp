@@ -18,16 +18,33 @@ package dev.goquick.sqlitenow.oversqlite
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
+internal const val bundleChangeWatchMaxLineBytes = 1 shl 20
+internal const val bundleChangeWatchMaxEventBytes = 1 shl 20
+
+internal class BundleChangeWatchLimitExceededException(
+    part: String,
+) : IllegalArgumentException("bundle change watch $part exceeds byte limit")
+
 internal class BundleChangeWatchSseParser(
     private val json: Json,
 ) {
     private var eventName: String = ""
-    private val dataLines = mutableListOf<String>()
+    private val data = StringBuilder()
+    private var eventByteCount = 0
 
     fun accept(line: String): List<BundleChangeEvent> {
+        val lineByteCount = line.encodeToByteArray().size
+        if (lineByteCount > bundleChangeWatchMaxLineBytes) {
+            throw BundleChangeWatchLimitExceededException("line")
+        }
         if (line.isEmpty()) {
             return dispatch()
         }
+        val encodedLineBytes = lineByteCount + 1
+        if (encodedLineBytes > bundleChangeWatchMaxEventBytes - eventByteCount) {
+            throw BundleChangeWatchLimitExceededException("event")
+        }
+        eventByteCount += encodedLineBytes
         if (line.startsWith(":")) {
             return emptyList()
         }
@@ -41,26 +58,32 @@ internal class BundleChangeWatchSseParser(
 
         when (field) {
             "event" -> eventName = value
-            "data" -> dataLines += value
+            "data" -> {
+                if (data.isNotEmpty()) {
+                    data.append('\n')
+                }
+                data.append(value)
+            }
         }
         return emptyList()
     }
 
     fun finish() {
         eventName = ""
-        dataLines.clear()
+        data.clear()
+        eventByteCount = 0
     }
 
     private fun dispatch(): List<BundleChangeEvent> {
         val shouldEmit = eventName == "bundle"
-        val data = dataLines.joinToString("\n")
+        val eventData = data.toString()
         finish()
         if (!shouldEmit) {
             return emptyList()
         }
-        require(data.isNotEmpty()) { "bundle change event is missing data" }
+        require(eventData.isNotEmpty()) { "bundle change event is missing data" }
         val event = try {
-            json.decodeFromString(BundleChangeEvent.serializer(), data)
+            json.decodeFromString(BundleChangeEvent.serializer(), eventData)
         } catch (error: SerializationException) {
             throw IllegalArgumentException("bundle change event data is malformed", error)
         } catch (error: IllegalArgumentException) {
@@ -69,6 +92,7 @@ internal class BundleChangeWatchSseParser(
         require(event.bundleSeq > 0) {
             "bundle change event bundle_seq ${event.bundleSeq} must be positive"
         }
+        requireValidOptionalOversqliteSourceId(event.sourceId)
         return listOf(event)
     }
 }

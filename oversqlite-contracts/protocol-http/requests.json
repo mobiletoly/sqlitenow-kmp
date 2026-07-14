@@ -66,7 +66,7 @@
       "args": {
         "sourceBundleId": 7,
         "plannedRowCount": 2,
-        "initializationId": "init-1"
+        "initializationId": "22222222-2222-4222-8222-222222222222"
       },
       "expected": {
         "method": "POST",
@@ -77,7 +77,7 @@
           "source_bundle_id": 7,
           "planned_row_count": 2,
           "canonical_request_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "initialization_id": "init-1"
+          "initialization_id": "22222222-2222-4222-8222-222222222222"
         },
         "bodyMustNotContain": [
           "source_id"
@@ -90,12 +90,12 @@
       "operation": "pushSessionChunk",
       "sourceId": "source-push-chunk",
       "args": {
-        "pushId": "push-fixture",
+        "pushId": "11111111-1111-4111-8111-111111111111",
         "startRowOrdinal": 0
       },
       "expected": {
         "method": "POST",
-        "path": "/api/v1/sync/push-sessions/push-fixture/chunks",
+        "path": "/api/v1/sync/push-sessions/11111111-1111-4111-8111-111111111111/chunks",
         "query": {},
         "sourceHeader": "source-push-chunk",
         "body": {
@@ -127,11 +127,11 @@
       "operation": "pushSessionCommit",
       "sourceId": "source-push-commit",
       "args": {
-        "pushId": "push-fixture"
+        "pushId": "11111111-1111-4111-8111-111111111111"
       },
       "expected": {
         "method": "POST",
-        "path": "/api/v1/sync/push-sessions/push-fixture/commit",
+        "path": "/api/v1/sync/push-sessions/11111111-1111-4111-8111-111111111111/commit",
         "query": {},
         "sourceHeader": "source-push-commit",
         "body": null,
@@ -186,14 +186,16 @@
         "snapshotId": "snapshot-fixture",
         "snapshotBundleSeq": 6,
         "afterRowOrdinal": 5,
-        "maxRows": 19
+        "maxRows": 19,
+        "maxBytes": 4194304
       },
       "expected": {
         "method": "GET",
         "path": "/api/v1/sync/snapshot-sessions/snapshot-fixture",
         "query": {
           "after_row_ordinal": "5",
-          "max_rows": "19"
+          "max_rows": "19",
+          "max_bytes": "4194304"
         },
         "sourceHeader": "source-snapshot-chunk",
         "body": null

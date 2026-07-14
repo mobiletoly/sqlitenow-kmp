@@ -73,7 +73,8 @@ internal suspend fun initializeOversqliteControlTables(db: SafeSQLiteConnection)
           key_json TEXT NOT NULL,
           row_version INTEGER NOT NULL,
           payload TEXT NOT NULL,
-          PRIMARY KEY (snapshot_id, row_ordinal)
+          PRIMARY KEY (snapshot_id, row_ordinal),
+          UNIQUE (snapshot_id, schema_name, table_name, key_json)
         )
         """.trimIndent()
     )
@@ -126,6 +127,8 @@ internal suspend fun initializeOversqliteControlTables(db: SafeSQLiteConnection)
           staged_snapshot_id TEXT NOT NULL DEFAULT '',
           snapshot_bundle_seq INTEGER NOT NULL DEFAULT 0,
           snapshot_row_count INTEGER NOT NULL DEFAULT 0,
+          snapshot_byte_count INTEGER NOT NULL DEFAULT 0,
+          snapshot_stage_complete INTEGER NOT NULL DEFAULT 0,
           reason TEXT NOT NULL DEFAULT '',
           replacement_source_id TEXT NOT NULL DEFAULT ''
         )
@@ -140,10 +143,12 @@ internal suspend fun initializeOversqliteControlTables(db: SafeSQLiteConnection)
           staged_snapshot_id,
           snapshot_bundle_seq,
           snapshot_row_count,
+          snapshot_byte_count,
+          snapshot_stage_complete,
           reason,
           replacement_source_id
         )
-        VALUES(1, 'none', '', '', 0, 0, '', '')
+        VALUES(1, 'none', '', '', 0, 0, 0, 0, '', '')
         ON CONFLICT(singleton_key) DO NOTHING
         """.trimIndent()
     )

@@ -5,11 +5,18 @@ import com.sun.net.httpserver.HttpServer
 import dev.goquick.sqlitenow.core.BundledSqliteConnectionProvider
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.sqlite.use
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.plugins.defaultRequest
 import kotlinx.coroutines.runBlocking
+import kotlinx.io.IOException
 import java.net.InetSocketAddress
+import java.nio.file.Files
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
@@ -79,6 +86,39 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
         }
     }
 
+    @Test
+    fun persistedInitializationIds_failClosedOnAttachmentAndOutboxLoad() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newServer()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.open().getOrThrow()
+
+            db.execSQL(
+                "UPDATE _sync_attachment_state SET pending_initialization_id = ' init-corrupt ' WHERE singleton_key = 1",
+            )
+            val attachmentError = assertFailsWith<IllegalArgumentException> {
+                OversqliteAttachmentStateStore(db).loadState()
+            }
+            assertFalse(attachmentError.message.orEmpty().contains("init-corrupt"))
+
+            db.execSQL("UPDATE _sync_attachment_state SET pending_initialization_id = '' WHERE singleton_key = 1")
+            db.execSQL(
+                "UPDATE _sync_outbox_bundle SET initialization_id = 'init-corrupt' WHERE singleton_key = 1",
+            )
+            val outboxError = assertFailsWith<IllegalArgumentException> {
+                OversqliteOutboxStateStore(db).loadBundleState()
+            }
+            assertFalse(outboxError.message.orEmpty().contains("init-corrupt"))
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
     @OptIn(ExperimentalUuidApi::class)
     @Test
     fun managedSourceIds_useUuidFormat_andRotatedRecoveryDoesNotReusePreviousId() = runBlocking {
@@ -109,6 +149,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
                         {
                           "snapshot_id": "snapshot-uuid",
                           "snapshot_bundle_seq": 0,
+                          "byte_count": 0,
                           "next_row_ordinal": 0,
                           "has_more": false,
                           "rows": []
@@ -417,6 +458,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
                             {
                               "snapshot_id": "snapshot-recover",
                               "snapshot_bundle_seq": 9,
+                              "byte_count": 32,
                               "next_row_ordinal": 1,
                               "has_more": false,
                               "rows": [
@@ -505,6 +547,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
                         {
                           "snapshot_id": "snapshot-generic-rebuild",
                           "snapshot_bundle_seq": 7,
+                          "byte_count": 32,
                           "next_row_ordinal": 1,
                           "has_more": false,
                           "rows": [
@@ -884,9 +927,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
         val server = newLifecycleServer(
-            capabilitiesBody = """
-                {"protocol_version":"v0","schema_version":1,"features":{"connect_lifecycle":true}}
-            """.trimIndent(),
+            capabilitiesBody = capabilitiesJson(mapOf("connect_lifecycle" to true)),
             connectHandler = { _ ->
                 200 to """
                     {"resolution":"retry_later","retry_after_seconds":7,"lease_expires_at":"2099-01-01T00:00:00Z"}
@@ -912,8 +953,10 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
     fun connect_transportFailure_isRetryable_andLeavesLocalStateUntouched() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
-        val server = newServer()
-        val http = newHttpClient(server)
+        val sentinel = "private-retry-cause-sentinel"
+        val http = HttpClient(MockEngine { throw IOException(sentinel) }) {
+            defaultRequest { url("http://oversqlite.invalid") }
+        }
         try {
             val client = newClient(
                 db,
@@ -926,12 +969,14 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
             val error = client.attach("user-1").exceptionOrNull()
 
             assertTrue(error != null)
+            assertTrue(error !is IOException)
+            assertTrue(sentinel !in error.toString())
+            assertEquals(null, error.cause)
             assertEquals("anonymous", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
             assertEquals("none", scalarText(db, "SELECT kind FROM _sync_operation_state"))
             assertEquals("", scalarText(db, "SELECT pending_initialization_id FROM _sync_attachment_state"))
         } finally {
             http.close()
-            server.stop(0)
             db.close()
         }
     }
@@ -941,9 +986,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
         val server = newLifecycleServer(
-            capabilitiesBody = """
-                {"protocol_version":"v0","schema_version":1,"features":{"connect_lifecycle":false}}
-            """.trimIndent(),
+            capabilitiesBody = capabilitiesJson(mapOf("connect_lifecycle" to false)),
             connectHandler = { _ -> error("connect should not be called without capability") },
         )
         server.start()
@@ -954,6 +997,87 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
 
             assertIs<ConnectLifecycleUnsupportedException>(client.attach("user-1").exceptionOrNull())
             Unit
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun remoteAuthoritativeAttachClearsPreGuardDirtyRowsBeforeSnapshotApply() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newLifecycleServer(
+            capabilitiesBody = capabilitiesJson(mapOf("connect_lifecycle" to true)),
+            connectHandler = { 200 to """{"resolution":"remote_authoritative"}""" },
+        ).apply {
+            snapshotRoutes(
+                snapshotId = "remote-authoritative-dirty",
+                snapshotBundleSeq = 7,
+                rows = listOf(
+                    SnapshotChunkRow(
+                        table = "users",
+                        keyJson = """{"id":"remote"}""",
+                        rowVersion = 7,
+                        payloadJson = """{"id":"remote","name":"Remote"}""",
+                    ),
+                ),
+                byteCount = 32,
+            )
+        }
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.open().getOrThrow()
+            db.execSQL("INSERT INTO users(id, name) VALUES('local', 'Local')")
+            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+
+            assertConnectedOutcome(
+                expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
+                actual = client.attach("user-1").getOrThrow(),
+            )
+
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users WHERE id = 'local'"))
+            assertEquals("Remote", scalarText(db, "SELECT name FROM users WHERE id = 'remote'"))
+            assertEquals("none", scalarText(db, "SELECT kind FROM _sync_operation_state"))
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun remoteAuthoritativeAttachRejectsAndPreservesPendingOutboxBeforeTransition() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val server = newLifecycleServer(
+            capabilitiesBody = capabilitiesJson(mapOf("connect_lifecycle" to true)),
+            connectHandler = { 200 to """{"resolution":"remote_authoritative"}""" },
+        )
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val client = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            client.open().getOrThrow()
+            db.execSQL(
+                """
+                INSERT INTO _sync_outbox_rows(
+                  source_bundle_id, row_ordinal, schema_name, table_name, key_json,
+                  wire_key_json, op, base_row_version, local_payload, wire_payload
+                ) VALUES (1, 1, 'main', 'users', '{"id":"local"}', '{"id":"local"}',
+                          'INSERT', 0, '{"id":"local","name":"Local"}',
+                          '{"id":"local","name":"Local"}')
+                """.trimIndent(),
+            )
+
+            assertIs<PendingPushReplayException>(client.attach("user-1").exceptionOrNull())
+            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            assertEquals("anonymous", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
+            assertEquals("none", scalarText(db, "SELECT kind FROM _sync_operation_state"))
         } finally {
             http.close()
             server.stop(0)
@@ -1031,14 +1155,123 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
+    fun attach_restartWithCompleteExpiredStage_appliesWithoutContactingRemoteSnapshot() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val snapshotRequests = AtomicInteger()
+        val server = newServer().apply {
+            createContext("/sync/snapshot-sessions") { exchange ->
+                snapshotRequests.incrementAndGet()
+                respondJson(exchange, 404, """{"error":"snapshot_not_found","message":"expired"}""")
+            }
+        }
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val firstClient = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            firstClient.open().getOrThrow()
+            db.execSQL(
+                """
+                INSERT INTO _sync_snapshot_stage(snapshot_id, row_ordinal, schema_name, table_name, key_json, row_version, payload)
+                VALUES ('expired-complete', 1, 'main', 'users', '{"id":"user-1"}', 7, '{"id":"user-1","name":"Ada"}')
+                """.trimIndent(),
+            )
+            OversqliteOperationStateStore(db).persistState(
+                OversqliteOperationState(
+                    kind = operationKindRemoteReplace,
+                    targetUserId = "user-1",
+                    stagedSnapshotId = "expired-complete",
+                    snapshotBundleSeq = 7,
+                    snapshotRowCount = 1,
+                    snapshotByteCount = 32,
+                    snapshotStageComplete = true,
+                ),
+            )
+
+            val restartedClient = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            restartedClient.open().getOrThrow()
+            assertConnectedOutcome(
+                expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
+                actual = restartedClient.attach("user-1").getOrThrow(),
+            )
+
+            assertEquals(0, snapshotRequests.get())
+            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM users WHERE id = 'user-1' AND name = 'Ada'"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
+            assertEquals("none", scalarText(db, "SELECT kind FROM _sync_operation_state"))
+            assertEquals("attached", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
+    fun attach_restartWithPartialExpiredStage_clearsItAndNeverAppliesIt() = runBlocking {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        val createAttempts = AtomicInteger()
+        val expiredSessionRequests = AtomicInteger()
+        val server = newServer().apply {
+            createContext("/sync/snapshot-sessions") { exchange ->
+                if (exchange.requestURI.path == "/sync/snapshot-sessions" && exchange.requestMethod == "POST") {
+                    createAttempts.incrementAndGet()
+                } else {
+                    expiredSessionRequests.incrementAndGet()
+                }
+                respondJson(exchange, 404, """{"error":"snapshot_not_found","message":"expired"}""")
+            }
+        }
+        server.start()
+        val http = newHttpClient(server)
+        try {
+            val firstClient = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            firstClient.open().getOrThrow()
+            db.execSQL(
+                """
+                INSERT INTO _sync_snapshot_stage(snapshot_id, row_ordinal, schema_name, table_name, key_json, row_version, payload)
+                VALUES ('expired-partial', 1, 'main', 'users', '{"id":"partial"}', 3, '{"id":"partial","name":"Do not apply"}')
+                """.trimIndent(),
+            )
+            OversqliteOperationStateStore(db).persistState(
+                OversqliteOperationState(
+                    kind = operationKindRemoteReplace,
+                    targetUserId = "user-1",
+                    stagedSnapshotId = "expired-partial",
+                    snapshotBundleSeq = 3,
+                    snapshotRowCount = 2,
+                    snapshotByteCount = 64,
+                    snapshotStageComplete = false,
+                ),
+            )
+
+            val restartedClient = newClient(db, http, syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")))
+            restartedClient.open().getOrThrow()
+            assertIs<SnapshotHttpException>(restartedClient.attach("user-1").exceptionOrNull())
+
+            assertEquals(1, createAttempts.get())
+            assertEquals(0, expiredSessionRequests.get())
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
+            assertEquals("remote_replace", scalarText(db, "SELECT kind FROM _sync_operation_state"))
+            assertEquals("", scalarText(db, "SELECT staged_snapshot_id FROM _sync_operation_state"))
+            assertEquals(0L, scalarLong(db, "SELECT snapshot_stage_complete FROM _sync_operation_state"))
+            assertEquals("anonymous", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
+        } finally {
+            http.close()
+            server.stop(0)
+            db.close()
+        }
+    }
+
+    @Test
     fun attach_restartAfterPartialRemoteReplace_restagesSnapshotAndAppliesFreshRemoteState() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersTable(db)
         var sessionAttempts = 0
         val server = newLifecycleServer(
-            capabilitiesBody = """
-                {"protocol_version":"v0","schema_version":1,"features":{"connect_lifecycle":true}}
-            """.trimIndent(),
+            capabilitiesBody = capabilitiesJson(mapOf("connect_lifecycle" to true)),
             connectHandler = { _ ->
                 200 to """{"resolution":"remote_authoritative"}"""
             },
@@ -1086,6 +1319,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
                                 {
                                   "snapshot_id": "snapshot-a",
                                   "snapshot_bundle_seq": 9,
+                                  "byte_count": 32,
                                   "next_row_ordinal": 1,
                                   "has_more": true,
                                   "rows": [
@@ -1116,6 +1350,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
                             {
                               "snapshot_id": "snapshot-b",
                               "snapshot_bundle_seq": 12,
+                              "byte_count": 32,
                               "next_row_ordinal": 1,
                               "has_more": false,
                               "rows": [
@@ -1145,7 +1380,10 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
             val firstError = firstClient.attach("user-1").exceptionOrNull()
 
             assertTrue(firstError != null)
+            assertIs<ConnectRequiredException>(firstClient.syncStatus().exceptionOrNull())
             firstClient.open().getOrThrow()
+            assertEquals("anonymous", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
+            assertEquals("", scalarText(db, "SELECT attached_user_id FROM _sync_attachment_state"))
             assertEquals("remote_replace", scalarText(db, "SELECT kind FROM _sync_operation_state"))
             assertEquals("snapshot-a", scalarText(db, "SELECT staged_snapshot_id FROM _sync_operation_state"))
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
@@ -1160,6 +1398,9 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
             assertEquals(2, sessionAttempts)
             assertEquals("none", scalarText(db, "SELECT kind FROM _sync_operation_state"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
+            assertEquals("attached", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
+            assertEquals("user-1", scalarText(db, "SELECT attached_user_id FROM _sync_attachment_state"))
+            assertTrue(restartedClient.syncStatus().isSuccess)
             assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM users WHERE id = 'user-b'"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users WHERE id = 'user-a'"))
         } finally {
@@ -1196,7 +1437,8 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
 
     @Test
     fun detach_restartAfterMidCleanupFailure_rollsBackAndLaterDetachesCleanly() = runBlocking {
-        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        val databasePath = Files.createTempDirectory("oversqlite-detach-failure-").resolve("client.sqlite")
+        var db = BundledSqliteConnectionProvider.openConnection(databasePath.toString(), debug = false)
         createUsersTable(db)
         val server = newServer()
         server.start()
@@ -1223,6 +1465,8 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
 
             assertTrue(error != null)
             assertTrue(error.message?.contains("simulated detach crash") == true)
+            assertTrue(runCatching { db.execSQL("SELECT 1") }.isFailure)
+            db = BundledSqliteConnectionProvider.openConnection(databasePath.toString(), debug = false)
             assertEquals("attached", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
             assertEquals("user-1", scalarText(db, "SELECT attached_user_id FROM _sync_attachment_state"))
             assertEquals(sourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
@@ -1448,7 +1692,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
         )
         assertEquals("attached", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
         assertEquals("user-1", scalarText(db, "SELECT attached_user_id FROM _sync_attachment_state"))
-        assertEquals("init-connect", scalarText(db, "SELECT pending_initialization_id FROM _sync_attachment_state"))
+        assertEquals(testCanonicalInitializationId, scalarText(db, "SELECT pending_initialization_id FROM _sync_attachment_state"))
     }
 
     private fun newLifecycleServer(

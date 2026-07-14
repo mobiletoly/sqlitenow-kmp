@@ -17,6 +17,9 @@ package dev.goquick.sqlitenow.oversqlite
 
 import io.ktor.http.HttpStatusCode
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 private val httpErrorJson = Json { ignoreUnknownKeys = true }
 
@@ -24,7 +27,7 @@ open class UploadHttpException(
     val status: HttpStatusCode,
     val rawBody: String,
     cause: Throwable? = null,
-) : RuntimeException("Upload failed: HTTP $status - $rawBody", cause), OversqliteCategorizedException {
+) : RuntimeException("Upload failed: HTTP $status", cause), OversqliteCategorizedException {
     override val category: OversqliteErrorCategory
         get() = if (status.value in AUTH_HTTP_STATUSES) {
             OversqliteErrorCategory.AUTH
@@ -37,7 +40,7 @@ open class DownloadHttpException(
     val status: HttpStatusCode,
     val rawBody: String,
     cause: Throwable? = null,
-) : RuntimeException("Download failed: HTTP $status - $rawBody", cause), OversqliteCategorizedException {
+) : RuntimeException("Download failed: HTTP $status", cause), OversqliteCategorizedException {
     override val category: OversqliteErrorCategory
         get() = if (status.value in AUTH_HTTP_STATUSES) {
             OversqliteErrorCategory.AUTH
@@ -58,6 +61,67 @@ class CheckpointAheadException(
     override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
 }
 
+internal class SnapshotHttpException(
+    val status: HttpStatusCode,
+    val errorCode: String,
+) : RuntimeException("snapshot request failed: HTTP ${status.value} error=$errorCode"), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory
+        get() = if (status.value in AUTH_HTTP_STATUSES) {
+            OversqliteErrorCategory.AUTH
+        } else {
+            OversqliteErrorCategory.NETWORK
+    }
+}
+
+class SnapshotSessionLimitExceededException(
+    val dimension: String,
+    val actual: Long,
+    val limit: Long,
+) : RuntimeException(
+    "snapshot session exceeds server $dimension limit: actual=$actual limit=$limit",
+), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.NETWORK
+}
+
+internal class SnapshotResponseDecodeException(
+    val operation: String,
+) : RuntimeException("$operation response could not be decoded"), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.PROTOCOL
+}
+
+internal class SnapshotCapacityException(
+    val status: HttpStatusCode,
+    val errorCode: String,
+    val retryAfterMillis: Long?,
+) : RuntimeException("snapshot request temporarily unavailable: HTTP ${status.value} error=$errorCode"),
+    OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.NETWORK
+}
+
+class SnapshotCapacityRetryExhaustedException(
+    val operation: String,
+    val errorCode: String,
+    val waitedMillis: Long,
+) : RuntimeException("oversqlite snapshot capacity retry exhausted for $operation"),
+    OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.NETWORK
+}
+
+internal class TransientRetryExhaustedException(
+    operation: String,
+    attempts: Int,
+) : RuntimeException("oversqlite transient retry exhausted for $operation after $attempts attempts"),
+    OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.NETWORK
+}
+
+internal class SnapshotSourceRecoveryRequiredException(
+    val reason: SourceRecoveryReason,
+    val replacementSourceId: String? = null,
+) : RuntimeException("snapshot source recovery is required"), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
+
 class CommittedReplayPrunedException(
     rawBody: String,
 ) : DownloadHttpException(HttpStatusCode.Conflict, rawBody)
@@ -71,9 +135,9 @@ class SourceRecoveryRequiredHttpException(
 
 class SourceReplacementInvalidHttpException(
     val status: HttpStatusCode,
-    val rawBody: String,
-    val errorMessage: String,
-) : RuntimeException("Snapshot session request failed: HTTP $status - $errorMessage"), OversqliteCategorizedException {
+) : RuntimeException(
+    "snapshot session request failed: HTTP ${status.value}; server rejected the source replacement request",
+), OversqliteCategorizedException {
     override val category: OversqliteErrorCategory
         get() = if (status.value in AUTH_HTTP_STATUSES) {
             OversqliteErrorCategory.AUTH
@@ -105,7 +169,7 @@ internal fun DownloadHttpException.toHistoryPrunedOrNull(): HistoryPrunedExcepti
         expectedStatus = HttpStatusCode.Conflict,
         expectedError = "history_pruned",
     ) ?: return null
-    return HistoryPrunedException(error.message)
+    return HistoryPrunedException("server history required for incremental sync has been pruned")
 }
 
 internal fun decodePushConflictExceptionOrNull(
@@ -118,7 +182,7 @@ internal fun decodePushConflictExceptionOrNull(
     }.getOrNull() ?: return null
     if (response.error != "push_conflict" || response.conflict == null) return null
     validatePushConflictDetails(response.conflict)
-    return PushConflictException(rawBody = rawBody, response = response)
+    return PushConflictException(rawBody = "", response = response.copy(message = ""))
 }
 
 internal fun decodeCommittedBundleNotFoundExceptionOrNull(
@@ -131,7 +195,7 @@ internal fun decodeCommittedBundleNotFoundExceptionOrNull(
         expectedStatus = HttpStatusCode.NotFound,
         expectedError = "committed_bundle_not_found",
     ) ?: return null
-    return CommittedBundleNotFoundException(rawBody = rawBody)
+    return CommittedBundleNotFoundException(rawBody = "")
 }
 
 internal fun decodeCommittedReplayPrunedExceptionOrNull(
@@ -144,23 +208,71 @@ internal fun decodeCommittedReplayPrunedExceptionOrNull(
         expectedStatus = HttpStatusCode.Conflict,
         expectedError = "history_pruned",
     ) ?: return null
-    return CommittedReplayPrunedException(rawBody = rawBody)
+    return CommittedReplayPrunedException(rawBody = "")
+}
+
+internal data class ValidatedSourceRetiredWire(
+    val replacementSourceId: String?,
+)
+
+internal fun decodeValidatedSourceRetiredWireOrNull(
+    rawBody: String,
+    expectedSourceId: String?,
+): ValidatedSourceRetiredWire? {
+    val document = runCatching { httpErrorJson.parseToJsonElement(rawBody) }.getOrNull() as? JsonObject
+        ?: return null
+    val error = document["error"] as? JsonPrimitive ?: return null
+    if (!error.isString || error.content != "source_retired") return null
+
+    fun malformed(): Nothing = throw RemoteResponseSemanticException("source retired response")
+
+    val message = document["message"] as? JsonPrimitive ?: malformed()
+    if (!message.isString) malformed()
+    val source = document["source_id"] as? JsonPrimitive ?: malformed()
+    if (!source.isString) malformed()
+    val sourceId = try {
+        requireValidOversqliteSourceId(source.content)
+    } catch (_: RuntimeException) {
+        malformed()
+    }
+    if (expectedSourceId != null) {
+        val expected = try {
+            requireValidOversqliteSourceId(expectedSourceId)
+        } catch (_: RuntimeException) {
+            malformed()
+        }
+        if (sourceId != expected) malformed()
+    }
+
+    val replacement = if (document.containsKey("replaced_by_source_id")) {
+        val value = document["replaced_by_source_id"]
+        if (value == null || value is JsonNull) malformed()
+        val primitive = value as? JsonPrimitive ?: malformed()
+        if (!primitive.isString) malformed()
+        try {
+            requireValidOversqliteSourceId(primitive.content)
+        } catch (_: RuntimeException) {
+            malformed()
+        }
+    } else {
+        null
+    }
+    return ValidatedSourceRetiredWire(replacement)
 }
 
 internal fun decodeSourceRecoveryRequiredExceptionOrNull(
     status: HttpStatusCode,
     rawBody: String,
+    expectedSourceId: String? = null,
 ): SourceRecoveryRequiredHttpException? {
     if (status != HttpStatusCode.Conflict) return null
-    val retired = runCatching {
-        httpErrorJson.decodeFromString<SourceRetiredResponse>(rawBody)
-    }.getOrNull()
-    if (retired?.error == "source_retired") {
+    val retired = decodeValidatedSourceRetiredWireOrNull(rawBody, expectedSourceId)
+    if (retired != null) {
         return SourceRecoveryRequiredHttpException(
             status = status,
-            rawBody = rawBody,
+            rawBody = "",
             reason = SourceRecoveryReason.SOURCE_RETIRED,
-            replacementSourceId = retired.replacedBySourceId?.takeIf { it.isNotBlank() },
+            replacementSourceId = retired.replacementSourceId,
         )
     }
     val error = decodeErrorResponseOrNull(
@@ -176,7 +288,7 @@ internal fun decodeSourceRecoveryRequiredExceptionOrNull(
     }
     return SourceRecoveryRequiredHttpException(
         status = status,
-        rawBody = rawBody,
+        rawBody = "",
         reason = reason,
     )
 }
@@ -185,17 +297,13 @@ internal fun decodeSourceReplacementInvalidExceptionOrNull(
     status: HttpStatusCode,
     rawBody: String,
 ): SourceReplacementInvalidHttpException? {
-    val error = decodeErrorResponseOrNull(
+    decodeErrorResponseOrNull(
         status = status,
         rawBody = rawBody,
         expectedStatus = HttpStatusCode.Conflict,
         expectedError = "source_replacement_invalid",
     ) ?: return null
-    return SourceReplacementInvalidHttpException(
-        status = status,
-        rawBody = rawBody,
-        errorMessage = error.message,
-    )
+    return SourceReplacementInvalidHttpException(status)
 }
 
 private fun decodeErrorResponseOrNull(

@@ -13,6 +13,8 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import java.util.UUID
 
+internal const val testCanonicalInitializationId = "22222222-2222-4222-8222-222222222222"
+
 open class BundleClientContractTestSupport {
     protected data class DirtyRowRecord(
         val op: String,
@@ -29,11 +31,28 @@ open class BundleClientContractTestSupport {
 
     protected val json = Json { ignoreUnknownKeys = true }
 
+    protected fun capabilitiesJson(
+        features: Map<String, Boolean>,
+        protocolVersion: String = "v1",
+    ): String = json.encodeToString(
+        CapabilitiesResponse.serializer(),
+        CapabilitiesResponse(
+            protocolVersion = protocolVersion,
+            schemaVersion = 1,
+            features = features,
+            bundleLimits = testBundleCapabilitiesLimits(),
+        ),
+    )
+
     protected fun newClient(
         db: SafeSQLiteConnection,
         http: HttpClient,
         syncTables: List<SyncTable>,
         uploadLimit: Int = 200,
+        snapshotChunkRows: Int = 1000,
+        snapshotChunkBytes: Long = 4L * 1024L * 1024L,
+        snapshotApplyBatchRows: Int = 256,
+        snapshotApplyBatchBytes: Long = 4L * 1024L * 1024L,
         transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy(),
         resolver: Resolver = ServerWinsResolver,
     ): DefaultOversqliteClient {
@@ -43,6 +62,10 @@ open class BundleClientContractTestSupport {
                 schema = "main",
                 syncTables = syncTables,
                 uploadLimit = uploadLimit,
+                snapshotChunkRows = snapshotChunkRows,
+                snapshotChunkBytes = snapshotChunkBytes,
+                snapshotApplyBatchRows = snapshotApplyBatchRows,
+                snapshotApplyBatchBytes = snapshotApplyBatchBytes,
                 transientRetryPolicy = transientRetryPolicy,
             ),
             http = http,
@@ -64,9 +87,10 @@ open class BundleClientContractTestSupport {
                 json.encodeToString(
                     CapabilitiesResponse.serializer(),
                     CapabilitiesResponse(
-                        protocolVersion = "v0",
+                        protocolVersion = "v1",
                         schemaVersion = 1,
                         features = mapOf("connect_lifecycle" to true),
+                        bundleLimits = testBundleCapabilitiesLimits(),
                     ),
                 ),
             )
@@ -84,7 +108,7 @@ open class BundleClientContractTestSupport {
             val response = if (request.hasLocalPendingRows) {
                 ConnectResponse(
                     resolution = "initialize_local",
-                    initializationId = "init-connect",
+                    initializationId = testCanonicalInitializationId,
                     leaseExpiresAt = "2099-01-01T00:00:00Z",
                 )
             } else {
@@ -113,6 +137,10 @@ open class BundleClientContractTestSupport {
         db: SafeSQLiteConnection,
         syncTables: List<SyncTable>,
         uploadLimit: Int = 200,
+        snapshotChunkRows: Int = 1000,
+        snapshotChunkBytes: Long = 4L * 1024L * 1024L,
+        snapshotApplyBatchRows: Int = 256,
+        snapshotApplyBatchBytes: Long = 4L * 1024L * 1024L,
         transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy(),
         resolver: Resolver = ServerWinsResolver,
         configureServer: HttpServer.() -> Unit = {},
@@ -127,6 +155,10 @@ open class BundleClientContractTestSupport {
                 http,
                 syncTables = syncTables,
                 uploadLimit = uploadLimit,
+                snapshotChunkRows = snapshotChunkRows,
+                snapshotChunkBytes = snapshotChunkBytes,
+                snapshotApplyBatchRows = snapshotApplyBatchRows,
+                snapshotApplyBatchBytes = snapshotApplyBatchBytes,
                 transientRetryPolicy = transientRetryPolicy,
                 resolver = resolver,
             )
@@ -142,6 +174,10 @@ open class BundleClientContractTestSupport {
         db: SafeSQLiteConnection,
         syncTables: List<SyncTable>,
         uploadLimit: Int = 200,
+        snapshotChunkRows: Int = 1000,
+        snapshotChunkBytes: Long = 4L * 1024L * 1024L,
+        snapshotApplyBatchRows: Int = 256,
+        snapshotApplyBatchBytes: Long = 4L * 1024L * 1024L,
         transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy(),
         resolver: Resolver = ServerWinsResolver,
         userId: String = "user-1",
@@ -152,6 +188,10 @@ open class BundleClientContractTestSupport {
             db,
             syncTables = syncTables,
             uploadLimit = uploadLimit,
+            snapshotChunkRows = snapshotChunkRows,
+            snapshotChunkBytes = snapshotChunkBytes,
+            snapshotApplyBatchRows = snapshotApplyBatchRows,
+            snapshotApplyBatchBytes = snapshotApplyBatchBytes,
             transientRetryPolicy = transientRetryPolicy,
             resolver = resolver,
             configureServer = configureServer,
@@ -658,6 +698,7 @@ open class BundleClientContractTestSupport {
                         nextRowOrdinal = rowCount,
                         hasMore = false,
                         rows = rows,
+                        byteCount = byteCount,
                     ),
                 )
 
@@ -705,6 +746,7 @@ open class BundleClientContractTestSupport {
                         nextRowOrdinal = 1,
                         hasMore = true,
                         row = firstRow,
+                        byteCount = byteCount / 2,
                     ),
                 )
                 "1" -> respondJson(
@@ -716,6 +758,7 @@ open class BundleClientContractTestSupport {
                         nextRowOrdinal = 2,
                         hasMore = false,
                         row = secondRow,
+                        byteCount = byteCount - (byteCount / 2),
                     ),
                 )
                 else -> error(unexpectedOrdinalMessage)
@@ -729,6 +772,7 @@ open class BundleClientContractTestSupport {
         nextRowOrdinal: Long,
         hasMore: Boolean,
         row: SnapshotChunkRow,
+        byteCount: Long,
     ): String {
         return snapshotResponse(
             snapshotId = snapshotId,
@@ -736,6 +780,7 @@ open class BundleClientContractTestSupport {
             nextRowOrdinal = nextRowOrdinal,
             hasMore = hasMore,
             rows = listOf(row),
+            byteCount = byteCount,
         )
     }
 
@@ -745,6 +790,7 @@ open class BundleClientContractTestSupport {
         nextRowOrdinal: Long,
         hasMore: Boolean,
         rows: List<SnapshotChunkRow>,
+        byteCount: Long,
     ): String {
         val rowsJson = rows.joinToString(separator = ",\n", prefix = "[\n", postfix = "\n          ]") { row ->
             """
@@ -761,6 +807,7 @@ open class BundleClientContractTestSupport {
         {
           "snapshot_id": "$snapshotId",
           "snapshot_bundle_seq": $snapshotBundleSeq,
+          "byte_count": $byteCount,
           "next_row_ordinal": $nextRowOrdinal,
           "has_more": $hasMore,
           "rows": ${if (rows.isEmpty()) "[]" else rowsJson}
@@ -813,8 +860,12 @@ open class BundleClientContractTestSupport {
         val createRequests = mutableListOf<RecordedCreateRequest>()
         val uploadedChunks = mutableListOf<RecordedChunk>()
         val bundles = mutableListOf<StoredBundle>()
+        val deletedPushIds = mutableListOf<String>()
 
         var nextBundleSeq = 1L
+        var commitRequestCount = 0
+        var createPushIdTransform: ((String) -> String)? = null
+        var chunkPushIdTransform: ((String) -> String)? = null
         var createError: ((RecordedCreateRequest) -> Pair<Int, String>?)? = null
         var commitError: ((Long, Int) -> Pair<Int, String>?)? = null
         var committedBundleChunkError: ((Long, Long?) -> Pair<Int, String>?)? = null
@@ -887,7 +938,7 @@ open class BundleClientContractTestSupport {
                     json.encodeToString(
                         PushSessionCreateResponse.serializer(),
                         PushSessionCreateResponse(
-                            pushId = pushId,
+                            pushId = createPushIdTransform?.invoke(pushId) ?: pushId,
                             status = "staging",
                             plannedRowCount = request.plannedRowCount,
                             nextExpectedRowOrdinal = 0,
@@ -922,7 +973,7 @@ open class BundleClientContractTestSupport {
                             json.encodeToString(
                                 PushSessionChunkResponse.serializer(),
                                 PushSessionChunkResponse(
-                                    pushId = pushId,
+                                    pushId = chunkPushIdTransform?.invoke(pushId) ?: pushId,
                                     nextExpectedRowOrdinal = session.rows.size.toLong(),
                                 )
                             )
@@ -930,6 +981,7 @@ open class BundleClientContractTestSupport {
                     }
 
                     exchange.requestMethod == "POST" && segments.getOrNull(1) == "commit" -> {
+                        commitRequestCount++
                         commitError?.invoke(session.sourceBundleId, session.rows.size)?.let { (status, body) ->
                             respondJson(exchange, status, body)
                             return@createContext
@@ -997,6 +1049,7 @@ open class BundleClientContractTestSupport {
                     }
 
                     exchange.requestMethod == "DELETE" -> {
+                        deletedPushIds += pushId
                         sessionsById.remove(pushId)
                         exchange.sendResponseHeaders(204, -1)
                         exchange.close()

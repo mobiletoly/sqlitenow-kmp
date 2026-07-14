@@ -7,6 +7,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
@@ -35,6 +37,67 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
             },
         ) { client ->
             block(db, client)
+        }
+    }
+
+    @Test
+    fun sourceIdStoresRejectInvalidPersistedAndNewValuesWithoutTrimming() = runBlocking<Unit> {
+        val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
+        createUsersTable(db)
+        withConnectedClient(
+            db = db,
+            syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
+        ) {
+            val attachmentStore = OversqliteAttachmentStateStore(db)
+            val sourceStore = OversqliteSourceStateStore(db)
+            val operationStore = OversqliteOperationStateStore(db)
+            val outboxStore = OversqliteOutboxStateStore(db)
+            val validAttachment = attachmentStore.loadState()
+            val sourceId = validAttachment.currentSourceId
+
+            assertFailsWith<InvalidOversqliteSourceIdException> {
+                attachmentStore.persistAnonymousState(" invalid")
+            }
+            assertFailsWith<InvalidOversqliteSourceIdException> {
+                sourceStore.ensureSource("invalid ")
+            }
+            assertFailsWith<InvalidOversqliteSourceIdException> {
+                operationStore.persistState(
+                    OversqliteOperationState(
+                        kind = operationKindSourceRecovery,
+                        reason = SourceRecoveryReason.SOURCE_RETIRED.toPersistedOperationReason(),
+                        replacementSourceId = "invalid\nsource",
+                    ),
+                )
+            }
+            assertFailsWith<InvalidOversqliteSourceIdException> {
+                outboxStore.persistBundleState(
+                    OversqliteOutboxBundleState(state = outboxStatePrepared, sourceId = ""),
+                )
+            }
+
+            db.execSQL("UPDATE _sync_attachment_state SET current_source_id = ' invalid' WHERE singleton_key = 1")
+            assertFailsWith<InvalidOversqliteSourceIdException> { attachmentStore.loadState() }
+            db.execSQL("UPDATE _sync_attachment_state SET current_source_id = '$sourceId' WHERE singleton_key = 1")
+
+            db.execSQL("UPDATE _sync_source_state SET replaced_by_source_id = 'invalid ' WHERE source_id = '$sourceId'")
+            assertFailsWith<InvalidOversqliteSourceIdException> { sourceStore.loadState(sourceId) }
+            db.execSQL("UPDATE _sync_source_state SET replaced_by_source_id = '' WHERE source_id = '$sourceId'")
+
+            db.execSQL(
+                "UPDATE _sync_operation_state SET kind = 'source_recovery', " +
+                    "replacement_source_id = 'invalid source' WHERE singleton_key = 1",
+            )
+            assertFailsWith<InvalidOversqliteSourceIdException> { operationStore.loadState() }
+            db.execSQL(
+                "UPDATE _sync_operation_state SET kind = 'none', replacement_source_id = '' WHERE singleton_key = 1",
+            )
+
+            db.execSQL(
+                "UPDATE _sync_outbox_bundle SET state = 'prepared', source_id = ' invalid' WHERE singleton_key = 1",
+            )
+            assertFailsWith<InvalidOversqliteSourceIdException> { outboxStore.loadBundleState() }
+            db.execSQL("UPDATE _sync_outbox_bundle SET state = 'none', source_id = '' WHERE singleton_key = 1")
         }
     }
 
@@ -69,14 +132,15 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
               "snapshot_id": "snapshot-invalid-expiry",
               "snapshot_bundle_seq": 9,
               "row_count": 0,
-              "byte_count": 32,
+              "byte_count": 0,
               "expires_at": "not-a-timestamp"
             }
             """.trimIndent(),
         ) { client ->
-            val error = client.rebuild().exceptionOrNull()
-            assertTrue(error != null)
-            assertTrue(error.message?.contains("oversqlite timestamp must be RFC3339/ISO-8601 instant") == true)
+            val error = assertIs<SnapshotSemanticException>(client.rebuild().exceptionOrNull())
+            assertEquals(SnapshotSemanticFailure.INVALID_SESSION, error.failure)
+            assertEquals(null, error.cause)
+            assertTrue("not-a-timestamp" !in error.toString())
         }
     }
 
@@ -108,6 +172,7 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
                     {
                       "snapshot_id": "snapshot-report",
                       "snapshot_bundle_seq": 5,
+                      "byte_count": 32,
                       "rows": [
                         {
                           "schema": "main",
@@ -138,7 +203,8 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
 
             collectJob.cancel()
             assertEquals(RemoteSyncOutcome.APPLIED_SNAPSHOT, report.outcome)
-            assertEquals(RestoreSummary(bundleSeq = 5, rowCount = 1), report.restore)
+            assertEquals(5L, report.restore?.bundleSeq)
+            assertEquals(1L, report.restore?.rowCount)
             assertEquals(AuthorityStatus.AUTHORITATIVE_MATERIALIZED, report.status.authority)
             assertTrue(observedProgress.contains(OversqliteProgress.Active(OversqliteOperation.REBUILD_KEEP_SOURCE, OversqlitePhase.STAGING_REMOTE_STATE)))
             assertTrue(observedProgress.contains(OversqliteProgress.Active(OversqliteOperation.REBUILD_KEEP_SOURCE, OversqlitePhase.APPLYING_REMOTE_STATE)))
@@ -175,13 +241,11 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
                 """.trimIndent()
             )
 
-            val error = client.rebuild().exceptionOrNull()
-            assertTrue(error != null)
-            assertTrue(error.message?.contains("payload for users must contain every table column") == true)
+            val error = assertIs<SnapshotSemanticException>(client.rebuild().exceptionOrNull())
+            assertEquals(SnapshotSemanticFailure.INVALID_PAYLOAD_SHAPE, error.failure)
             assertEquals(0L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
-            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
-            assertEquals("snapshot-one", scalarText(db, "SELECT DISTINCT snapshot_id FROM _sync_snapshot_stage"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
         }
     }
 
@@ -222,6 +286,7 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
                             {
                               "snapshot_id": "snapshot-multi",
                               "snapshot_bundle_seq": 9,
+                              "byte_count": 32,
                               "next_row_ordinal": 1,
                               "has_more": true,
                               "rows": [
@@ -243,6 +308,7 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
                             {
                               "snapshot_id": "snapshot-multi",
                               "snapshot_bundle_seq": 9,
+                              "byte_count": 32,
                               "next_row_ordinal": 2,
                               "has_more": false,
                               "rows": [
@@ -262,12 +328,11 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
                 }
             },
         ) { client ->
-            val error = client.rebuild().exceptionOrNull()
-            assertTrue(error != null)
-            assertTrue(error.message?.contains("payload for users must contain every table column") == true)
+            val error = assertIs<SnapshotSemanticException>(client.rebuild().exceptionOrNull())
+            assertEquals(SnapshotSemanticFailure.INVALID_PAYLOAD_SHAPE, error.failure)
             assertEquals(listOf("0", "1"), requestedOrdinals)
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
-            assertEquals(2L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
+            assertEquals(1L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
             assertEquals(0L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
         }
     }
@@ -296,6 +361,7 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
                     {
                       "snapshot_id": "snapshot-blob-docs",
                       "snapshot_bundle_seq": 7,
+                      "byte_count": 96,
                       "next_row_ordinal": 1,
                       "has_more": false,
                       "rows": [
@@ -381,6 +447,7 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
                             {
                               "snapshot_id": "snapshot-restart-a",
                               "snapshot_bundle_seq": 9,
+                              "byte_count": 32,
                               "next_row_ordinal": 1,
                               "has_more": true,
                               "rows": [
@@ -413,6 +480,7 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
                         {
                           "snapshot_id": "snapshot-restart-b",
                           "snapshot_bundle_seq": 12,
+                          "byte_count": 32,
                           "next_row_ordinal": 1,
                           "has_more": false,
                           "rows": [
@@ -539,9 +607,8 @@ class BundleSnapshotContractTest : BundleClientContractTestSupport() {
             val originalSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
 
             markSourceRecoveryRequired(db)
-            val error = client.rebuild().exceptionOrNull()
-            assertTrue(error != null)
-            assertTrue(error.message?.contains("payload for users must contain every table column") == true)
+            val error = assertIs<SnapshotSemanticException>(client.rebuild().exceptionOrNull())
+            assertEquals(SnapshotSemanticFailure.INVALID_PAYLOAD_SHAPE, error.failure)
             assertEquals(originalSourceId, scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
             assertEquals(0L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
         }

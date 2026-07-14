@@ -90,14 +90,32 @@ internal data class CommittedReplayRow(
 )
 
 internal data class StagedSnapshotRow(
+    val rowOrdinal: Long,
     val schemaName: String,
     val tableName: String,
     val keyJson: String,
-    val localPk: String,
-    val wireKey: SyncKey,
     val rowVersion: Long,
     val payload: String,
 )
+
+internal data class SnapshotNegotiation(
+    val maxRows: Int,
+    val maxBytes: Long,
+    val maxRowBytes: Long,
+)
+
+internal data class SnapshotTransferTotals(
+    val rows: Long = 0,
+    val bytes: Long = 0,
+)
+
+internal data class StagedSnapshotPage(
+    val rows: List<StagedSnapshotRow>,
+    val retainedTextBytes: Long,
+) {
+    val lastRowOrdinal: Long?
+        get() = rows.lastOrNull()?.rowOrdinal
+}
 
 internal data class StructuredRowState(
     val exists: Boolean = false,
@@ -114,18 +132,34 @@ internal data class DirtyUploadState(
 )
 
 internal class DirtyStateRejectedException(
-    private val dirtyCount: Int,
+    private val dirtyCount: Long,
 ) : RuntimeException("cannot pull while $dirtyCount local dirty rows exist"), OversqliteCategorizedException {
     override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
 }
 
-internal fun DirtyRowCapture.toVerboseSummary(): String {
-    return "table=$tableName op=$op key=$wireKey baseRowVersion=$baseRowVersion " +
-        "dirtyOrdinal=$dirtyOrdinal payloadLength=${localPayload?.length ?: 0}"
+internal data class OversqliteCountEvaluation(
+    val dirtyRowCount: Long,
+    val outboundRowCount: Long,
+    val sourceBundleRowCount: Long = outboundRowCount,
+    val expectedOutboxRowCount: Long = outboundRowCount,
+) {
+    init {
+        require(dirtyRowCount >= 0L)
+        require(outboundRowCount >= 0L)
+        require(sourceBundleRowCount >= 0L)
+        require(expectedOutboxRowCount >= 0L)
+    }
+
+    val hasDirtyRows: Boolean = dirtyRowCount > 0L
+    val hasOutboundRows: Boolean = outboundRowCount > 0L
+    val hasPendingRows: Boolean = hasDirtyRows || hasOutboundRows
+    val preparedOutboxMatches: Boolean =
+        sourceBundleRowCount == outboundRowCount && sourceBundleRowCount == expectedOutboxRowCount
+
+    val totalPendingRowCount: Long = checkCountSum(dirtyRowCount, outboundRowCount)
 }
 
-internal fun PushRequestRow.toVerboseSummary(): String {
-    return "table=$table op=$op key=$key baseRowVersion=$baseRowVersion payload=${
-        payload?.toString() ?: "null"
-    }"
+private fun checkCountSum(left: Long, right: Long): Long {
+    require(left <= Long.MAX_VALUE - right) { "pending row count overflow" }
+    return left + right
 }

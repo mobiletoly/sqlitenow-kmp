@@ -54,6 +54,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -124,6 +126,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -207,6 +211,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "source_sequence_changed",
                   "replacement_source_id": "<source-2>"
                 }
@@ -283,6 +289,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "source_sequence_changed",
                   "replacement_source_id": "<source-2>"
                 }
@@ -359,6 +367,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "source_sequence_changed",
                   "replacement_source_id": "<source-2>"
                 }
@@ -445,6 +455,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -531,6 +543,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -601,6 +615,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -684,6 +700,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "source_retired",
                   "replacement_source_id": "<source-2>"
                 }
@@ -760,6 +778,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "source_retired",
                   "replacement_source_id": "<source-2>"
                 }
@@ -836,6 +856,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "source_retired",
                   "replacement_source_id": "<source-2>"
                 }
@@ -919,6 +941,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "source_retired",
                   "replacement_source_id": "<source-2>"
                 }
@@ -1005,6 +1029,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -1075,6 +1101,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -1158,6 +1186,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "history_pruned",
                   "replacement_source_id": "<source-2>"
                 }
@@ -1234,6 +1264,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "history_pruned",
                   "replacement_source_id": "<source-2>"
                 }
@@ -1310,6 +1342,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "history_pruned",
                   "replacement_source_id": "<source-2>"
                 }
@@ -1393,6 +1427,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "history_pruned",
                   "replacement_source_id": "<source-2>"
                 }
@@ -1479,6 +1515,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -1549,6 +1587,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -1632,6 +1672,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "source_sequence_out_of_order",
                   "replacement_source_id": "<source-2>"
                 }
@@ -1708,6 +1750,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "source_sequence_out_of_order",
                   "replacement_source_id": "<source-2>"
                 }
@@ -1784,6 +1828,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "source_sequence_out_of_order",
                   "replacement_source_id": "<source-2>"
                 }
@@ -1867,6 +1913,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "source_sequence_out_of_order",
                   "replacement_source_id": "<source-2>"
                 }
@@ -1952,6 +2000,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -2022,6 +2072,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -2105,6 +2157,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "source_retired",
                   "replacement_source_id": "<source-2>"
                 }
@@ -2181,6 +2235,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "source_retired",
                   "replacement_source_id": "<source-2>"
                 }
@@ -2257,6 +2313,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "source_retired",
                   "replacement_source_id": "<source-2>"
                 }
@@ -2340,6 +2398,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "source_retired",
                   "replacement_source_id": "<source-2>"
                 }
@@ -2416,6 +2476,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -2486,6 +2548,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -2569,6 +2633,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "unknown_reason",
                   "replacement_source_id": "<source-2>"
                 }
@@ -2645,6 +2711,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "unknown_reason",
                   "replacement_source_id": "<source-2>"
                 }
@@ -2721,6 +2789,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "unknown_reason",
                   "replacement_source_id": "<source-2>"
                 }
@@ -2798,6 +2868,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "unknown_reason",
                   "replacement_source_id": "<source-2>"
                 }

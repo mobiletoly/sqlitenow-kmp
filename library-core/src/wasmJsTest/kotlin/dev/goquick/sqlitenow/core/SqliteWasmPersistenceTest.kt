@@ -7,6 +7,8 @@ import kotlin.JsFun
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlinx.coroutines.await
 import kotlinx.coroutines.test.runTest
@@ -67,6 +69,28 @@ class SqliteWasmPersistenceTest {
         }
     }
 
+    @Test
+    fun failingClosePersistenceIsReportedOnceAndCloseIsNotRetried() = runTest {
+        val failure = IllegalStateException("WASM_CLOSE_PERSISTENCE_SENTINEL")
+        val persistence = FailingPersistence(failure)
+        val connection = BundledSqliteConnectionProvider.openConnection(
+            dbName = "wasmCloseFailure_${Random.nextInt()}.db",
+            debug = false,
+            config = SqliteConnectionConfig(
+                persistence = persistence,
+                autoFlushPersistence = false,
+            ),
+        )
+        connection.execSQL("CREATE TABLE IF NOT EXISTS probe(id INTEGER PRIMARY KEY)")
+
+        val observed = assertFailsWith<IllegalStateException> { connection.close() }
+
+        assertSame(failure, generateSequence<Throwable>(observed) { it.cause }.last())
+        assertEquals(1, persistence.persistCalls)
+        connection.close()
+        assertEquals(1, persistence.persistCalls)
+    }
+
     private suspend fun collectBodies(connection: SafeSQLiteConnection): List<String> {
         val values = mutableListOf<String>()
         val stmt = connection.prepare("SELECT body FROM notes ORDER BY id")
@@ -82,6 +106,22 @@ class SqliteWasmPersistenceTest {
 
     private fun fakeOpfsSupport() {
         installOpfsTestStub()
+    }
+
+    private class FailingPersistence(
+        private val failure: Throwable,
+    ) : SqlitePersistence {
+        var persistCalls: Int = 0
+            private set
+
+        override suspend fun load(dbName: String): ByteArray? = null
+
+        override suspend fun persist(dbName: String, bytes: ByteArray) {
+            persistCalls++
+            throw failure
+        }
+
+        override suspend fun clear(dbName: String) = Unit
     }
 }
 

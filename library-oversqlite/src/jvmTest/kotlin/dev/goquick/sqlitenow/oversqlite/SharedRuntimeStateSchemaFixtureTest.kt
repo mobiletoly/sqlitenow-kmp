@@ -6,7 +6,7 @@ import kotlin.test.assertContains
 import kotlin.test.assertNotNull
 
 class SharedRuntimeStateSchemaFixtureTest : SharedRuntimeStateFixtureSupport() {
-    private val fixtureFile = oversqliteContractFixture("runtime-state/schema/v0.json")
+    private val fixtureFile = oversqliteContractFixture("runtime-state/schema/v1.json")
 
     @Test
     fun kmpSharedRuntimeStateSchemaFixtureMatchesRuntime() = runBlocking {

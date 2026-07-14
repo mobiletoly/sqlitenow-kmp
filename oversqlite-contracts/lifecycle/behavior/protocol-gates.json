@@ -7,8 +7,8 @@
       "serverScript": {
         "kind": "chunked_sync",
         "protocolVersions": [
-          "v0",
-          "v1"
+          "v1",
+          "v0"
         ]
       },
       "steps": [
@@ -51,6 +51,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -125,6 +127,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -198,6 +202,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -283,6 +289,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -334,8 +342,9 @@
         "kind": "remote_authoritative_partial_snapshot",
         "connectResolution": "remote_authoritative",
         "protocolVersions": [
-          "v0",
-          "v1"
+          "v1",
+          "v1",
+          "v0"
         ],
         "snapshots": [
           {
@@ -424,6 +433,8 @@
                   "staged_snapshot_id": "",
                   "snapshot_bundle_seq": 0,
                   "snapshot_row_count": 0,
+                  "snapshot_byte_count": 0,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -498,6 +509,8 @@
                   "staged_snapshot_id": "snapshot-a",
                   "snapshot_bundle_seq": 9,
                   "snapshot_row_count": 2,
+                  "snapshot_byte_count": 312,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -578,6 +591,8 @@
                   "staged_snapshot_id": "snapshot-a",
                   "snapshot_bundle_seq": 9,
                   "snapshot_row_count": 2,
+                  "snapshot_byte_count": 312,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
@@ -662,6 +677,8 @@
                   "staged_snapshot_id": "snapshot-a",
                   "snapshot_bundle_seq": 9,
                   "snapshot_row_count": 2,
+                  "snapshot_byte_count": 312,
+                  "snapshot_stage_complete": 0,
                   "reason": "",
                   "replacement_source_id": ""
                 }
