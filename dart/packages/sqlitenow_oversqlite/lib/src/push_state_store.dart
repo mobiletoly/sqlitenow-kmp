@@ -223,6 +223,47 @@ WHERE singleton_key = 1''',
     return scalarInt('SELECT COUNT(*) FROM _sync_outbox_rows');
   }
 
+  Future<int> countOutboxRowsForSourceBundle(int sourceBundleId) async {
+    final rows = await _connection.select(
+      'SELECT COUNT(*) FROM _sync_outbox_rows WHERE source_bundle_id = ?',
+      (row) => row.readInt(0),
+      parameters: [sourceBundleId],
+    );
+    return rows.single;
+  }
+
+  Future<void> visitPreparedOutboxRows({
+    required int sourceBundleId,
+    required Future<void> Function(PreparedOutboxReplayRow row) visit,
+  }) async {
+    var afterRowOrdinal = -1;
+    await _connection.usePrepared(
+      '''SELECT row_ordinal, table_name, key_json, op, local_payload
+FROM _sync_outbox_rows
+WHERE source_bundle_id = ? AND row_ordinal > ?
+ORDER BY row_ordinal
+LIMIT 1''',
+      (statement) async {
+        while (true) {
+          final rows = statement.select(
+            (row) => PreparedOutboxReplayRow(
+              rowOrdinal: row.readInt(0),
+              tableName: row.readString(1),
+              keyJson: row.readString(2),
+              op: row.readString(3),
+              localPayload: row.readNullableString(4),
+            ),
+            [sourceBundleId, afterRowOrdinal],
+          );
+          if (rows.isEmpty) break;
+          final row = rows.single;
+          await visit(row);
+          afterRowOrdinal = row.rowOrdinal;
+        }
+      },
+    );
+  }
+
   Future<OversqlitePushSnapshot> loadPersistedSnapshot(
     OversqliteOutboxBundle outbox,
   ) async {
@@ -416,6 +457,22 @@ WHERE schema_name = ? AND table_name = ? AND key_json = ?''',
     final rows = await _connection.select(sql, (row) => row.readInt(0));
     return rows.single;
   }
+}
+
+final class PreparedOutboxReplayRow {
+  const PreparedOutboxReplayRow({
+    required this.rowOrdinal,
+    required this.tableName,
+    required this.keyJson,
+    required this.op,
+    required this.localPayload,
+  });
+
+  final int rowOrdinal;
+  final String tableName;
+  final String keyJson;
+  final String op;
+  final String? localPayload;
 }
 
 final class OversqlitePushSnapshot {

@@ -3,9 +3,10 @@ import 'dart:math';
 import 'package:sqlitenow_runtime/sqlitenow_runtime.dart';
 
 import 'local_runtime.dart';
-import 'protocol.dart';
+import 'protocol_models.dart';
 
 const oversqliteAttachmentBindingAttached = 'attached';
+const oversqliteAttachmentBindingAnonymous = 'anonymous';
 const oversqliteOperationKindNone = 'none';
 const oversqliteOperationKindRemoteReplace = 'remote_replace';
 const oversqliteOperationKindSourceRecovery = 'source_recovery';
@@ -66,6 +67,8 @@ final class OversqliteClientOperationState {
     this.stagedSnapshotId = '',
     this.snapshotBundleSeq = 0,
     this.snapshotRowCount = 0,
+    this.snapshotByteCount = 0,
+    this.snapshotStageComplete = false,
     this.reason = '',
     this.replacementSourceId = '',
   });
@@ -75,6 +78,8 @@ final class OversqliteClientOperationState {
   final String stagedSnapshotId;
   final int snapshotBundleSeq;
   final int snapshotRowCount;
+  final int snapshotByteCount;
+  final bool snapshotStageComplete;
   final String reason;
   final String replacementSourceId;
 
@@ -141,7 +146,7 @@ WHERE singleton_key = 1''',
   Future<OversqliteClientOperationState> loadOperationState() async {
     final rows = await _connection.select(
       '''SELECT kind, target_user_id, staged_snapshot_id, snapshot_bundle_seq, snapshot_row_count,
-       reason, replacement_source_id
+       snapshot_byte_count, snapshot_stage_complete, reason, replacement_source_id
 FROM _sync_operation_state
 WHERE singleton_key = 1''',
       (row) => OversqliteClientOperationState(
@@ -150,8 +155,10 @@ WHERE singleton_key = 1''',
         stagedSnapshotId: row.readString(2),
         snapshotBundleSeq: row.readInt(3),
         snapshotRowCount: row.readInt(4),
-        reason: row.readString(5),
-        replacementSourceId: row.readString(6),
+        snapshotByteCount: row.readInt(5),
+        snapshotStageComplete: row.readInt(6) == 1,
+        reason: row.readString(7),
+        replacementSourceId: row.readString(8),
       ),
     );
     if (rows.isEmpty) {
@@ -198,13 +205,15 @@ WHERE singleton_key = 1''',
     required String userId,
     required String sourceId,
   }) async {
-    await persistAnonymousState(sourceId);
-    await persistOperationState(
-      OversqliteClientOperationState(
-        kind: oversqliteOperationKindRemoteReplace,
-        targetUserId: userId,
-      ),
-    );
+    await _connection.transaction(() async {
+      await persistAnonymousState(sourceId);
+      await persistOperationState(
+        OversqliteClientOperationState(
+          kind: oversqliteOperationKindRemoteReplace,
+          targetUserId: userId,
+        ),
+      );
+    }, mode: TransactionMode.immediate);
   }
 
   Future<void> persistOperationState(OversqliteClientOperationState state) {
@@ -215,6 +224,8 @@ SET kind = ?,
     staged_snapshot_id = ?,
     snapshot_bundle_seq = ?,
     snapshot_row_count = ?,
+    snapshot_byte_count = ?,
+    snapshot_stage_complete = ?,
     reason = ?,
     replacement_source_id = ?
 WHERE singleton_key = 1''',
@@ -224,6 +235,8 @@ WHERE singleton_key = 1''',
         state.stagedSnapshotId,
         state.snapshotBundleSeq,
         state.snapshotRowCount,
+        state.snapshotByteCount,
+        state.snapshotStageComplete ? 1 : 0,
         state.reason,
         state.replacementSourceId,
       ],
@@ -314,15 +327,18 @@ WHERE singleton_key = 1''',
     String? preferredReplacementSourceId,
   }) async {
     final operation = await loadOperationState();
-    final existing = operation.replacementSourceId.trim();
-    final preferred = preferredReplacementSourceId?.trim() ?? '';
+    final existing = operation.replacementSourceId;
+    if (existing.isNotEmpty) {
+      requireValidOversqliteSourceId(existing);
+    }
+    if (preferredReplacementSourceId != null) {
+      requireValidOversqliteSourceId(preferredReplacementSourceId);
+    }
+    final preferred = preferredReplacementSourceId ?? '';
     final reserved = switch ((existing, preferred)) {
       (final local, final remote)
           when local.isNotEmpty && remote.isNotEmpty && local != remote =>
-        throw SourceReplacementDivergedException(
-          localReplacementSourceId: local,
-          remoteReplacementSourceId: remote,
-        ),
+        throw const SourceReplacementDivergedException(),
       (final local, _) when local.isNotEmpty => local,
       (_, final remote) when remote.isNotEmpty => remote,
       _ => _generateFreshReplacementSourceId(currentSourceId),
@@ -338,9 +354,7 @@ WHERE singleton_key = 1''',
     required String currentSourceId,
     required String replacementSourceId,
   }) async {
-    if (replacementSourceId.trim().isEmpty) {
-      throw StateError('replacement source id must not be blank');
-    }
+    requireValidOversqliteSourceId(replacementSourceId);
     if (replacementSourceId == currentSourceId) {
       throw StateError(
         'replacement source id must differ from current source id',
@@ -358,16 +372,11 @@ WHERE source_id = ?''',
       parameters: [replacementSourceId],
     );
     if (rows.isEmpty) {
-      throw StateError(
-        '_sync_source_state missing for replacement source $replacementSourceId',
-      );
+      throw StateError('_sync_source_state missing for replacement source');
     }
     final state = rows.single;
-    if (state.nextSourceBundleId != 1 ||
-        state.replacedBySourceId.trim().isNotEmpty) {
-      throw StateError(
-        'replacement source $replacementSourceId is not fresh for source recovery',
-      );
+    if (state.nextSourceBundleId != 1 || state.replacedBySourceId.isNotEmpty) {
+      throw StateError('replacement source is not fresh for source recovery');
     }
   }
 

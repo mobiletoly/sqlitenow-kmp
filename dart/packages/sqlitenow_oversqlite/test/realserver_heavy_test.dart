@@ -461,6 +461,10 @@ void main() {
           final oldSourceResponse = await oldSourceHttp.postJson(
             'sync/push-sessions',
             sourceId: recoverSource,
+            operation: 'old source push probe',
+            bounds: const OversqliteHttpRequestBounds(
+              errorBodyBytes: 64 * 1024,
+            ),
             body: {
               'source_bundle_id': 1,
               'planned_row_count': 1,

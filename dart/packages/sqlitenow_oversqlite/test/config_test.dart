@@ -11,7 +11,7 @@ void main() {
 
   test('OversqliteConfig keeps generated metadata and default limits', () {
     const table = SyncTable(tableName: 'docs', syncKeyColumnName: 'doc_id');
-    const config = OversqliteConfig(schema: 'main', syncTables: [table]);
+    final config = OversqliteConfig(schema: 'main', syncTables: [table]);
 
     expect(config.schema, 'main');
     expect(config.syncTables, [table]);

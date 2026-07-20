@@ -1,246 +1,477 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 
-import 'package:sqlitenow_oversqlite/sqlitenow_oversqlite.dart';
-import 'package:sqlitenow_runtime/sqlitenow_runtime.dart';
+import 'package:crypto/crypto.dart';
 import 'package:test/test.dart';
 
-void main() {
-  test('Dart VM snapshot memory baseline', () async {
-    final rawRows = Platform.environment['OVERSQLITE_MEMORY_BASELINE_ROWS'];
-    if (rawRows == null) return;
-    final rowCount = int.tryParse(rawRows);
-    if (rowCount == null || !const {1000, 100000, 1000000}.contains(rowCount)) {
-      fail(
-        'OVERSQLITE_MEMORY_BASELINE_ROWS must be 1000, 100000, or 1000000, got $rawRows',
-      );
-    }
+import 'support/snapshot_memory_matrix.dart';
+import 'support/snapshot_memory_reverify.dart';
 
-    final directory = await Directory.systemTemp.createTemp(
-      'oversqlite-dart-memory-baseline-',
-    );
-    final databaseFile = File('${directory.path}/oversqlite.sqlite');
-    final database = SqliteNowDatabase(path: databaseFile.path);
-    await database.open(
-      preInit: (connection) async {
-        await connection.execute(
-          'CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)',
+void main() {
+  group('Phase 4C heavy-lane policy', () {
+    test(
+      'snapshot memory entrypoint fails before setup in GitHub Actions',
+      () async {
+        final root = _repoRoot();
+        final artifactPath =
+            '${Directory.systemTemp.path}/oversqlite-guard-$pid-${DateTime.now().microsecondsSinceEpoch}';
+        final result = await Process.run(
+          'bash',
+          [
+            '${root.path}/dart/scripts/oversqlite_snapshot_memory.sh',
+            artifactPath,
+          ],
+          environment: {...Platform.environment, 'GITHUB_ACTIONS': 'true'},
         );
-        await connection.execute('PRAGMA journal_mode = WAL');
+
+        expect(result.exitCode, 64);
+        expect(result.stderr, contains(githubActionsGuardMessage));
+        expect(Directory(artifactPath).existsSync(), isFalse);
       },
     );
-    final server = _SnapshotMemoryServer(rowCount);
-    final client = DefaultOversqliteClient(
-      database: database,
-      config: const OversqliteConfig(
-        schema: 'main',
-        syncTables: [SyncTable(tableName: 'users', syncKeyColumnName: 'id')],
-      ),
-      httpClient: server,
+
+    test(
+      'realserver heavy entrypoint fails before setup in GitHub Actions',
+      () async {
+        final root = _repoRoot();
+        final result = await Process.run(
+          'bash',
+          ['${root.path}/dart/scripts/oversqlite_realserver_all_heavy.sh'],
+          environment: {...Platform.environment, 'GITHUB_ACTIONS': 'true'},
+        );
+
+        expect(result.exitCode, 64);
+        expect(
+          result.stderr,
+          contains(
+            'Oversqlite realserver heavy workloads are local-only and must not run in GitHub Actions.',
+          ),
+        );
+      },
     );
-    final sampler = _DartMemorySampler.start();
-    final stopwatch = Stopwatch()..start();
-    var appliedRows = 0;
-    var sqliteBytes = 0;
-    var sqliteWalBytes = 0;
-    try {
-      await client.open();
-      await client.attach('memory-baseline-user');
-      await client.rebuild();
-      appliedRows = await _scalarInt(
-        database.connection,
-        'SELECT COUNT(*) FROM users',
+
+    test('base realserver script cannot bypass the heavy guard', () async {
+      final root = _repoRoot();
+      final result = await Process.run(
+        'bash',
+        ['${root.path}/dart/scripts/oversqlite_realserver_all.sh'],
+        environment: {
+          ...Platform.environment,
+          'GITHUB_ACTIONS': 'true',
+          'OVERSQLITE_REALSERVER_HEAVY': 'true',
+        },
       );
-      expect(appliedRows, rowCount);
+
+      expect(result.exitCode, 64);
       expect(
-        await _scalarInt(
-          database.connection,
-          'SELECT COUNT(*) FROM _sync_snapshot_stage',
+        result.stderr,
+        contains(
+          'Oversqlite realserver heavy workloads are local-only and must not run in GitHub Actions.',
         ),
-        0,
       );
-      // Measure SQLite artifacts before close can checkpoint and remove the WAL.
-      final walFile = File('${databaseFile.path}-wal');
-      sqliteBytes = databaseFile.existsSync() ? databaseFile.lengthSync() : 0;
-      sqliteWalBytes = walFile.existsSync() ? walFile.lengthSync() : 0;
-    } finally {
-      stopwatch.stop();
-      await client.close();
-      await database.close();
-    }
-    final metrics = sampler.stop();
-    stdout.writeln(
-      jsonEncode({
-        'event': 'snapshot_memory_baseline',
-        'runtime': 'dart-vm',
-        'rows': rowCount,
-        'applied_rows': appliedRows,
-        'chunks': server.chunkCount,
-        'max_chunk_rows': server.maxChunkRows,
-        'driver_selected_rows_high_water': rowCount,
-        'converted_apply_rows_high_water': rowCount,
-        'elapsed_ms': stopwatch.elapsedMilliseconds,
-        'baseline_rss_bytes': metrics.baselineRssBytes,
-        'peak_rss_bytes': metrics.peakRssBytes,
-        'vm_max_rss_bytes': ProcessInfo.maxRss,
-        'sqlite_bytes': sqliteBytes,
-        'sqlite_wal_bytes': sqliteWalBytes,
-      }),
-    );
+    });
+
+    test('active workflows do not opt into local-heavy entrypoints', () {
+      final workflowDirectory = Directory(
+        '${_repoRoot().path}/.github/workflows',
+      );
+      final workflows =
+          workflowDirectory
+              .listSync()
+              .whereType<File>()
+              .where(
+                (file) =>
+                    file.path.endsWith('.yml') || file.path.endsWith('.yaml'),
+              )
+              .toList()
+            ..sort((left, right) => left.path.compareTo(right.path));
+      expect(workflows, isNotEmpty);
+      const forbidden = [
+        'OVERSQLITE_REALSERVER_HEAVY',
+        'OVERSQLITE_MEMORY_BASELINE_ROWS',
+        'oversqlite_realserver_all_heavy.sh',
+        'oversqlite_snapshot_memory.sh',
+        'test/support/snapshot_memory_matrix.dart',
+      ];
+      for (final workflow in workflows) {
+        final source = workflow.readAsStringSync();
+        for (final token in forbidden) {
+          expect(
+            source,
+            isNot(contains(token)),
+            reason: '${workflow.path} must not opt into $token',
+          );
+        }
+      }
+    });
   });
 
-  test('expected-red Dart staged apply does not retain whole snapshot', () {
-    if (Platform.environment['OVERSQLITE_EXPECTED_RED_MEMORY_BOUND'] !=
-        'true') {
-      return;
-    }
-    final source = File('lib/src/download_stage_store.dart').readAsStringSync();
-    final returnsFullList = RegExp(
-      r'Future<List<OversqliteStagedSnapshotRow>>\s+loadStagedSnapshotRows',
-    ).hasMatch(source);
-    final buildsSecondList = source.contains(
-      'final stagedRows = <OversqliteStagedSnapshotRow>[];',
+  test('snapshot memory verifier enforces completeness and resource gates', () {
+    final accepted = _acceptedResults();
+    expect(verifySnapshotMemoryResults(accepted)['status'], 'pass');
+
+    expect(
+      () => verifySnapshotMemoryResults(accepted.sublist(1)),
+      throwsStateError,
+      reason: 'missing profiles must fail closed',
     );
     expect(
-      returnsFullList || buildsSecondList,
+      () => verifySnapshotMemoryResults([...accepted, accepted.first]),
+      throwsStateError,
+      reason: 'duplicate profiles must fail closed',
+    );
+    for (final osPeakRss in [
+      dartClientRssCeilingBytes,
+      dartClientRssCeilingBytes + 1,
+    ]) {
+      expect(
+        () => verifySnapshotMemoryResults(
+          _replace(
+            accepted,
+            'measured-1m-256',
+            (result) => _copy(result, vmMaxRssBytes: osPeakRss),
+          ),
+        ),
+        throwsStateError,
+        reason: 'OS high-water RSS at or above the ceiling must fail',
+      );
+    }
+    expect(
+      () => verifySnapshotMemoryResults(
+        _replace(
+          accepted,
+          'representative-10k-256',
+          (result) => _copy(result, vmMaxRssBytes: result.peakRssBytes - 1),
+        ),
+      ),
+      throwsStateError,
+      reason: 'OS high-water RSS below the sampled peak must fail',
+    );
+    expect(
+      () => verifySnapshotMemoryResults(
+        _replace(
+          accepted,
+          'measured-100k-256-1',
+          (result) => _copy(
+            result,
+            peakRssBytes: result.baselineRssBytes + 4 * 1024 * 1024,
+            adjustedRssBytes: 4 * 1024 * 1024,
+            vmMaxRssBytes: result.baselineRssBytes + 8 * 1024 * 1024,
+          ),
+        ),
+      ),
+      throwsStateError,
+      reason: 'OS high-water RSS scaling overflow must fail',
+    );
+    expect(
+      () => verifySnapshotMemoryResults(
+        _replace(
+          accepted,
+          'measured-1m-256',
+          (result) => _copy(
+            result,
+            peakHeapBytes: 200 * 1024 * 1024,
+            adjustedHeapBytes: 200 * 1024 * 1024 - result.baselineHeapBytes,
+          ),
+        ),
+      ),
+      throwsStateError,
+      reason: 'heap scaling overflow must fail',
+    );
+    expect(
+      () => verifySnapshotMemoryResults(
+        _replace(
+          accepted,
+          'representative-10k-256',
+          (result) => _copy(result, serverPid: result.clientPid),
+        ),
+      ),
+      throwsStateError,
+      reason: 'client/server PID identity must fail',
+    );
+  });
+
+  test('snapshot memory evidence requires a valid OS high-water RSS', () {
+    final profile = snapshotMemoryProfiles.first;
+    final result = _acceptedResults().first;
+    final client = _clientEvidence(result);
+    final server = <String, Object?>{'pid': result.serverPid};
+
+    client.remove('vm_max_rss_bytes');
+    expect(
+      () => SnapshotMemoryResult.fromEvidence(
+        profile: profile,
+        client: client,
+        server: server,
+      ),
+      throwsStateError,
+    );
+
+    client['vm_max_rss_bytes'] = 'not-an-integer';
+    expect(
+      () => SnapshotMemoryResult.fromEvidence(
+        profile: profile,
+        client: client,
+        server: server,
+      ),
+      throwsStateError,
+    );
+  });
+
+  test('retained Phase 4C OS high-water values pass corrected gates', () {
+    var retained = _acceptedResults();
+    retained = _replace(
+      retained,
+      'measured-100k-256-1',
+      (result) => _copy(
+        result,
+        baselineHeapBytes: 18820144,
+        peakHeapBytes: 66083472,
+        adjustedHeapBytes: 47263328,
+        baselineRssBytes: 77807616,
+        peakRssBytes: 149651456,
+        adjustedRssBytes: 71843840,
+        vmMaxRssBytes: 201998336,
+      ),
+    );
+    retained = _replace(
+      retained,
+      'measured-100k-256-2',
+      (result) => _copy(
+        result,
+        baselineHeapBytes: 18817392,
+        peakHeapBytes: 68160064,
+        adjustedHeapBytes: 49342672,
+        baselineRssBytes: 77398016,
+        peakRssBytes: 151715840,
+        adjustedRssBytes: 74317824,
+        vmMaxRssBytes: 202752000,
+      ),
+    );
+    retained = _replace(
+      retained,
+      'measured-100k-256-3',
+      (result) => _copy(
+        result,
+        baselineHeapBytes: 18817312,
+        peakHeapBytes: 67019712,
+        adjustedHeapBytes: 48202400,
+        baselineRssBytes: 77414400,
+        peakRssBytes: 151748608,
+        adjustedRssBytes: 74334208,
+        vmMaxRssBytes: 202326016,
+      ),
+    );
+    retained = _replace(
+      retained,
+      'measured-1m-256',
+      (result) => _copy(
+        result,
+        baselineHeapBytes: 18817296,
+        peakHeapBytes: 68376368,
+        adjustedHeapBytes: 49559072,
+        baselineRssBytes: 77332480,
+        peakRssBytes: 154501120,
+        adjustedRssBytes: 77168640,
+        vmMaxRssBytes: 234389504,
+      ),
+    );
+
+    final gates = verifySnapshotMemoryResults(retained);
+    expect(gates['million_os_peak_rss_bytes'], 234389504);
+    expect(gates['conservative_100k_os_adjusted_rss_bytes'], 124190720);
+    expect(gates['million_os_adjusted_rss_bytes'], 157057024);
+    expect(gates['os_rss_scaling_limit_bytes'], 315490304);
+    expect(gates['million_adjusted_heap_bytes'], 49559072);
+  });
+
+  test(
+    'retained artifact verifier binds hashes and refuses overwrite',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'oversqlite-retained-reverify-',
+      );
+      addTearDown(() async {
+        if (directory.existsSync()) await directory.delete(recursive: true);
+      });
+      final manifestFile = File('${directory.path}/manifest.json');
+      final checksumsFile = File('${directory.path}/SHA256SUMS');
+      final results = _acceptedResults();
+      await manifestFile.writeAsString(
+        '${jsonEncode({
+          'event': 'snapshot_memory_matrix_result',
+          'status': 'pass',
+          'profiles': [for (final result in results) _profileEvidence(result)],
+        })}\n',
+      );
+      await checksumsFile.writeAsString('original retained checksum index\n');
+      final manifestSha = sha256
+          .convert(manifestFile.readAsBytesSync())
+          .toString();
+      final checksumsSha = sha256
+          .convert(checksumsFile.readAsBytesSync())
+          .toString();
+      final output = File('${directory.path}/rss-gate-reverification.json');
+
+      final verified = await reverifySnapshotMemoryArtifact(
+        artifactDirectory: directory,
+        expectedManifestSha256: manifestSha,
+        expectedOriginalChecksumsSha256: checksumsSha,
+        outputFile: output,
+      );
+      expect(verified['status'], 'pass');
+      expect(output.existsSync(), isTrue);
+      expect(
+        () => reverifySnapshotMemoryArtifact(
+          artifactDirectory: directory,
+          expectedManifestSha256: manifestSha,
+          expectedOriginalChecksumsSha256: checksumsSha,
+          outputFile: output,
+        ),
+        throwsStateError,
+        reason: 'retained reverification output must not be overwritten',
+      );
+      expect(
+        () => reverifySnapshotMemoryArtifact(
+          artifactDirectory: directory,
+          expectedManifestSha256: List.filled(64, '0').join(),
+          expectedOriginalChecksumsSha256: checksumsSha,
+          outputFile: File('${directory.path}/wrong-hash.json'),
+        ),
+        throwsStateError,
+        reason: 'a different retained manifest must fail closed',
+      );
+      expect(
+        () => reverifySnapshotMemoryArtifact(
+          artifactDirectory: directory,
+          expectedManifestSha256: manifestSha,
+          expectedOriginalChecksumsSha256: checksumsSha,
+          outputFile: File('${directory.path}/../escaped-output.json'),
+        ),
+        throwsArgumentError,
+        reason: 'lexical parent traversal must not escape the artifact root',
+      );
+    },
+  );
+
+  test('Dart staged apply has no complete-snapshot loader', () {
+    final source = File(
+      '${_repoRoot().path}/dart/packages/sqlitenow_oversqlite/lib/src/download_stage_store.dart',
+    ).readAsStringSync();
+    expect(
+      RegExp(
+        r'Future<List<OversqliteStagedSnapshotRow>>\s+loadStagedSnapshotRows',
+      ).hasMatch(source),
       isFalse,
-      reason:
-          'expected bounded staged apply, observed a driver result list and a second complete converted list; current structural high water is two snapshot-sized row collections',
     );
+    expect(source, contains('LIMIT ?'));
+    expect(source, contains('row_ordinal > ?'));
+    expect(source, contains('row_ordinal <= ?'));
   });
 }
 
-Future<int> _scalarInt(SqliteNowConnection connection, String sql) async {
-  final rows = await connection.select(sql, (row) => row.readInt(0));
-  return rows.single;
+List<SnapshotMemoryResult> _acceptedResults() {
+  return [
+    for (var index = 0; index < snapshotMemoryProfiles.length; index++)
+      () {
+        final profile = snapshotMemoryProfiles[index];
+        final million = profile.label == 'measured-1m-256';
+        final baselineHeap = 32 * 1024 * 1024;
+        final peakHeap = (million ? 80 : 64) * 1024 * 1024;
+        final baselineRss = 128 * 1024 * 1024;
+        final peakRss = (million ? 224 : 192) * 1024 * 1024;
+        final vmMaxRss = (million ? 240 : 200) * 1024 * 1024;
+        return SnapshotMemoryResult(
+          label: profile.label,
+          rowCount: profile.rowCount,
+          targetRowBytes: profile.targetRowBytes,
+          clientPid: 1000 + index,
+          serverPid: 2000 + index,
+          baselineHeapBytes: baselineHeap,
+          peakHeapBytes: peakHeap,
+          adjustedHeapBytes: peakHeap - baselineHeap,
+          baselineRssBytes: baselineRss,
+          peakRssBytes: peakRss,
+          adjustedRssBytes: peakRss - baselineRss,
+          vmMaxRssBytes: vmMaxRss,
+        );
+      }(),
+  ];
 }
 
-final class _SnapshotMemoryServer implements OversqliteHttpClient {
-  _SnapshotMemoryServer(this.rowCount);
-
-  final int rowCount;
-  var chunkCount = 0;
-  var maxChunkRows = 0;
-
-  @override
-  Future<OversqliteHttpResponse> get(
-    String path, {
-    required String sourceId,
-  }) async {
-    if (path == 'sync/capabilities') {
-      return _json({
-        'protocol_version': 'v0',
-        'schema_version': 1,
-        'features': {'connect_lifecycle': true},
-      });
-    }
-    if (path.startsWith('sync/snapshot-sessions/snapshot-memory-baseline')) {
-      final uri = Uri.parse(path);
-      final after = int.parse(uri.queryParameters['after_row_ordinal']!);
-      final requested = int.parse(uri.queryParameters['max_rows']!);
-      final rowsInChunk = min(requested, rowCount - after);
-      chunkCount++;
-      maxChunkRows = max(maxChunkRows, rowsInChunk);
-      final next = after + rowsInChunk;
-      return _json({
-        'snapshot_id': 'snapshot-memory-baseline',
-        'snapshot_bundle_seq': 1,
-        'rows': [
-          for (var offset = 0; offset < rowsInChunk; offset++)
-            _row(after + offset + 1),
-        ],
-        'next_row_ordinal': next,
-        'has_more': next < rowCount,
-      });
-    }
-    return _json({'error': 'not_found', 'message': path}, statusCode: 404);
-  }
-
-  @override
-  Future<OversqliteHttpResponse> postJson(
-    String path, {
-    required String sourceId,
-    required Object? body,
-  }) async {
-    if (path == 'sync/connect') {
-      return _json({'resolution': 'initialize_empty'});
-    }
-    if (path == 'sync/snapshot-sessions') {
-      return _json({
-        'snapshot_id': 'snapshot-memory-baseline',
-        'snapshot_bundle_seq': 1,
-        'row_count': rowCount,
-        'byte_count': 0,
-        'expires_at': '2099-01-01T00:00:00Z',
-      });
-    }
-    return _json({'error': 'not_found', 'message': path}, statusCode: 404);
-  }
-
-  @override
-  Future<OversqliteHttpResponse> delete(
-    String path, {
-    required String sourceId,
-  }) async {
-    return const OversqliteHttpResponse(statusCode: 204, body: '');
-  }
-
-  Map<String, Object?> _row(int ordinal) {
-    final id = 'user-${ordinal.toString().padLeft(9, '0')}';
-    return {
-      'schema': 'main',
-      'table': 'users',
-      'key': {'id': id},
-      'row_version': ordinal,
-      'payload': {'id': id, 'name': 'Snapshot User'},
-    };
-  }
-
-  OversqliteHttpResponse _json(
-    Map<String, Object?> body, {
-    int statusCode = 200,
-  }) {
-    return OversqliteHttpResponse(
-      statusCode: statusCode,
-      body: jsonEncode(body),
-    );
-  }
+List<SnapshotMemoryResult> _replace(
+  List<SnapshotMemoryResult> results,
+  String label,
+  SnapshotMemoryResult Function(SnapshotMemoryResult) replacement,
+) {
+  return [
+    for (final result in results)
+      if (result.label == label) replacement(result) else result,
+  ];
 }
 
-final class _DartMemoryMetrics {
-  const _DartMemoryMetrics({
-    required this.baselineRssBytes,
-    required this.peakRssBytes,
-  });
-
-  final int baselineRssBytes;
-  final int peakRssBytes;
+SnapshotMemoryResult _copy(
+  SnapshotMemoryResult result, {
+  int? clientPid,
+  int? serverPid,
+  int? baselineHeapBytes,
+  int? peakHeapBytes,
+  int? adjustedHeapBytes,
+  int? baselineRssBytes,
+  int? peakRssBytes,
+  int? adjustedRssBytes,
+  int? vmMaxRssBytes,
+}) {
+  return SnapshotMemoryResult(
+    label: result.label,
+    rowCount: result.rowCount,
+    targetRowBytes: result.targetRowBytes,
+    clientPid: clientPid ?? result.clientPid,
+    serverPid: serverPid ?? result.serverPid,
+    baselineHeapBytes: baselineHeapBytes ?? result.baselineHeapBytes,
+    peakHeapBytes: peakHeapBytes ?? result.peakHeapBytes,
+    adjustedHeapBytes: adjustedHeapBytes ?? result.adjustedHeapBytes,
+    baselineRssBytes: baselineRssBytes ?? result.baselineRssBytes,
+    peakRssBytes: peakRssBytes ?? result.peakRssBytes,
+    adjustedRssBytes: adjustedRssBytes ?? result.adjustedRssBytes,
+    vmMaxRssBytes: vmMaxRssBytes ?? result.vmMaxRssBytes,
+  );
 }
 
-final class _DartMemorySampler {
-  _DartMemorySampler._(this._baselineRssBytes, this._timer, this._peakRssBytes);
+Map<String, Object?> _profileEvidence(SnapshotMemoryResult result) {
+  return {
+    'label': result.label,
+    'client': _clientEvidence(result),
+    'server': {'pid': result.serverPid},
+  };
+}
 
-  final int _baselineRssBytes;
-  final Timer _timer;
-  final List<int> _peakRssBytes;
+Map<String, Object?> _clientEvidence(SnapshotMemoryResult result) {
+  return {
+    'rows': result.rowCount,
+    'target_row_bytes': result.targetRowBytes,
+    'pid': result.clientPid,
+    'baseline_heap_bytes': result.baselineHeapBytes,
+    'peak_heap_bytes': result.peakHeapBytes,
+    'adjusted_heap_bytes': result.adjustedHeapBytes,
+    'baseline_rss_bytes': result.baselineRssBytes,
+    'peak_rss_bytes': result.peakRssBytes,
+    'adjusted_rss_bytes': result.adjustedRssBytes,
+    'vm_max_rss_bytes': result.vmMaxRssBytes,
+  };
+}
 
-  static _DartMemorySampler start() {
-    final baseline = ProcessInfo.currentRss;
-    final peak = <int>[baseline];
-    final timer = Timer.periodic(const Duration(milliseconds: 5), (_) {
-      peak[0] = max(peak[0], ProcessInfo.currentRss);
-    });
-    return _DartMemorySampler._(baseline, timer, peak);
-  }
-
-  _DartMemoryMetrics stop() {
-    _timer.cancel();
-    _peakRssBytes[0] = max(_peakRssBytes[0], ProcessInfo.currentRss);
-    return _DartMemoryMetrics(
-      baselineRssBytes: _baselineRssBytes,
-      peakRssBytes: _peakRssBytes[0],
-    );
+Directory _repoRoot() {
+  var current = Directory.current.absolute;
+  while (true) {
+    if (File('${current.path}/settings.gradle.kts').existsSync()) {
+      return current;
+    }
+    if (current.parent.path == current.path) {
+      throw StateError(
+        'repository root not found from ${Directory.current.path}',
+      );
+    }
+    current = current.parent;
   }
 }

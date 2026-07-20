@@ -1,5 +1,8 @@
+import 'wire_int64.dart';
+
 const _hiddenSyncScopeColumnName = '_sync_scope_id';
-const oversqliteProtocolVersion = 'v0';
+const oversqliteProtocolVersion = 'v1';
+const maxOversqliteInt64 = maxWireOversqliteInt64;
 
 final class ProtocolVersionMismatchException implements Exception {
   const ProtocolVersionMismatchException({
@@ -22,6 +25,172 @@ final class OversqliteProtocolException implements Exception {
 
   @override
   String toString() => message;
+}
+
+final class SnapshotCapabilitiesException implements Exception {
+  const SnapshotCapabilitiesException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+final class SnapshotResponseBodyTooLargeException implements Exception {
+  const SnapshotResponseBodyTooLargeException({
+    required this.operation,
+    required this.limit,
+  });
+
+  final String operation;
+  final int limit;
+
+  @override
+  String toString() => '$operation decoded response body exceeds $limit bytes';
+}
+
+final class SnapshotUnsupportedContentEncodingException implements Exception {
+  const SnapshotUnsupportedContentEncodingException({required this.operation});
+
+  final String operation;
+
+  @override
+  String toString() => '$operation response uses unsupported content encoding';
+}
+
+final class SnapshotResponseDecodeException implements Exception {
+  const SnapshotResponseDecodeException(this.operation);
+
+  final String operation;
+
+  @override
+  String toString() => '$operation response could not be decoded';
+}
+
+enum SnapshotSemanticFailure {
+  duplicateObjectMember,
+  excessiveNesting,
+  invalidSession,
+  invalidChunk,
+  invalidRow,
+}
+
+final class SnapshotSemanticException implements Exception {
+  const SnapshotSemanticException(this.failure);
+
+  final SnapshotSemanticFailure failure;
+
+  @override
+  String toString() =>
+      'snapshot response failed semantic validation: ${failure.name}';
+}
+
+final class InvalidOversqliteSourceIdException implements Exception {
+  const InvalidOversqliteSourceIdException();
+
+  @override
+  String toString() =>
+      'oversqlite source id must contain one or more visible ASCII characters';
+}
+
+final class SnapshotChunkTooSmallException implements Exception {
+  const SnapshotChunkTooSmallException({
+    required this.configuredBytes,
+    required this.requiredBytes,
+  });
+
+  final int configuredBytes;
+  final int requiredBytes;
+
+  @override
+  String toString() =>
+      'snapshot chunk byte budget $configuredBytes is too small for the next row requiring $requiredBytes bytes; increase snapshotChunkBytes';
+}
+
+final class SnapshotFinalApplyGateException implements Exception {
+  const SnapshotFinalApplyGateException({
+    required this.mode,
+    required this.reason,
+    required this.cause,
+  });
+
+  final String mode;
+  final String reason;
+  final Object cause;
+
+  @override
+  String toString() => 'snapshot final apply gate rejected $mode mode: $reason';
+}
+
+final class SnapshotRowApplyException implements Exception {
+  const SnapshotRowApplyException({
+    required this.rowOrdinal,
+    required this.schemaName,
+    required this.tableName,
+  });
+
+  final int rowOrdinal;
+  final String schemaName;
+  final String tableName;
+
+  @override
+  String toString() =>
+      'failed to apply snapshot row ordinal=$rowOrdinal '
+      'schema=${safeSnapshotDiagnosticIdentifier(schemaName)} '
+      'table=${safeSnapshotDiagnosticIdentifier(tableName)}';
+}
+
+final class SnapshotApplyRowTooLargeException implements Exception {
+  const SnapshotApplyRowTooLargeException({
+    required this.rowOrdinal,
+    required this.retainedTextBytes,
+    required this.limit,
+  });
+
+  final int rowOrdinal;
+  final int retainedTextBytes;
+  final int limit;
+
+  @override
+  String toString() =>
+      'snapshot staged row ordinal=$rowOrdinal requires '
+      '$retainedTextBytes retained text bytes, exceeding limit $limit';
+}
+
+String safeSnapshotDiagnosticIdentifier(String value) {
+  if (value.isEmpty || value.length > 63) return '<redacted>';
+  final first = value.codeUnitAt(0);
+  final validFirst =
+      first == 0x5f ||
+      (first >= 0x41 && first <= 0x5a) ||
+      (first >= 0x61 && first <= 0x7a);
+  if (!validFirst) return '<redacted>';
+  for (var index = 1; index < value.length; index++) {
+    final code = value.codeUnitAt(index);
+    final valid =
+        code == 0x5f ||
+        (code >= 0x30 && code <= 0x39) ||
+        (code >= 0x41 && code <= 0x5a) ||
+        (code >= 0x61 && code <= 0x7a);
+    if (!valid) return '<redacted>';
+  }
+  return value;
+}
+
+final class SnapshotSessionLimitExceededException implements Exception {
+  const SnapshotSessionLimitExceededException({
+    required this.dimension,
+    required this.actual,
+    required this.limit,
+  });
+
+  final String dimension;
+  final int actual;
+  final int limit;
+
+  @override
+  String toString() =>
+      'snapshot session exceeds server $dimension limit: actual=$actual limit=$limit';
 }
 
 enum SourceRecoveryReason {
@@ -103,34 +272,43 @@ final class SourceRecoveryRequiredException implements Exception {
 }
 
 final class SourceReplacementDivergedException implements Exception {
-  const SourceReplacementDivergedException({
-    required this.localReplacementSourceId,
-    required this.remoteReplacementSourceId,
-  });
-
-  final String localReplacementSourceId;
-  final String remoteReplacementSourceId;
+  const SourceReplacementDivergedException();
 
   @override
   String toString() =>
-      'replacement source diverged between local and server recovery state: '
-      'local="$localReplacementSourceId" remote="$remoteReplacementSourceId"';
+      'replacement source diverged between local and server recovery state';
 }
 
 final class SourceRecoveryRequiredHttpException implements Exception {
-  const SourceRecoveryRequiredHttpException({
-    required this.reason,
-    required this.body,
-    this.replacementSourceId,
-  });
+  const SourceRecoveryRequiredHttpException({required this.reason});
 
   final SourceRecoveryReason reason;
-  final String body;
-  final String? replacementSourceId;
 
   @override
-  String toString() => body;
+  String toString() =>
+      'source recovery is required (${reason.wireName}); run rebuild() before syncing';
 }
+
+final class _SourceRecoveryRequiredHttpSignal
+    extends SourceRecoveryRequiredHttpException {
+  const _SourceRecoveryRequiredHttpSignal(
+    SourceRecoveryReason reason,
+    this._replacementSourceId,
+  ) : super(reason: reason);
+
+  final String? _replacementSourceId;
+}
+
+SourceRecoveryRequiredHttpException sourceRecoveryRequiredHttpSignal({
+  required SourceRecoveryReason reason,
+  String? replacementSourceId,
+}) => _SourceRecoveryRequiredHttpSignal(reason, replacementSourceId);
+
+String? sourceRecoveryReplacementSourceId(
+  SourceRecoveryRequiredHttpException error,
+) => error is _SourceRecoveryRequiredHttpSignal
+    ? error._replacementSourceId
+    : null;
 
 final class CommittedReplayPrunedException implements Exception {
   const CommittedReplayPrunedException(this.body);
@@ -387,15 +565,21 @@ final class SnapshotRow {
   final Object? payload;
 
   factory SnapshotRow.fromJson(Map<String, Object?> json) {
-    final row = SnapshotRow(
-      schema: json['schema']! as String,
-      table: json['table']! as String,
-      key: (json['key']! as Map).cast<String, String>(),
-      rowVersion: json['row_version']! as int,
-      payload: json['payload'],
-    );
-    _validateSnapshotRow(row);
-    return row;
+    try {
+      final row = SnapshotRow(
+        schema: json['schema']! as String,
+        table: json['table']! as String,
+        key: (json['key']! as Map).cast<String, String>(),
+        rowVersion: json['row_version']! as int,
+        payload: json['payload'],
+      );
+      validateSnapshotRow(row);
+      return row;
+    } on SnapshotSemanticException {
+      rethrow;
+    } catch (_) {
+      throw const SnapshotSemanticException(SnapshotSemanticFailure.invalidRow);
+    }
   }
 }
 
@@ -415,12 +599,34 @@ final class SnapshotSession {
   final String expiresAt;
 
   factory SnapshotSession.fromJson(Map<String, Object?> json) {
+    final snapshotId = json['snapshot_id'];
+    final expiresAt = json['expires_at'];
+    if (snapshotId is! String || expiresAt is! String) {
+      throw const SnapshotSemanticException(
+        SnapshotSemanticFailure.invalidSession,
+      );
+    }
     final session = SnapshotSession(
-      snapshotId: json['snapshot_id']! as String,
-      snapshotBundleSeq: json['snapshot_bundle_seq']! as int,
-      rowCount: json['row_count']! as int,
-      byteCount: (json['byte_count'] as int?) ?? 0,
-      expiresAt: json['expires_at']! as String,
+      snapshotId: snapshotId,
+      snapshotBundleSeq: readWireOversqliteInt64(
+        json,
+        'snapshot_bundle_seq',
+        required: true,
+        error: OversqliteProtocolException.new,
+      ),
+      rowCount: readWireOversqliteInt64(
+        json,
+        'row_count',
+        required: true,
+        error: OversqliteProtocolException.new,
+      ),
+      byteCount: readWireOversqliteInt64(
+        json,
+        'byte_count',
+        required: true,
+        error: OversqliteProtocolException.new,
+      ),
+      expiresAt: expiresAt,
     );
     _validateSnapshotSession(session);
     return session;
@@ -467,6 +673,7 @@ final class SnapshotChunkResponse {
     required this.rows,
     required this.nextRowOrdinal,
     required this.hasMore,
+    required this.byteCount,
   });
 
   final String snapshotId;
@@ -474,6 +681,7 @@ final class SnapshotChunkResponse {
   final List<SnapshotRow> rows;
   final int nextRowOrdinal;
   final bool hasMore;
+  final int byteCount;
 
   factory SnapshotChunkResponse.fromJson(Map<String, Object?> json) {
     return SnapshotChunkResponse(
@@ -485,6 +693,7 @@ final class SnapshotChunkResponse {
           .toList(),
       nextRowOrdinal: json['next_row_ordinal']! as int,
       hasMore: json['has_more']! as bool,
+      byteCount: json['byte_count']! as int,
     );
   }
 }
@@ -812,6 +1021,16 @@ void _validateSnapshotRow(SnapshotRow row) {
   _validateVisibleWirePayload(row.payload, 'snapshot row payload');
 }
 
+void validateSnapshotRow(SnapshotRow row) {
+  try {
+    _validateSnapshotRow(row);
+  } on SnapshotSemanticException {
+    rethrow;
+  } catch (_) {
+    throw const SnapshotSemanticException(SnapshotSemanticFailure.invalidRow);
+  }
+}
+
 void _validateSnapshotSession(SnapshotSession session) {
   if (session.snapshotId.trim().isEmpty) {
     throw const OversqliteProtocolException(
@@ -838,18 +1057,75 @@ void _validateSnapshotSession(SnapshotSession session) {
       'snapshot session byte_count ${session.byteCount} must be non-negative',
     );
   }
-  if (session.expiresAt.trim().isEmpty) {
-    throw const OversqliteProtocolException(
-      'snapshot session response missing expires_at',
+  if (session.rowCount == 0 && session.byteCount != 0) {
+    throw const SnapshotSemanticException(
+      SnapshotSemanticFailure.invalidSession,
     );
   }
-  try {
-    DateTime.parse(session.expiresAt);
-  } on FormatException {
-    throw OversqliteProtocolException(
-      "oversqlite timestamp must be RFC3339/ISO-8601 instant: '${session.expiresAt}'",
+  if (session.rowCount > 0 && session.byteCount == 0) {
+    throw const SnapshotSemanticException(
+      SnapshotSemanticFailure.invalidSession,
     );
   }
+  if (!_isCanonicalSnapshotTimestamp(session.expiresAt)) {
+    throw const SnapshotSemanticException(
+      SnapshotSemanticFailure.invalidSession,
+    );
+  }
+}
+
+final RegExp _canonicalSnapshotTimestamp = RegExp(
+  r'^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})'
+  r'(?:\.\d{1,9})?(?:Z|([+-])(\d{2}):(\d{2}))$',
+);
+
+bool _isCanonicalSnapshotTimestamp(String value) {
+  final match = _canonicalSnapshotTimestamp.firstMatch(value);
+  if (match == null) return false;
+  final year = int.parse(match.group(1)!);
+  final month = int.parse(match.group(2)!);
+  final day = int.parse(match.group(3)!);
+  final hour = int.parse(match.group(4)!);
+  final minute = int.parse(match.group(5)!);
+  final second = int.parse(match.group(6)!);
+  final offsetHour = match.group(8) == null ? 0 : int.parse(match.group(8)!);
+  final offsetMinute = match.group(9) == null ? 0 : int.parse(match.group(9)!);
+  if (month < 1 ||
+      month > 12 ||
+      day < 1 ||
+      hour > 23 ||
+      minute > 59 ||
+      second > 59 ||
+      offsetHour > 23 ||
+      offsetMinute > 59) {
+    return false;
+  }
+  final normalized = DateTime.utc(year, month, day);
+  return normalized.year == year &&
+      normalized.month == month &&
+      normalized.day == day;
+}
+
+String requireValidOversqliteSourceId(String value) {
+  if (value.isEmpty ||
+      value.codeUnits.any((unit) => unit < 0x21 || unit > 0x7e)) {
+    throw const InvalidOversqliteSourceIdException();
+  }
+  return value;
+}
+
+int checkedAddOversqliteInt64(int left, int right, String operation) {
+  if (left < minWireOversqliteInt64 ||
+      left > maxOversqliteInt64 ||
+      right < minWireOversqliteInt64 ||
+      right > maxOversqliteInt64) {
+    throw OversqliteProtocolException('$operation overflow');
+  }
+  if ((right > 0 && left > maxOversqliteInt64 - right) ||
+      (right < 0 && left < minWireOversqliteInt64 - right)) {
+    throw OversqliteProtocolException('$operation overflow');
+  }
+  return left + right;
 }
 
 void _validateVisibleWireKey(SyncKey key, String label) {

@@ -89,15 +89,30 @@ FROM exact_values''',
     expect(wireOversqlitePayloadValue(real, 1.25), '1.25');
   });
 
-  test('protocol gate rejects v1, empty, and unknown versions', () {
-    for (final actual in ['v1', '', 'v-next']) {
+  test('protocol gate rejects v0, empty, and unknown versions', () {
+    for (final actual in ['v0', '', 'v-next']) {
       expect(
         () => requireOversqliteProtocol(
-          CapabilitiesResponse(protocolVersion: actual),
+          CapabilitiesResponse.fromJson({
+            'protocol_version': actual,
+            'schema_version': 1,
+            'features': <String, bool>{},
+            'bundle_limits': {
+              'default_rows_per_snapshot_chunk': 1000,
+              'max_rows_per_snapshot_chunk': 1000,
+              'default_bytes_per_snapshot_chunk': 4194304,
+              'max_bytes_per_snapshot_chunk': 4194304,
+              'max_bytes_per_snapshot_row': 4194304,
+              'snapshot_materialization_batch_rows': 1000,
+              'snapshot_materialization_batch_bytes': 4194304,
+              'max_concurrent_snapshot_builds': 1,
+              'max_concurrent_snapshot_chunk_requests': 1,
+            },
+          }),
         ),
         throwsA(
           isA<ProtocolVersionMismatchException>()
-              .having((error) => error.expected, 'expected', 'v0')
+              .having((error) => error.expected, 'expected', 'v1')
               .having((error) => error.actual, 'actual', actual),
         ),
       );

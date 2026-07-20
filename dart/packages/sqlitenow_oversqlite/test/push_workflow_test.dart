@@ -7,6 +7,8 @@ import 'package:sqlitenow_runtime/sqlitenow_runtime.dart';
 import 'package:sqlitenow_oversqlite/sqlitenow_oversqlite.dart';
 import 'package:test/test.dart';
 
+import 'support/behavior_fixture_support.dart';
+
 void main() {
   test('Dart push fixtures decode against protocol models', () {
     final fixtures = _readPushFixtures();
@@ -992,28 +994,28 @@ Directory _repoRoot() {
 DefaultOversqliteClient _newClient(
   SqliteNowDatabase database,
   OversqliteHttpClient http, {
-  OversqliteConfig config = _usersConfig,
+  OversqliteConfig? config,
   Resolver resolver = const ServerWinsResolver(),
 }) {
   return DefaultOversqliteClient(
     database: database,
-    config: config,
+    config: config ?? _usersConfig,
     httpClient: http,
     resolver: resolver,
   );
 }
 
-const _usersConfig = OversqliteConfig(
+final _usersConfig = OversqliteConfig(
   schema: 'main',
   syncTables: [SyncTable(tableName: 'users', syncKeyColumnName: 'id')],
 );
 
-const _documentsConfig = OversqliteConfig(
+final _documentsConfig = OversqliteConfig(
   schema: 'main',
   syncTables: [SyncTable(tableName: 'documents', syncKeyColumnName: 'id')],
 );
 
-const _fileReviewConfig = OversqliteConfig(
+final _fileReviewConfig = OversqliteConfig(
   schema: 'main',
   syncTables: [
     SyncTable(tableName: 'files', syncKeyColumnName: 'id'),
@@ -1021,7 +1023,7 @@ const _fileReviewConfig = OversqliteConfig(
   ],
 );
 
-const _authorProfileConfig = OversqliteConfig(
+final _authorProfileConfig = OversqliteConfig(
   schema: 'main',
   syncTables: [
     SyncTable(tableName: 'authors', syncKeyColumnName: 'id'),
@@ -1150,14 +1152,12 @@ final class _PushServer implements OversqliteHttpClient {
   Future<OversqliteHttpResponse> get(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     _sourceId = sourceId;
     if (path == 'sync/capabilities') {
-      return _json({
-        'protocol_version': 'v0',
-        'schema_version': 1,
-        'features': {'connect_lifecycle': true},
-      });
+      return _json(phase4CapabilitiesResponse());
     }
     if (path.startsWith('sync/committed-bundles/')) {
       _committedFetchAttempts++;
@@ -1200,6 +1200,8 @@ final class _PushServer implements OversqliteHttpClient {
     String path, {
     required String sourceId,
     required Object? body,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     _sourceId = sourceId;
     if (path == 'sync/connect') {
@@ -1302,6 +1304,8 @@ final class _PushServer implements OversqliteHttpClient {
   Future<OversqliteHttpResponse> delete(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     return const OversqliteHttpResponse(statusCode: 204, body: '');
   }

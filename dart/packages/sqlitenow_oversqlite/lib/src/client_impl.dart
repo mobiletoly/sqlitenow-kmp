@@ -24,6 +24,7 @@ final class DefaultOversqliteClient implements OversqliteClient {
   final _progressController = StreamController<OversqliteProgress>.broadcast();
 
   OversqliteValidatedConfig? _validated;
+  CapabilitiesResponse? _snapshotCapabilities;
   bool _opened = false;
   bool _sessionConnected = false;
   String? _currentUserId;
@@ -254,7 +255,6 @@ final class DefaultOversqliteClient implements OversqliteClient {
               userId: requestedUserId,
               sourceId: sourceId,
             );
-            _currentUserId = requestedUserId;
             final result = await _executeSnapshotRebuild(
               userId: requestedUserId,
               sourceId: sourceId,
@@ -530,7 +530,7 @@ final class DefaultOversqliteClient implements OversqliteClient {
       await _clientStateStore.persistSourceRecoveryRequiredState(
         currentSourceId: attachment.currentSourceId,
         reason: error.reason,
-        replacementSourceId: error.replacementSourceId,
+        replacementSourceId: sourceRecoveryReplacementSourceId(error),
       );
       throw SourceRecoveryRequiredException(error.reason);
     } on CommittedReplayPrunedException {
@@ -564,6 +564,7 @@ final class DefaultOversqliteClient implements OversqliteClient {
             database: _database,
             config: _config,
             remoteApi: _remoteApiOrThrow(),
+            capabilities: _requireSnapshotCapabilities(),
           ).pullToStable(
             validated: _requireValidatedConfig(),
             sourceId: attachment.currentSourceId,
@@ -575,7 +576,7 @@ final class DefaultOversqliteClient implements OversqliteClient {
       await _clientStateStore.persistSourceRecoveryRequiredState(
         currentSourceId: attachment.currentSourceId,
         reason: error.reason,
-        replacementSourceId: error.replacementSourceId,
+        replacementSourceId: sourceRecoveryReplacementSourceId(error),
       );
       throw SourceRecoveryRequiredException(error.reason);
     }
@@ -654,11 +655,12 @@ final class DefaultOversqliteClient implements OversqliteClient {
     final operation = await _clientStateStore.loadOperationState();
     final userId = _attachedUserIdOrThrow(attachment, 'rebuild()');
     if (operation.kind == oversqliteOperationKindSourceRecovery) {
-      if (operation.replacementSourceId.trim().isEmpty) {
+      if (operation.replacementSourceId.isEmpty) {
         throw StateError(
           'source recovery operation state is missing replacement_source_id',
         );
       }
+      requireValidOversqliteSourceId(operation.replacementSourceId);
       if (operation.reason.trim().isEmpty) {
         throw StateError('source recovery operation state is missing reason');
       }
@@ -696,6 +698,7 @@ final class DefaultOversqliteClient implements OversqliteClient {
             database: _database,
             config: _config,
             remoteApi: _remoteApiOrThrow(),
+            capabilities: _requireSnapshotCapabilities(),
           ).rebuildFromSnapshot(
             validated: _requireValidatedConfig(),
             sourceId: sourceId,
@@ -713,7 +716,7 @@ final class DefaultOversqliteClient implements OversqliteClient {
       await _clientStateStore.persistSourceRecoveryRequiredState(
         currentSourceId: sourceId,
         reason: error.reason,
-        replacementSourceId: error.replacementSourceId,
+        replacementSourceId: sourceRecoveryReplacementSourceId(error),
       );
       throw SourceRecoveryRequiredException(error.reason);
     }
@@ -851,10 +854,20 @@ WHERE singleton_key = 1''');
     String sourceId,
   ) async {
     final capabilities = await _remoteApiOrThrow().fetchCapabilities(sourceId);
+    negotiateSnapshotLimits(capabilities, _config);
     if (!capabilities.connectLifecycleSupported) {
       throw const ConnectLifecycleUnsupportedException(
         'connect_lifecycle capability is absent',
       );
+    }
+    _snapshotCapabilities = capabilities;
+    return capabilities;
+  }
+
+  CapabilitiesResponse _requireSnapshotCapabilities() {
+    final capabilities = _snapshotCapabilities;
+    if (capabilities == null) {
+      throw StateError('snapshot capabilities have not been validated');
     }
     return capabilities;
   }

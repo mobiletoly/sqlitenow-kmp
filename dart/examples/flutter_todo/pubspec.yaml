@@ -18,6 +18,7 @@ dev_dependencies:
   integration_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  sqlite3: ^3.3.1
   sqlitenow_cli: ^0.10.0
   sqlitenow_oversqlite: ^0.10.0
 

@@ -464,7 +464,7 @@ WHERE singleton_key = 1''',
   Future<_OperationState> _loadOperationState() async {
     final rows = await _connection.select(
       '''SELECT kind, target_user_id, staged_snapshot_id, snapshot_bundle_seq, snapshot_row_count,
-       reason, replacement_source_id
+       snapshot_byte_count, snapshot_stage_complete, reason, replacement_source_id
 FROM _sync_operation_state
 WHERE singleton_key = 1''',
       (row) => _OperationState(
@@ -473,8 +473,10 @@ WHERE singleton_key = 1''',
         stagedSnapshotId: row.readString(2),
         snapshotBundleSeq: row.readInt(3),
         snapshotRowCount: row.readInt(4),
-        reason: row.readString(5),
-        replacementSourceId: row.readString(6),
+        snapshotByteCount: row.readInt(5),
+        snapshotStageComplete: row.readInt(6) == 1,
+        reason: row.readString(7),
+        replacementSourceId: row.readString(8),
       ),
     );
     if (rows.isEmpty) {

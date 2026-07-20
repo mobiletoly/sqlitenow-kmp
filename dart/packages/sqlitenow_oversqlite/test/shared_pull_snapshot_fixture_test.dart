@@ -122,7 +122,7 @@ void main() {
                 (fixture['snapshotChunkAfterRowOrdinal'] as int?) ?? 0;
             final chunkHttp = _FixtureHttpClient(
               getResponses: {
-                'sync/snapshot-sessions/${session!.snapshotId}?after_row_ordinal=$afterRowOrdinal&max_rows=1000':
+                'sync/snapshot-sessions/${session!.snapshotId}?after_row_ordinal=$afterRowOrdinal&max_rows=1000&max_bytes=4194304':
                     OversqliteHttpResponse(
                       statusCode: 200,
                       body: jsonEncode(chunkJson),
@@ -140,6 +140,7 @@ void main() {
                       snapshotBundleSeq: session!.snapshotBundleSeq,
                       afterRowOrdinal: afterRowOrdinal,
                       maxRows: 1000,
+                      maxBytes: 4194304,
                     );
                 expect(
                   chunk.nextRowOrdinal,
@@ -190,6 +191,30 @@ Future<void> _expectFixtureResult(
     return;
   }
   expect(error, isNotNull, reason: '$name expected validation error');
+  if (name == 'snapshot-rejects-malformed-expiry') {
+    expect(
+      error,
+      isA<SnapshotSemanticException>().having(
+        (value) => value.failure,
+        'failure',
+        SnapshotSemanticFailure.invalidSession,
+      ),
+      reason: '$name expected fixed invalid-session error',
+    );
+    return;
+  }
+  if (name == 'snapshot-rejects-hidden-scope-payload') {
+    expect(
+      error,
+      isA<SnapshotSemanticException>().having(
+        (value) => value.failure,
+        'failure',
+        SnapshotSemanticFailure.invalidRow,
+      ),
+      reason: '$name expected fixed invalid-row error',
+    );
+    return;
+  }
   expect(
     error.toString(),
     contains(expectedMessage),
@@ -259,6 +284,8 @@ final class _FixtureHttpClient implements OversqliteHttpClient {
   Future<OversqliteHttpResponse> get(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     final response = getResponses[path];
     if (response == null) {
@@ -272,6 +299,8 @@ final class _FixtureHttpClient implements OversqliteHttpClient {
     String path, {
     required String sourceId,
     required Object? body,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     postedBodies.add(body);
     final response = postResponses[path];
@@ -285,6 +314,8 @@ final class _FixtureHttpClient implements OversqliteHttpClient {
   Future<OversqliteHttpResponse> delete(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     return const OversqliteHttpResponse(statusCode: 204, body: '');
   }

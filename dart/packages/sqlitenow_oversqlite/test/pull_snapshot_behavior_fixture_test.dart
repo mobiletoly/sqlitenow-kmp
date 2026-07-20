@@ -260,13 +260,11 @@ final class PullSnapshotBehaviorFixtureServer implements OversqliteHttpClient {
   Future<OversqliteHttpResponse> get(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     if (path == 'sync/capabilities') {
-      return _json({
-        'protocol_version': 'v0',
-        'schema_version': 1,
-        'features': {'connect_lifecycle': true},
-      });
+      return _json(phase4CapabilitiesResponse());
     }
     if (path.startsWith('sync/pull')) {
       final response = _pullIndex < pullResponses.length
@@ -302,6 +300,8 @@ final class PullSnapshotBehaviorFixtureServer implements OversqliteHttpClient {
     String path, {
     required String sourceId,
     required Object? body,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     if (path == 'sync/connect') {
       return _json({'resolution': 'initialize_empty'});
@@ -332,6 +332,8 @@ final class PullSnapshotBehaviorFixtureServer implements OversqliteHttpClient {
   Future<OversqliteHttpResponse> delete(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     return const OversqliteHttpResponse(statusCode: 204, body: '');
   }

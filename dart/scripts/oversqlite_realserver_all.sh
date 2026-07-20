@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${GITHUB_ACTIONS:-false}" == "true" && \
+      "${OVERSQLITE_REALSERVER_HEAVY:-false}" == "true" ]]; then
+  echo "Oversqlite realserver heavy workloads are local-only and must not run in GitHub Actions." >&2
+  exit 64
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$WORKSPACE_DIR"

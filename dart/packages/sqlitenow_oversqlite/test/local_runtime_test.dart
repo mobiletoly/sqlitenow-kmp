@@ -12,7 +12,7 @@ void main() {
       addTearDown(database.close);
       final runtime = OversqliteLocalRuntime(
         database: database,
-        config: const OversqliteConfig(
+        config: OversqliteConfig(
           schema: 'main',
           syncTables: [SyncTable(tableName: 'users', syncKeyColumnName: 'id')],
         ),
@@ -122,7 +122,7 @@ CREATE TABLE posts (
     addTearDown(database.close);
     final runtime = OversqliteLocalRuntime(
       database: database,
-      config: const OversqliteConfig(
+      config: OversqliteConfig(
         schema: 'main',
         syncTables: [
           SyncTable(tableName: 'users', syncKeyColumnName: 'id'),
@@ -312,7 +312,7 @@ Future<OversqliteLocalRuntime> _initializeUsersRuntime(
 ) async {
   final runtime = OversqliteLocalRuntime(
     database: database,
-    config: const OversqliteConfig(
+    config: OversqliteConfig(
       schema: 'main',
       syncTables: [SyncTable(tableName: 'users', syncKeyColumnName: 'id')],
     ),

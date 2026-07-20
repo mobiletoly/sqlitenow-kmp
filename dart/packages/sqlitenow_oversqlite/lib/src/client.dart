@@ -7,9 +7,13 @@ import 'config.dart';
 import 'download.dart';
 import 'local_runtime.dart';
 import 'protocol.dart';
+import 'protocol_models.dart';
 import 'push.dart';
 import 'resolver.dart';
 import 'runtime_state_store.dart';
+import 'snapshot_cancellation.dart';
+import 'snapshot_gate.dart';
+import 'watch_protocol.dart';
 
 part 'client_contract.dart';
 part 'client_impl.dart';

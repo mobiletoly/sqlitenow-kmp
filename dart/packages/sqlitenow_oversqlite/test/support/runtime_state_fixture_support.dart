@@ -50,7 +50,7 @@ DefaultOversqliteClient newRuntimeStateClient(
 ) {
   return DefaultOversqliteClient(
     database: database,
-    config: const OversqliteConfig(
+    config: OversqliteConfig(
       schema: 'main',
       syncTables: [SyncTable(tableName: 'users', syncKeyColumnName: 'id')],
     ),

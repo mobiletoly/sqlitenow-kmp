@@ -238,7 +238,7 @@ Future<void> _withClient(
   final fixtureServer = server ?? _InvalidationServer();
   final client = DefaultOversqliteClient(
     database: database,
-    config: const OversqliteConfig(
+    config: OversqliteConfig(
       schema: 'main',
       syncTables: [
         SyncTable(tableName: 'users', syncKeyColumnName: 'id'),
@@ -328,14 +328,12 @@ final class _InvalidationServer implements OversqliteHttpClient {
   Future<OversqliteHttpResponse> get(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     _sourceId = sourceId;
     if (path == 'sync/capabilities') {
-      return _json({
-        'protocol_version': 'v0',
-        'schema_version': 1,
-        'features': {'connect_lifecycle': true},
-      });
+      return _json(phase4CapabilitiesResponse());
     }
     if (path.startsWith('sync/pull')) {
       if (historyPrunedOnPull) {
@@ -364,6 +362,7 @@ final class _InvalidationServer implements OversqliteHttpClient {
         'snapshot_id': 'snapshot-1',
         'snapshot_bundle_seq': stableBundleSeq,
         'rows': rows,
+        'byte_count': snapshotCompactWireByteCount(rows),
         'next_row_ordinal': after + rows.length,
         'has_more': after + rows.length < snapshotRows.length,
       });
@@ -403,6 +402,8 @@ final class _InvalidationServer implements OversqliteHttpClient {
     String path, {
     required String sourceId,
     required Object? body,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     _sourceId = sourceId;
     if (path == 'sync/connect') {
@@ -413,7 +414,7 @@ final class _InvalidationServer implements OversqliteHttpClient {
         'snapshot_id': 'snapshot-1',
         'snapshot_bundle_seq': stableBundleSeq,
         'row_count': snapshotRows.length,
-        'byte_count': 0,
+        'byte_count': snapshotCompactWireByteCount(snapshotRows),
         'expires_at': '2099-01-01T00:00:00Z',
       });
     }
@@ -493,6 +494,8 @@ final class _InvalidationServer implements OversqliteHttpClient {
   Future<OversqliteHttpResponse> delete(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     return const OversqliteHttpResponse(statusCode: 204, body: '');
   }

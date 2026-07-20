@@ -6,12 +6,14 @@ import 'package:sqlitenow_runtime/sqlitenow_runtime.dart';
 import 'package:sqlitenow_oversqlite/sqlitenow_oversqlite.dart';
 import 'package:test/test.dart';
 
+import 'support/behavior_fixture_support.dart';
+
 void main() {
   test('automatic download config validates when worker starts', () async {
     final database = SqliteNowDatabase.inMemory();
     final client = DefaultOversqliteClient(
       database: database,
-      config: const OversqliteConfig(
+      config: OversqliteConfig(
         schema: 'main',
         syncTables: [SyncTable(tableName: 'users', syncKeyColumnName: 'id')],
         automaticDownloadInterval: Duration.zero,
@@ -71,7 +73,7 @@ void main() {
     () async {
       final env = await _newEnv();
       addTearDown(env.close);
-      env.server.protocolVersion = 'v1';
+      env.server.protocolVersion = 'v0';
       final initialCapabilityAttempts = env.server.capabilitySourceIds.length;
       final initialPullAttempts = env.server.pullRequestCount;
 
@@ -80,8 +82,8 @@ void main() {
         handle.done,
         throwsA(
           isA<ProtocolVersionMismatchException>()
-              .having((error) => error.expected, 'expected', 'v0')
-              .having((error) => error.actual, 'actual', 'v1'),
+              .having((error) => error.expected, 'expected', 'v1')
+              .having((error) => error.actual, 'actual', 'v0'),
         ),
       );
 
@@ -143,11 +145,54 @@ void main() {
     });
   });
 
+  test('automatic download stop cancels an active capacity delay', () async {
+    final env = await _newEnv(
+      config: OversqliteConfig(
+        schema: 'main',
+        syncTables: [SyncTable(tableName: 'users', syncKeyColumnName: 'id')],
+        automaticDownloadInterval: const Duration(milliseconds: 25),
+        snapshotCapacityRetryPolicy: OversqliteSnapshotCapacityRetryPolicy(
+          maxWait: const Duration(hours: 1),
+          fallbackDelay: const Duration(minutes: 30),
+          positiveJitterRatio: 0,
+        ),
+      ),
+    );
+    addTearDown(env.close);
+    env.server
+      ..historyPrunedOnPull = true
+      ..snapshotCapacityOnCreate = true;
+    final capacityTimerScheduled = Completer<void>();
+    final handle = runZoned(
+      env.client.startAutomaticDownloads,
+      zoneSpecification: ZoneSpecification(
+        createTimer: (self, parent, zone, duration, callback) {
+          if (duration == const Duration(minutes: 30)) {
+            if (!capacityTimerScheduled.isCompleted) {
+              capacityTimerScheduled.complete();
+            }
+            return _NeverTimer();
+          }
+          return parent.createTimer(zone, duration, callback);
+        },
+      ),
+    );
+
+    await capacityTimerScheduled.future.timeout(const Duration(seconds: 2));
+    final elapsed = Stopwatch()..start();
+    await handle.stop().timeout(const Duration(seconds: 1));
+    elapsed.stop();
+
+    expect(env.server.snapshotSessionCreateCount, 1);
+    expect(elapsed.elapsed, lessThan(const Duration(seconds: 1)));
+    await expectLater(handle.done, completes);
+  });
+
   test(
     'automatic downloads auto watch wakes and pulls authoritatively',
     () async {
       final env = await _newEnv(
-        config: const OversqliteConfig(
+        config: OversqliteConfig(
           schema: 'main',
           syncTables: [SyncTable(tableName: 'users', syncKeyColumnName: 'id')],
           automaticDownloadInterval: Duration(seconds: 60),
@@ -189,7 +234,7 @@ void main() {
 
   test('automatic downloads stop closes active watch stream', () async {
     final env = await _newEnv(
-      config: const OversqliteConfig(
+      config: OversqliteConfig(
         schema: 'main',
         syncTables: [SyncTable(tableName: 'users', syncKeyColumnName: 'id')],
         automaticDownloadInterval: Duration(seconds: 60),
@@ -213,7 +258,7 @@ void main() {
     'automatic downloads do not poll while watch stream is healthy',
     () async {
       final env = await _newEnv(
-        config: const OversqliteConfig(
+        config: OversqliteConfig(
           schema: 'main',
           syncTables: [SyncTable(tableName: 'users', syncKeyColumnName: 'id')],
           automaticDownloadInterval: Duration(milliseconds: 20),
@@ -379,7 +424,7 @@ void main() {
     'automatic downloads heartbeats do not trigger pulls by themselves',
     () async {
       final env = await _newEnv(
-        config: const OversqliteConfig(
+        config: OversqliteConfig(
           schema: 'main',
           syncTables: [SyncTable(tableName: 'users', syncKeyColumnName: 'id')],
           automaticDownloadInterval: Duration(seconds: 60),
@@ -454,8 +499,21 @@ void main() {
   );
 }
 
+final class _NeverTimer implements Timer {
+  var _active = true;
+
+  @override
+  bool get isActive => _active;
+
+  @override
+  int get tick => 0;
+
+  @override
+  void cancel() => _active = false;
+}
+
 Future<_Env> _newEnv({
-  OversqliteConfig config = _usersConfig,
+  OversqliteConfig? config,
   bool bundleChangeWatchSupported = false,
 }) async {
   final database = await _openUsersDatabase();
@@ -464,7 +522,7 @@ Future<_Env> _newEnv({
   );
   final client = DefaultOversqliteClient(
     database: database,
-    config: config,
+    config: config ?? _usersConfig,
     httpClient: server,
   );
   await client.open();
@@ -472,7 +530,7 @@ Future<_Env> _newEnv({
   return _Env(database: database, server: server, client: client);
 }
 
-const _usersConfig = OversqliteConfig(
+final _usersConfig = OversqliteConfig(
   schema: 'main',
   syncTables: [SyncTable(tableName: 'users', syncKeyColumnName: 'id')],
   automaticDownloadInterval: Duration(milliseconds: 25),
@@ -480,7 +538,7 @@ const _usersConfig = OversqliteConfig(
   bundleChangeWatchReconnectMax: Duration(milliseconds: 20),
 );
 
-const _autoWatchConfig = OversqliteConfig(
+final _autoWatchConfig = OversqliteConfig(
   schema: 'main',
   syncTables: [SyncTable(tableName: 'users', syncKeyColumnName: 'id')],
   automaticDownloadInterval: Duration(seconds: 60),
@@ -518,10 +576,14 @@ final class _WatchSyncServer
   final _watchControllers = <StreamController<String>>[];
   final _watchResponses = <_WatchResponse>[];
   var watchCloseCount = 0;
-  var protocolVersion = 'v0';
+  var protocolVersion = 'v1';
+  var historyPrunedOnPull = false;
+  var snapshotCapacityOnCreate = false;
   var pullRequestCount = 0;
+  var snapshotSessionCreateCount = 0;
   var stableBundleSeq = 0;
   var _nextBundleSeq = 1;
+  final snapshotCapacityReached = Completer<void>();
 
   void enqueueWatchResponse({required int statusCode, required String body}) {
     _watchResponses.add(_WatchResponse(statusCode: statusCode, body: body));
@@ -562,20 +624,29 @@ final class _WatchSyncServer
   Future<OversqliteHttpResponse> get(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     if (path == 'sync/capabilities') {
       capabilitySourceIds.add(sourceId);
-      return _json({
-        'protocol_version': protocolVersion,
-        'schema_version': 1,
-        'features': {
-          'connect_lifecycle': true,
-          if (bundleChangeWatchSupported) 'bundle_change_watch': true,
-        },
-      });
+      return _json(
+        phase4CapabilitiesResponse(
+          protocolVersion: protocolVersion,
+          features: {
+            'connect_lifecycle': true,
+            if (bundleChangeWatchSupported) 'bundle_change_watch': true,
+          },
+        ),
+      );
     }
     if (path.startsWith('sync/pull')) {
       pullRequestCount += 1;
+      if (historyPrunedOnPull) {
+        return _json({
+          'error': 'history_pruned',
+          'message': 'history pruned',
+        }, statusCode: 409);
+      }
       final uri = Uri.parse('http://local/$path');
       final after = int.parse(uri.queryParameters['after_bundle_seq'] ?? '0');
       final visible = bundles
@@ -595,9 +666,23 @@ final class _WatchSyncServer
     String path, {
     required String sourceId,
     required Object? body,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     if (path == 'sync/connect') {
       return _json({'resolution': 'initialize_empty'});
+    }
+    if (path == 'sync/snapshot-sessions') {
+      snapshotSessionCreateCount++;
+      if (snapshotCapacityOnCreate) {
+        if (!snapshotCapacityReached.isCompleted) {
+          snapshotCapacityReached.complete();
+        }
+        return _json({
+          'error': 'snapshot_build_capacity',
+          'message': 'busy',
+        }, statusCode: 429);
+      }
     }
     return _json({'error': 'not_found', 'message': path}, statusCode: 404);
   }
@@ -606,6 +691,8 @@ final class _WatchSyncServer
   Future<OversqliteHttpResponse> delete(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     return const OversqliteHttpResponse(statusCode: 204, body: '');
   }

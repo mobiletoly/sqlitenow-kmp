@@ -363,13 +363,14 @@ tasks.register<Test>("oversqliteRealserverJvm") {
     }
 
     inputs.property("oversqliteRealServerSmokeBaseUrl", baseUrlOverride ?: "")
+    testLogging.showStandardStreams = true
     outputs.upToDateWhen { false }
     shouldRunAfter(jvmTest)
 }
 
 tasks.register<Test>("jvmRealServerSharedConnectionStress") {
     group = "verification"
-    description = "Runs the local-only shared realserver stress test on the JVM target."
+    description = "Runs the local-only shared realserver stress and Phase 5 profile tests on the JVM target."
 
     dependsOn(tasks.named("jvmTestClasses"))
 
@@ -379,6 +380,7 @@ tasks.register<Test>("jvmRealServerSharedConnectionStress") {
 
     filter {
         includeTestsMatching("dev.goquick.sqlitenow.oversqlite.RealServerSharedConnectionStressTest")
+        includeTestsMatching("dev.goquick.sqlitenow.oversqlite.RealServerSnapshotProfileJvmTest")
     }
 
     environment("OVERSQLITE_REALSERVER_TESTS", "true")
@@ -389,6 +391,7 @@ tasks.register<Test>("jvmRealServerSharedConnectionStress") {
     }
 
     inputs.property("oversqliteRealServerSmokeBaseUrl", baseUrlOverride ?: "")
+    testLogging.showStandardStreams = true
     outputs.upToDateWhen { false }
     shouldRunAfter(jvmTest)
 }

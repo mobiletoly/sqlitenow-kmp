@@ -24,6 +24,58 @@ Directory repoRoot() {
   }
 }
 
+Map<String, Object?> phase4CapabilitiesResponse({
+  String protocolVersion = 'v1',
+  Map<String, bool> features = const {'connect_lifecycle': true},
+}) {
+  return {
+    'protocol_version': protocolVersion,
+    'schema_version': 1,
+    'features': features,
+    'bundle_limits': {
+      'max_rows_per_bundle': 1000,
+      'max_bytes_per_bundle': 4194304,
+      'max_bundles_per_pull': 100,
+      'default_rows_per_push_chunk': 1000,
+      'max_rows_per_push_chunk': 1000,
+      'push_session_ttl_seconds': 300,
+      'default_rows_per_committed_bundle_chunk': 1000,
+      'max_rows_per_committed_bundle_chunk': 1000,
+      'default_rows_per_snapshot_chunk': 1000,
+      'max_rows_per_snapshot_chunk': 1000,
+      'snapshot_session_ttl_seconds': 300,
+      'max_rows_per_snapshot_session': 1000000,
+      'max_bytes_per_snapshot_session': 4294967296,
+      'default_bytes_per_snapshot_chunk': 4194304,
+      'max_bytes_per_snapshot_chunk': 4194304,
+      'max_bytes_per_snapshot_row': 4194304,
+      'snapshot_materialization_batch_rows': 1000,
+      'snapshot_materialization_batch_bytes': 4194304,
+      'max_concurrent_snapshot_builds': 1,
+      'max_concurrent_snapshot_chunk_requests': 1,
+      'initialization_lease_ttl_seconds': 300,
+    },
+  };
+}
+
+int snapshotFixtureWireByteCount(Iterable<Map<String, Object?>> rows) {
+  return rows.fold(
+    0,
+    (total, row) => total + utf8.encode(snapshotFixtureWireRowJson(row)).length,
+  );
+}
+
+String snapshotFixtureWireRowJson(Map<String, Object?> row) {
+  return const JsonEncoder.withIndent('  ').convert(row);
+}
+
+int snapshotCompactWireByteCount(Iterable<Map<String, Object?>> rows) {
+  return rows.fold(
+    0,
+    (total, row) => total + utf8.encode(jsonEncode(row)).length,
+  );
+}
+
 Future<SqliteNowDatabase> openUsersDatabase() async {
   final database = SqliteNowDatabase.inMemory();
   await database.open(
@@ -133,7 +185,7 @@ DefaultOversqliteClient newBehaviorClient(
   );
 }
 
-const usersConfig = OversqliteConfig(
+final usersConfig = OversqliteConfig(
   schema: 'main',
   syncTables: [SyncTable(tableName: 'users', syncKeyColumnName: 'id')],
   automaticDownloadInterval: Duration(seconds: 10),
@@ -157,7 +209,7 @@ OversqliteConfig behaviorConfig(Map<String, Object?> fixture) {
   return OversqliteConfig(schema: 'main', syncTables: syncTables);
 }
 
-const heartbeatWatchConfig = OversqliteConfig(
+final heartbeatWatchConfig = OversqliteConfig(
   schema: 'main',
   syncTables: [SyncTable(tableName: 'users', syncKeyColumnName: 'id')],
   automaticDownloadInterval: Duration(seconds: 10),
@@ -349,14 +401,12 @@ final class PushFixtureServer implements OversqliteHttpClient {
   Future<OversqliteHttpResponse> get(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     _sourceId = sourceId;
     if (path == 'sync/capabilities') {
-      return _json({
-        'protocol_version': 'v0',
-        'schema_version': 1,
-        'features': {'connect_lifecycle': true},
-      });
+      return _json(phase4CapabilitiesResponse());
     }
     if (path.startsWith('sync/committed-bundles/')) {
       _committedFetchAttempts++;
@@ -420,6 +470,8 @@ final class PushFixtureServer implements OversqliteHttpClient {
     String path, {
     required String sourceId,
     required Object? body,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     _sourceId = sourceId;
     if (path == 'sync/connect') {
@@ -524,6 +576,8 @@ final class PushFixtureServer implements OversqliteHttpClient {
   Future<OversqliteHttpResponse> delete(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     return const OversqliteHttpResponse(statusCode: 204, body: '');
   }
@@ -762,13 +816,11 @@ final class PullFixtureServer implements OversqliteHttpClient {
   Future<OversqliteHttpResponse> get(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     if (path == 'sync/capabilities') {
-      return _json({
-        'protocol_version': 'v0',
-        'schema_version': 1,
-        'features': {'connect_lifecycle': true},
-      });
+      return _json(phase4CapabilitiesResponse());
     }
     if (path.startsWith('sync/pull')) {
       pullRequestCount++;
@@ -782,6 +834,8 @@ final class PullFixtureServer implements OversqliteHttpClient {
     String path, {
     required String sourceId,
     required Object? body,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     if (path == 'sync/connect') {
       return _json({'resolution': 'initialize_empty'});
@@ -793,6 +847,8 @@ final class PullFixtureServer implements OversqliteHttpClient {
   Future<OversqliteHttpResponse> delete(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     return const OversqliteHttpResponse(statusCode: 204, body: '');
   }
@@ -826,7 +882,7 @@ final class WatchFixtureEnv {
 }
 
 Future<WatchFixtureEnv> newWatchFixtureEnv({
-  OversqliteConfig config = usersConfig,
+  OversqliteConfig? config,
   bool bundleChangeWatchSupported = true,
 }) async {
   final database = await openUsersDatabase();
@@ -835,7 +891,7 @@ Future<WatchFixtureEnv> newWatchFixtureEnv({
   );
   final client = DefaultOversqliteClient(
     database: database,
-    config: config,
+    config: config ?? usersConfig,
     httpClient: server,
   );
   await client.open();
@@ -900,17 +956,19 @@ final class WatchFixtureServer
   Future<OversqliteHttpResponse> get(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     if (path == 'sync/capabilities') {
       capabilitySourceIds.add(sourceId);
-      return _json({
-        'protocol_version': 'v0',
-        'schema_version': 1,
-        'features': {
-          'connect_lifecycle': true,
-          if (bundleChangeWatchSupported) 'bundle_change_watch': true,
-        },
-      });
+      return _json(
+        phase4CapabilitiesResponse(
+          features: {
+            'connect_lifecycle': true,
+            if (bundleChangeWatchSupported) 'bundle_change_watch': true,
+          },
+        ),
+      );
     }
     if (path.startsWith('sync/pull')) {
       pullRequestCount += 1;
@@ -933,6 +991,8 @@ final class WatchFixtureServer
     String path, {
     required String sourceId,
     required Object? body,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     if (path == 'sync/connect') {
       return _json({'resolution': 'initialize_empty'});
@@ -944,6 +1004,8 @@ final class WatchFixtureServer
   Future<OversqliteHttpResponse> delete(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     return const OversqliteHttpResponse(statusCode: 204, body: '');
   }

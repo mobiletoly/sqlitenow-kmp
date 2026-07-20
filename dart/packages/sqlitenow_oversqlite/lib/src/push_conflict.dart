@@ -53,7 +53,7 @@ final class OversqliteConflictExecutor {
       localOp: conflictingRow.op,
       localPayload: conflictingRow.localPayload == null
           ? null
-			: (jsonDecode(conflictingRow.localPayload!) as Map)
+          : (jsonDecode(conflictingRow.localPayload!) as Map)
                 .cast<String, Object?>(),
       baseRowVersion: conflict.baseRowVersion,
       serverRowVersion: conflict.serverRowVersion,

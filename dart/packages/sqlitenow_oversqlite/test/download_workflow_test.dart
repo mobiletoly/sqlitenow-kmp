@@ -5,6 +5,7 @@ import 'package:sqlitenow_oversqlite/sqlitenow_oversqlite.dart';
 import 'package:test/test.dart';
 
 import 'support/behavior_fixture_support.dart';
+import 'support/recording_sqlite_driver.dart';
 
 void main() {
   test('pullToStable applies incremental bundles and tombstones', () async {
@@ -143,6 +144,257 @@ void main() {
       'Snapshot',
     );
   });
+
+  test(
+    'terminal snapshot row mismatch is rejected before apply begins',
+    () async {
+      final database = await _openUsersDatabase();
+      addTearDown(database.close);
+      final server = _SyncServer(
+        declaredSnapshotRowCount: 2,
+        snapshotRows: [
+          _snapshotRow({'id': 'remote'}, {'id': 'remote', 'name': 'Remote'}),
+        ],
+      )..stableBundleSeq = 3;
+      final client = _newClient(database, server);
+      addTearDown(client.close);
+      await client.open();
+      await client.attach('user-1');
+      await executeApplyModeSql(database, [
+        "INSERT INTO users(id, name) VALUES('local', 'Local')",
+      ]);
+      await database.connection.execute('''
+CREATE TRIGGER fail_snapshot_delete
+BEFORE DELETE ON users
+BEGIN
+  SELECT RAISE(FAIL, 'snapshot apply entered');
+END
+''');
+
+      await expectLater(
+        client.rebuild(),
+        throwsA(
+          isA<OversqliteProtocolException>().having(
+            (error) => error.message,
+            'message',
+            contains('staged snapshot row count 1 does not match'),
+          ),
+        ),
+      );
+
+      expect(await _scalarInt(database, 'SELECT COUNT(*) FROM users'), 1);
+      expect(
+        await _scalarText(
+          database,
+          "SELECT name FROM users WHERE id = 'local'",
+        ),
+        'Local',
+      );
+    },
+  );
+
+  test(
+    'durable byte mismatch restarts with a fresh snapshot after reopen',
+    () async {
+      final database = await _openUsersDatabase();
+      addTearDown(database.close);
+      final server = _SyncServer(
+        connectResolution: 'remote_authoritative',
+        snapshotRows: [
+          _snapshotRow(
+            {'id': 'rejected'},
+            {'id': 'rejected', 'name': 'Rejected'},
+          ),
+        ],
+      )..stableBundleSeq = 3;
+      server.declaredSnapshotByteCount =
+          snapshotCompactWireByteCount(server.snapshotRows) + 1;
+      var client = _newClient(database, server);
+      addTearDown(() => client.close());
+      await client.open();
+      await executeApplyModeSql(database, [
+        "INSERT INTO users(id, name) VALUES('authoritative-old', 'Old')",
+      ]);
+
+      await expectLater(
+        client.attach('user-1'),
+        throwsA(
+          isA<OversqliteProtocolException>().having(
+            (error) => error.message,
+            'message',
+            contains('snapshot final byte total'),
+          ),
+        ),
+      );
+
+      expect(server.snapshotSessionCreateCount, 1);
+      expect(
+        await _scalarText(
+          database,
+          "SELECT name FROM users WHERE id = 'authoritative-old'",
+        ),
+        'Old',
+      );
+      expect(
+        await _scalarInt(database, 'SELECT COUNT(*) FROM _sync_snapshot_stage'),
+        1,
+      );
+      expect(
+        await _scalarText(
+          database,
+          'SELECT staged_snapshot_id FROM _sync_operation_state WHERE singleton_key = 1',
+        ),
+        'snapshot-1',
+      );
+
+      await client.close();
+      server
+        ..snapshotId = 'snapshot-2'
+        ..stableBundleSeq = 4
+        ..declaredSnapshotByteCount = null
+        ..snapshotRows = [
+          _snapshotRow(
+            {'id': 'accepted'},
+            {'id': 'accepted', 'name': 'Accepted'},
+          ),
+        ];
+      client = _newClient(database, server);
+      await client.open();
+
+      final result = await client.attach('user-1');
+
+      expect(result, isA<AttachConnected>());
+      expect(server.snapshotSessionCreateCount, 2);
+      expect(await _scalarInt(database, 'SELECT COUNT(*) FROM users'), 1);
+      expect(
+        await _scalarText(
+          database,
+          "SELECT name FROM users WHERE id = 'accepted'",
+        ),
+        'Accepted',
+      );
+      expect(
+        await _scalarInt(database, 'SELECT COUNT(*) FROM _sync_snapshot_stage'),
+        0,
+      );
+    },
+  );
+
+  test(
+    'complete retired remote-replace stage is reused after apply failure',
+    () async {
+      final database = await _openUsersDatabase();
+      addTearDown(database.close);
+      final server = _SyncServer(
+        connectResolution: 'remote_authoritative',
+        snapshotRows: [
+          _snapshotRow(
+            {'id': 'remote-reused'},
+            {'id': 'remote-reused', 'name': 'Reused'},
+          ),
+        ],
+      )..stableBundleSeq = 5;
+      var client = _newClient(database, server);
+      addTearDown(() => client.close());
+      await client.open();
+      await executeApplyModeSql(database, [
+        "INSERT INTO users(id, name) VALUES('old', 'Old')",
+      ]);
+      await database.connection.execute('''CREATE TRIGGER fail_snapshot_insert
+BEFORE INSERT ON users
+WHEN NEW.id = 'remote-reused'
+BEGIN
+  SELECT RAISE(ABORT, 'injected snapshot apply failure');
+END''');
+
+      await expectLater(
+        client.attach('user-1'),
+        throwsA(isA<SnapshotRowApplyException>()),
+      );
+
+      expect(server.snapshotSessionCreateCount, 1);
+      expect(
+        await _scalarInt(
+          database,
+          'SELECT snapshot_stage_complete FROM _sync_operation_state',
+        ),
+        1,
+      );
+      expect(
+        await _scalarInt(database, 'SELECT COUNT(*) FROM _sync_snapshot_stage'),
+        1,
+      );
+      expect(
+        await _scalarText(database, "SELECT name FROM users WHERE id = 'old'"),
+        'Old',
+      );
+
+      await client.close();
+      await database.connection.execute('DROP TRIGGER fail_snapshot_insert');
+      server.snapshotRows = const [];
+      client = _newClient(database, server);
+      await client.open();
+
+      final result = await client.attach('user-1');
+
+      expect(result, isA<AttachConnected>());
+      expect(server.snapshotSessionCreateCount, 1);
+      expect(
+        await _scalarText(
+          database,
+          "SELECT name FROM users WHERE id = 'remote-reused'",
+        ),
+        'Reused',
+      );
+      expect(await _scalarInt(database, 'SELECT COUNT(*) FROM users'), 1);
+      expect(
+        await _scalarInt(database, 'SELECT COUNT(*) FROM _sync_snapshot_stage'),
+        0,
+      );
+    },
+  );
+
+  test(
+    'production snapshot chunk capacity retry succeeds end to end',
+    () async {
+      final database = await _openUsersDatabase();
+      addTearDown(database.close);
+      final config = OversqliteConfig(
+        schema: 'main',
+        syncTables: [SyncTable(tableName: 'users', syncKeyColumnName: 'id')],
+        snapshotCapacityRetryPolicy: OversqliteSnapshotCapacityRetryPolicy(
+          maxWait: Duration(seconds: 1),
+          fallbackDelay: Duration(milliseconds: 1),
+          positiveJitterRatio: 0,
+        ),
+      );
+      final server = _SyncServer(
+        connectResolution: 'remote_authoritative',
+        config: config,
+        snapshotChunkCapacityFailures: 1,
+        snapshotRows: [
+          _snapshotRow({'id': 'remote'}, {'id': 'remote', 'name': 'Retried'}),
+        ],
+      )..stableBundleSeq = 4;
+      final client = _newClient(database, server, config: config);
+      addTearDown(client.close);
+      await client.open();
+
+      final result = await client.attach('user-1');
+
+      expect(result, isA<AttachConnected>());
+      expect(server.snapshotChunkRequestCount, 2);
+      expect(server.snapshotChunkCapacityCloseCount, 1);
+      expect(server.capabilitiesRequestCount, 1);
+      expect(
+        await _scalarText(
+          database,
+          "SELECT name FROM users WHERE id = 'remote'",
+        ),
+        'Retried',
+      );
+    },
+  );
 
   test('normal sync automatically resumes durable checkpoint recovery', () async {
     final database = await _openUsersDatabase();
@@ -429,53 +681,73 @@ void main() {
   });
 
   test(
-    'source-recovery rebuild rotates source and preserves outbox replay',
+    'source-recovery replay is bounded and source mismatches roll back',
     () async {
-      final database = await _openUsersDatabase();
-      addTearDown(database.close);
-      final server = _SyncServer(sourceRetiredOnPushCreate: true);
-      final client = _newClient(database, server);
-      addTearDown(client.close);
-      await client.open();
-      await client.attach('user-1');
-      await database.connection.execute(
-        "INSERT INTO users(id, name) VALUES('local', 'Local')",
-      );
-
-      await expectLater(
-        client.pushPending(),
-        throwsA(isA<SourceRecoveryRequiredException>()),
-      );
-      server.sourceRetiredOnPushCreate = false;
-      await client.rebuild();
-
-      expect(
-        await _scalarText(
-          database,
-          'SELECT current_source_id FROM _sync_attachment_state',
-        ),
-        'server-replacement-source',
-      );
-      expect(
-        await _scalarText(
-          database,
-          'SELECT source_id FROM _sync_outbox_bundle WHERE singleton_key = 1',
-        ),
-        'server-replacement-source',
-      );
-
-      await client.pushPending();
-
-      expect(
-        await _scalarInt(database, 'SELECT COUNT(*) FROM _sync_outbox_rows'),
-        0,
-      );
-      expect(server.uploadedRows.single['payload'], {
-        'id': 'local',
-        'name': 'Local',
-      });
+      await _proveBoundedSourceRecoveryReplay();
+      await _proveSourceBundleMismatchRollback();
     },
   );
+
+  test('malformed source retirement does not persist recovery state', () async {
+    const sentinel = 'replacement-SECRET-token';
+    final database = await _openUsersDatabase();
+    addTearDown(database.close);
+    final server = _SyncServer(
+      sourceRetiredResponse: const {
+        'error': 'source_retired',
+        'message': 'source retired',
+        'source_id': 'wrong-source',
+        'replaced_by_source_id': sentinel,
+      },
+    );
+    final client = _newClient(database, server);
+    addTearDown(client.close);
+    await client.open();
+    await client.attach('user-1');
+    final originalSourceId = await _scalarText(
+      database,
+      'SELECT current_source_id FROM _sync_attachment_state',
+    );
+    await database.connection.execute(
+      "INSERT INTO users(id, name) VALUES('local', 'Local')",
+    );
+
+    Object? caught;
+    try {
+      await client.pushPending();
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught, isA<OversqliteProtocolException>());
+    expect(caught.toString(), 'source retired response is malformed');
+    expect(caught.toString(), isNot(contains(sentinel)));
+    expect(
+      await _scalarText(
+        database,
+        'SELECT kind FROM _sync_operation_state WHERE singleton_key = 1',
+      ),
+      'none',
+    );
+    expect(
+      await _scalarText(
+        database,
+        'SELECT replacement_source_id FROM _sync_operation_state WHERE singleton_key = 1',
+      ),
+      isEmpty,
+    );
+    expect(
+      await _scalarText(
+        database,
+        'SELECT current_source_id FROM _sync_attachment_state',
+      ),
+      originalSourceId,
+    );
+    expect(
+      await _scalarText(database, "SELECT name FROM users WHERE id = 'local'"),
+      'Local',
+    );
+  });
 
   test(
     'snapshot rebuild applies self-referential rows under deferred FKs',
@@ -559,29 +831,306 @@ void main() {
   });
 }
 
+Future<void> _proveBoundedSourceRecoveryReplay() async {
+  final recordingDriver = RecordingSqliteDriver();
+  final database = await _openUsersDatabase(driver: recordingDriver);
+  final server = _SyncServer(sourceRetiredOnPushCreate: true);
+  final client = _newClient(database, server);
+  try {
+    await client.open();
+    await client.attach('user-1');
+    for (var ordinal = 0; ordinal < 64; ordinal++) {
+      await database.connection.execute(
+        'INSERT INTO users(id, name) VALUES(?, ?)',
+        parameters: ['local-$ordinal', 'Local $ordinal'],
+      );
+    }
+
+    await expectLater(
+      client.pushPending(),
+      throwsA(isA<SourceRecoveryRequiredException>()),
+    );
+    server.sourceRetiredOnPushCreate = false;
+    recordingDriver.reset();
+
+    await client.rebuild();
+
+    bool isReplayQuery(String sql) =>
+        sql.contains('FROM _sync_outbox_rows') &&
+        sql.contains('source_bundle_id = ? AND row_ordinal > ?') &&
+        sql.contains('LIMIT 1');
+    final replayCalls = recordingDriver
+        .selectCallsWhere(isReplayQuery, prepared: true)
+        .toList();
+    expect(recordingDriver.prepareCountWhere(isReplayQuery), 1);
+    expect(replayCalls, hasLength(65));
+    expect(replayCalls.every((call) => call.returnedRowCount <= 1), isTrue);
+    expect(
+      replayCalls.map((call) => call.parameters[1]),
+      List.generate(65, (index) => index - 1),
+    );
+    expect(await _scalarInt(database, 'SELECT COUNT(*) FROM users'), 64);
+    expect(
+      await _scalarText(
+        database,
+        "SELECT name FROM users WHERE id = 'local-63'",
+      ),
+      'Local 63',
+    );
+    expect(
+      await _scalarInt(database, 'SELECT COUNT(*) FROM _sync_outbox_rows'),
+      64,
+    );
+    expect(
+      await _scalarInt(
+        database,
+        'SELECT COUNT(DISTINCT source_bundle_id) FROM _sync_outbox_rows',
+      ),
+      1,
+    );
+    expect(
+      await _scalarInt(
+        database,
+        'SELECT source_bundle_id FROM _sync_outbox_rows LIMIT 1',
+      ),
+      1,
+    );
+    expect(
+      await _scalarText(
+        database,
+        'SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1',
+      ),
+      'prepared',
+    );
+    expect(
+      await _scalarText(
+        database,
+        'SELECT source_id FROM _sync_outbox_bundle WHERE singleton_key = 1',
+      ),
+      'server-replacement-source',
+    );
+    expect(
+      await _scalarText(
+        database,
+        'SELECT current_source_id FROM _sync_attachment_state',
+      ),
+      'server-replacement-source',
+    );
+    expect(
+      await _scalarInt(
+        database,
+        'SELECT rebuild_required FROM _sync_attachment_state',
+      ),
+      0,
+    );
+    expect(
+      await _scalarText(database, 'SELECT kind FROM _sync_operation_state'),
+      'none',
+    );
+    expect(
+      await _scalarInt(
+        database,
+        "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = 'server-replacement-source'",
+      ),
+      2,
+    );
+
+    await client.pushPending();
+
+    expect(
+      await _scalarInt(database, 'SELECT COUNT(*) FROM _sync_outbox_rows'),
+      0,
+    );
+    expect(server.uploadedRows, hasLength(64));
+    expect(server.uploadedRows.first['payload'], {
+      'id': 'local-0',
+      'name': 'Local 0',
+    });
+    expect(server.uploadedRows.last['payload'], {
+      'id': 'local-63',
+      'name': 'Local 63',
+    });
+  } finally {
+    await client.close();
+    await database.close();
+  }
+}
+
+Future<void> _proveSourceBundleMismatchRollback() async {
+  final database = await _openUsersDatabase();
+  final server = _SyncServer(sourceRetiredOnPushCreate: true);
+  final client = _newClient(database, server);
+  try {
+    await client.open();
+    await client.attach('user-1');
+    final originalSourceId = await _scalarText(
+      database,
+      'SELECT current_source_id FROM _sync_attachment_state',
+    );
+    for (var ordinal = 0; ordinal < 2; ordinal++) {
+      await database.connection.execute(
+        'INSERT INTO users(id, name) VALUES(?, ?)',
+        parameters: ['local-$ordinal', 'Local $ordinal'],
+      );
+    }
+    await expectLater(
+      client.pushPending(),
+      throwsA(isA<SourceRecoveryRequiredException>()),
+    );
+    await database.connection.execute(
+      'UPDATE _sync_outbox_rows SET source_bundle_id = 99 WHERE row_ordinal = 0',
+    );
+    server
+      ..sourceRetiredOnPushCreate = false
+      ..stableBundleSeq = 7
+      ..snapshotRows = [
+        _snapshotRow(
+          {'id': 'remote'},
+          {'id': 'remote', 'name': 'Must roll back'},
+        ),
+      ];
+
+    Object? caught;
+    try {
+      await client.rebuild();
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught, isA<StateError>());
+    expect(
+      caught.toString(),
+      contains('prepared outbox row count changed before replay'),
+    );
+    expect(caught.toString(), isNot(contains('local-0')));
+    expect(caught.toString(), isNot(contains('Must roll back')));
+    expect(await _scalarInt(database, 'SELECT COUNT(*) FROM users'), 2);
+    expect(
+      await _scalarInt(
+        database,
+        "SELECT COUNT(*) FROM users WHERE id = 'remote'",
+      ),
+      0,
+    );
+    expect(
+      await _scalarInt(
+        database,
+        'SELECT last_bundle_seq_seen FROM _sync_attachment_state',
+      ),
+      0,
+    );
+    expect(
+      await _scalarText(
+        database,
+        'SELECT current_source_id FROM _sync_attachment_state',
+      ),
+      originalSourceId,
+    );
+    expect(
+      await _scalarInt(
+        database,
+        'SELECT rebuild_required FROM _sync_attachment_state',
+      ),
+      1,
+    );
+    expect(
+      await _scalarText(
+        database,
+        'SELECT binding_state FROM _sync_attachment_state',
+      ),
+      'attached',
+    );
+    expect(
+      await _scalarText(database, 'SELECT kind FROM _sync_operation_state'),
+      'source_recovery',
+    );
+    expect(
+      await _scalarText(
+        database,
+        'SELECT replacement_source_id FROM _sync_operation_state',
+      ),
+      'server-replacement-source',
+    );
+    expect(
+      await _scalarInt(
+        database,
+        'SELECT snapshot_stage_complete FROM _sync_operation_state',
+      ),
+      0,
+    );
+    expect(
+      await _scalarText(
+        database,
+        'SELECT state FROM _sync_outbox_bundle WHERE singleton_key = 1',
+      ),
+      'prepared',
+    );
+    expect(
+      await _scalarText(
+        database,
+        'SELECT source_id FROM _sync_outbox_bundle WHERE singleton_key = 1',
+      ),
+      originalSourceId,
+    );
+    expect(
+      await _scalarInt(database, 'SELECT COUNT(*) FROM _sync_outbox_rows'),
+      2,
+    );
+    expect(
+      await _scalarInt(
+        database,
+        'SELECT COUNT(*) FROM _sync_outbox_rows WHERE source_bundle_id = 99',
+      ),
+      1,
+    );
+    expect(
+      await _scalarInt(database, 'SELECT COUNT(*) FROM _sync_snapshot_stage'),
+      1,
+    );
+    expect(
+      await _scalarText(
+        database,
+        'SELECT replaced_by_source_id FROM _sync_source_state WHERE source_id = ?',
+        parameters: [originalSourceId],
+      ),
+      isEmpty,
+    );
+    expect(
+      await _scalarInt(
+        database,
+        "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = 'server-replacement-source'",
+      ),
+      1,
+    );
+  } finally {
+    await client.close();
+    await database.close();
+  }
+}
+
 DefaultOversqliteClient _newClient(
   SqliteNowDatabase database,
   OversqliteHttpClient http, {
-  OversqliteConfig config = _usersConfig,
+  OversqliteConfig? config,
 }) {
   return DefaultOversqliteClient(
     database: database,
-    config: config,
+    config: config ?? _usersConfig,
     httpClient: http,
   );
 }
 
-const _usersConfig = OversqliteConfig(
+final _usersConfig = OversqliteConfig(
   schema: 'main',
   syncTables: [SyncTable(tableName: 'users', syncKeyColumnName: 'id')],
 );
 
-const _nodeConfig = OversqliteConfig(
+final _nodeConfig = OversqliteConfig(
   schema: 'main',
   syncTables: [SyncTable(tableName: 'nodes', syncKeyColumnName: 'id')],
 );
 
-const _authorProfileConfig = OversqliteConfig(
+final _authorProfileConfig = OversqliteConfig(
   schema: 'main',
   syncTables: [
     SyncTable(tableName: 'authors', syncKeyColumnName: 'id'),
@@ -589,8 +1138,10 @@ const _authorProfileConfig = OversqliteConfig(
   ],
 );
 
-Future<SqliteNowDatabase> _openUsersDatabase() async {
-  final database = SqliteNowDatabase.inMemory();
+Future<SqliteNowDatabase> _openUsersDatabase({
+  SqliteNowDriver driver = const Sqlite3Driver(),
+}) async {
+  final database = SqliteNowDatabase.inMemory(driver: driver);
   await database.open(
     preInit: (connection) {
       return connection.execute(
@@ -639,10 +1190,15 @@ Future<int> _scalarInt(SqliteNowDatabase database, String sql) async {
   return rows.single;
 }
 
-Future<String> _scalarText(SqliteNowDatabase database, String sql) async {
+Future<String> _scalarText(
+  SqliteNowDatabase database,
+  String sql, {
+  List<Object?> parameters = const [],
+}) async {
   final rows = await database.connection.select(
     sql,
     (row) => row.readString(0),
+    parameters: parameters,
   );
   return rows.single;
 }
@@ -686,9 +1242,13 @@ final class _SyncServer implements OversqliteHttpClient {
     this.committedReplayPruned = false,
     this.pushCreateUnauthorized = false,
     this.sourceRetiredOnPushCreate = false,
-    this.config = _usersConfig,
+    this.sourceRetiredResponse,
+    this.declaredSnapshotRowCount,
+    this.snapshotChunkCapacityFailures = 0,
+    OversqliteConfig? config,
     List<Map<String, Object?>> snapshotRows = const [],
-  }) : snapshotRows = [...snapshotRows];
+  }) : config = config ?? _usersConfig,
+       snapshotRows = [...snapshotRows];
 
   final String connectResolution;
   final bool historyPrunedOnPull;
@@ -696,6 +1256,11 @@ final class _SyncServer implements OversqliteHttpClient {
   final bool committedReplayPruned;
   final bool pushCreateUnauthorized;
   bool sourceRetiredOnPushCreate;
+  final Map<String, Object?>? sourceRetiredResponse;
+  final int? declaredSnapshotRowCount;
+  int? declaredSnapshotByteCount;
+  String snapshotId = 'snapshot-1';
+  int snapshotChunkCapacityFailures;
   final OversqliteConfig config;
   final bundles = <Map<String, Object?>>[];
   final uploadedRows = <Map<String, Object?>>[];
@@ -705,6 +1270,10 @@ final class _SyncServer implements OversqliteHttpClient {
   var _sourceId = '';
   var _canonicalRequestHash = '';
   var _nextBundleSeq = 1;
+  var capabilitiesRequestCount = 0;
+  var snapshotChunkRequestCount = 0;
+  var snapshotChunkCapacityCloseCount = 0;
+  var snapshotSessionCreateCount = 0;
 
   void addRemoteBundle(List<Map<String, Object?>> rows) {
     final bundleSeq = _nextBundleSeq++;
@@ -724,14 +1293,13 @@ final class _SyncServer implements OversqliteHttpClient {
   Future<OversqliteHttpResponse> get(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     _sourceId = sourceId;
     if (path == 'sync/capabilities') {
-      return _json({
-        'protocol_version': 'v0',
-        'schema_version': 1,
-        'features': {'connect_lifecycle': true},
-      });
+      capabilitiesRequestCount++;
+      return _json(phase4CapabilitiesResponse());
     }
     if (path.startsWith('sync/pull')) {
       if (historyPrunedOnPull) {
@@ -757,15 +1325,26 @@ final class _SyncServer implements OversqliteHttpClient {
         'has_more': false,
       });
     }
-    if (path.startsWith('sync/snapshot-sessions/snapshot-1')) {
+    if (path.startsWith('sync/snapshot-sessions/')) {
+      snapshotChunkRequestCount++;
+      if (snapshotChunkCapacityFailures > 0) {
+        snapshotChunkCapacityFailures--;
+        return _json(
+          {'error': 'snapshot_chunk_capacity', 'message': 'busy'},
+          statusCode: 429,
+          close: () async => snapshotChunkCapacityCloseCount++,
+        );
+      }
       final uri = Uri.parse('http://local/$path');
+      final requestedSnapshotId = uri.pathSegments[2];
       final after = int.parse(uri.queryParameters['after_row_ordinal'] ?? '0');
       final maxRows = int.parse(uri.queryParameters['max_rows'] ?? '1000');
       final rows = snapshotRows.skip(after).take(maxRows).toList();
       return _json({
-        'snapshot_id': 'snapshot-1',
+        'snapshot_id': requestedSnapshotId,
         'snapshot_bundle_seq': stableBundleSeq,
         'rows': rows,
+        'byte_count': snapshotCompactWireByteCount(rows),
         'next_row_ordinal': after + rows.length,
         'has_more': after + rows.length < snapshotRows.length,
       });
@@ -811,17 +1390,22 @@ final class _SyncServer implements OversqliteHttpClient {
     String path, {
     required String sourceId,
     required Object? body,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     _sourceId = sourceId;
     if (path == 'sync/connect') {
       return _json({'resolution': connectResolution});
     }
     if (path == 'sync/snapshot-sessions') {
+      snapshotSessionCreateCount++;
       return _json({
-        'snapshot_id': 'snapshot-1',
+        'snapshot_id': snapshotId,
         'snapshot_bundle_seq': stableBundleSeq,
-        'row_count': snapshotRows.length,
-        'byte_count': 0,
+        'row_count': declaredSnapshotRowCount ?? snapshotRows.length,
+        'byte_count':
+            declaredSnapshotByteCount ??
+            snapshotCompactWireByteCount(snapshotRows),
         'expires_at': '2099-01-01T00:00:00Z',
       });
     }
@@ -834,6 +1418,9 @@ final class _SyncServer implements OversqliteHttpClient {
           'error': 'unauthorized',
           'message': 'checkpoint reconcile denied',
         }, statusCode: 401);
+      }
+      if (sourceRetiredResponse != null) {
+        return _json(sourceRetiredResponse!, statusCode: 409);
       }
       if (sourceRetiredOnPushCreate) {
         return _json({
@@ -908,6 +1495,8 @@ final class _SyncServer implements OversqliteHttpClient {
   Future<OversqliteHttpResponse> delete(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     return const OversqliteHttpResponse(statusCode: 204, body: '');
   }
@@ -915,10 +1504,12 @@ final class _SyncServer implements OversqliteHttpClient {
   OversqliteHttpResponse _json(
     Map<String, Object?> body, {
     int statusCode = 200,
+    Future<void> Function()? close,
   }) {
     return OversqliteHttpResponse(
       statusCode: statusCode,
       body: jsonEncode(body),
+      close: close,
     );
   }
 }

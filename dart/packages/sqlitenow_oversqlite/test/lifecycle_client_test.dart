@@ -1,6 +1,10 @@
+import 'dart:convert';
+
 import 'package:sqlitenow_runtime/sqlitenow_runtime.dart';
 import 'package:sqlitenow_oversqlite/sqlitenow_oversqlite.dart';
 import 'package:test/test.dart';
+
+import 'support/behavior_fixture_support.dart';
 
 void main() {
   test('construction is side-effect free and open is required', () async {
@@ -146,6 +150,38 @@ void main() {
     expect(connected.status.lastBundleSeqSeen, 9);
   });
 
+  test(
+    'failed remote-authoritative attach does not publish identity',
+    () async {
+      final database = await _openUsersDatabase();
+      addTearDown(database.close);
+      final server = _FailingRemoteAttachServer();
+      final client = _newClient(database, httpClient: server);
+      addTearDown(client.close);
+      await client.open();
+      final sourceBefore = (await client.sourceInfo()).currentSourceId;
+
+      await expectLater(
+        client.attach('user-next'),
+        throwsA(isA<OversqliteHttpException>()),
+      );
+
+      await expectLater(
+        client.syncStatus(),
+        throwsA(isA<ConnectRequiredException>()),
+      );
+      final attachment = await _attachmentRow(database);
+      expect(attachment['currentSourceId'], sourceBefore);
+      expect(attachment['bindingState'], 'anonymous');
+      expect(attachment['attachedUserId'], '');
+      final operation = await _operationRow(database);
+      expect(operation['kind'], 'remote_replace');
+      expect(operation['targetUserId'], 'user-next');
+      expect(server.retirementCount, 1);
+      expect(server.retirementDiscardBody, isTrue);
+    },
+  );
+
   test('sourceInfo reports durable source recovery state', () async {
     final database = await _openUsersDatabase();
     addTearDown(database.close);
@@ -250,13 +286,17 @@ void main() {
   });
 }
 
-DefaultOversqliteClient _newClient(SqliteNowDatabase database) {
+DefaultOversqliteClient _newClient(
+  SqliteNowDatabase database, {
+  OversqliteHttpClient? httpClient,
+}) {
   return DefaultOversqliteClient(
     database: database,
-    config: const OversqliteConfig(
+    config: OversqliteConfig(
       schema: 'main',
       syncTables: [SyncTable(tableName: 'users', syncKeyColumnName: 'id')],
     ),
+    httpClient: httpClient,
   );
 }
 
@@ -328,4 +368,68 @@ Future<Map<String, Object?>> _operationRow(SqliteNowDatabase database) async {
     (row) => {'kind': row.readString(0), 'targetUserId': row.readString(1)},
   );
   return rows.single;
+}
+
+final class _FailingRemoteAttachServer implements OversqliteHttpClient {
+  var retirementCount = 0;
+  var retirementDiscardBody = false;
+
+  @override
+  Future<OversqliteHttpResponse> get(
+    String path, {
+    required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
+  }) async {
+    if (path == 'sync/capabilities') {
+      return _json(phase4CapabilitiesResponse());
+    }
+    return _json({
+      'error': 'temporary',
+      'message': 'snapshot unavailable',
+    }, statusCode: 500);
+  }
+
+  @override
+  Future<OversqliteHttpResponse> postJson(
+    String path, {
+    required String sourceId,
+    required Object? body,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
+  }) async {
+    if (path == 'sync/connect') {
+      return _json({'resolution': 'remote_authoritative'});
+    }
+    if (path == 'sync/snapshot-sessions') {
+      return _json({
+        'snapshot_id': 'failed-attach-snapshot',
+        'snapshot_bundle_seq': 3,
+        'row_count': 1,
+        'byte_count': 100,
+        'expires_at': '2099-01-01T00:00:00Z',
+      });
+    }
+    return _json({
+      'error': 'not_found',
+      'message': 'not found',
+    }, statusCode: 404);
+  }
+
+  @override
+  Future<OversqliteHttpResponse> delete(
+    String path, {
+    required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
+  }) async {
+    retirementCount++;
+    retirementDiscardBody = bounds.discardBody;
+    return const OversqliteHttpResponse(statusCode: 204, body: '');
+  }
+
+  OversqliteHttpResponse _json(
+    Map<String, Object?> body, {
+    int statusCode = 200,
+  }) => OversqliteHttpResponse(statusCode: statusCode, body: jsonEncode(body));
 }

@@ -37,6 +37,32 @@ plus the Dart opt-in realserver test before the contract change is accepted.
 Each required lane starts against a newly recreated PostgreSQL database and fresh local client
 databases. Client tests do not reset a running server through HTTP.
 
+## Cross-runtime realserver ownership
+
+Go owns the normative Swagger and server behavior. KMP and Dart own independent
+client implementations and consume the same live server contract. Acceptance
+of a combined change requires the shared fixtures plus the relevant Go, KMP,
+Dart, Flutter Android, and available native realserver lanes; a green fixture
+runner does not replace a live-server result.
+
+The local-heavy wrappers are `./gradlew oversqliteRealserverAllHeavy` and
+`dart/scripts/oversqlite_realserver_all_heavy.sh`. For representative and large
+snapshot measurements, set `OVERSQLITE_PHASE5_REALSERVER_ROWS` to `10000` or
+`100000`, `OVERSQLITE_PHASE5_REALSERVER_ROW_BYTES` to `256` or `1024`, and give
+the process a unique `OVERSQLITE_PHASE5_REALSERVER_RUN_LABEL`. The KMP JVM and
+Dart VM workers restore the pre-seeded scope named
+`phase5-<rows>x<row-bytes>` into a fresh local database and report transfer,
+apply-page, latency, and SQLite/WAL metrics. Go's corresponding test is
+`TestLocalHeavy_EndToEndLargeMultiChunkRowByteSnapshotRestore` in
+`oversqlite_e2e`.
+
+These cardinalities and byte shapes are measurement roles only. They are not
+wire-protocol requirements, product limits, or promises about device latency.
+Heavy wrappers and profile workers must fail closed when
+`GITHUB_ACTIONS=true`; active workflows must not set a heavy opt-in or invoke a
+heavy wrapper. Run them only against newly created test-owned server and client
+databases, and never use HTTP to destructively reset a running shared server.
+
 Local schema fixtures live under `local-schema/<fixture-name>/`:
 
 - `schema.sql` creates the application schema.
@@ -138,8 +164,8 @@ Pull and snapshot fixtures live under `pull-snapshot/`:
 
 Snapshot admission retry parity lives under `snapshot-capacity/retry.json`. It
 locks the 30-second elapsed budget, one-second fallback, positive-only jitter,
-delta-seconds parsing, and the two capacity error codes for Go and KMP. Dart
-consumption remains owned by the existing bounded-snapshot Phase 4.
+delta-seconds parsing, and the two capacity error codes across Go, KMP, and
+Dart.
 
 - `basic.json` records populated-table adoption baseline history, incremental
   pull responses, history-pruned fallback,
@@ -168,11 +194,10 @@ consumption remains owned by the existing bounded-snapshot Phase 4.
   sends `max_rows` and `max_bytes`, and session/chunk `byte_count` is required
   with missing distinct from zero. `max_concurrent_snapshot_chunks` is not an
   alias for `max_concurrent_snapshot_chunk_requests`.
-- KMP Phase 3 owns the bounded-body, ordinal/identity/empty-shape, row/byte
-  transfer, final-gate, and row-and-byte-bounded apply behavior. Dart consumes
-  these fixtures in Phase 4; expected-red Dart results during Phase 3 are
-  recorded in the ignored phase evidence and must not be hidden with fallback
-  fields or mixed-version fixtures.
+- KMP and Dart both consume the bounded-body, ordinal/identity/empty-shape,
+  row/byte transfer, final-gate, and row-and-byte-bounded apply contract. The
+  historical phased ownership remains recorded in ignored evidence; current
+  conformance must not add fallback fields or mixed-version fixtures.
 
 Watch fixtures live under `watch/`:
 

@@ -80,11 +80,33 @@ final class SqliteNowConnection {
   ) {
     return withExclusiveAccess((connection) async {
       final statement = connection.prepare(sql);
+      Object? primaryFailure;
+      StackTrace? primaryStackTrace;
+      T? result;
       try {
-        return await block(SqliteNowPreparedStatement(statement));
-      } finally {
-        statement.dispose();
+        result = await block(SqliteNowPreparedStatement(statement));
+      } catch (error, stackTrace) {
+        primaryFailure = error;
+        primaryStackTrace = stackTrace;
       }
+      try {
+        statement.dispose();
+      } catch (cleanupFailure, cleanupStackTrace) {
+        final closeFailure = _closeFatally(connection);
+        final fatal = SqliteNowFatalStatementCleanupException(
+          primaryFailure: primaryFailure,
+          cleanupFailure: cleanupFailure,
+          connectionCloseFailure: closeFailure,
+        );
+        Error.throwWithStackTrace(
+          fatal,
+          primaryStackTrace ?? cleanupStackTrace,
+        );
+      }
+      if (primaryFailure != null) {
+        Error.throwWithStackTrace(primaryFailure, primaryStackTrace!);
+      }
+      return result as T;
     });
   }
 
@@ -104,15 +126,23 @@ final class SqliteNowConnection {
           connection.execute('COMMIT');
         }
         return result;
-      } catch (_) {
+      } catch (primaryFailure, primaryStackTrace) {
         if (outermost) {
           try {
             connection.execute('ROLLBACK');
-          } catch (_) {
-            // The original transaction failure is more useful to callers.
+          } catch (cleanupFailure) {
+            final closeFailure = _closeFatally(connection);
+            Error.throwWithStackTrace(
+              SqliteNowFatalTransactionException(
+                primaryFailure: primaryFailure,
+                cleanupFailure: cleanupFailure,
+                connectionCloseFailure: closeFailure,
+              ),
+              primaryStackTrace,
+            );
           }
         }
-        rethrow;
+        Error.throwWithStackTrace(primaryFailure, primaryStackTrace);
       } finally {
         _transactionDepth--;
       }
@@ -155,6 +185,16 @@ final class SqliteNowConnection {
   void _ensureOpen() {
     if (_closed) {
       throw StateError('Database connection is already closed');
+    }
+  }
+
+  Object? _closeFatally(SqliteNowDriverConnection connection) {
+    _closed = true;
+    try {
+      connection.close();
+      return null;
+    } catch (error) {
+      return error;
     }
   }
 }

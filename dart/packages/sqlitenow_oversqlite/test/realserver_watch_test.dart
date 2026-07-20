@@ -39,6 +39,11 @@ void main() {
           final response = await http.get(
             'sync/capabilities',
             sourceId: sourceId,
+            operation: 'capabilities request',
+            bounds: const OversqliteHttpRequestBounds(
+              successBodyBytes: 4 * 1024 * 1024,
+              errorBodyBytes: 64 * 1024,
+            ),
           );
           final capabilities = CapabilitiesResponse.fromJson(
             jsonDecode(response.body) as Map<String, Object?>,
@@ -172,7 +177,7 @@ DefaultOversqliteClient _newWatchClient(
 ) {
   return DefaultOversqliteClient(
     database: database,
-    config: const OversqliteConfig(
+    config: OversqliteConfig(
       schema: 'business',
       syncTables: businessSyncTables,
       uploadLimit: 8,

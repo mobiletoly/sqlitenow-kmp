@@ -33,12 +33,45 @@ void main() {
       }
     }
   });
+
+  test('legacy lifecycle adapter is limited to its named three-value case', () {
+    expect(
+      _adaptLegacyRebuildHandshakeVersions(
+        'remote-replace-resume-protocol-mismatch-preserves-staged-state',
+        const ['v1', 'v1', 'v0'],
+      ),
+      const ['v1', 'v0'],
+    );
+    expect(
+      _adaptLegacyRebuildHandshakeVersions('unrelated-case', const [
+        'v1',
+        'v1',
+        'v0',
+      ]),
+      const ['v1', 'v1', 'v0'],
+    );
+    expect(
+      _adaptLegacyRebuildHandshakeVersions(
+        'remote-replace-resume-protocol-mismatch-preserves-staged-state',
+        const ['v1', 'v1', 'v1', 'v0'],
+      ),
+      const ['v1', 'v1', 'v1', 'v0'],
+    );
+    expect(
+      _adaptLegacyRebuildHandshakeVersions(
+        'remote-replace-resume-protocol-mismatch-preserves-staged-state',
+        const ['v1', 'v0', 'v0'],
+      ),
+      const ['v1', 'v0', 'v0'],
+    );
+  });
 }
 
 Future<void> _runCase(Map<String, Object?> fixture) async {
   final database = await openUsersDatabase();
   final server = LifecycleFixtureServer(
     database: database,
+    caseName: fixture['name']! as String,
     script:
         (fixture['serverScript'] as Map<Object?, Object?>?)
             ?.cast<String, Object?>() ??
@@ -82,6 +115,16 @@ Future<void> _runCase(Map<String, Object?> fixture) async {
         await dumpRuntimeState(database),
         step['expectedState'],
         reason: '${fixture['name']}/${step['action']}',
+      );
+      expect(
+        server.snapshotRetirementCount,
+        server.successfulSnapshotSessionCount,
+        reason: '${fixture['name']}/${step['action']} snapshot retirement',
+      );
+      expect(
+        server.snapshotRetirementBounds.every((bounds) => bounds.discardBody),
+        isTrue,
+        reason: '${fixture['name']}/${step['action']} retirement body handling',
       );
     }
   } finally {
@@ -256,14 +299,32 @@ String _snake(String value) {
   );
 }
 
+List<String> _adaptLegacyRebuildHandshakeVersions(
+  String caseName,
+  List<String> versions,
+) {
+  if (caseName ==
+          'remote-replace-resume-protocol-mismatch-preserves-staged-state' &&
+      versions.length == 3 &&
+      versions[0] == 'v1' &&
+      versions[1] == 'v1' &&
+      versions[2] == 'v0') {
+    return const ['v1', 'v0'];
+  }
+  return versions;
+}
+
 final class LifecycleFixtureServer implements OversqliteHttpClient {
   LifecycleFixtureServer({
     required this.database,
+    required String caseName,
     required Map<String, Object?> script,
   }) : connectResolution = script['connectResolution'] as String? ?? 'default',
-       protocolVersions =
-           (script['protocolVersions'] as List<Object?>? ?? const ['v0'])
-               .cast<String>(),
+       protocolVersions = _adaptLegacyRebuildHandshakeVersions(
+         caseName,
+         (script['protocolVersions'] as List<Object?>? ?? const ['v1'])
+             .cast<String>(),
+       ),
        lateWritesByPull =
            (script['lateWritesByPull'] as List<Object?>? ?? const [])
                .map((entry) => (entry as List<Object?>).cast<String>())
@@ -297,6 +358,9 @@ final class LifecycleFixtureServer implements OversqliteHttpClient {
   final _uploadedRowsByBundleSeq = <int, List<Map<String, Object?>>>{};
   final _sourceBundleIdByBundleSeq = <int, int>{};
   var snapshotSessionCreateCount = 0;
+  var successfulSnapshotSessionCount = 0;
+  var snapshotRetirementCount = 0;
+  final snapshotRetirementBounds = <OversqliteHttpRequestBounds>[];
   var stableBundleSeq = 0;
   var _sourceId = '';
   var _activeSourceBundleId = 1;
@@ -310,6 +374,8 @@ final class LifecycleFixtureServer implements OversqliteHttpClient {
   Future<OversqliteHttpResponse> get(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     _sourceId = sourceId;
     if (path == 'sync/capabilities') {
@@ -318,11 +384,9 @@ final class LifecycleFixtureServer implements OversqliteHttpClient {
               ? _capabilityRequestCount
               : protocolVersions.length - 1];
       _capabilityRequestCount++;
-      return _json({
-        'protocol_version': protocolVersion,
-        'schema_version': 1,
-        'features': {'connect_lifecycle': true},
-      });
+      return _json(
+        phase4CapabilitiesResponse(protocolVersion: protocolVersion),
+      );
     }
     if (path.startsWith('sync/pull')) {
       final lateWrites = _pullRequestCount < lateWritesByPull.length
@@ -392,23 +456,19 @@ final class LifecycleFixtureServer implements OversqliteHttpClient {
           : (snapshot.rowsPerChunk! < maxRows
                 ? snapshot.rowsPerChunk!
                 : maxRows);
-      final rows = snapshot.rows.skip(after).take(rowLimit).toList();
-      return _json({
-        'snapshot_id': snapshot.id,
-        'snapshot_bundle_seq': snapshot.bundleSeq,
-        'rows': [
-          for (final row in rows)
-            {
-              'schema': 'main',
-              'table': 'users',
-              'key': row.key,
-              'row_version': row.rowVersion,
-              'payload': row.payload,
-            },
-        ],
-        'next_row_ordinal': after + rows.length,
-        'has_more': after + rows.length < snapshot.rows.length,
-      });
+      final rows = snapshot.wireRows.skip(after).take(rowLimit).toList();
+      final encodedRows = rows.map(snapshotFixtureWireRowJson).toList();
+      final nextRowOrdinal = after + rows.length;
+      return OversqliteHttpResponse(
+        statusCode: 200,
+        body:
+            '{"snapshot_id":${jsonEncode(snapshot.id)},'
+            '"snapshot_bundle_seq":${snapshot.bundleSeq},'
+            '"rows":[${encodedRows.join(',')}],'
+            '"byte_count":${snapshotFixtureWireByteCount(rows)},'
+            '"next_row_ordinal":$nextRowOrdinal,'
+            '"has_more":${nextRowOrdinal < snapshot.rows.length}}',
+      );
     }
     return _json({'error': 'not_found', 'message': path}, statusCode: 404);
   }
@@ -418,6 +478,8 @@ final class LifecycleFixtureServer implements OversqliteHttpClient {
     String path, {
     required String sourceId,
     required Object? body,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     _sourceId = sourceId;
     if (path == 'sync/connect') {
@@ -454,11 +516,12 @@ final class LifecycleFixtureServer implements OversqliteHttpClient {
               ? _nextSnapshotIndex
               : snapshots.length - 1];
       _nextSnapshotIndex++;
+      successfulSnapshotSessionCount++;
       return _json({
         'snapshot_id': snapshot.id,
         'snapshot_bundle_seq': snapshot.bundleSeq,
         'row_count': snapshot.rows.length,
-        'byte_count': 0,
+        'byte_count': snapshotFixtureWireByteCount(snapshot.wireRows),
         'expires_at': '2099-01-01T00:00:00Z',
       });
     }
@@ -519,7 +582,13 @@ final class LifecycleFixtureServer implements OversqliteHttpClient {
   Future<OversqliteHttpResponse> delete(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
+    if (path.startsWith('sync/snapshot-sessions/')) {
+      snapshotRetirementCount++;
+      snapshotRetirementBounds.add(bounds);
+    }
     return const OversqliteHttpResponse(statusCode: 204, body: '');
   }
 
@@ -587,6 +656,17 @@ final class LifecycleSnapshot {
   final List<LifecycleSnapshotRow> rows;
   final int? failAfterRowOrdinal;
   final int? rowsPerChunk;
+
+  List<Map<String, Object?>> get wireRows => [
+    for (final row in rows)
+      {
+        'schema': 'main',
+        'table': 'users',
+        'key': row.key,
+        'row_version': row.rowVersion,
+        'payload': row.payload,
+      },
+  ];
 }
 
 final class LifecycleSnapshotRow {

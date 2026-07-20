@@ -724,6 +724,7 @@ class SnapshotFinalGateAndRollbackTest : BundleClientContractTestSupport() {
         val directory = Files.createTempDirectory("oversqlite-late-writer-")
         val databasePath = directory.resolve("client.sqlite")
         val db = BundledSqliteConnectionProvider.openConnection(databasePath.toString(), debug = false)
+        db.execSQL("PRAGMA busy_timeout = 5000")
         createUsersTable(db)
         withConnectedClient(
             db = db,

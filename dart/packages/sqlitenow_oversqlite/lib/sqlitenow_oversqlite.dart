@@ -7,3 +7,8 @@ export 'src/local_runtime.dart';
 export 'src/protocol.dart';
 export 'src/push.dart';
 export 'src/resolver.dart';
+export 'src/snapshot_gate.dart'
+    show
+        DirtyStateRejectedException,
+        PendingPushReplayException,
+        SnapshotRebuildOutboxMode;

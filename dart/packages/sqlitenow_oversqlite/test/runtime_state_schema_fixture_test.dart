@@ -14,7 +14,7 @@ void main() {
 
     final actual = await dumpRuntimeSchema(database);
     final expected = readRuntimeStateFixture(
-      'oversqlite-contracts/runtime-state/schema/v0.json',
+      'oversqlite-contracts/runtime-state/schema/v1.json',
     );
     expect(actual, expected);
   });

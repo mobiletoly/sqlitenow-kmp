@@ -10,27 +10,11 @@ import 'support/behavior_fixture_support.dart';
 void main() {
   final spec = _readFixture();
   final cases = (spec['cases']! as List<Object?>).cast<Map<String, Object?>>();
-  final executableCases = cases.where((fixture) {
-    if (fixture['operation'] != 'snapshotChunk') return true;
-    final args = (fixture['args']! as Map).cast<String, Object?>();
-    return !args.containsKey('maxBytes');
+  test('Dart shared protocol HTTP request fixtures match runtime', () async {
+    for (final fixture in cases) {
+      await _runCase(fixture);
+    }
   });
-
-  test(
-    'Dart pre-Phase-4 shared protocol HTTP request fixtures match runtime',
-    () async {
-      for (final fixture in executableCases) {
-        await _runCase(fixture);
-      }
-    },
-  );
-
-  test(
-    'Dart snapshot max_bytes fixture remains owned by parent Phase 4',
-    () {},
-    skip:
-        'Dart production does not emit snapshot max_bytes until parent Phase 4',
-  );
 
   test('push request DELETE rows omit payload field', () {
     final deleteRow = const PushRequestRow(
@@ -136,6 +120,7 @@ Future<void> _executeOperation(
         snapshotBundleSeq: args['snapshotBundleSeq']! as int,
         afterRowOrdinal: args['afterRowOrdinal']! as int,
         maxRows: args['maxRows']! as int,
+        maxBytes: args['maxBytes']! as int,
       );
     case 'sourceReplacement':
       await api.createSnapshotSession(
@@ -179,11 +164,12 @@ Map<String, Object?> _responseBody(Map<String, Object?> fixture) {
   final args = (fixture['args'] as Map?)?.cast<String, Object?>() ?? const {};
   switch (fixture['operation']) {
     case 'capabilities':
-      return {
-        'protocol_version': 'v0',
-        'schema_version': 1,
-        'features': {'connect_lifecycle': true, 'bundle_change_watch': true},
-      };
+      return phase4CapabilitiesResponse(
+        features: const {
+          'connect_lifecycle': true,
+          'bundle_change_watch': true,
+        },
+      );
     case 'connect':
       return {'resolution': 'initialize_empty'};
     case 'pull':
@@ -237,6 +223,7 @@ Map<String, Object?> _responseBody(Map<String, Object?> fixture) {
         'snapshot_id': args['snapshotId'],
         'snapshot_bundle_seq': args['snapshotBundleSeq'],
         'rows': <Object?>[],
+        'byte_count': 0,
         'next_row_ordinal': args['afterRowOrdinal'],
         'has_more': false,
       };

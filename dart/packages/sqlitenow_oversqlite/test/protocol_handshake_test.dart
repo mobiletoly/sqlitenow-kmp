@@ -52,7 +52,29 @@ void main() {
     expect(http.requests.single.sourceId, sourceId);
   });
 
-  test('handshake HTTP errors decode structured error bodies', () async {
+  test('root-only API constructs download runtime from capabilities', () {
+    final fixture = fixtures.singleWhere(
+      (item) => item.name == 'initialize-empty',
+    );
+    final database = SqliteNowDatabase.inMemory();
+    final config = OversqliteConfig(
+      schema: 'main',
+      syncTables: [SyncTable(tableName: 'users', syncKeyColumnName: 'id')],
+    );
+
+    final runtime = OversqliteDownloadRuntime(
+      database: database,
+      config: config,
+      remoteApi: OversqliteRemoteApi(
+        _StaticHttpClient(fixture.capabilities.toHttpResponse()),
+      ),
+      capabilities: CapabilitiesResponse.fromJson(fixture.capabilities.body),
+    );
+
+    expect(runtime, isA<OversqliteDownloadRuntime>());
+  });
+
+  test('handshake HTTP errors are redacted snapshot errors', () async {
     final api = OversqliteRemoteApi(
       _StaticHttpClient(
         OversqliteHttpResponse(
@@ -68,17 +90,12 @@ void main() {
     await expectLater(
       () => api.fetchCapabilities('source-1'),
       throwsA(
-        isA<OversqliteHttpException>()
+        isA<SnapshotHttpException>()
             .having((error) => error.statusCode, 'statusCode', 409)
             .having(
-              (error) => error.errorResponse?.error,
+              (error) => error.errorCode,
               'error code',
-              'connect_rejected',
-            )
-            .having(
-              (error) => error.errorResponse?.message,
-              'message',
-              'connect was rejected',
+              'invalid_error_response',
             ),
       ),
     );
@@ -159,6 +176,11 @@ void main() {
         reason: fixture.name,
       );
       expect(http.requests.first.sourceId, sourceId, reason: fixture.name);
+      expect(
+        http.requests.where((request) => request.path == 'sync/capabilities'),
+        hasLength(1),
+        reason: '${fixture.name} must reuse its validated capabilities',
+      );
       final connectRequests = http.requests
           .where((request) => request.path == 'sync/connect')
           .toList();
@@ -185,7 +207,7 @@ DefaultOversqliteClient _newClient(
 ) {
   return DefaultOversqliteClient(
     database: database,
-    config: const OversqliteConfig(
+    config: OversqliteConfig(
       schema: 'main',
       syncTables: [SyncTable(tableName: 'users', syncKeyColumnName: 'id')],
     ),
@@ -263,6 +285,8 @@ final class _StaticHttpClient implements OversqliteHttpClient {
   Future<OversqliteHttpResponse> get(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     return response;
   }
@@ -272,6 +296,8 @@ final class _StaticHttpClient implements OversqliteHttpClient {
     String path, {
     required String sourceId,
     required Object? body,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     return response;
   }
@@ -280,6 +306,8 @@ final class _StaticHttpClient implements OversqliteHttpClient {
   Future<OversqliteHttpResponse> delete(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     return response;
   }
@@ -295,6 +323,8 @@ final class _RecordingHttpClient implements OversqliteHttpClient {
   Future<OversqliteHttpResponse> get(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     requests.add(
       _RecordedRequest(method: 'GET', path: path, sourceId: sourceId),
@@ -309,6 +339,7 @@ final class _RecordingHttpClient implements OversqliteHttpClient {
           'snapshot_id': 'snapshot-1',
           'snapshot_bundle_seq': 0,
           'rows': <Object?>[],
+          'byte_count': 0,
           'next_row_ordinal': 0,
           'has_more': false,
         }),
@@ -322,6 +353,8 @@ final class _RecordingHttpClient implements OversqliteHttpClient {
     String path, {
     required String sourceId,
     required Object? body,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     requests.add(
       _RecordedRequest(
@@ -357,6 +390,8 @@ final class _RecordingHttpClient implements OversqliteHttpClient {
   Future<OversqliteHttpResponse> delete(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) async {
     requests.add(
       _RecordedRequest(method: 'DELETE', path: path, sourceId: sourceId),

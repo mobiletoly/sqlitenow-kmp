@@ -152,6 +152,8 @@ final class _OperationState {
     required this.stagedSnapshotId,
     required this.snapshotBundleSeq,
     required this.snapshotRowCount,
+    required this.snapshotByteCount,
+    required this.snapshotStageComplete,
     this.reason = '',
     this.replacementSourceId = '',
   });
@@ -161,6 +163,8 @@ final class _OperationState {
   final String stagedSnapshotId;
   final int snapshotBundleSeq;
   final int snapshotRowCount;
+  final int snapshotByteCount;
+  final bool snapshotStageComplete;
   final String reason;
   final String replacementSourceId;
 }

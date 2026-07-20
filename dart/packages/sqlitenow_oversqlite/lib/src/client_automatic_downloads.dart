@@ -27,7 +27,11 @@ Future<void> _runAutomaticDownloads(
     } on ProtocolVersionMismatchException {
       rethrow;
     } catch (_) {
-      await _runAutomaticPullToStable(client, 'automatic downloads fallback');
+      await _runAutomaticPullToStable(
+        client,
+        handle,
+        'automatic downloads fallback',
+      );
       await backoff.delayNext(handle);
     }
   }
@@ -65,7 +69,11 @@ Future<void> _runAutomaticPollingIteration(
   _DefaultAutomaticDownloadsHandle handle,
 ) async {
   if (!client._downloadsPaused) {
-    await _runAutomaticPullToStable(client, 'automatic downloads polling');
+    await _runAutomaticPullToStable(
+      client,
+      handle,
+      'automatic downloads polling',
+    );
   }
   await _automaticDownloadDelay(
     handle,
@@ -107,7 +115,11 @@ Future<void> _runBundleChangeWatchIteration(
     while (!handle.isStopped && await iterator.moveNext()) {
       final event = iterator.current;
       if (event.bundleSeq > 0 && !client._downloadsPaused) {
-        await _runAutomaticPullToStable(client, 'bundle change watch event');
+        await _runAutomaticPullToStable(
+          client,
+          handle,
+          'bundle change watch event',
+        );
       }
     }
   } finally {
@@ -116,7 +128,11 @@ Future<void> _runBundleChangeWatchIteration(
     handle.clearActiveCancel();
   }
   if (!handle.isStopped && !client._downloadsPaused) {
-    await _runAutomaticPullToStable(client, 'bundle change watch reconnect');
+    await _runAutomaticPullToStable(
+      client,
+      handle,
+      'bundle change watch reconnect',
+    );
   }
 }
 
@@ -134,10 +150,15 @@ Future<_AutomaticDownloadState> _automaticDownloadState(
 
 Future<bool> _runAutomaticPullToStable(
   DefaultOversqliteClient client,
+  _DefaultAutomaticDownloadsHandle handle,
   String operation,
 ) async {
   try {
-    await client.pullToStable();
+    await SnapshotCancellationScope.run(
+      isCancelled: () => handle.isStopped,
+      cancellationSignal: handle.stopSignal,
+      action: client.pullToStable,
+    );
     return true;
   } catch (error) {
     if (error is ProtocolVersionMismatchException) {

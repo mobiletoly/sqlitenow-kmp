@@ -1,6 +1,8 @@
 import 'dart:convert';
 
+import 'config.dart';
 import 'protocol_models.dart';
+import 'wire_int64.dart';
 
 final class BundleCapabilitiesLimits {
   const BundleCapabilitiesLimits({
@@ -17,6 +19,13 @@ final class BundleCapabilitiesLimits {
     required this.snapshotSessionTtlSeconds,
     required this.maxRowsPerSnapshotSession,
     required this.maxBytesPerSnapshotSession,
+    required this.defaultBytesPerSnapshotChunk,
+    required this.maxBytesPerSnapshotChunk,
+    required this.maxBytesPerSnapshotRow,
+    this.snapshotMaterializationBatchRows = 0,
+    this.snapshotMaterializationBatchBytes = 0,
+    required this.maxConcurrentSnapshotBuilds,
+    required this.maxConcurrentSnapshotChunkRequests,
     required this.initializationLeaseTtlSeconds,
   });
 
@@ -33,6 +42,13 @@ final class BundleCapabilitiesLimits {
   final int snapshotSessionTtlSeconds;
   final int maxRowsPerSnapshotSession;
   final int maxBytesPerSnapshotSession;
+  final int defaultBytesPerSnapshotChunk;
+  final int maxBytesPerSnapshotChunk;
+  final int maxBytesPerSnapshotRow;
+  final int snapshotMaterializationBatchRows;
+  final int snapshotMaterializationBatchBytes;
+  final int maxConcurrentSnapshotBuilds;
+  final int maxConcurrentSnapshotChunkRequests;
   final int initializationLeaseTtlSeconds;
 
   factory BundleCapabilitiesLimits.fromJson(Map<String, Object?> json) {
@@ -51,11 +67,14 @@ final class BundleCapabilitiesLimits {
         json,
         'max_rows_per_committed_bundle_chunk',
       ),
-      defaultRowsPerSnapshotChunk: _readInt(
+      defaultRowsPerSnapshotChunk: _readRequiredInt(
         json,
         'default_rows_per_snapshot_chunk',
       ),
-      maxRowsPerSnapshotChunk: _readInt(json, 'max_rows_per_snapshot_chunk'),
+      maxRowsPerSnapshotChunk: _readRequiredInt(
+        json,
+        'max_rows_per_snapshot_chunk',
+      ),
       snapshotSessionTtlSeconds: _readInt(json, 'snapshot_session_ttl_seconds'),
       maxRowsPerSnapshotSession: _readInt(
         json,
@@ -64,6 +83,34 @@ final class BundleCapabilitiesLimits {
       maxBytesPerSnapshotSession: _readInt(
         json,
         'max_bytes_per_snapshot_session',
+      ),
+      defaultBytesPerSnapshotChunk: _readRequiredInt(
+        json,
+        'default_bytes_per_snapshot_chunk',
+      ),
+      maxBytesPerSnapshotChunk: _readRequiredInt(
+        json,
+        'max_bytes_per_snapshot_chunk',
+      ),
+      maxBytesPerSnapshotRow: _readRequiredInt(
+        json,
+        'max_bytes_per_snapshot_row',
+      ),
+      snapshotMaterializationBatchRows: _readInt(
+        json,
+        'snapshot_materialization_batch_rows',
+      ),
+      snapshotMaterializationBatchBytes: _readInt(
+        json,
+        'snapshot_materialization_batch_bytes',
+      ),
+      maxConcurrentSnapshotBuilds: _readRequiredInt(
+        json,
+        'max_concurrent_snapshot_builds',
+      ),
+      maxConcurrentSnapshotChunkRequests: _readRequiredInt(
+        json,
+        'max_concurrent_snapshot_chunk_requests',
       ),
       initializationLeaseTtlSeconds: _readInt(
         json,
@@ -75,16 +122,16 @@ final class BundleCapabilitiesLimits {
 
 final class CapabilitiesResponse {
   const CapabilitiesResponse({
-    this.protocolVersion = '',
-    this.schemaVersion = 0,
-    this.features = const {},
-    this.bundleLimits,
+    required this.protocolVersion,
+    required this.schemaVersion,
+    required this.features,
+    required this.bundleLimits,
   });
 
   final String protocolVersion;
   final int schemaVersion;
   final Map<String, bool> features;
-  final BundleCapabilitiesLimits? bundleLimits;
+  final BundleCapabilitiesLimits bundleLimits;
 
   bool get connectLifecycleSupported => features['connect_lifecycle'] ?? false;
 
@@ -92,21 +139,31 @@ final class CapabilitiesResponse {
       features['bundle_change_watch'] ?? false;
 
   factory CapabilitiesResponse.fromJson(Map<String, Object?> json) {
+    final protocolVersion = json['protocol_version'];
     final rawFeatures = json['features'];
+    final rawLimits = json['bundle_limits'];
+    if (protocolVersion is! String ||
+        rawFeatures is! Map ||
+        rawLimits is! Map) {
+      throw const SnapshotCapabilitiesException(
+        'capabilities response is missing required protocol or limit fields',
+      );
+    }
     return CapabilitiesResponse(
-      protocolVersion: (json['protocol_version'] as String?) ?? '',
-      schemaVersion: (json['schema_version'] as int?) ?? 0,
-      features: rawFeatures is Map
-          ? {
-              for (final entry in rawFeatures.entries)
-                entry.key.toString(): entry.value == true,
-            }
-          : const {},
-      bundleLimits: json['bundle_limits'] is Map
-          ? BundleCapabilitiesLimits.fromJson(
-              (json['bundle_limits'] as Map).cast<String, Object?>(),
-            )
-          : null,
+      protocolVersion: protocolVersion,
+      schemaVersion: readWireOversqliteInt64(
+        json,
+        'schema_version',
+        required: true,
+        error: SnapshotCapabilitiesException.new,
+      ),
+      features: {
+        for (final entry in rawFeatures.entries)
+          entry.key.toString(): entry.value == true,
+      },
+      bundleLimits: BundleCapabilitiesLimits.fromJson(
+        rawLimits.cast<String, Object?>(),
+      ),
     );
   }
 }
@@ -120,6 +177,83 @@ CapabilitiesResponse requireOversqliteProtocol(
     );
   }
   return capabilities;
+}
+
+final class SnapshotNegotiation {
+  const SnapshotNegotiation({
+    required this.maxRows,
+    required this.maxBytes,
+    required this.maxRowBytes,
+  });
+
+  final int maxRows;
+  final int maxBytes;
+  final int maxRowBytes;
+}
+
+SnapshotNegotiation negotiateSnapshotLimits(
+  CapabilitiesResponse capabilities,
+  OversqliteConfig config,
+) {
+  requireOversqliteProtocol(capabilities);
+  final limits = capabilities.bundleLimits;
+  if (limits.defaultRowsPerSnapshotChunk <= 0 ||
+      limits.maxRowsPerSnapshotChunk <= 0) {
+    throw const SnapshotCapabilitiesException(
+      'snapshot capabilities require positive default_rows_per_snapshot_chunk and max_rows_per_snapshot_chunk',
+    );
+  }
+  if (limits.defaultRowsPerSnapshotChunk > limits.maxRowsPerSnapshotChunk) {
+    throw const SnapshotCapabilitiesException(
+      'snapshot capability default_rows_per_snapshot_chunk exceeds max_rows_per_snapshot_chunk',
+    );
+  }
+  if (limits.defaultBytesPerSnapshotChunk <= 0 ||
+      limits.maxBytesPerSnapshotChunk <= 0 ||
+      limits.maxBytesPerSnapshotRow <= 0) {
+    throw const SnapshotCapabilitiesException(
+      'snapshot capabilities require positive default/max chunk byte and max row byte limits',
+    );
+  }
+  if (limits.defaultBytesPerSnapshotChunk > limits.maxBytesPerSnapshotChunk) {
+    throw const SnapshotCapabilitiesException(
+      'snapshot capability default_bytes_per_snapshot_chunk exceeds max_bytes_per_snapshot_chunk',
+    );
+  }
+  if (limits.maxBytesPerSnapshotRow > limits.maxBytesPerSnapshotChunk) {
+    throw const SnapshotCapabilitiesException(
+      'snapshot capability max_bytes_per_snapshot_row exceeds max_bytes_per_snapshot_chunk',
+    );
+  }
+  if (limits.maxConcurrentSnapshotBuilds <= 0 ||
+      limits.maxConcurrentSnapshotChunkRequests <= 0) {
+    throw const SnapshotCapabilitiesException(
+      'snapshot capabilities require positive max_concurrent_snapshot_builds and max_concurrent_snapshot_chunk_requests',
+    );
+  }
+  final effectiveRows =
+      config.snapshotChunkRows < limits.maxRowsPerSnapshotChunk
+      ? config.snapshotChunkRows
+      : limits.maxRowsPerSnapshotChunk;
+  final effectiveBytes =
+      config.snapshotChunkBytes < limits.maxBytesPerSnapshotChunk
+      ? config.snapshotChunkBytes
+      : limits.maxBytesPerSnapshotChunk;
+  if (effectiveBytes < limits.maxBytesPerSnapshotRow) {
+    throw const SnapshotCapabilitiesException(
+      'effective snapshot chunk byte budget is below server max_bytes_per_snapshot_row; increase snapshotChunkBytes',
+    );
+  }
+  if (config.snapshotApplyBatchBytes < limits.maxBytesPerSnapshotRow) {
+    throw const SnapshotCapabilitiesException(
+      'snapshot apply byte budget is below server max_bytes_per_snapshot_row; increase snapshotApplyBatchBytes',
+    );
+  }
+  return SnapshotNegotiation(
+    maxRows: effectiveRows,
+    maxBytes: effectiveBytes,
+    maxRowBytes: limits.maxBytesPerSnapshotRow,
+  );
 }
 
 final class BundleChangeEvent {
@@ -238,9 +372,19 @@ final class _BundleChangeWatchSseParser {
 }
 
 int _readInt(Map<String, Object?> json, String key) {
-  final value = json[key];
-  if (value is int) {
-    return value;
-  }
-  return 0;
+  return readWireOversqliteInt64(
+    json,
+    key,
+    required: false,
+    error: SnapshotCapabilitiesException.new,
+  );
+}
+
+int _readRequiredInt(Map<String, Object?> json, String key) {
+  return readWireOversqliteInt64(
+    json,
+    key,
+    required: true,
+    error: SnapshotCapabilitiesException.new,
+  );
 }

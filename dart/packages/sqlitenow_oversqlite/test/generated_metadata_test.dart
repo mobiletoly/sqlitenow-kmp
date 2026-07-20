@@ -113,7 +113,12 @@ void main() {
 
 final class _NoopHttpClient implements OversqliteHttpClient {
   @override
-  Future<OversqliteHttpResponse> get(String path, {required String sourceId}) {
+  Future<OversqliteHttpResponse> get(
+    String path, {
+    required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
+  }) {
     throw UnimplementedError();
   }
 
@@ -122,6 +127,8 @@ final class _NoopHttpClient implements OversqliteHttpClient {
     String path, {
     required String sourceId,
     required Object? body,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) {
     throw UnimplementedError();
   }
@@ -130,6 +137,8 @@ final class _NoopHttpClient implements OversqliteHttpClient {
   Future<OversqliteHttpResponse> delete(
     String path, {
     required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
   }) {
     throw UnimplementedError();
   }

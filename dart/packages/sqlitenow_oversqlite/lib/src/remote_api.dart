@@ -3,22 +3,76 @@ import 'dart:io';
 
 import 'protocol_models.dart';
 import 'protocol_transport.dart';
+import 'snapshot_capacity_retry.dart';
+import 'snapshot_diagnostics.dart';
+import 'snapshot_utf8.dart';
+import 'snapshot_wire_decoder.dart';
 import 'watch_protocol.dart';
+import 'wire_int64.dart';
+
+const _ordinaryBounds = OversqliteHttpRequestBounds(
+  errorBodyBytes: OversqliteRemoteApi.snapshotControlBodyLimit,
+);
 
 final class OversqliteRemoteApi {
-  const OversqliteRemoteApi(this._http);
+  OversqliteRemoteApi(
+    this._http, {
+    SnapshotDiagnosticsRecorder? snapshotDiagnostics,
+  }) : snapshotDiagnostics =
+           snapshotDiagnostics ?? SnapshotDiagnosticsRecorder();
+
+  static const snapshotCapabilitiesBodyLimit = 4 * 1024 * 1024;
+  static const snapshotControlBodyLimit = 64 * 1024;
+  static const snapshotBodyEnvelopeBytes = 64 * 1024;
+  static const snapshotRetirementTimeout = Duration(seconds: 5);
 
   final OversqliteHttpClient _http;
+  final SnapshotDiagnosticsRecorder snapshotDiagnostics;
 
   Future<CapabilitiesResponse> fetchCapabilities(String sourceId) async {
-    final response = await _http.get('sync/capabilities', sourceId: sourceId);
-    final body = _requireOkJsonObject(
-      response,
+    final response = await _http.get(
+      'sync/capabilities',
+      sourceId: requireValidOversqliteSourceId(sourceId),
       operation: 'capabilities request',
-      method: 'GET',
-      path: '/sync/capabilities',
+      bounds: const OversqliteHttpRequestBounds(
+        successBodyBytes: snapshotCapabilitiesBodyLimit,
+        errorBodyBytes: snapshotControlBodyLimit,
+      ),
     );
-    return requireOversqliteProtocol(CapabilitiesResponse.fromJson(body));
+    return _useSnapshotResponse(response, () async {
+      try {
+        _requireSnapshotResponseIngress(
+          response,
+          operation: 'capabilities request',
+          successLimit: snapshotCapabilitiesBodyLimit,
+          errorLimit: snapshotControlBodyLimit,
+          diagnostics: snapshotDiagnostics,
+        );
+        final body = _decodeSnapshotJsonObject(
+          response,
+          operation: 'capabilities request',
+        );
+        return requireOversqliteProtocol(CapabilitiesResponse.fromJson(body));
+      } on SnapshotCapabilitiesException {
+        rethrow;
+      } on ProtocolVersionMismatchException {
+        rethrow;
+      } on OversqliteHttpException {
+        rethrow;
+      } on SnapshotCapacityException {
+        rethrow;
+      } on SnapshotResponseBodyTooLargeException {
+        rethrow;
+      } on SnapshotUnsupportedContentEncodingException {
+        rethrow;
+      } on SnapshotResponseDecodeException {
+        rethrow;
+      } on SnapshotSemanticException {
+        rethrow;
+      } catch (_) {
+        throw const SnapshotResponseDecodeException('capabilities request');
+      }
+    });
   }
 
   Future<ConnectResponse> connect({
@@ -29,6 +83,8 @@ final class OversqliteRemoteApi {
       'sync/connect',
       sourceId: sourceId,
       body: ConnectRequest(hasLocalPendingRows: hasLocalPendingRows).toJson(),
+      operation: 'connect request',
+      bounds: _ordinaryBounds,
     );
     final body = _requireOkJsonObject(
       response,
@@ -67,9 +123,16 @@ final class OversqliteRemoteApi {
         if (initializationId != null && initializationId.isNotEmpty)
           'initialization_id': initializationId,
       },
+      operation: 'push session request',
+      bounds: _ordinaryBounds,
     );
     if (response.statusCode != HttpStatus.ok) {
-      final recovery = _decodeSourceRecoveryRequired(response);
+      final errorDocument = _decodeErrorDocument(response.body);
+      final recovery = _decodeSourceRecoveryRequired(
+        response,
+        expectedSourceId: sourceId,
+        document: errorDocument,
+      );
       if (recovery != null) {
         throw recovery;
       }
@@ -78,6 +141,7 @@ final class OversqliteRemoteApi {
         operation: 'push session request',
         method: 'POST',
         path: '/sync/push-sessions',
+        decodedError: errorDocument,
       );
     }
     final body = _requireOkJsonObject(
@@ -110,6 +174,8 @@ final class OversqliteRemoteApi {
         'start_row_ordinal': startRowOrdinal,
         'rows': [for (final row in rows) row.toJson()],
       },
+      operation: 'push chunk request',
+      bounds: _ordinaryBounds,
     );
     final body = _requireOkJsonObject(
       response,
@@ -128,13 +194,20 @@ final class OversqliteRemoteApi {
       'sync/push-sessions/$pushId/commit',
       sourceId: sourceId,
       body: null,
+      operation: 'push commit request',
+      bounds: _ordinaryBounds,
     );
     if (response.statusCode != HttpStatus.ok) {
-      final conflict = _decodePushConflict(response);
+      final errorDocument = _decodeErrorDocument(response.body);
+      final conflict = _decodePushConflict(response, document: errorDocument);
       if (conflict != null) {
         throw conflict;
       }
-      final recovery = _decodeSourceRecoveryRequired(response);
+      final recovery = _decodeSourceRecoveryRequired(
+        response,
+        expectedSourceId: sourceId,
+        document: errorDocument,
+      );
       if (recovery != null) {
         throw recovery;
       }
@@ -143,6 +216,7 @@ final class OversqliteRemoteApi {
         operation: 'push commit request',
         method: 'POST',
         path: '/sync/push-sessions/$pushId/commit',
+        decodedError: errorDocument,
       );
     }
     final body = _requireOkJsonObject(
@@ -165,7 +239,12 @@ final class OversqliteRemoteApi {
       'max_rows=$maxRows',
     ].join('&');
     final path = 'sync/committed-bundles/$bundleSeq/rows?$query';
-    final response = await _http.get(path, sourceId: sourceId);
+    final response = await _http.get(
+      path,
+      sourceId: sourceId,
+      operation: 'committed bundle chunk request',
+      bounds: _ordinaryBounds,
+    );
     if (response.statusCode != HttpStatus.ok) {
       final notFound = _decodeCommittedBundleNotFound(response);
       if (notFound != null) {
@@ -203,7 +282,12 @@ final class OversqliteRemoteApi {
       if (targetBundleSeq > 0) 'target_bundle_seq=$targetBundleSeq',
     ].join('&');
     final path = 'sync/pull?$query';
-    final response = await _http.get(path, sourceId: sourceId);
+    final response = await _http.get(
+      path,
+      sourceId: sourceId,
+      operation: 'pull',
+      bounds: _ordinaryBounds,
+    );
     if (response.statusCode != HttpStatus.ok) {
       final historyPruned = _decodeHistoryPruned(response);
       if (historyPruned != null) {
@@ -228,34 +312,57 @@ final class OversqliteRemoteApi {
     required String sourceId,
     SnapshotSessionCreateRequest? request,
   }) async {
+    final replacement = request?.sourceReplacement;
+    if (replacement != null) {
+      requireValidOversqliteSourceId(replacement.previousSourceId);
+      requireValidOversqliteSourceId(replacement.newSourceId);
+    }
     final response = await _http.postJson(
       'sync/snapshot-sessions',
-      sourceId: sourceId,
+      sourceId: requireValidOversqliteSourceId(sourceId),
       body: request?.toJson(),
+      operation: 'snapshot session request',
+      bounds: const OversqliteHttpRequestBounds(
+        successBodyBytes: snapshotControlBodyLimit,
+        errorBodyBytes: snapshotControlBodyLimit,
+      ),
     );
-    if (response.statusCode != HttpStatus.ok) {
-      final recovery = _decodeSourceRecoveryRequired(response);
-      if (recovery != null) {
-        throw recovery;
-      }
-      final replacementInvalid = _decodeSourceReplacementInvalid(response);
-      if (replacementInvalid != null) {
-        throw replacementInvalid;
-      }
-      _throwHttp(
+    return _useSnapshotResponse(response, () async {
+      _requireSnapshotResponseIngress(
         response,
         operation: 'snapshot session request',
-        method: 'POST',
-        path: '/sync/snapshot-sessions',
+        successLimit: snapshotControlBodyLimit,
+        errorLimit: snapshotControlBodyLimit,
+        diagnostics: snapshotDiagnostics,
+        sourceId: sourceId,
       );
-    }
-    final body = _requireOkJsonObject(
-      response,
-      operation: 'snapshot session request',
-      method: 'POST',
-      path: '/sync/snapshot-sessions',
-    );
-    return SnapshotSession.fromJson(body);
+      final body = _decodeSnapshotJsonObject(
+        response,
+        operation: 'snapshot session request',
+      );
+      final createdSnapshotId = body['snapshot_id'] is String
+          ? body['snapshot_id']! as String
+          : null;
+      try {
+        final session = SnapshotSession.fromJson(body);
+        snapshotDiagnostics.recordSession();
+        return session;
+      } catch (error) {
+        if (createdSnapshotId != null && createdSnapshotId.isNotEmpty) {
+          await deleteSnapshotSessionBestEffort(
+            snapshotId: createdSnapshotId,
+            sourceId: sourceId,
+          );
+        }
+        if (error is SnapshotSemanticException ||
+            error is OversqliteProtocolException) {
+          rethrow;
+        }
+        throw const SnapshotSemanticException(
+          SnapshotSemanticFailure.invalidSession,
+        );
+      }
+    });
   }
 
   Future<SnapshotChunkResponse> fetchSnapshotChunk({
@@ -264,38 +371,80 @@ final class OversqliteRemoteApi {
     required int snapshotBundleSeq,
     required int afterRowOrdinal,
     required int maxRows,
+    required int maxBytes,
   }) async {
-    final query = 'after_row_ordinal=$afterRowOrdinal&max_rows=$maxRows';
-    final path = 'sync/snapshot-sessions/$snapshotId?$query';
-    final response = await _http.get(path, sourceId: sourceId);
-    final body = _requireOkJsonObject(
-      response,
+    if (maxRows <= 0 || maxBytes <= 0) {
+      throw const SnapshotSemanticException(
+        SnapshotSemanticFailure.invalidChunk,
+      );
+    }
+    final bodyLimit = checkedSnapshotChunkBodyLimit(maxBytes, maxRows);
+    final query =
+        'after_row_ordinal=$afterRowOrdinal&max_rows=$maxRows&max_bytes=$maxBytes';
+    final encodedSnapshotId = encodeOversqliteSessionIdPathSegment(snapshotId);
+    final path = 'sync/snapshot-sessions/$encodedSnapshotId?$query';
+    final response = await _http.get(
+      path,
+      sourceId: requireValidOversqliteSourceId(sourceId),
       operation: 'snapshot chunk request',
-      method: 'GET',
-      path: '/$path',
+      bounds: OversqliteHttpRequestBounds(
+        successBodyBytes: bodyLimit,
+        errorBodyBytes: snapshotControlBodyLimit,
+      ),
     );
-    final chunk = SnapshotChunkResponse.fromJson(body);
-    _validateSnapshotChunkResponse(
-      chunk,
-      snapshotId: snapshotId,
-      snapshotBundleSeq: snapshotBundleSeq,
-      afterRowOrdinal: afterRowOrdinal,
-    );
-    return chunk;
+    return _useSnapshotResponse(response, () async {
+      _requireSnapshotResponseIngress(
+        response,
+        operation: 'snapshot chunk request',
+        successLimit: bodyLimit,
+        errorLimit: snapshotControlBodyLimit,
+        diagnostics: snapshotDiagnostics,
+        configuredBytes: maxBytes,
+        sourceId: sourceId,
+      );
+      final decoded = decodeSnapshotChunkWire(response.body);
+      final chunk = decoded.chunk;
+      if (chunk.byteCount != decoded.rowWireByteCount) {
+        throw const SnapshotSemanticException(
+          SnapshotSemanticFailure.invalidChunk,
+        );
+      }
+      _validateSnapshotChunkResponse(
+        chunk,
+        snapshotId: snapshotId,
+        snapshotBundleSeq: snapshotBundleSeq,
+        afterRowOrdinal: afterRowOrdinal,
+        maxRows: maxRows,
+        maxBytes: maxBytes,
+      );
+      snapshotDiagnostics.recordValidatedChunk(
+        chunk.rows.length,
+        chunk.byteCount,
+      );
+      return chunk;
+    });
   }
 
   Future<void> deleteSnapshotSessionBestEffort({
     required String snapshotId,
     required String sourceId,
   }) async {
-    if (snapshotId.trim().isEmpty) {
+    if (snapshotId.isEmpty) {
       return;
     }
     try {
-      await _http.delete(
-        'sync/snapshot-sessions/$snapshotId',
-        sourceId: sourceId,
-      );
+      await (() async {
+        final response = await _http.delete(
+          'sync/snapshot-sessions/${encodeOversqliteSessionIdPathSegment(snapshotId)}',
+          sourceId: requireValidOversqliteSourceId(sourceId),
+          operation: 'delete snapshot session',
+          bounds: const OversqliteHttpRequestBounds(
+            errorBodyBytes: snapshotControlBodyLimit,
+            discardBody: true,
+          ),
+        );
+        await response.close();
+      })().timeout(snapshotRetirementTimeout);
     } catch (_) {
       return;
     }
@@ -309,12 +458,243 @@ final class OversqliteRemoteApi {
       return;
     }
     try {
-      await _http.delete('sync/push-sessions/$pushId', sourceId: sourceId);
+      final response = await _http.delete(
+        'sync/push-sessions/$pushId',
+        sourceId: sourceId,
+        operation: 'delete push session',
+        bounds: const OversqliteHttpRequestBounds(
+          errorBodyBytes: snapshotControlBodyLimit,
+          discardBody: true,
+        ),
+      );
+      await response.close();
     } catch (_) {
       return;
     }
   }
 }
+
+Future<T> _useSnapshotResponse<T>(
+  OversqliteHttpResponse response,
+  Future<T> Function() use,
+) async {
+  Object? primaryError;
+  StackTrace? primaryStackTrace;
+  T? result;
+  try {
+    result = await use();
+  } catch (error, stackTrace) {
+    primaryError = error;
+    primaryStackTrace = stackTrace;
+  }
+
+  try {
+    await response.close();
+  } catch (_) {
+    if (primaryError == null) {
+      throw const OversqliteProtocolException(
+        'snapshot response cleanup failed',
+      );
+    }
+  }
+
+  if (primaryError != null) {
+    Error.throwWithStackTrace(primaryError, primaryStackTrace!);
+  }
+  return result as T;
+}
+
+void _requireSnapshotResponseIngress(
+  OversqliteHttpResponse response, {
+  required String operation,
+  required int successLimit,
+  required int errorLimit,
+  required SnapshotDiagnosticsRecorder diagnostics,
+  int? configuredBytes,
+  String? sourceId,
+}) {
+  final encoding = response.header('content-encoding')?.trim().toLowerCase();
+  if (encoding != null &&
+      encoding.isNotEmpty &&
+      encoding != 'identity' &&
+      encoding != 'gzip') {
+    throw SnapshotUnsupportedContentEncodingException(operation: operation);
+  }
+  final actual = snapshotUtf8ByteLength(response.body);
+  if (response.decodedBodyBytes != null &&
+      response.decodedBodyBytes != actual) {
+    throw SnapshotResponseDecodeException(operation);
+  }
+  final limit = response.statusCode == HttpStatus.ok
+      ? successLimit
+      : errorLimit;
+  if (actual > limit) {
+    throw SnapshotResponseBodyTooLargeException(
+      operation: operation,
+      limit: limit,
+    );
+  }
+  diagnostics.recordCompletelyDecodedBody(actual);
+  if (response.statusCode != HttpStatus.ok) {
+    _throwSnapshotHttp(
+      response,
+      operation: operation,
+      configuredBytes: configuredBytes,
+      sourceId: sourceId,
+    );
+  }
+}
+
+Map<String, Object?> _decodeSnapshotJsonObject(
+  OversqliteHttpResponse response, {
+  required String operation,
+}) {
+  requireUniqueSnapshotJsonObjectMembers(response.body, operation: operation);
+  try {
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map) {
+      throw SnapshotResponseDecodeException(operation);
+    }
+    return decoded.cast<String, Object?>();
+  } on SnapshotResponseDecodeException {
+    rethrow;
+  } on FormatException {
+    throw SnapshotResponseDecodeException(operation);
+  }
+}
+
+Never _throwSnapshotHttp(
+  OversqliteHttpResponse response, {
+  required String operation,
+  int? configuredBytes,
+  String? sourceId,
+}) {
+  Map<String, Object?>? body;
+  try {
+    requireUniqueSnapshotJsonObjectMembers(response.body, operation: operation);
+    final decoded = jsonDecode(response.body);
+    if (decoded is Map) body = decoded.cast<String, Object?>();
+  } catch (_) {
+    body = null;
+  }
+  final rawError = body?['error'];
+  final rawMessage = body?['message'];
+  final safeErrorCode =
+      rawError is String &&
+          rawMessage is String &&
+          _knownSnapshotErrorCodes.contains(rawError)
+      ? rawError
+      : 'invalid_error_response';
+  if (response.statusCode == HttpStatus.tooManyRequests &&
+      _snapshotCapacityErrorCodes.contains(safeErrorCode)) {
+    throw SnapshotCapacityException(
+      statusCode: response.statusCode,
+      errorCode: safeErrorCode,
+      retryAfter: parseSnapshotRetryAfter(response.header('retry-after')),
+    );
+  }
+  if (response.statusCode == HttpStatus.badRequest &&
+      safeErrorCode == 'snapshot_chunk_too_small' &&
+      configuredBytes != null) {
+    final requiredBytes = _readSnapshotErrorInt64(body, 'required_byte_count');
+    if (requiredBytes != null && requiredBytes > configuredBytes) {
+      throw SnapshotChunkTooSmallException(
+        configuredBytes: configuredBytes,
+        requiredBytes: requiredBytes,
+      );
+    }
+    throw SnapshotHttpException(
+      statusCode: response.statusCode,
+      errorCode: 'invalid_error_response',
+    );
+  }
+  if (response.statusCode == HttpStatus.conflict &&
+      safeErrorCode == 'snapshot_session_limit_exceeded') {
+    const dimensions = {'row_count', 'byte_count', 'row_byte_count'};
+    final dimension = body?['dimension'];
+    final actual = _readSnapshotErrorInt64(body, 'actual');
+    final limit = _readSnapshotErrorInt64(body, 'limit');
+    if (dimension is String &&
+        dimensions.contains(dimension) &&
+        actual != null &&
+        limit != null &&
+        actual >= 0 &&
+        limit > 0 &&
+        actual > limit) {
+      throw SnapshotSessionLimitExceededException(
+        dimension: dimension,
+        actual: actual,
+        limit: limit,
+      );
+    }
+    throw SnapshotHttpException(
+      statusCode: response.statusCode,
+      errorCode: 'invalid_error_response',
+    );
+  }
+  if (sourceId != null &&
+      response.statusCode == HttpStatus.conflict &&
+      safeErrorCode != 'invalid_error_response') {
+    SourceRecoveryRequiredHttpException? recovery;
+    try {
+      recovery = _decodeSourceRecoveryRequired(
+        response,
+        expectedSourceId: sourceId,
+        document: _DecodedErrorDocument(body: body),
+      );
+    } on OversqliteProtocolException {
+      throw SnapshotHttpException(
+        statusCode: response.statusCode,
+        errorCode: 'invalid_error_response',
+      );
+    }
+    if (recovery != null) {
+      throw recovery;
+    }
+    if (safeErrorCode == 'source_replacement_invalid') {
+      throw const SourceReplacementInvalidException(
+        'server rejected the source replacement request',
+      );
+    }
+  }
+  throw SnapshotHttpException(
+    statusCode: response.statusCode,
+    errorCode: safeErrorCode,
+  );
+}
+
+int? _readSnapshotErrorInt64(Map<String, Object?>? body, String field) {
+  if (body == null) return null;
+  try {
+    return readWireOversqliteInt64(
+      body,
+      field,
+      required: true,
+      error: FormatException.new,
+    );
+  } catch (_) {
+    return null;
+  }
+}
+
+const _snapshotCapacityErrorCodes = {
+  'snapshot_build_capacity',
+  'snapshot_chunk_capacity',
+};
+
+const _knownSnapshotErrorCodes = {
+  'history_pruned',
+  'initialization_expired',
+  'initialization_stale',
+  'snapshot_build_capacity',
+  'snapshot_chunk_capacity',
+  'snapshot_chunk_too_small',
+  'snapshot_session_limit_exceeded',
+  'source_replacement_invalid',
+  'source_retired',
+  'source_sequence_changed',
+  'source_sequence_out_of_order',
+};
 
 Map<String, Object?> _requireOkJsonObject(
   OversqliteHttpResponse response, {
@@ -339,8 +719,11 @@ Never _throwHttp(
   required String operation,
   required String method,
   required String path,
+  _DecodedErrorDocument? decodedError,
 }) {
-  final errorResponse = _decodeErrorResponse(response.body);
+  final errorResponse = decodedError == null
+      ? _decodeErrorResponse(response.body)
+      : decodedError.errorResponse;
   throw OversqliteHttpException(
     operation: operation,
     method: method,
@@ -352,72 +735,108 @@ Never _throwHttp(
 }
 
 ErrorResponse? _decodeErrorResponse(String body) {
-  try {
-    final decoded = jsonDecode(body);
-    if (decoded is Map) {
-      return ErrorResponse.fromJson(decoded.cast<String, Object?>());
-    }
-  } on FormatException {
-    return null;
-  }
-  return null;
+  return _decodeErrorDocument(body).errorResponse;
 }
 
-PushConflictException? _decodePushConflict(OversqliteHttpResponse response) {
+final class _DecodedErrorDocument {
+  const _DecodedErrorDocument({required this.body, this.errorResponse});
+
+  final Map<String, Object?>? body;
+  final ErrorResponse? errorResponse;
+}
+
+_DecodedErrorDocument _decodeErrorDocument(String body) {
+  final decoded = _decodeJsonObject(body);
+  if (decoded == null) {
+    return const _DecodedErrorDocument(body: null);
+  }
+  try {
+    return _DecodedErrorDocument(
+      body: decoded,
+      errorResponse: ErrorResponse.fromJson(decoded),
+    );
+  } catch (_) {
+    return _DecodedErrorDocument(body: decoded);
+  }
+}
+
+PushConflictException? _decodePushConflict(
+  OversqliteHttpResponse response, {
+  _DecodedErrorDocument? document,
+}) {
   if (response.statusCode != HttpStatus.conflict) {
     return null;
   }
-  try {
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map) {
-      return null;
-    }
-    final body = decoded.cast<String, Object?>();
-    if (body['error'] != 'push_conflict') {
-      return null;
-    }
-    final conflict = body['conflict'];
-    if (conflict is! Map) {
-      return null;
-    }
-    return PushConflictException(
-      message: (body['message'] as String?) ?? 'push conflict',
-      conflict: PushConflictDetails.fromJson(conflict.cast<String, Object?>()),
-    );
-  } on FormatException {
+  final decoded = document == null
+      ? _decodeJsonObject(response.body)
+      : document.body;
+  if (decoded == null || decoded['error'] != 'push_conflict') {
     return null;
   }
+  final conflict = decoded['conflict'];
+  if (conflict is! Map) {
+    return null;
+  }
+  return PushConflictException(
+    message: (decoded['message'] as String?) ?? 'push conflict',
+    conflict: PushConflictDetails.fromJson(conflict.cast<String, Object?>()),
+  );
 }
 
 SourceRecoveryRequiredHttpException? _decodeSourceRecoveryRequired(
-  OversqliteHttpResponse response,
-) {
+  OversqliteHttpResponse response, {
+  required String expectedSourceId,
+  _DecodedErrorDocument? document,
+}) {
   if (response.statusCode != HttpStatus.conflict) {
     return null;
   }
-  final decoded = _decodeErrorResponse(response.body);
+  final decoded = document == null
+      ? _decodeJsonObject(response.body)
+      : document.body;
   if (decoded == null) {
     return null;
   }
-  if (decoded.error == 'source_retired') {
-    String? replacementSourceId;
-    try {
-      final body = jsonDecode(response.body);
-      if (body is Map) {
-        replacementSourceId = body['replaced_by_source_id'] as String?;
-      }
-    } on FormatException {
-      replacementSourceId = null;
+  final errorCode = decoded['error'];
+  if (errorCode == 'source_retired') {
+    if (decoded['message'] is! String || decoded['source_id'] is! String) {
+      throw const OversqliteProtocolException(
+        'source retired response is malformed',
+      );
     }
-    return SourceRecoveryRequiredHttpException(
+    final responseSourceId = decoded['source_id']! as String;
+    try {
+      requireValidOversqliteSourceId(responseSourceId);
+      if (responseSourceId != expectedSourceId) {
+        throw const FormatException('source mismatch');
+      }
+    } catch (_) {
+      throw const OversqliteProtocolException(
+        'source retired response is malformed',
+      );
+    }
+    String? replacementSourceId;
+    if (decoded.containsKey('replaced_by_source_id')) {
+      final replacement = decoded['replaced_by_source_id'];
+      if (replacement is! String) {
+        throw const OversqliteProtocolException(
+          'source retired response is malformed',
+        );
+      }
+      try {
+        replacementSourceId = requireValidOversqliteSourceId(replacement);
+      } catch (_) {
+        throw const OversqliteProtocolException(
+          'source retired response is malformed',
+        );
+      }
+    }
+    return sourceRecoveryRequiredHttpSignal(
       reason: SourceRecoveryReason.sourceRetired,
-      body: response.body,
-      replacementSourceId: replacementSourceId?.trim().isEmpty == true
-          ? null
-          : replacementSourceId,
+      replacementSourceId: replacementSourceId,
     );
   }
-  final reason = switch (decoded.error) {
+  final reason = switch (errorCode) {
     'history_pruned' => SourceRecoveryReason.historyPruned,
     'source_sequence_out_of_order' =>
       SourceRecoveryReason.sourceSequenceOutOfOrder,
@@ -427,10 +846,16 @@ SourceRecoveryRequiredHttpException? _decodeSourceRecoveryRequired(
   if (reason == null) {
     return null;
   }
-  return SourceRecoveryRequiredHttpException(
-    reason: reason,
-    body: response.body,
-  );
+  return sourceRecoveryRequiredHttpSignal(reason: reason);
+}
+
+Map<String, Object?>? _decodeJsonObject(String body) {
+  try {
+    final decoded = jsonDecode(body);
+    return decoded is Map ? decoded.cast<String, Object?>() : null;
+  } on FormatException {
+    return null;
+  }
 }
 
 CommittedBundleNotFoundException? _decodeCommittedBundleNotFound(
@@ -481,19 +906,6 @@ CheckpointAheadException? _decodeCheckpointAhead(
     return null;
   }
   return CheckpointAheadException(decoded?.message ?? response.body);
-}
-
-SourceReplacementInvalidException? _decodeSourceReplacementInvalid(
-  OversqliteHttpResponse response,
-) {
-  if (response.statusCode != HttpStatus.conflict) {
-    return null;
-  }
-  final decoded = _decodeErrorResponse(response.body);
-  if (decoded?.error != 'source_replacement_invalid') {
-    return null;
-  }
-  return SourceReplacementInvalidException(decoded?.message ?? response.body);
 }
 
 void _validatePushSessionCreateResponse(
@@ -568,30 +980,88 @@ void _validateSnapshotChunkResponse(
   required String snapshotId,
   required int snapshotBundleSeq,
   required int afterRowOrdinal,
+  required int maxRows,
+  required int maxBytes,
 }) {
-  if (chunk.snapshotId != snapshotId) {
-    throw OversqliteProtocolException(
-      'snapshot chunk response snapshot_id ${chunk.snapshotId} does not match requested $snapshotId',
+  try {
+    if (chunk.snapshotId != snapshotId ||
+        chunk.snapshotBundleSeq != snapshotBundleSeq ||
+        chunk.rows.length > maxRows ||
+        chunk.byteCount < 0 ||
+        chunk.byteCount > maxBytes ||
+        (chunk.rows.isEmpty && chunk.byteCount != 0) ||
+        (chunk.rows.isNotEmpty && chunk.byteCount == 0)) {
+      throw const SnapshotSemanticException(
+        SnapshotSemanticFailure.invalidChunk,
+      );
+    }
+    if (chunk.rows.isNotEmpty && chunk.snapshotBundleSeq <= 0) {
+      throw const OversqliteProtocolException(
+        'snapshot chunk missing snapshot_bundle_seq for non-empty row set',
+      );
+    }
+    if (chunk.hasMore && chunk.rows.isEmpty) {
+      throw const OversqliteProtocolException(
+        'snapshot chunk has_more=true must include at least one row',
+      );
+    }
+    final expectedOrdinal = checkedAddOversqliteInt64(
+      afterRowOrdinal,
+      chunk.rows.length,
+      'snapshot chunk next ordinal',
     );
+    if (chunk.nextRowOrdinal != expectedOrdinal) {
+      throw OversqliteProtocolException(
+        'snapshot chunk next_row_ordinal ${chunk.nextRowOrdinal} does not match expected $expectedOrdinal',
+      );
+    }
+    for (final row in chunk.rows) {
+      validateSnapshotRow(row);
+    }
+  } on SnapshotSemanticException {
+    rethrow;
+  } on OversqliteProtocolException {
+    rethrow;
+  } catch (_) {
+    throw const SnapshotSemanticException(SnapshotSemanticFailure.invalidChunk);
   }
-  if (chunk.snapshotBundleSeq != snapshotBundleSeq) {
-    throw OversqliteProtocolException(
-      'snapshot chunk response snapshot_bundle_seq ${chunk.snapshotBundleSeq} does not match session $snapshotBundleSeq',
-    );
+}
+
+int checkedSnapshotChunkBodyLimit(int maxBytes, int maxRows) {
+  if (maxBytes <= 0 || maxRows <= 0) {
+    throw ArgumentError('snapshot chunk body budget requires positive limits');
   }
-  if (chunk.rows.isNotEmpty && chunk.snapshotBundleSeq <= 0) {
-    throw const OversqliteProtocolException(
-      'snapshot chunk response missing snapshot_bundle_seq for non-empty row set',
-    );
+  final withRows = checkedAddOversqliteInt64(
+    maxBytes,
+    maxRows,
+    'snapshot chunk body budget',
+  );
+  return checkedAddOversqliteInt64(
+    withRows,
+    OversqliteRemoteApi.snapshotBodyEnvelopeBytes,
+    'snapshot chunk body budget',
+  );
+}
+
+String encodeOversqliteSessionIdPathSegment(String value) {
+  final output = StringBuffer();
+  const hexadecimal = '0123456789ABCDEF';
+  for (final byte in utf8.encode(value)) {
+    final unescaped =
+        (byte >= 0x61 && byte <= 0x7a) ||
+        (byte >= 0x41 && byte <= 0x5a) ||
+        (byte >= 0x30 && byte <= 0x39) ||
+        byte == 0x2d ||
+        byte == 0x5f ||
+        byte == 0x7e;
+    if (unescaped) {
+      output.writeCharCode(byte);
+    } else {
+      output
+        ..write('%')
+        ..write(hexadecimal[byte >> 4])
+        ..write(hexadecimal[byte & 0x0f]);
+    }
   }
-  if (chunk.nextRowOrdinal != afterRowOrdinal + chunk.rows.length) {
-    throw OversqliteProtocolException(
-      'snapshot chunk response next_row_ordinal ${chunk.nextRowOrdinal} does not match expected ${afterRowOrdinal + chunk.rows.length}',
-    );
-  }
-  if (chunk.hasMore && chunk.rows.isEmpty) {
-    throw const OversqliteProtocolException(
-      'snapshot chunk response with has_more=true must include at least one row',
-    );
-  }
+  return output.toString();
 }
