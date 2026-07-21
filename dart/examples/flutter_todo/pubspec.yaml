@@ -10,7 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   path_provider: ^2.1.5
-  sqlitenow_runtime: ^0.10.0
+  sqlitenow_runtime: ^0.15.0
 
 dev_dependencies:
   flutter_test:
@@ -19,8 +19,8 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^6.0.0
   sqlite3: ^3.3.1
-  sqlitenow_cli: ^0.10.0
-  sqlitenow_oversqlite: ^0.10.0
+  sqlitenow_cli: ^0.15.0
+  sqlitenow_oversqlite: ^0.15.0
 
 dependency_overrides:
   sqlitenow_runtime:

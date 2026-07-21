@@ -854,6 +854,7 @@ WHERE singleton_key = 1''');
     String sourceId,
   ) async {
     final capabilities = await _remoteApiOrThrow().fetchCapabilities(sourceId);
+    _requireMatchingSyncTableContract(capabilities, _requireValidatedConfig());
     negotiateSnapshotLimits(capabilities, _config);
     if (!capabilities.connectLifecycleSupported) {
       throw const ConnectLifecycleUnsupportedException(
@@ -862,6 +863,84 @@ WHERE singleton_key = 1''');
     }
     _snapshotCapabilities = capabilities;
     return capabilities;
+  }
+
+  void _requireMatchingSyncTableContract(
+    CapabilitiesResponse capabilities,
+    OversqliteValidatedConfig validated,
+  ) {
+    final server = <({String schema, String table}), List<String>>{};
+    for (final spec in capabilities.registeredTableSpecs) {
+      if (spec.schema.trim().isEmpty ||
+          spec.table.trim().isEmpty ||
+          spec.syncKeyColumns.length != 1 ||
+          spec.syncKeyColumns.any((key) => key.trim().isEmpty) ||
+          spec.syncKeyColumns.toSet().length != spec.syncKeyColumns.length) {
+        throw const SnapshotCapabilitiesException(
+          'capabilities registered_table_specs failed semantic validation',
+        );
+      }
+      final tableKey = (schema: spec.schema, table: spec.table);
+      if (server.containsKey(tableKey)) {
+        throw const SnapshotCapabilitiesException(
+          'capabilities registered_table_specs failed semantic validation',
+        );
+      }
+      server[tableKey] = List.unmodifiable(spec.syncKeyColumns);
+    }
+
+    final client = <({String schema, String table}), List<String>>{
+      for (final table in validated.tables)
+        (schema: validated.schema, table: table.tableName.toLowerCase()): [
+          table.syncKeyColumnName.toLowerCase(),
+        ],
+    };
+    final serverOnly =
+        server.keys
+            .where((table) => !client.containsKey(table))
+            .map((table) => '${table.schema}.${table.table}')
+            .toList()
+          ..sort();
+    final clientOnly =
+        client.keys
+            .where((table) => !server.containsKey(table))
+            .map((table) => '${table.schema}.${table.table}')
+            .toList()
+          ..sort();
+    final keyMismatches = <SyncKeyContractMismatch>[];
+    for (final table in server.keys.where(client.containsKey)) {
+      final clientKeys = client[table]!;
+      final serverKeys = server[table]!;
+      if (!_orderedStringListsEqual(clientKeys, serverKeys)) {
+        keyMismatches.add(
+          SyncKeyContractMismatch(
+            qualifiedTable: '${table.schema}.${table.table}',
+            clientSyncKeyColumns: clientKeys,
+            serverSyncKeyColumns: serverKeys,
+          ),
+        );
+      }
+    }
+    keyMismatches.sort(
+      (left, right) => left.qualifiedTable.compareTo(right.qualifiedTable),
+    );
+    if (serverOnly.isNotEmpty ||
+        clientOnly.isNotEmpty ||
+        keyMismatches.isNotEmpty) {
+      throw SyncTableContractMismatchException(
+        serverOnlyTables: serverOnly,
+        clientOnlyTables: clientOnly,
+        syncKeyMismatches: keyMismatches,
+      );
+    }
+  }
+
+  bool _orderedStringListsEqual(List<String> left, List<String> right) {
+    if (left.length != right.length) return false;
+    for (var index = 0; index < left.length; index++) {
+      if (left[index] != right[index]) return false;
+    }
+    return true;
   }
 
   CapabilitiesResponse _requireSnapshotCapabilities() {

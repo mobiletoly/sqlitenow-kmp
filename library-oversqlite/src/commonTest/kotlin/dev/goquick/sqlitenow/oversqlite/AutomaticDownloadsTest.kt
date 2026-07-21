@@ -118,6 +118,47 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
+    fun automaticDownloads_pollingModePropagatesTableContractMismatchWithoutRetry() = runTest {
+        val env = newTwoClientEnv()
+        try {
+            env.server.registeredTableSpecs = testRegisteredTableSpecs(
+                "users",
+                "posts",
+                "monitoring_focus",
+            )
+            val initialCapabilityAttempts = env.server.capabilitySourceIds.size
+            val initialPullAttempts = env.server.pullRequestCount
+
+            supervisorScope {
+                val worker = async(Dispatchers.Default) {
+                    env.follower.runAutomaticDownloads(
+                        OversqliteAutomaticDownloadConfig(
+                            automaticDownloadIntervalMillis = 25,
+                            bundleChangeWatchReconnectMinMillis = 10,
+                            bundleChangeWatchReconnectMaxMillis = 20,
+                        ),
+                    )
+                }
+
+                val mismatch = assertFailsWith<SyncTableContractMismatchException> {
+                    withContext(Dispatchers.Default) {
+                        withTimeout(5_000) {
+                            worker.await()
+                        }
+                    }
+                }
+                assertEquals(listOf("main.monitoring_focus"), mismatch.serverOnlyTables)
+            }
+
+            assertEquals(initialCapabilityAttempts + 1, env.server.capabilitySourceIds.size)
+            assertEquals(initialPullAttempts, env.server.pullRequestCount)
+            assertTrue(env.server.watchAfterBundleSeqs.isEmpty())
+        } finally {
+            env.close()
+        }
+    }
+
+    @Test
     fun automaticDownloads_pauseSuppressesBackgroundPullsOnly() = runTest {
         val env = newTwoClientEnv()
         try {

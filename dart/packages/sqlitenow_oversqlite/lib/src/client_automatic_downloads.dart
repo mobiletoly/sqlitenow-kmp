@@ -24,9 +24,10 @@ Future<void> _runAutomaticDownloads(
         await _runAutomaticPollingIteration(client, handle);
         backoff.reset();
       }
-    } on ProtocolVersionMismatchException {
-      rethrow;
-    } catch (_) {
+    } catch (error) {
+      if (_isTerminalAutomaticDownloadCompatibilityFailure(error)) {
+        rethrow;
+      }
       await _runAutomaticPullToStable(
         client,
         handle,
@@ -57,9 +58,10 @@ Future<bool> _shouldUseBundleChangeWatch(
       block: () => client._fetchCapabilitiesInternal(state.sourceId),
     );
     return capabilities.bundleChangeWatchSupported;
-  } on ProtocolVersionMismatchException {
-    rethrow;
-  } catch (_) {
+  } catch (error) {
+    if (_isTerminalAutomaticDownloadCompatibilityFailure(error)) {
+      rethrow;
+    }
     return false;
   }
 }
@@ -161,7 +163,7 @@ Future<bool> _runAutomaticPullToStable(
     );
     return true;
   } catch (error) {
-    if (error is ProtocolVersionMismatchException) {
+    if (_isTerminalAutomaticDownloadCompatibilityFailure(error)) {
       rethrow;
     }
     if (error is SyncOperationInProgressException ||
@@ -173,6 +175,10 @@ Future<bool> _runAutomaticPullToStable(
     return false;
   }
 }
+
+bool _isTerminalAutomaticDownloadCompatibilityFailure(Object error) =>
+    error is ProtocolVersionMismatchException ||
+    error is SyncTableContractMismatchException;
 
 Future<bool> _automaticDownloadDelay(
   _DefaultAutomaticDownloadsHandle handle,

@@ -1,5 +1,125 @@
 {
   "formatVersion": 1,
+  "contractCases": [
+    {
+      "name": "exact-match",
+      "localSpecs": [
+        {"schema": "business", "table": "users", "sync_key_columns": ["id"]},
+        {"schema": "business", "table": "projects", "sync_key_columns": ["project_id"]}
+      ],
+      "advertised": [
+        {"schema": "business", "table": "users", "sync_key_columns": ["id"]},
+        {"schema": "business", "table": "projects", "sync_key_columns": ["project_id"]}
+      ],
+      "expected": {"kind": "match"}
+    },
+    {
+      "name": "reordered-match",
+      "localSpecs": [
+        {"schema": "business", "table": "projects", "sync_key_columns": ["project_id"]},
+        {"schema": "business", "table": "users", "sync_key_columns": ["id"]}
+      ],
+      "advertised": [
+        {"schema": "business", "table": "users", "sync_key_columns": ["id"]},
+        {"schema": "business", "table": "projects", "sync_key_columns": ["project_id"]}
+      ],
+      "expected": {"kind": "match"}
+    },
+    {
+      "name": "server-only",
+      "localSpecs": [
+        {"schema": "business", "table": "users", "sync_key_columns": ["id"]}
+      ],
+      "advertised": [
+        {"schema": "business", "table": "monitoring_focus", "sync_key_columns": ["id"]},
+        {"schema": "business", "table": "users", "sync_key_columns": ["id"]}
+      ],
+      "expected": {
+        "kind": "mismatch",
+        "serverOnlyTables": ["business.monitoring_focus"],
+        "clientOnlyTables": [],
+        "syncKeyMismatches": []
+      }
+    },
+    {
+      "name": "client-only",
+      "localSpecs": [
+        {"schema": "business", "table": "projects", "sync_key_columns": ["project_id"]},
+        {"schema": "business", "table": "users", "sync_key_columns": ["id"]}
+      ],
+      "advertised": [
+        {"schema": "business", "table": "users", "sync_key_columns": ["id"]}
+      ],
+      "expected": {
+        "kind": "mismatch",
+        "serverOnlyTables": [],
+        "clientOnlyTables": ["business.projects"],
+        "syncKeyMismatches": []
+      }
+    },
+    {
+      "name": "key-mismatch",
+      "localSpecs": [
+        {"schema": "business", "table": "users", "sync_key_columns": ["id"]}
+      ],
+      "advertised": [
+        {"schema": "business", "table": "users", "sync_key_columns": ["user_id"]}
+      ],
+      "expected": {
+        "kind": "mismatch",
+        "serverOnlyTables": [],
+        "clientOnlyTables": [],
+        "syncKeyMismatches": [
+          {
+            "qualifiedTable": "business.users",
+            "clientSyncKeyColumns": ["id"],
+            "serverSyncKeyColumns": ["user_id"]
+          }
+        ]
+      }
+    },
+    {
+      "name": "schema-mismatch",
+      "localSpecs": [
+        {"schema": "business", "table": "users", "sync_key_columns": ["id"]}
+      ],
+      "advertised": [
+        {"schema": "public", "table": "users", "sync_key_columns": ["id"]}
+      ],
+      "expected": {
+        "kind": "mismatch",
+        "serverOnlyTables": ["public.users"],
+        "clientOnlyTables": ["business.users"],
+        "syncKeyMismatches": []
+      }
+    },
+    {
+      "name": "missing-metadata",
+      "localSpecs": [
+        {"schema": "business", "table": "users", "sync_key_columns": ["id"]}
+      ],
+      "expected": {"kind": "invalid"}
+    },
+    {
+      "name": "null-metadata",
+      "localSpecs": [
+        {"schema": "business", "table": "users", "sync_key_columns": ["id"]}
+      ],
+      "advertised": null,
+      "expected": {"kind": "invalid"}
+    },
+    {
+      "name": "duplicate-spec",
+      "localSpecs": [
+        {"schema": "business", "table": "users", "sync_key_columns": ["id"]}
+      ],
+      "advertised": [
+        {"schema": "business", "table": "users", "sync_key_columns": ["id"]},
+        {"schema": "business", "table": "users", "sync_key_columns": ["id"]}
+      ],
+      "expected": {"kind": "invalid"}
+    }
+  ],
   "cases": [
     {
       "name": "unsupported-capability",
@@ -8,6 +128,9 @@
         "body": {
           "protocol_version":"v1",
           "schema_version": 1,
+          "registered_table_specs": [
+            {"schema": "main", "table": "users", "sync_key_columns": ["id"]}
+          ],
           "features": {
             "connect_lifecycle": false
           },
@@ -41,6 +164,9 @@
         "body": {
           "protocol_version":"v1",
           "schema_version": 1,
+          "registered_table_specs": [
+            {"schema": "main", "table": "users", "sync_key_columns": ["id"]}
+          ],
           "features": {
             "connect_lifecycle": true
           },
@@ -82,6 +208,9 @@
         "body": {
           "protocol_version":"v1",
           "schema_version": 1,
+          "registered_table_specs": [
+            {"schema": "main", "table": "users", "sync_key_columns": ["id"]}
+          ],
           "features": {
             "connect_lifecycle": true
           },
@@ -135,6 +264,9 @@
         "body": {
           "protocol_version":"v1",
           "schema_version": 1,
+          "registered_table_specs": [
+            {"schema": "main", "table": "users", "sync_key_columns": ["id"]}
+          ],
           "features": {
             "connect_lifecycle": true
           },
@@ -178,6 +310,9 @@
         "body": {
           "protocol_version":"v1",
           "schema_version": 1,
+          "registered_table_specs": [
+            {"schema": "main", "table": "users", "sync_key_columns": ["id"]}
+          ],
           "features": {
             "connect_lifecycle": true
           },

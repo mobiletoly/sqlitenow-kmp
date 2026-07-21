@@ -106,6 +106,14 @@ Call `open()` on each application launch. Call `attach(userId)` after authentica
 the current account, then use `sync()` whenever the application should exchange local and remote
 changes. `AttachRetryLater` indicates that the remote attachment should be retried later.
 
+Every remote capabilities check compares the generated local table/key contract with the server's
+required `registered_table_specs`. Initial and remote attach fail before connect or snapshot work
+when the contracts differ. A same-user durable attach resume remains network-free and validates on
+the next operation that already contacts the server. `SyncTableContractMismatchException` exposes
+sorted `serverOnlyTables`, `clientOnlyTables`, and `syncKeyMismatches`; automatic downloads treat it
+as terminal. This check covers exact table and ordered sync-key compatibility, not wire-profile or
+projection negotiation.
+
 Your application owns authentication. `IoOversqliteHttpClient` sends the headers you provide along
 with the Oversqlite source identity managed by the local database.
 

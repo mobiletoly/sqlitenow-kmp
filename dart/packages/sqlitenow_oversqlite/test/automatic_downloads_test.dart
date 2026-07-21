@@ -96,6 +96,39 @@ void main() {
     },
   );
 
+  test(
+    'automatic downloads propagate table contract mismatch without retry',
+    () async {
+      final env = await _newEnv();
+      addTearDown(env.close);
+      env.server.registeredTableSpecs = phase4RegisteredTableSpecs([
+        'monitoring_focus',
+        'users',
+      ]);
+      final initialCapabilityAttempts = env.server.capabilitySourceIds.length;
+      final initialPullAttempts = env.server.pullRequestCount;
+
+      final handle = env.client.startAutomaticDownloads();
+      await expectLater(
+        handle.done,
+        throwsA(
+          isA<SyncTableContractMismatchException>().having(
+            (error) => error.serverOnlyTables,
+            'serverOnlyTables',
+            ['main.monitoring_focus'],
+          ),
+        ),
+      );
+
+      expect(
+        env.server.capabilitySourceIds.length,
+        initialCapabilityAttempts + 1,
+      );
+      expect(env.server.pullRequestCount, initialPullAttempts);
+      expect(env.server.watchAfterBundleSeqs, isEmpty);
+    },
+  );
+
   test('automatic downloads pause suppresses background pulls only', () async {
     final env = await _newEnv();
     addTearDown(env.close);
@@ -577,6 +610,7 @@ final class _WatchSyncServer
   final _watchResponses = <_WatchResponse>[];
   var watchCloseCount = 0;
   var protocolVersion = 'v1';
+  var registeredTableSpecs = phase4RegisteredTableSpecs(['users']);
   var historyPrunedOnPull = false;
   var snapshotCapacityOnCreate = false;
   var pullRequestCount = 0;
@@ -632,6 +666,7 @@ final class _WatchSyncServer
       return _json(
         phase4CapabilitiesResponse(
           protocolVersion: protocolVersion,
+          registeredTableSpecs: registeredTableSpecs,
           features: {
             'connect_lifecycle': true,
             if (bundleChangeWatchSupported) 'bundle_change_watch': true,

@@ -333,7 +333,11 @@ final class _InvalidationServer implements OversqliteHttpClient {
   }) async {
     _sourceId = sourceId;
     if (path == 'sync/capabilities') {
-      return _json(phase4CapabilitiesResponse());
+      return _json(
+        phase4CapabilitiesResponse(
+          registeredTableSpecs: phase4RegisteredTableSpecs(['users', 'posts']),
+        ),
+      );
     }
     if (path.startsWith('sync/pull')) {
       if (historyPrunedOnPull) {

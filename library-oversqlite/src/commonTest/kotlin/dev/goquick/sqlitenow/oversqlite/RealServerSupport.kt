@@ -163,10 +163,14 @@ internal open class RealServerSupport : CrossTargetSyncTestSupport() {
             )
             """.trimIndent(),
         )
+        createBusinessRichSupplementTables(db)
     }
 
     protected suspend fun createBusinessRichSchemaTables(db: SafeSQLiteConnection) {
         createBusinessSubsetTables(db)
+    }
+
+    private suspend fun createBusinessRichSupplementTables(db: SafeSQLiteConnection) {
         db.execSQL(
             """
             CREATE TABLE categories (
@@ -235,10 +239,7 @@ internal open class RealServerSupport : CrossTargetSyncTestSupport() {
     protected suspend fun bootstrapManagedSourceId(
         db: SafeSQLiteConnection,
         baseUrl: String,
-        syncTables: List<SyncTable> = listOf(
-            SyncTable("users", syncKeyColumnName = "id"),
-            SyncTable("posts", syncKeyColumnName = "id"),
-        ),
+        syncTables: List<SyncTable> = businessRichSyncTables,
     ): String {
         val http = newRealServerHttpClient(baseUrl)
         val client = newRealServerClient(db, http, syncTables = syncTables)
@@ -375,10 +376,7 @@ internal open class RealServerSupport : CrossTargetSyncTestSupport() {
     protected fun newRealServerClient(
         db: SafeSQLiteConnection,
         http: HttpClient,
-        syncTables: List<SyncTable> = listOf(
-            SyncTable("users", syncKeyColumnName = "id"),
-            SyncTable("posts", syncKeyColumnName = "id"),
-        ),
+        syncTables: List<SyncTable> = businessRichSyncTables,
         uploadLimit: Int = 8,
         downloadLimit: Int = 8,
         snapshotChunkRows: Int = 1000,

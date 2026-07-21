@@ -42,6 +42,7 @@ internal class OversqliteDownloadWorkflow(
     private val db: SafeSQLiteConnection,
     private val config: OversqliteConfig,
     private val remoteApi: OversqliteRemoteApi,
+    private val fetchCapabilities: suspend (String, String) -> CapabilitiesResponse,
     private val sourceStateStore: OversqliteSourceStateStore,
     private val outboxStateStore: OversqliteOutboxStateStore,
     private val attachmentStateStore: OversqliteAttachmentStateStore,
@@ -111,7 +112,10 @@ internal class OversqliteDownloadWorkflow(
             "snapshot diagnostics scope is missing for rebuild"
         }
         diagnostics.markRestoreAttempt()
-        val limits = negotiateSnapshotLimits(remoteApi.fetchCapabilities(state.sourceId), config)
+        val limits = negotiateSnapshotLimits(
+            fetchCapabilities(state.sourceId, "snapshot rebuild capability negotiation"),
+            config,
+        )
         if (rotatedSourceId == null && outboxMode == SnapshotRebuildOutboxMode.CLEAR_ALL) {
             markCheckpointRecoveryRequired("explicit_rebuild")
         }

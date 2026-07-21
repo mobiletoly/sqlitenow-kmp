@@ -27,6 +27,35 @@ class ProtocolVersionMismatchException(
     override val category: OversqliteErrorCategory = OversqliteErrorCategory.PROTOCOL
 }
 
+/** One ordered sync-key disagreement for a table present in both local and server contracts. */
+data class SyncKeyContractMismatch(
+    val qualifiedTable: String,
+    val clientSyncKeyColumns: List<String>,
+    val serverSyncKeyColumns: List<String>,
+)
+
+/** Thrown before sync work when the server advertises a different table/key contract. */
+class SyncTableContractMismatchException(
+    serverOnlyTables: List<String>,
+    clientOnlyTables: List<String>,
+    syncKeyMismatches: List<SyncKeyContractMismatch>,
+) : RuntimeException(
+    syncTableContractMismatchMessage(serverOnlyTables, clientOnlyTables, syncKeyMismatches),
+), OversqliteCategorizedException {
+    val serverOnlyTables: List<String> = serverOnlyTables.distinct().sorted()
+    val clientOnlyTables: List<String> = clientOnlyTables.distinct().sorted()
+    val syncKeyMismatches: List<SyncKeyContractMismatch> = syncKeyMismatches
+        .map { mismatch ->
+            mismatch.copy(
+                clientSyncKeyColumns = mismatch.clientSyncKeyColumns.toList(),
+                serverSyncKeyColumns = mismatch.serverSyncKeyColumns.toList(),
+            )
+        }
+        .sortedBy(SyncKeyContractMismatch::qualifiedTable)
+
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.PROTOCOL
+}
+
 internal fun CapabilitiesResponse.requireSupportedProtocol(): CapabilitiesResponse {
     if (protocolVersion != OVERSQLITE_PROTOCOL_VERSION) {
         throw ProtocolVersionMismatchException(actual = "")
@@ -139,6 +168,41 @@ internal fun safeSnapshotDiagnosticIdentifier(value: String): String =
     } else {
         "<redacted>"
     }
+
+internal fun safeSyncTableDiagnosticIdentifier(schema: String, table: String): String =
+    "${safeSnapshotDiagnosticIdentifier(schema)}.${safeSnapshotDiagnosticIdentifier(table)}"
+
+private fun syncTableContractMismatchMessage(
+    serverOnlyTables: List<String>,
+    clientOnlyTables: List<String>,
+    syncKeyMismatches: List<SyncKeyContractMismatch>,
+): String {
+    val safeServerOnly = serverOnlyTables.distinct().sorted().map(::safeQualifiedTableDiagnosticIdentifier)
+    val safeClientOnly = clientOnlyTables.distinct().sorted().map(::safeQualifiedTableDiagnosticIdentifier)
+    val safeKeyMismatches = syncKeyMismatches
+        .sortedBy(SyncKeyContractMismatch::qualifiedTable)
+        .map { mismatch ->
+            val clientKeys = mismatch.clientSyncKeyColumns.map(::safeSnapshotDiagnosticIdentifier)
+            val serverKeys = mismatch.serverSyncKeyColumns.map(::safeSnapshotDiagnosticIdentifier)
+            "${safeQualifiedTableDiagnosticIdentifier(mismatch.qualifiedTable)}" +
+                "(client=$clientKeys,server=$serverKeys)"
+        }
+    return "oversqlite sync table contract mismatch: " +
+        "server_only=$safeServerOnly, client_only=$safeClientOnly, " +
+        "sync_key_mismatches=$safeKeyMismatches"
+}
+
+private fun safeQualifiedTableDiagnosticIdentifier(value: String): String {
+    val parts = value.split('.')
+    return if (parts.size == 2) {
+        safeSyncTableDiagnosticIdentifier(parts[0], parts[1])
+    } else {
+        "<redacted>.<redacted>"
+    }
+}
+
+internal fun Throwable.isTerminalSyncCompatibilityFailure(): Boolean =
+    this is ProtocolVersionMismatchException || this is SyncTableContractMismatchException
 
 /** Thrown before destructive work when one staged row exceeds the configured live-page byte budget. */
 class SnapshotApplyRowTooLargeException(

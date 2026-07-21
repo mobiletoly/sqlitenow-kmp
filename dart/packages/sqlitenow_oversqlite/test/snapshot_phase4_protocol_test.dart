@@ -137,7 +137,9 @@ void main() {
       'max_concurrent_snapshot_chunk_requests',
     };
     for (final field in required) {
-      final json = phase4CapabilitiesResponse();
+      final json = phase4CapabilitiesResponse(
+        registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
+      );
       final limits = (json['bundle_limits']! as Map).cast<String, Object?>();
       limits.remove(field);
       expect(
@@ -152,7 +154,9 @@ void main() {
       'features',
       'bundle_limits',
     ]) {
-      final json = phase4CapabilitiesResponse()..remove(field);
+      final json = phase4CapabilitiesResponse(
+        registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
+      )..remove(field);
       expect(
         () => CapabilitiesResponse.fromJson(json),
         throwsA(isA<SnapshotCapabilitiesException>()),
@@ -168,7 +172,9 @@ void main() {
         'snapshot_materialization_batch_bytes',
       },
     ]) {
-      final json = phase4CapabilitiesResponse();
+      final json = phase4CapabilitiesResponse(
+        registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
+      );
       final limits = (json['bundle_limits']! as Map).cast<String, Object?>();
       for (final field in omitted) {
         limits.remove(field);
@@ -213,7 +219,9 @@ void main() {
         1.5,
         _jsonNumber('9223372036854775808'),
       ]) {
-        final json = phase4CapabilitiesResponse();
+        final json = phase4CapabilitiesResponse(
+          registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
+        );
         json['bundle_limits'] = {
           ...(json['bundle_limits']! as Map).cast<String, Object?>(),
           field: value,
@@ -308,7 +316,9 @@ void main() {
     const maxInt64 = 0x7fffffffffffffff;
 
     for (final value in [minInt64, maxInt64]) {
-      final json = phase4CapabilitiesResponse();
+      final json = phase4CapabilitiesResponse(
+        registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
+      );
       json['schema_version'] = value;
       expect(CapabilitiesResponse.fromJson(json).schemaVersion, value);
 
@@ -325,7 +335,9 @@ void main() {
       _jsonNumber('9223372036854775808'),
     ]) {
       for (final field in ['schema_version', 'max_rows_per_bundle']) {
-        final json = phase4CapabilitiesResponse();
+        final json = phase4CapabilitiesResponse(
+          registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
+        );
         if (field == 'schema_version') {
           json[field] = value;
         } else {
@@ -342,7 +354,9 @@ void main() {
       }
     }
     for (final value in <Object?>[null, '1', 1.5]) {
-      final json = phase4CapabilitiesResponse();
+      final json = phase4CapabilitiesResponse(
+        registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
+      );
       json['schema_version'] = value;
       expect(
         () => CapabilitiesResponse.fromJson(json),
@@ -667,7 +681,10 @@ CapabilitiesResponse _capabilities({
   String protocolVersion = 'v1',
   Map<String, Object?> limits = const {},
 }) {
-  final json = phase4CapabilitiesResponse(protocolVersion: protocolVersion);
+  final json = phase4CapabilitiesResponse(
+    protocolVersion: protocolVersion,
+    registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
+  );
   json['bundle_limits'] = {
     ...(json['bundle_limits']! as Map).cast<String, Object?>(),
     ...limits,

@@ -88,6 +88,17 @@ await syncClient.sync();
 `AttachRetryLater` as a lifecycle response and retry later rather than as a
 local database failure.
 
+Initial and remote attachment validates the server's canonical
+`registered_table_specs` before connect or snapshot work. A same-user durable
+resume remains network-free, and the next operation that contacts the server
+validates it. If tables or ordered sync keys differ,
+`SyncTableContractMismatchException` reports sorted `serverOnlyTables`,
+`clientOnlyTables`, and `syncKeyMismatches` before any sync mutation. Automatic
+downloads terminate on this incompatibility instead of retrying forever.
+
+This is exact table/key compatibility checking, not wire-profile or projection
+negotiation.
+
 ## Automatic Downloads
 
 Automatic downloads are optional and default-off. They download authoritative

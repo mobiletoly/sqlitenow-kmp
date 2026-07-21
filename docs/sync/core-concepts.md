@@ -71,6 +71,24 @@ It never talks to the server and never attaches an account.
 
 Call it whenever an authenticated session exists, not only on the first sign-in gesture.
 
+For a new or remote attachment, the client first checks `/sync/capabilities` and rejects a different
+advertised sync-table contract before `/sync/connect` or snapshot work. A same-user durable resume
+is deliberately network-free; its first later remote operation performs the same check.
+
+### Advertised Sync-Table Contract
+
+Every capabilities response must include `registered_table_specs`. SQLiteNow treats it as the
+canonical server table contract and compares it with the already-validated local configuration:
+
+- table order does not matter
+- logical schema, managed table names, and ordered sync-key columns must match exactly
+- missing, null, blank, duplicate, or malformed metadata is an invalid capabilities response
+- a valid difference throws `SyncTableContractMismatchException` with sorted server-only,
+  client-only, and sync-key mismatch diagnostics
+
+This is fail-fast table/key compatibility checking. It does not negotiate projections, payload
+columns, or a wire profile. Snapshot table checks remain in place as defense in depth.
+
 ### Automatic Downloads
 
 Automatic downloads are an optional attached-session worker. They are not part of `open()` or

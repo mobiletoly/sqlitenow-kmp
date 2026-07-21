@@ -1,6 +1,7 @@
 package dev.goquick.sqlitenow.oversqlite.platform
 
 import dev.goquick.sqlitenow.oversqlite.BundleCapabilitiesLimits
+import dev.goquick.sqlitenow.oversqlite.RegisteredTableSpec
 import kotlinx.serialization.json.Json
 
 internal val testJson = Json { ignoreUnknownKeys = true }
@@ -28,3 +29,8 @@ internal fun testBundleCapabilitiesLimits(): BundleCapabilitiesLimits = BundleCa
     maxConcurrentSnapshotChunkRequests = 8,
     initializationLeaseTtlSeconds = 900,
 )
+
+internal fun testRegisteredTableSpecs(vararg tables: String): List<RegisteredTableSpec> =
+    tables.map { table ->
+        RegisteredTableSpec(schema = "main", table = table, syncKeyColumns = listOf("id"))
+    }

@@ -382,7 +382,11 @@ final class _FailingRemoteAttachServer implements OversqliteHttpClient {
     required OversqliteHttpRequestBounds bounds,
   }) async {
     if (path == 'sync/capabilities') {
-      return _json(phase4CapabilitiesResponse());
+      return _json(
+        phase4CapabilitiesResponse(
+          registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
+        ),
+      );
     }
     return _json({
       'error': 'temporary',

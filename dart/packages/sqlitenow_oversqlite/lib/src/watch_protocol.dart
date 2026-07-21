@@ -124,12 +124,14 @@ final class CapabilitiesResponse {
   const CapabilitiesResponse({
     required this.protocolVersion,
     required this.schemaVersion,
+    required this.registeredTableSpecs,
     required this.features,
     required this.bundleLimits,
   });
 
   final String protocolVersion;
   final int schemaVersion;
+  final List<RegisteredTableSpec> registeredTableSpecs;
   final Map<String, bool> features;
   final BundleCapabilitiesLimits bundleLimits;
 
@@ -140,9 +142,11 @@ final class CapabilitiesResponse {
 
   factory CapabilitiesResponse.fromJson(Map<String, Object?> json) {
     final protocolVersion = json['protocol_version'];
+    final rawRegisteredTableSpecs = json['registered_table_specs'];
     final rawFeatures = json['features'];
     final rawLimits = json['bundle_limits'];
     if (protocolVersion is! String ||
+        rawRegisteredTableSpecs is! List ||
         rawFeatures is! Map ||
         rawLimits is! Map) {
       throw const SnapshotCapabilitiesException(
@@ -157,6 +161,16 @@ final class CapabilitiesResponse {
         required: true,
         error: SnapshotCapabilitiesException.new,
       ),
+      registeredTableSpecs: List.unmodifiable(
+        rawRegisteredTableSpecs.map((raw) {
+          if (raw is! Map) {
+            throw const SnapshotCapabilitiesException(
+              'capabilities registered_table_specs must contain objects',
+            );
+          }
+          return RegisteredTableSpec.fromJson(raw.cast<String, Object?>());
+        }),
+      ),
       features: {
         for (final entry in rawFeatures.entries)
           entry.key.toString(): entry.value == true,
@@ -164,6 +178,43 @@ final class CapabilitiesResponse {
       bundleLimits: BundleCapabilitiesLimits.fromJson(
         rawLimits.cast<String, Object?>(),
       ),
+    );
+  }
+}
+
+final class RegisteredTableSpec {
+  RegisteredTableSpec({
+    required this.schema,
+    required this.table,
+    required List<String> syncKeyColumns,
+  }) : syncKeyColumns = List.unmodifiable(syncKeyColumns);
+
+  final String schema;
+  final String table;
+  final List<String> syncKeyColumns;
+
+  factory RegisteredTableSpec.fromJson(Map<String, Object?> json) {
+    final schema = json['schema'];
+    final table = json['table'];
+    final rawSyncKeyColumns = json['sync_key_columns'];
+    if (schema is! String || table is! String || rawSyncKeyColumns is! List) {
+      throw const SnapshotCapabilitiesException(
+        'capabilities registered table spec is missing required fields',
+      );
+    }
+    final syncKeyColumns = <String>[];
+    for (final value in rawSyncKeyColumns) {
+      if (value is! String) {
+        throw const SnapshotCapabilitiesException(
+          'capabilities sync_key_columns must contain strings',
+        );
+      }
+      syncKeyColumns.add(value);
+    }
+    return RegisteredTableSpec(
+      schema: schema,
+      table: table,
+      syncKeyColumns: syncKeyColumns,
     );
   }
 }

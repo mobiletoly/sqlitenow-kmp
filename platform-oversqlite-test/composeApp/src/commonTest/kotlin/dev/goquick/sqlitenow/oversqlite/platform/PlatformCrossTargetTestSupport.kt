@@ -192,6 +192,7 @@ internal open class PlatformCrossTargetTestSupport {
                         CapabilitiesResponse(
                             protocolVersion = "v1",
                             schemaVersion = 1,
+                            registeredTableSpecs = testRegisteredTableSpecs("users", "posts"),
                             features = mapOf("connect_lifecycle" to true),
                             bundleLimits = testBundleCapabilitiesLimits(),
                         ),

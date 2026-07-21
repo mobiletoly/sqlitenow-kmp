@@ -18,6 +18,75 @@ final class ProtocolVersionMismatchException implements Exception {
       'oversqlite protocol version mismatch: expected "$expected", actual "$actual"';
 }
 
+final class SyncKeyContractMismatch {
+  SyncKeyContractMismatch({
+    required this.qualifiedTable,
+    required List<String> clientSyncKeyColumns,
+    required List<String> serverSyncKeyColumns,
+  }) : clientSyncKeyColumns = List.unmodifiable(clientSyncKeyColumns),
+       serverSyncKeyColumns = List.unmodifiable(serverSyncKeyColumns);
+
+  final String qualifiedTable;
+  final List<String> clientSyncKeyColumns;
+  final List<String> serverSyncKeyColumns;
+}
+
+final class SyncTableContractMismatchException implements Exception {
+  SyncTableContractMismatchException({
+    required Iterable<String> serverOnlyTables,
+    required Iterable<String> clientOnlyTables,
+    required Iterable<SyncKeyContractMismatch> syncKeyMismatches,
+  }) : serverOnlyTables = List.unmodifiable(
+         serverOnlyTables.toSet().toList()..sort(),
+       ),
+       clientOnlyTables = List.unmodifiable(
+         clientOnlyTables.toSet().toList()..sort(),
+       ),
+       syncKeyMismatches = List.unmodifiable(
+         syncKeyMismatches.toList()..sort(
+           (left, right) => left.qualifiedTable.compareTo(right.qualifiedTable),
+         ),
+       );
+
+  final List<String> serverOnlyTables;
+  final List<String> clientOnlyTables;
+  final List<SyncKeyContractMismatch> syncKeyMismatches;
+
+  @override
+  String toString() {
+    final safeServerOnly = serverOnlyTables
+        .map(_safeQualifiedTableDiagnosticIdentifier)
+        .toList();
+    final safeClientOnly = clientOnlyTables
+        .map(_safeQualifiedTableDiagnosticIdentifier)
+        .toList();
+    final safeKeyMismatches = syncKeyMismatches.map((mismatch) {
+      final clientKeys = mismatch.clientSyncKeyColumns
+          .map(safeSnapshotDiagnosticIdentifier)
+          .toList();
+      final serverKeys = mismatch.serverSyncKeyColumns
+          .map(safeSnapshotDiagnosticIdentifier)
+          .toList();
+      return '${_safeQualifiedTableDiagnosticIdentifier(mismatch.qualifiedTable)}'
+          '(client=$clientKeys,server=$serverKeys)';
+    }).toList();
+    return 'oversqlite sync table contract mismatch: '
+        'server_only=$safeServerOnly, client_only=$safeClientOnly, '
+        'sync_key_mismatches=$safeKeyMismatches';
+  }
+}
+
+String _safeQualifiedTableDiagnosticIdentifier(String value) {
+  final parts = value.split('.');
+  if (parts.length != 2) return '<redacted>.<redacted>';
+  return '${safeSnapshotDiagnosticIdentifier(parts[0])}.'
+      '${safeSnapshotDiagnosticIdentifier(parts[1])}';
+}
+
+String safeSyncTableDiagnosticIdentifier(String schema, String table) =>
+    '${safeSnapshotDiagnosticIdentifier(schema)}.'
+    '${safeSnapshotDiagnosticIdentifier(table)}';
+
 final class OversqliteProtocolException implements Exception {
   const OversqliteProtocolException(this.message);
 

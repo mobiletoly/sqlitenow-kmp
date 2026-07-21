@@ -681,9 +681,9 @@ class AndroidMockWebServerParityTest {
             client.open().getOrThrow()
             val sourceId = client.sourceInfo().getOrThrow().currentSourceId
 
-            enqueueCapabilities(server)
+            enqueueCapabilities(server, "files")
             enqueueInitializeEmptyConnect(server)
-            enqueueCapabilities(server)
+            enqueueCapabilities(server, "files")
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -830,7 +830,7 @@ class AndroidMockWebServerParityTest {
             .build()
     }
 
-    private fun enqueueCapabilities(server: MockWebServer) {
+    private fun enqueueCapabilities(server: MockWebServer, table: String = "users") {
         server.enqueue(
             jsonMockResponse(
                 testJson.encodeToString(
@@ -838,6 +838,7 @@ class AndroidMockWebServerParityTest {
                     CapabilitiesResponse(
                         protocolVersion = "v1",
                         schemaVersion = 1,
+                        registeredTableSpecs = testRegisteredTableSpecs(table),
                         features = mapOf("connect_lifecycle" to true),
                         bundleLimits = testBundleCapabilitiesLimits(),
                     ),

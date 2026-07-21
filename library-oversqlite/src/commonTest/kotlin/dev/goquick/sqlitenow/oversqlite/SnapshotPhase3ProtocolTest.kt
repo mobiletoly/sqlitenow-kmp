@@ -46,6 +46,7 @@ class SnapshotPhase3ProtocolTest {
             CapabilitiesResponse(
                 protocolVersion = "v1",
                 schemaVersion = 1,
+                registeredTableSpecs = testRegisteredTableSpecs("users"),
                 features = emptyMap(),
                 bundleLimits = testBundleCapabilitiesLimits(),
             ),
@@ -97,6 +98,7 @@ class SnapshotPhase3ProtocolTest {
             CapabilitiesResponse(
                 protocolVersion = "v1",
                 schemaVersion = 1,
+                registeredTableSpecs = testRegisteredTableSpecs("users"),
                 features = emptyMap(),
                 bundleLimits = testBundleCapabilitiesLimits(),
             ),
@@ -105,6 +107,7 @@ class SnapshotPhase3ProtocolTest {
         listOf(
             "protocol_version",
             "schema_version",
+            "registered_table_specs",
             "features",
             "bundle_limits",
             "default_rows_per_snapshot_chunk",
@@ -116,7 +119,15 @@ class SnapshotPhase3ProtocolTest {
             "max_concurrent_snapshot_chunk_requests",
         ).forEach { field ->
             val root = json.parseToJsonElement(valid).jsonObject
-            val withoutField = if (field in setOf("protocol_version", "schema_version", "features", "bundle_limits")) {
+            val withoutField = if (
+                field in setOf(
+                    "protocol_version",
+                    "schema_version",
+                    "registered_table_specs",
+                    "features",
+                    "bundle_limits",
+                )
+            ) {
                 JsonObject(root.filterKeys { it != field })
             } else {
                 JsonObject(
@@ -513,6 +524,7 @@ class SnapshotPhase3ProtocolTest {
     private fun capabilities(limits: BundleCapabilitiesLimits) = CapabilitiesResponse(
         protocolVersion = "v1",
         schemaVersion = 1,
+        registeredTableSpecs = testRegisteredTableSpecs("users"),
         features = emptyMap(),
         bundleLimits = limits,
     )

@@ -41,6 +41,15 @@ internal fun testBundleCapabilitiesLimits(): BundleCapabilitiesLimits = BundleCa
     initializationLeaseTtlSeconds = 900,
 )
 
+internal fun testRegisteredTableSpecs(vararg tables: String): List<RegisteredTableSpec> =
+    tables.map { table ->
+        RegisteredTableSpec(
+            schema = "main",
+            table = table,
+            syncKeyColumns = listOf("id"),
+        )
+    }
+
 internal fun snapshotRowWireBytes(json: Json, row: SnapshotRow): Long =
     json.encodeToString(SnapshotRow.serializer(), row).encodeToByteArray().size.toLong()
 

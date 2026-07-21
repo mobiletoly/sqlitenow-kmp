@@ -106,6 +106,7 @@ private class SnapshotMemoryFixtureServer(
                     CapabilitiesResponse(
                         protocolVersion = "v1",
                         schemaVersion = 1,
+                        registeredTableSpecs = testRegisteredTableSpecs("users"),
                         features = mapOf("connect_lifecycle" to true),
                         bundleLimits = testBundleCapabilitiesLimits(),
                     ),

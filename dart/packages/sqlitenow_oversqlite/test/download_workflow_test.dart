@@ -1299,7 +1299,11 @@ final class _SyncServer implements OversqliteHttpClient {
     _sourceId = sourceId;
     if (path == 'sync/capabilities') {
       capabilitiesRequestCount++;
-      return _json(phase4CapabilitiesResponse());
+      return _json(
+        phase4CapabilitiesResponse(
+          registeredTableSpecs: phase4RegisteredTableSpecsForConfig(config),
+        ),
+      );
     }
     if (path.startsWith('sync/pull')) {
       if (historyPrunedOnPull) {

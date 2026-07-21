@@ -236,7 +236,11 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
         for (scenario in scenarios) {
             val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
             scenario.createSchema(db)
-            withClient(db, syncTables = scenario.syncTables) { client ->
+            withClient(
+                db,
+                syncTables = scenario.syncTables,
+                registeredTableSpecs = testRegisteredTableSpecs("users"),
+            ) { client ->
                 val error = client.open().exceptionOrNull()
                 assertTrue(error != null, scenario.displayName)
                 for (fragment in scenario.expectedMessageFragments) {
@@ -1627,7 +1631,7 @@ class LifecycleContractTest : BundleClientContractTestSupport() {
     fun signOut_clearsManagedRows_forNonDeferrableFkGraph() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createActivityProgramTables(db)
-        val server = newServer()
+        val server = newServer(testRegisteredTableSpecs("activity", "daily_log", "program_item"))
         val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
         pushServer.install(server)
         server.start()

@@ -385,7 +385,10 @@ final class LifecycleFixtureServer implements OversqliteHttpClient {
               : protocolVersions.length - 1];
       _capabilityRequestCount++;
       return _json(
-        phase4CapabilitiesResponse(protocolVersion: protocolVersion),
+        phase4CapabilitiesResponse(
+          protocolVersion: protocolVersion,
+          registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
+        ),
       );
     }
     if (path.startsWith('sync/pull')) {

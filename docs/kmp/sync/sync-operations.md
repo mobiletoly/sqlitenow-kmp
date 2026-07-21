@@ -20,6 +20,10 @@ Call on every launch.
 
 Attaches or resumes the authenticated account scope. Required before connected sync operations.
 
+An initial or remote attach validates the server's advertised sync-table contract before
+`/sync/connect` or snapshot creation. Resuming the same durable attachment remains local-only and
+network-free; the next operation that already contacts the server performs the validation.
+
 ### `sourceInfo()`
 
 Returns read-only diagnostic information about the current internal source state.
@@ -55,6 +59,16 @@ preserved.
 ## Connected Sync Operations
 
 These operations require successful `open()` and `attach(userId)`.
+
+Before remote sync work, SQLiteNow compares the validated local schema, managed tables, and ordered
+sync-key columns with `registered_table_specs` from `/sync/capabilities`. Table ordering is ignored,
+but identifiers and key order must match exactly. A difference throws
+`SyncTableContractMismatchException` before connect, outbox freeze, pull, or snapshot work. Its
+sorted `serverOnlyTables`, `clientOnlyTables`, and `syncKeyMismatches` fields are safe for
+compatibility diagnostics.
+
+This check establishes table/key compatibility only. It is not wire-profile, projection, or
+per-column payload negotiation.
 
 ### `pushPending()`
 
@@ -183,3 +197,9 @@ durable for retry or operator action.
 
 The current source stream is stale or out-of-order. Ordinary sync is blocked until explicit
 `rebuild()` succeeds and oversqlite performs managed rotated recovery internally.
+
+### `SyncTableContractMismatchException`
+
+The server and client disagree about synchronized tables or their sync keys. Correct the generated
+client configuration or server registration before retrying. Automatic downloads treat this as a
+terminal compatibility failure instead of polling indefinitely.

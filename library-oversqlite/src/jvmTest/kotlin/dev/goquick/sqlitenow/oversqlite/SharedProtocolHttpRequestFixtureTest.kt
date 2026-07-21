@@ -168,6 +168,7 @@ class SharedProtocolHttpRequestFixtureTest {
                 CapabilitiesResponse(
                     protocolVersion = "v1",
                     schemaVersion = 1,
+                    registeredTableSpecs = testRegisteredTableSpecs("users"),
                     features = mapOf("connect_lifecycle" to true, "bundle_change_watch" to true),
                     bundleLimits = testBundleCapabilitiesLimits(),
                 ),

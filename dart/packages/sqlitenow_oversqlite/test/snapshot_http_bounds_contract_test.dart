@@ -471,7 +471,11 @@ void main() {
               name: 'success',
               response: (close) => OversqliteHttpResponse(
                 statusCode: 200,
-                body: jsonEncode(phase4CapabilitiesResponse()),
+                body: jsonEncode(
+                  phase4CapabilitiesResponse(
+                    registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
+                  ),
+                ),
                 close: close,
               ),
               invoke: (api) async => api.fetchCapabilities('source-1'),
@@ -575,7 +579,11 @@ void main() {
           _StaticHttpClient(
             OversqliteHttpResponse(
               statusCode: 200,
-              body: jsonEncode(phase4CapabilitiesResponse()),
+              body: jsonEncode(
+                phase4CapabilitiesResponse(
+                  registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
+                ),
+              ),
               close: () async {
                 successCloseCount++;
                 throw StateError(closeSentinel);
@@ -836,7 +844,13 @@ void main() {
           } catch (_) {}
           return;
         }
-        request.response.write(jsonEncode(phase4CapabilitiesResponse()));
+        request.response.write(
+          jsonEncode(
+            phase4CapabilitiesResponse(
+              registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
+            ),
+          ),
+        );
         await request.response.close();
       });
       addTearDown(() => server.close(force: true));
@@ -891,7 +905,13 @@ void main() {
           } catch (_) {}
           return;
         }
-        request.response.write(jsonEncode(phase4CapabilitiesResponse()));
+        request.response.write(
+          jsonEncode(
+            phase4CapabilitiesResponse(
+              registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
+            ),
+          ),
+        );
         await request.response.close();
       });
       addTearDown(() => server.close(force: true));
@@ -1119,7 +1139,11 @@ final class _BoundRecordingClient implements OversqliteHttpClient {
     if (path == 'sync/capabilities') {
       return OversqliteHttpResponse(
         statusCode: 200,
-        body: jsonEncode(phase4CapabilitiesResponse()),
+        body: jsonEncode(
+          phase4CapabilitiesResponse(
+            registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
+          ),
+        ),
       );
     }
     return const OversqliteHttpResponse(

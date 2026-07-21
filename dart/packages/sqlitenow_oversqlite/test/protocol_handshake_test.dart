@@ -7,6 +7,7 @@ import 'package:test/test.dart';
 
 void main() {
   final fixtures = _readHandshakeFixtures();
+  final contractCases = _readHandshakeContractCases();
 
   test('protocol handshake fixture models decode', () {
     for (final fixture in fixtures) {
@@ -73,6 +74,223 @@ void main() {
 
     expect(runtime, isA<OversqliteDownloadRuntime>());
   });
+
+  test(
+    'shared table contract cases enforce exact advertised metadata',
+    () async {
+      final base = fixtures.singleWhere(
+        (item) => item.name == 'initialize-empty',
+      );
+      for (final contractCase in contractCases) {
+        final database = await _openContractDatabase(contractCase.localSpecs);
+        final body = Map<String, Object?>.from(base.capabilities.body);
+        if (contractCase.hasAdvertised) {
+          body['registered_table_specs'] = contractCase.advertised;
+        } else {
+          body.remove('registered_table_specs');
+        }
+        final client = DefaultOversqliteClient(
+          database: database,
+          config: OversqliteConfig(
+            schema: contractCase.localSpecs.first.schema,
+            syncTables: [
+              for (final spec in contractCase.localSpecs)
+                SyncTable(
+                  tableName: spec.table,
+                  syncKeyColumnName: spec.syncKeyColumns.single,
+                ),
+            ],
+          ),
+          httpClient: _StaticHttpClient(
+            OversqliteHttpResponse(statusCode: 200, body: jsonEncode(body)),
+          ),
+        );
+        try {
+          await client.open();
+          switch (contractCase.kind) {
+            case 'match':
+              await client.fetchCapabilities();
+            case 'invalid':
+              await expectLater(
+                client.fetchCapabilities,
+                throwsA(isA<SnapshotCapabilitiesException>()),
+                reason: contractCase.name,
+              );
+            case 'mismatch':
+              try {
+                await client.fetchCapabilities();
+                fail('${contractCase.name} did not reject mismatched tables');
+              } on SyncTableContractMismatchException catch (error) {
+                expect(
+                  error.serverOnlyTables,
+                  contractCase.serverOnlyTables,
+                  reason: contractCase.name,
+                );
+                expect(
+                  error.clientOnlyTables,
+                  contractCase.clientOnlyTables,
+                  reason: contractCase.name,
+                );
+                expect(
+                  error.syncKeyMismatches,
+                  hasLength(contractCase.syncKeyMismatches.length),
+                  reason: contractCase.name,
+                );
+                for (
+                  var index = 0;
+                  index < error.syncKeyMismatches.length;
+                  index++
+                ) {
+                  final actual = error.syncKeyMismatches[index];
+                  final expected = contractCase.syncKeyMismatches[index];
+                  expect(
+                    actual.qualifiedTable,
+                    expected.qualifiedTable,
+                    reason: contractCase.name,
+                  );
+                  expect(
+                    actual.clientSyncKeyColumns,
+                    expected.clientSyncKeyColumns,
+                    reason: contractCase.name,
+                  );
+                  expect(
+                    actual.serverSyncKeyColumns,
+                    expected.serverSyncKeyColumns,
+                    reason: contractCase.name,
+                  );
+                }
+              }
+            default:
+              fail('unknown contract fixture kind ${contractCase.kind}');
+          }
+        } finally {
+          await client.close();
+          await database.close();
+        }
+      }
+    },
+  );
+
+  test(
+    'table contract mismatch blocks attach before connect and binding',
+    () async {
+      final base = fixtures.singleWhere(
+        (item) => item.name == 'initialize-empty',
+      );
+      final body = Map<String, Object?>.from(base.capabilities.body)
+        ..['registered_table_specs'] = [
+          {
+            'schema': 'business',
+            'table': 'users',
+            'sync_key_columns': ['id'],
+          },
+          {
+            'schema': 'business',
+            'table': 'monitoring_focus',
+            'sync_key_columns': ['id'],
+          },
+        ];
+      final fixture = _HandshakeFixture(
+        name: 'server-only-before-connect',
+        capabilities: _FixtureHttpResponse(status: 200, body: body),
+        connect: base.connect,
+        local: base.local,
+        expected: base.expected,
+      );
+      final database = await _openUsersDatabase();
+      final http = _RecordingHttpClient(fixture);
+      final client = _newClient(database, http, schema: 'business');
+      try {
+        await client.open();
+        await expectLater(
+          () => client.attach('user-1'),
+          throwsA(
+            isA<SyncTableContractMismatchException>().having(
+              (error) => error.serverOnlyTables,
+              'serverOnlyTables',
+              ['business.monitoring_focus'],
+            ),
+          ),
+        );
+        expect(http.requests.map((request) => request.path), [
+          'sync/capabilities',
+        ]);
+        final attachment = await _attachmentRow(database);
+        expect(attachment['bindingState'], 'anonymous');
+        expect(attachment['attachedUserId'], '');
+      } finally {
+        await client.close();
+        await database.close();
+      }
+    },
+  );
+
+  test(
+    'table contract mismatch blocks push pull sync and snapshot work',
+    () async {
+      final base = fixtures.singleWhere(
+        (item) => item.name == 'initialize-empty',
+      );
+      final http = _MutableContractHttpClient(base.capabilities.body);
+      final database = await _openUsersDatabase();
+      final client = _newClient(database, http);
+      try {
+        await client.open();
+        await client.attach('user-1');
+        await database.connection.execute(
+          "INSERT INTO users(id, name) VALUES('user-1', 'Ada')",
+        );
+        http
+          ..registeredTableSpecs = [
+            {
+              'schema': 'main',
+              'table': 'users',
+              'sync_key_columns': ['id'],
+            },
+            {
+              'schema': 'main',
+              'table': 'monitoring_focus',
+              'sync_key_columns': ['id'],
+            },
+          ]
+          ..requests.clear();
+        final initialDirty = await _scalar(
+          database,
+          'SELECT COUNT(*) FROM _sync_dirty_rows',
+        );
+        final initialOutbox = await _scalar(
+          database,
+          'SELECT COUNT(*) FROM _sync_outbox_rows',
+        );
+
+        for (final operation in <Future<void> Function()>[
+          () async => client.pushPending(),
+          () async => client.pullToStable(),
+          () async => client.sync(),
+          () async => client.rebuild(),
+        ]) {
+          await expectLater(
+            operation,
+            throwsA(isA<SyncTableContractMismatchException>()),
+          );
+        }
+
+        expect(http.requests, List.filled(4, 'sync/capabilities'));
+        expect(
+          await _scalar(database, 'SELECT COUNT(*) FROM _sync_dirty_rows'),
+          initialDirty,
+        );
+        expect(
+          await _scalar(database, 'SELECT COUNT(*) FROM _sync_outbox_rows'),
+          initialOutbox,
+        );
+        expect((await _operationRow(database))['kind'], 'none');
+      } finally {
+        await client.close();
+        await database.close();
+      }
+    },
+  );
 
   test('handshake HTTP errors are redacted snapshot errors', () async {
     final api = OversqliteRemoteApi(
@@ -203,12 +421,13 @@ void main() {
 
 DefaultOversqliteClient _newClient(
   SqliteNowDatabase database,
-  OversqliteHttpClient http,
-) {
+  OversqliteHttpClient http, {
+  String schema = 'main',
+}) {
   return DefaultOversqliteClient(
     database: database,
     config: OversqliteConfig(
-      schema: 'main',
+      schema: schema,
       syncTables: [SyncTable(tableName: 'users', syncKeyColumnName: 'id')],
     ),
     httpClient: http,
@@ -236,6 +455,38 @@ List<_HandshakeFixture> _readHandshakeFixtures() {
       .cast<Map<String, Object?>>()
       .map(_HandshakeFixture.fromJson)
       .toList();
+}
+
+List<_ContractCase> _readHandshakeContractCases() {
+  final file = _repoRoot().uri
+      .resolve('oversqlite-contracts/protocol-handshake/connect.json')
+      .toFilePath();
+  final raw = jsonDecode(File(file).readAsStringSync()) as Map<String, Object?>;
+  return (raw['contractCases']! as List<Object?>)
+      .cast<Map<String, Object?>>()
+      .map(_ContractCase.fromJson)
+      .toList();
+}
+
+Future<SqliteNowDatabase> _openContractDatabase(
+  List<RegisteredTableSpec> specs,
+) async {
+  final database = SqliteNowDatabase.inMemory();
+  await database.open(
+    preInit: (connection) async {
+      for (final spec in specs) {
+        await connection.execute(
+          'CREATE TABLE ${spec.table} (${spec.syncKeyColumns.single} TEXT PRIMARY KEY NOT NULL)',
+        );
+      }
+    },
+  );
+  return database;
+}
+
+Future<int> _scalar(SqliteNowDatabase database, String sql) async {
+  final rows = await database.connection.select(sql, (row) => row.readInt(0));
+  return rows.single;
 }
 
 Future<Map<String, Object?>> _attachmentRow(SqliteNowDatabase database) async {
@@ -310,6 +561,125 @@ final class _StaticHttpClient implements OversqliteHttpClient {
     required OversqliteHttpRequestBounds bounds,
   }) async {
     return response;
+  }
+}
+
+final class _MutableContractHttpClient implements OversqliteHttpClient {
+  _MutableContractHttpClient(Map<String, Object?> baseCapabilities)
+    : _baseCapabilities = Map<String, Object?>.from(baseCapabilities),
+      registeredTableSpecs = List<Map<String, Object?>>.from(
+        (baseCapabilities['registered_table_specs']! as List).map(
+          (value) => Map<String, Object?>.from(value as Map),
+        ),
+      );
+
+  final Map<String, Object?> _baseCapabilities;
+  List<Map<String, Object?>> registeredTableSpecs;
+  final List<String> requests = [];
+
+  @override
+  Future<OversqliteHttpResponse> get(
+    String path, {
+    required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
+  }) async {
+    requests.add(path);
+    if (path == 'sync/capabilities') {
+      final body = Map<String, Object?>.from(_baseCapabilities)
+        ..['registered_table_specs'] = registeredTableSpecs;
+      return OversqliteHttpResponse(statusCode: 200, body: jsonEncode(body));
+    }
+    fail('unexpected GET $path');
+  }
+
+  @override
+  Future<OversqliteHttpResponse> postJson(
+    String path, {
+    required String sourceId,
+    required Object? body,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
+  }) async {
+    requests.add(path);
+    if (path == 'sync/connect') {
+      return OversqliteHttpResponse(
+        statusCode: 200,
+        body: jsonEncode({
+          'resolution': 'initialize_empty',
+          'server_has_synced_data': false,
+        }),
+      );
+    }
+    fail('unexpected POST $path');
+  }
+
+  @override
+  Future<OversqliteHttpResponse> delete(
+    String path, {
+    required String sourceId,
+    required String operation,
+    required OversqliteHttpRequestBounds bounds,
+  }) async {
+    requests.add(path);
+    fail('unexpected DELETE $path');
+  }
+}
+
+final class _ContractCase {
+  const _ContractCase({
+    required this.name,
+    required this.localSpecs,
+    required this.hasAdvertised,
+    required this.advertised,
+    required this.kind,
+    required this.serverOnlyTables,
+    required this.clientOnlyTables,
+    required this.syncKeyMismatches,
+  });
+
+  final String name;
+  final List<RegisteredTableSpec> localSpecs;
+  final bool hasAdvertised;
+  final Object? advertised;
+  final String kind;
+  final List<String> serverOnlyTables;
+  final List<String> clientOnlyTables;
+  final List<SyncKeyContractMismatch> syncKeyMismatches;
+
+  factory _ContractCase.fromJson(Map<String, Object?> json) {
+    final expected = (json['expected']! as Map).cast<String, Object?>();
+    return _ContractCase(
+      name: json['name']! as String,
+      localSpecs: List.unmodifiable(
+        (json['localSpecs']! as List).map(
+          (value) => RegisteredTableSpec.fromJson(
+            (value as Map).cast<String, Object?>(),
+          ),
+        ),
+      ),
+      hasAdvertised: json.containsKey('advertised'),
+      advertised: json['advertised'],
+      kind: expected['kind']! as String,
+      serverOnlyTables: List<String>.unmodifiable(
+        (expected['serverOnlyTables'] as List? ?? const []).cast<String>(),
+      ),
+      clientOnlyTables: List<String>.unmodifiable(
+        (expected['clientOnlyTables'] as List? ?? const []).cast<String>(),
+      ),
+      syncKeyMismatches: List.unmodifiable(
+        (expected['syncKeyMismatches'] as List? ?? const []).map((value) {
+          final mismatch = (value as Map).cast<String, Object?>();
+          return SyncKeyContractMismatch(
+            qualifiedTable: mismatch['qualifiedTable']! as String,
+            clientSyncKeyColumns: (mismatch['clientSyncKeyColumns']! as List)
+                .cast<String>(),
+            serverSyncKeyColumns: (mismatch['serverSyncKeyColumns']! as List)
+                .cast<String>(),
+          );
+        }),
+      ),
+    );
   }
 }
 

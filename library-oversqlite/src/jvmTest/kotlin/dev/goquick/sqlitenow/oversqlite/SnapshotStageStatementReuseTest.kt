@@ -22,6 +22,7 @@ import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -272,6 +273,37 @@ class SnapshotStageStatementReuseTest : BundleClientContractTestSupport() {
                         """.trimIndent(),
                     )
                 }
+                createContext("/sync/snapshot-sessions/statement-reuse-3") { exchange ->
+                    respondJson(
+                        exchange,
+                        200,
+                        """
+                        {
+                          "snapshot_id": "statement-reuse-3",
+                          "snapshot_bundle_seq": 7,
+                          "byte_count": 64,
+                          "next_row_ordinal": 2,
+                          "has_more": false,
+                          "rows": [
+                            {
+                              "schema": "main",
+                              "table": "users",
+                              "key": {"id":"user-1"},
+                              "row_version": 11,
+                              "payload": {"id":"user-1","name":"Ada"}
+                            },
+                            {
+                              "schema": "main",
+                              "table": "hostile\\nsecret",
+                              "key": {"id":"user-2"},
+                              "row_version": 12,
+                              "payload": {"id":"user-2","name":"Grace"}
+                            }
+                          ]
+                        }
+                        """.trimIndent(),
+                    )
+                }
             },
         ) { client ->
             val payloadValidationError = assertIs<SnapshotSemanticException>(client.rebuild().exceptionOrNull())
@@ -279,9 +311,19 @@ class SnapshotStageStatementReuseTest : BundleClientContractTestSupport() {
             assertEquals(emptyList(), stagedRows(db))
 
             val validationError = client.rebuild().exceptionOrNull()
-            assertTrue(validationError?.message.orEmpty().contains("snapshot row table is not configured for sync"))
+            assertTrue(
+                validationError?.message.orEmpty().contains(
+                    "snapshot row main.not_configured is not configured for sync",
+                ),
+            )
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
             assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM users"))
+
+            val redactedError = client.rebuild().exceptionOrNull()
+            assertTrue(redactedError?.message.orEmpty().contains("snapshot row main.<redacted>"))
+            assertFalse(redactedError?.message.orEmpty().contains("hostile"))
+            assertFalse(redactedError?.message.orEmpty().contains("secret"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_snapshot_stage"))
         }
     }
 

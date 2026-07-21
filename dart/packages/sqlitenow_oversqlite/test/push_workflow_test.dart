@@ -557,7 +557,11 @@ void main() {
   test('committed replay applies cyclic foreign keys under apply mode', () async {
     final database = await _openAuthorProfileDatabase();
     addTearDown(database.close);
-    final server = _PushServer();
+    final server = _PushServer(
+      registeredTableSpecs: phase4RegisteredTableSpecsForConfig(
+        _authorProfileConfig,
+      ),
+    );
     final client = _newClient(database, server, config: _authorProfileConfig);
     addTearDown(client.close);
     await client.open();
@@ -679,6 +683,9 @@ void main() {
     ]);
     final dataBytes = Uint8List.fromList([1, 2, 3, 255]);
     final server = _PushServer(
+      registeredTableSpecs: phase4RegisteredTableSpecsForConfig(
+        _documentsConfig,
+      ),
       transformCommittedPayload: (payload) => {...payload, 'enabled': true},
     );
     final client = _newClient(database, server, config: _documentsConfig);
@@ -794,6 +801,9 @@ void main() {
         .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
         .join();
     final server = _PushServer(
+      registeredTableSpecs: phase4RegisteredTableSpecsForConfig(
+        _documentsConfig,
+      ),
       preserveConfiguredBundleHash: true,
       commitResponse: {
         'bundle_seq': 1,
@@ -891,7 +901,11 @@ void main() {
       0x88,
     ]);
     final content = Uint8List.fromList([4, 5, 6, 7]);
-    final server = _PushServer();
+    final server = _PushServer(
+      registeredTableSpecs: phase4RegisteredTableSpecsForConfig(
+        _fileReviewConfig,
+      ),
+    );
     final client = _newClient(database, server, config: _fileReviewConfig);
     addTearDown(client.close);
     await client.open();
@@ -1114,6 +1128,7 @@ Future<String> _scalarText(SqliteNowDatabase database, String sql) async {
 final class _PushServer implements OversqliteHttpClient {
   _PushServer({
     this.connectResolution = 'initialize_empty',
+    List<Map<String, Object?>>? registeredTableSpecs,
     Map<String, Object?>? conflict,
     List<Map<String, Object?>> conflicts = const [],
     this.failFirstCommit = false,
@@ -1126,9 +1141,12 @@ final class _PushServer implements OversqliteHttpClient {
     this.commitResponse,
     this.committedRowsResponse,
     this.preserveConfiguredBundleHash = false,
-  }) : conflicts = [...conflicts, ?conflict];
+  }) : registeredTableSpecs =
+           registeredTableSpecs ?? phase4RegisteredTableSpecs(['users']),
+       conflicts = [...conflicts, ?conflict];
 
   final String connectResolution;
+  final List<Map<String, Object?>> registeredTableSpecs;
   final List<Map<String, Object?>> conflicts;
   final bool failFirstCommit;
   final bool failFirstCommittedFetch;
@@ -1157,7 +1175,9 @@ final class _PushServer implements OversqliteHttpClient {
   }) async {
     _sourceId = sourceId;
     if (path == 'sync/capabilities') {
-      return _json(phase4CapabilitiesResponse());
+      return _json(
+        phase4CapabilitiesResponse(registeredTableSpecs: registeredTableSpecs),
+      );
     }
     if (path.startsWith('sync/committed-bundles/')) {
       _committedFetchAttempts++;

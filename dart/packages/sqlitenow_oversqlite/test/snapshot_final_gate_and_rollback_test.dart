@@ -179,7 +179,9 @@ void main() {
         config: config,
         remoteApi: api,
         capabilities: CapabilitiesResponse.fromJson(
-          phase4CapabilitiesResponse(),
+          phase4CapabilitiesResponse(
+            registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
+          ),
         ),
         faultInjector: SnapshotApplyFaultInjector(
           afterApplyPageLoaded: () async {
@@ -253,7 +255,9 @@ void main() {
           config: config,
           remoteApi: api,
           capabilities: CapabilitiesResponse.fromJson(
-            phase4CapabilitiesResponse(),
+            phase4CapabilitiesResponse(
+              registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
+            ),
           ),
           faultInjector: SnapshotApplyFaultInjector(
             beforeCommit: () async => throw StateError('before commit failure'),
@@ -314,7 +318,9 @@ void main() {
         config: config,
         remoteApi: api,
         capabilities: CapabilitiesResponse.fromJson(
-          phase4CapabilitiesResponse(),
+          phase4CapabilitiesResponse(
+            registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
+          ),
         ),
         faultInjector: SnapshotApplyFaultInjector(
           afterApplyPageLoaded: () async => throw cancellation,
@@ -363,7 +369,9 @@ void main() {
         config: config,
         remoteApi: api,
         capabilities: CapabilitiesResponse.fromJson(
-          phase4CapabilitiesResponse(),
+          phase4CapabilitiesResponse(
+            registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
+          ),
         ),
         faultInjector: SnapshotApplyFaultInjector(
           afterApplyPageLoaded: () async {
@@ -415,7 +423,9 @@ void main() {
           _SnapshotServer([_snapshotRow('remote', 'Remote')]),
         ),
         capabilities: CapabilitiesResponse.fromJson(
-          phase4CapabilitiesResponse(),
+          phase4CapabilitiesResponse(
+            registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
+          ),
         ),
         faultInjector: SnapshotApplyFaultInjector(
           afterApplyPageLoaded: () async {
@@ -504,7 +514,9 @@ void main() {
           config: config,
           remoteApi: OversqliteRemoteApi(server),
           capabilities: CapabilitiesResponse.fromJson(
-            phase4CapabilitiesResponse(),
+            phase4CapabilitiesResponse(
+              registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
+            ),
           ),
         ).rebuildFromSnapshot(
           validated: validated,

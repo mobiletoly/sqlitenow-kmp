@@ -137,8 +137,17 @@ data class PullResponse(
 data class CapabilitiesResponse(
     @SerialName("protocol_version") val protocolVersion: String,
     @SerialName("schema_version") val schemaVersion: Int,
+    @SerialName("registered_table_specs") val registeredTableSpecs: List<RegisteredTableSpec>,
     val features: Map<String, Boolean>,
     @SerialName("bundle_limits") val bundleLimits: BundleCapabilitiesLimits,
+)
+
+/** One server-advertised sync table and its ordered wire key-column contract. */
+@Serializable
+data class RegisteredTableSpec(
+    val schema: String,
+    val table: String,
+    @SerialName("sync_key_columns") val syncKeyColumns: List<String>,
 )
 
 val CapabilitiesResponse.bundleChangeWatchSupported: Boolean

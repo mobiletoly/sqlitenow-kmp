@@ -60,8 +60,21 @@ WHERE snapshot_id = ?''',
       var rowOrdinal = afterRowOrdinal;
       for (final row in chunk.rows) {
         if (row.schema != validated.schema) {
-          throw const OversqliteProtocolException(
-            'snapshot row schema does not match the configured client schema',
+          throw OversqliteProtocolException(
+            'snapshot row '
+            '${safeSyncTableDiagnosticIdentifier(row.schema, row.table)} '
+            'does not match configured schema '
+            '${safeSnapshotDiagnosticIdentifier(validated.schema)}',
+          );
+        }
+        final configuredTables = validated.tables
+            .map((table) => table.tableName)
+            .toSet();
+        if (!configuredTables.contains(row.table)) {
+          throw OversqliteProtocolException(
+            'snapshot row '
+            '${safeSyncTableDiagnosticIdentifier(row.schema, row.table)} '
+            'is not configured for sync',
           );
         }
         final key = await _localStore.localKeyFromWire(row.table, row.key);
@@ -167,11 +180,24 @@ ORDER BY row_ordinal''',
       );
     }
     final stagedRows = <OversqliteStagedSnapshotRow>[];
+    final configuredTables = validated.tables
+        .map((table) => table.tableName)
+        .toSet();
     for (final row in storedRows) {
       try {
         if (row.schemaName != validated.schema) {
-          throw const OversqliteProtocolException(
-            'staged snapshot row schema does not match client schema',
+          throw OversqliteProtocolException(
+            'staged snapshot row '
+            '${safeSyncTableDiagnosticIdentifier(row.schemaName, row.tableName)} '
+            'does not match configured schema '
+            '${safeSnapshotDiagnosticIdentifier(validated.schema)}',
+          );
+        }
+        if (!configuredTables.contains(row.tableName)) {
+          throw OversqliteProtocolException(
+            'staged snapshot row '
+            '${safeSyncTableDiagnosticIdentifier(row.schemaName, row.tableName)} '
+            'is not configured for sync',
           );
         }
         final table = await _localStore.tableInfo(row.tableName);

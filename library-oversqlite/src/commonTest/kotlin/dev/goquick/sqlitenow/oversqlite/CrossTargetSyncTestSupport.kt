@@ -73,11 +73,12 @@ internal open class CrossTargetSyncTestSupport {
         uploadLimit: Int = 200,
         downloadLimit: Int = 1000,
         resolver: Resolver = ServerWinsResolver,
+        schema: String = "main",
     ): DefaultOversqliteClient {
         return DefaultOversqliteClient(
             db = db,
             config = OversqliteConfig(
-                schema = "main",
+                schema = schema,
                 syncTables = listOf(
                     SyncTable("users", syncKeyColumnName = "id"),
                     SyncTable("posts", syncKeyColumnName = "id"),
@@ -174,8 +175,11 @@ internal open class CrossTargetSyncTestSupport {
         var sourceReplacementInvalidOnSnapshotCreate: ErrorResponse? = null
         var bundleChangeWatchSupported: Boolean = false
         var protocolVersion: String = "v1"
+        var registeredTableSpecs: List<RegisteredTableSpec> = testRegisteredTableSpecs("users", "posts")
+        var connectRequestCount: Int = 0
         var pullRequestCount: Int = 0
         var pushSessionCreateRequestCount: Int = 0
+        var snapshotSessionCreateRequestCount: Int = 0
         var cancelNextPushSessionCreate: Boolean = false
         var watchCloseCount: Int = 0
         val capabilitySourceIds = mutableListOf<String>()
@@ -269,6 +273,7 @@ internal open class CrossTargetSyncTestSupport {
                             CapabilitiesResponse(
                                 protocolVersion = protocolVersion,
                                 schemaVersion = 1,
+                                registeredTableSpecs = registeredTableSpecs,
                                 features = mapOf(
                                     "connect_lifecycle" to true,
                                     "bundle_change_watch" to bundleChangeWatchSupported,
@@ -279,8 +284,10 @@ internal open class CrossTargetSyncTestSupport {
                     )
                 }
 
-            request.method.value == "POST" && request.url.encodedPath == "/sync/connect" ->
+            request.method.value == "POST" && request.url.encodedPath == "/sync/connect" -> {
+                connectRequestCount++
                 handleConnect(request)
+            }
 
             request.method.value == "POST" && request.url.encodedPath == "/sync/push-sessions" ->
                 handleCreatePushSession(request)
@@ -307,8 +314,10 @@ internal open class CrossTargetSyncTestSupport {
                 jsonResponse("""{}""")
             }
 
-            request.method.value == "POST" && request.url.encodedPath == "/sync/snapshot-sessions" ->
+            request.method.value == "POST" && request.url.encodedPath == "/sync/snapshot-sessions" -> {
+                snapshotSessionCreateRequestCount++
                 handleCreateSnapshotSession(request)
+            }
 
             request.method.value == "GET" &&
                 request.url.encodedPath.startsWith("/sync/snapshot-sessions/") ->

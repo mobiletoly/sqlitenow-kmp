@@ -555,7 +555,7 @@ $indentedCommittedRowsJson
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createTypedRowsTable(db)
         val committedHash = computeCommittedBundleHash(committedRows)
-        val server = newServer().apply {
+        val server = newServer(testRegisteredTableSpecs("typed_rows")).apply {
             installCommittedReplayRoutes(
                 pushId = pushId,
                 committedHash = committedHash,
@@ -810,7 +810,7 @@ $indentedCommittedRowsJson
     fun pushPending_usesPushSessions_chunksTransport_andReplaysCommittedBundle() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersAndPostsTables(db)
-        val server = newServer()
+        val server = newServer(testRegisteredTableSpecs("users", "posts"))
         val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
         pushServer.install(server)
         server.start()
@@ -1017,7 +1017,7 @@ $indentedCommittedRowsJson
     fun pushPending_ordersParentFirstUpserts_andChildFirstDeletes() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersAndPostsTables(db)
-        val server = newServer()
+        val server = newServer(testRegisteredTableSpecs("users", "posts"))
         val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson)
         pushServer.install(server)
         server.start()
@@ -1303,7 +1303,7 @@ $indentedCommittedRowsJson
     fun pushPending_structuredConflict_preservesSiblingRowsFromRejectedBundle() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersAndPostsTables(db)
-        val server = newServer()
+        val server = newServer(testRegisteredTableSpecs("users", "posts"))
         var conflictEnabled = false
         val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson).apply {
             commitError = { _, rowCount ->
@@ -1474,7 +1474,7 @@ $indentedCommittedRowsJson
     fun pushPending_preCommitRetry_reuploadsAllChunksFromZero() = runBlocking {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createUsersAndPostsTables(db)
-        val server = newServer()
+        val server = newServer(testRegisteredTableSpecs("users", "posts"))
         var failFirstCommit = true
         val pushServer = FakeChunkedSyncServer(json, ::queryParam, ::respondJson).apply {
             commitError = { _, _ ->

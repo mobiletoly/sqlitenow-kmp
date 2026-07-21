@@ -27,10 +27,12 @@ Directory repoRoot() {
 Map<String, Object?> phase4CapabilitiesResponse({
   String protocolVersion = 'v1',
   Map<String, bool> features = const {'connect_lifecycle': true},
+  required List<Map<String, Object?>> registeredTableSpecs,
 }) {
   return {
     'protocol_version': protocolVersion,
     'schema_version': 1,
+    'registered_table_specs': registeredTableSpecs,
     'features': features,
     'bundle_limits': {
       'max_rows_per_bundle': 1000,
@@ -57,6 +59,30 @@ Map<String, Object?> phase4CapabilitiesResponse({
     },
   };
 }
+
+List<Map<String, Object?>> phase4RegisteredTableSpecs(
+  Iterable<String> tables, {
+  String schema = 'main',
+  String syncKeyColumn = 'id',
+}) => [
+  for (final table in tables)
+    {
+      'schema': schema,
+      'table': table,
+      'sync_key_columns': [syncKeyColumn],
+    },
+];
+
+List<Map<String, Object?>> phase4RegisteredTableSpecsForConfig(
+  OversqliteConfig config,
+) => [
+  for (final table in config.syncTables)
+    {
+      'schema': config.schema,
+      'table': table.tableName.toLowerCase(),
+      'sync_key_columns': [table.syncKeyColumnName.toLowerCase()],
+    },
+];
 
 int snapshotFixtureWireByteCount(Iterable<Map<String, Object?>> rows) {
   return rows.fold(
@@ -396,6 +422,7 @@ final class PushFixtureServer implements OversqliteHttpClient {
   var _activeRequestHash = '';
   var _nextBundleSeq = 1;
   var _sourceId = '';
+  var registeredTableSpecs = phase4RegisteredTableSpecs(['users']);
 
   @override
   Future<OversqliteHttpResponse> get(
@@ -406,7 +433,9 @@ final class PushFixtureServer implements OversqliteHttpClient {
   }) async {
     _sourceId = sourceId;
     if (path == 'sync/capabilities') {
-      return _json(phase4CapabilitiesResponse());
+      return _json(
+        phase4CapabilitiesResponse(registeredTableSpecs: registeredTableSpecs),
+      );
     }
     if (path.startsWith('sync/committed-bundles/')) {
       _committedFetchAttempts++;
@@ -820,7 +849,11 @@ final class PullFixtureServer implements OversqliteHttpClient {
     required OversqliteHttpRequestBounds bounds,
   }) async {
     if (path == 'sync/capabilities') {
-      return _json(phase4CapabilitiesResponse());
+      return _json(
+        phase4CapabilitiesResponse(
+          registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
+        ),
+      );
     }
     if (path.startsWith('sync/pull')) {
       pullRequestCount++;
@@ -963,6 +996,7 @@ final class WatchFixtureServer
       capabilitySourceIds.add(sourceId);
       return _json(
         phase4CapabilitiesResponse(
+          registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
           features: {
             'connect_lifecycle': true,
             if (bundleChangeWatchSupported) 'bundle_change_watch': true,

@@ -111,14 +111,20 @@ internal class OversqliteStageStore(
                 var statementUsed = false
                 for (row in chunk.rows) {
                     require(row.schema == state.validated.schema) {
-                        "snapshot row schema does not match the configured client schema"
+                        "snapshot row ${safeSyncTableDiagnosticIdentifier(row.schema, row.table)} " +
+                            "does not match configured schema " +
+                            safeSnapshotDiagnosticIdentifier(state.validated.schema)
                     }
                     validateSnapshotRow(row)
-                    require(row.table.lowercase() in state.validated.tableInfoByName) {
-                        "snapshot row table is not configured for sync"
+                    require(row.table in state.validated.tableInfoByName) {
+                        "snapshot row ${safeSyncTableDiagnosticIdentifier(row.schema, row.table)} " +
+                            "is not configured for sync"
                     }
                     val payload = row.payload as? JsonObject
-                        ?: error("snapshot row payload must be a JSON object for ${row.schema}.${row.table}")
+                        ?: error(
+                            "snapshot row payload must be a JSON object for " +
+                                safeSyncTableDiagnosticIdentifier(row.schema, row.table),
+                        )
                     val normalizedPayload = localStore.validateAndNormalizeSnapshotPayload(
                         state = state,
                         tableName = row.table,
@@ -244,10 +250,15 @@ internal class OversqliteStageStore(
         }
         rows.forEach { row ->
             require(row.schemaName == state.validated.schema) {
-                "staged snapshot row schema does not match the configured client schema"
+                "staged snapshot row " +
+                    safeSyncTableDiagnosticIdentifier(row.schemaName, row.tableName) +
+                    " does not match configured schema " +
+                    safeSnapshotDiagnosticIdentifier(state.validated.schema)
             }
-            require(row.tableName.lowercase() in state.validated.tableInfoByName) {
-                "staged snapshot row table is not configured for sync"
+            require(row.tableName in state.validated.tableInfoByName) {
+                "staged snapshot row " +
+                    safeSyncTableDiagnosticIdentifier(row.schemaName, row.tableName) +
+                    " is not configured for sync"
             }
         }
         return StagedSnapshotPage(rows = rows, retainedTextBytes = selectedBytes)

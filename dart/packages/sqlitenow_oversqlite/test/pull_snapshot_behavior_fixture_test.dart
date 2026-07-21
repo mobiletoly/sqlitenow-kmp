@@ -21,7 +21,10 @@ Future<void> _runPullCase(Map<String, Object?> fixture) async {
   final database = await openBehaviorDatabase(
     fixture['schema'] as String? ?? 'users',
   );
-  final server = _newPullServer(fixture);
+  final server = _newPullServer(fixture)
+    ..registeredTableSpecs = phase4RegisteredTableSpecsForConfig(
+      behaviorConfig(fixture),
+    );
   final client = newBehaviorClient(database, server, fixture);
   try {
     await client.open();
@@ -83,7 +86,7 @@ Future<void> _runPullCase(Map<String, Object?> fixture) async {
   }
 }
 
-OversqliteHttpClient _newPullServer(Map<String, Object?> fixture) {
+PullSnapshotBehaviorFixtureServer _newPullServer(Map<String, Object?> fixture) {
   final script = (fixture['serverScript']! as Map).cast<String, Object?>();
   switch (script['kind']) {
     case 'pull_incremental_bundles':
@@ -255,6 +258,7 @@ final class PullSnapshotBehaviorFixtureServer implements OversqliteHttpClient {
   final Map<String, Object?> snapshotChunks;
   var _pullIndex = 0;
   var _snapshotSessionIndex = 0;
+  var registeredTableSpecs = phase4RegisteredTableSpecs(['users']);
 
   @override
   Future<OversqliteHttpResponse> get(
@@ -264,7 +268,9 @@ final class PullSnapshotBehaviorFixtureServer implements OversqliteHttpClient {
     required OversqliteHttpRequestBounds bounds,
   }) async {
     if (path == 'sync/capabilities') {
-      return _json(phase4CapabilitiesResponse());
+      return _json(
+        phase4CapabilitiesResponse(registeredTableSpecs: registeredTableSpecs),
+      );
     }
     if (path.startsWith('sync/pull')) {
       final response = _pullIndex < pullResponses.length

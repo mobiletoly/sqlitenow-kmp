@@ -22,11 +22,18 @@ class GoSwaggerConformanceTest {
             capabilities,
             "protocol_version",
             "schema_version",
+            "registered_table_specs",
             "features",
             "bundle_limits",
         )
         val protocol = propertyBlock(capabilities, "protocol_version")
         assertTrue(protocol.contains(Regex("(?m)^\\s+enum:\\s*\\[v1]\\s*$")))
+
+        val tableSpec = schemaBlock("RegisteredTableSpec")
+        assertRequired(tableSpec, "schema", "table", "sync_key_columns")
+        val syncKeys = propertyBlock(tableSpec, "sync_key_columns")
+        assertTrue(syncKeys.contains(Regex("(?m)^\\s+minItems:\\s*1\\s*$")))
+        assertTrue(syncKeys.contains(Regex("(?m)^\\s+maxItems:\\s*1\\s*$")))
 
         val limits = schemaBlock("BundleCapabilitiesLimits")
         val requiredLimits = listOf(

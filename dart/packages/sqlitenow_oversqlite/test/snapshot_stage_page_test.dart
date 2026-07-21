@@ -83,10 +83,111 @@ void main() {
     expect(caught, isA<OversqliteProtocolException>());
     expect(
       (caught as OversqliteProtocolException).message,
-      'snapshot row schema does not match the configured client schema',
+      'snapshot row <redacted>.users does not match configured schema main',
     );
     expect(caught.toString(), isNot(contains(schemaSecret)));
     expect(await store.countSnapshotStageRows('snapshot-schema-redaction'), 0);
+  });
+
+  test(
+    'snapshot table guard names safe tables and redacts malformed ones',
+    () async {
+      const malformedTable = 'Bearer snapshot-table-secret';
+      final database = await openUsersDatabase();
+      addTearDown(database.close);
+      final validated = await OversqliteLocalRuntime(
+        database: database,
+        config: usersConfig,
+      ).initialize();
+      final store = OversqliteDownloadStageStore(
+        connection: database.connection,
+        localStore: OversqliteLocalRowStore(database.connection),
+      );
+
+      for (final testCase in const [
+        (table: 'audit_events', diagnostic: 'main.audit_events'),
+        (table: malformedTable, diagnostic: 'main.<redacted>'),
+      ]) {
+        Object? caught;
+        try {
+          await store.stageSnapshotChunk(
+            validated: validated,
+            session: SnapshotSession(
+              snapshotId: 'snapshot-${testCase.diagnostic}',
+              snapshotBundleSeq: 1,
+              rowCount: 1,
+              byteCount: 1,
+              expiresAt: '',
+            ),
+            chunk: SnapshotChunkResponse(
+              snapshotId: 'snapshot-${testCase.diagnostic}',
+              snapshotBundleSeq: 1,
+              rows: [
+                SnapshotRow(
+                  schema: 'main',
+                  table: testCase.table,
+                  key: const {'id': 'row-1'},
+                  rowVersion: 1,
+                  payload: const {'id': 'row-1'},
+                ),
+              ],
+              nextRowOrdinal: 1,
+              hasMore: false,
+              byteCount: 1,
+            ),
+            afterRowOrdinal: 0,
+          );
+        } catch (error) {
+          caught = error;
+        }
+
+        expect(caught, isA<OversqliteProtocolException>());
+        expect(
+          (caught as OversqliteProtocolException).message,
+          'snapshot row ${testCase.diagnostic} is not configured for sync',
+        );
+        expect(caught.toString(), isNot(contains(malformedTable)));
+        expect(
+          await store.countSnapshotStageRows('snapshot-${testCase.diagnostic}'),
+          0,
+        );
+      }
+    },
+  );
+
+  test('staged apply rejects an unconfigured table by safe name', () async {
+    final database = await openUsersDatabase();
+    addTearDown(database.close);
+    final validated = await OversqliteLocalRuntime(
+      database: database,
+      config: usersConfig,
+    ).initialize();
+    final store = OversqliteDownloadStageStore(
+      connection: database.connection,
+      localStore: OversqliteLocalRowStore(database.connection),
+    );
+    await database.connection.execute(
+      '''INSERT INTO _sync_snapshot_stage(
+  snapshot_id, row_ordinal, schema_name, table_name, key_json, row_version, payload
+) VALUES ('unconfigured-apply', 1, 'main', 'audit_events', '{"id":"1"}', 1, '{"id":"1"}')''',
+    );
+
+    await expectLater(
+      () => store.loadStagedSnapshotPage(
+        validated: validated,
+        snapshotId: 'unconfigured-apply',
+        afterRowOrdinal: 0,
+        maxRows: 1,
+        maxBytes: 4096,
+      ),
+      throwsA(
+        isA<SnapshotRowApplyException>().having(
+          (error) => error.toString(),
+          'message',
+          allOf(contains('schema=main'), contains('table=audit_events')),
+        ),
+      ),
+    );
   });
 
   test('stage pages obey row and retained UTF-8 byte limits', () async {

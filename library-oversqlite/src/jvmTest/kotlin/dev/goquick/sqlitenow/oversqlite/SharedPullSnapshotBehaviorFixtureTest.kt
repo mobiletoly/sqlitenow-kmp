@@ -33,7 +33,8 @@ class SharedPullSnapshotBehaviorFixtureTest : BundleClientContractTestSupport() 
     private suspend fun runCase(case: PullBehaviorCase) {
         val db = BundledSqliteConnectionProvider.openConnection(":memory:", debug = false)
         createSchema(db, case.schema)
-        val server = newServer()
+        val syncTables = case.syncTables.map { SyncTable(it.tableName, syncKeyColumnName = it.syncKeyColumnName) }
+        val server = newServer(registeredTableSpecsFor(syncTables))
         configureServer(case, server)
         server.start()
         val http = newHttpClient(server)
@@ -41,7 +42,7 @@ class SharedPullSnapshotBehaviorFixtureTest : BundleClientContractTestSupport() 
             val client = newClient(
                 db,
                 http,
-                syncTables = case.syncTables.map { SyncTable(it.tableName, syncKeyColumnName = it.syncKeyColumnName) },
+                syncTables = syncTables,
                 transientRetryPolicy = OversqliteTransientRetryPolicy(maxAttempts = 1),
             )
             client.openAndConnect("user-1").getOrThrow()

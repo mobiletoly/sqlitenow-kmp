@@ -21,7 +21,10 @@ Future<void> _runPushCase(Map<String, Object?> fixture) async {
   final database = await openBehaviorDatabase(
     fixture['schema'] as String? ?? 'users',
   );
-  final server = _newPushServer(fixture);
+  final server = _newPushServer(fixture)
+    ..registeredTableSpecs = phase4RegisteredTableSpecsForConfig(
+      behaviorConfig(fixture),
+    );
   final client = newBehaviorClient(
     database,
     server,

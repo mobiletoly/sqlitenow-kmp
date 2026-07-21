@@ -96,6 +96,7 @@ FROM exact_values''',
           CapabilitiesResponse.fromJson({
             'protocol_version': actual,
             'schema_version': 1,
+            'registered_table_specs': <Object?>[],
             'features': <String, bool>{},
             'bundle_limits': {
               'default_rows_per_snapshot_chunk': 1000,

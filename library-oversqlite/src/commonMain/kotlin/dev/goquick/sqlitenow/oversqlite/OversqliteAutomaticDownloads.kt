@@ -50,7 +50,7 @@ internal class OversqliteAutomaticDownloads(
                 if (error is CancellationException) {
                     throw error
                 }
-                if (error is ProtocolVersionMismatchException) {
+                if (error.isTerminalSyncCompatibilityFailure()) {
                     throw error
                 }
                 log {
@@ -75,7 +75,7 @@ internal class OversqliteAutomaticDownloads(
             if (error is CancellationException) {
                 throw error
             }
-            if (error is ProtocolVersionMismatchException) {
+            if (error.isTerminalSyncCompatibilityFailure()) {
                 throw error
             }
             log {
@@ -129,7 +129,7 @@ internal class OversqliteAutomaticDownloads(
         if (error is CancellationException) {
             throw error
         }
-        if (error is ProtocolVersionMismatchException) {
+        if (error.isTerminalSyncCompatibilityFailure()) {
             throw error
         }
         val expectedContention = error is SyncOperationInProgressException

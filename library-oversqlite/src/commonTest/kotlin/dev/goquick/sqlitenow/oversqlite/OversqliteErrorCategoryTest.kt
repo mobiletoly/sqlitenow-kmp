@@ -17,6 +17,15 @@ internal class OversqliteErrorCategoryTest {
                 expected = OversqliteErrorCategory.PROTOCOL,
             ),
             Scenario(
+                name = "table contract mismatch is a protocol failure",
+                error = SyncTableContractMismatchException(
+                    serverOnlyTables = listOf("business.monitoring_focus"),
+                    clientOnlyTables = emptyList(),
+                    syncKeyMismatches = emptyList(),
+                ),
+                expected = OversqliteErrorCategory.PROTOCOL,
+            ),
+            Scenario(
                 name = "state precondition",
                 error = OpenRequiredException("sync"),
                 expected = OversqliteErrorCategory.STATE,
@@ -107,6 +116,7 @@ internal class OversqliteErrorCategoryTest {
                 CapabilitiesResponse(
                     protocolVersion = actual,
                     schemaVersion = 1,
+                    registeredTableSpecs = testRegisteredTableSpecs("users"),
                     features = emptyMap(),
                     bundleLimits = testBundleCapabilitiesLimits(),
                 ).requireSupportedProtocol()

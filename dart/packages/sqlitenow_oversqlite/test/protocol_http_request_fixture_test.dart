@@ -165,6 +165,7 @@ Map<String, Object?> _responseBody(Map<String, Object?> fixture) {
   switch (fixture['operation']) {
     case 'capabilities':
       return phase4CapabilitiesResponse(
+        registeredTableSpecs: phase4RegisteredTableSpecs(['users']),
         features: const {
           'connect_lifecycle': true,
           'bundle_change_watch': true,

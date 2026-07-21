@@ -34,11 +34,13 @@ open class BundleClientContractTestSupport {
     protected fun capabilitiesJson(
         features: Map<String, Boolean>,
         protocolVersion: String = "v1",
+        registeredTableSpecs: List<RegisteredTableSpec> = testRegisteredTableSpecs("users"),
     ): String = json.encodeToString(
         CapabilitiesResponse.serializer(),
         CapabilitiesResponse(
             protocolVersion = protocolVersion,
             schemaVersion = 1,
+            registeredTableSpecs = registeredTableSpecs,
             features = features,
             bundleLimits = testBundleCapabilitiesLimits(),
         ),
@@ -73,7 +75,9 @@ open class BundleClientContractTestSupport {
         )
     }
 
-    protected fun newServer(): HttpServer {
+    protected fun newServer(
+        registeredTableSpecs: List<RegisteredTableSpec> = testRegisteredTableSpecs("users"),
+    ): HttpServer {
         val server = HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
         server.createContext("/sync/capabilities") { exchange ->
             if (exchange.requestMethod != "GET") {
@@ -89,6 +93,7 @@ open class BundleClientContractTestSupport {
                     CapabilitiesResponse(
                         protocolVersion = "v1",
                         schemaVersion = 1,
+                        registeredTableSpecs = registeredTableSpecs,
                         features = mapOf("connect_lifecycle" to true),
                         bundleLimits = testBundleCapabilitiesLimits(),
                     ),
@@ -136,6 +141,7 @@ open class BundleClientContractTestSupport {
     protected suspend fun <T> withClient(
         db: SafeSQLiteConnection,
         syncTables: List<SyncTable>,
+        registeredTableSpecs: List<RegisteredTableSpec>? = null,
         uploadLimit: Int = 200,
         snapshotChunkRows: Int = 1000,
         snapshotChunkBytes: Long = 4L * 1024L * 1024L,
@@ -146,7 +152,7 @@ open class BundleClientContractTestSupport {
         configureServer: HttpServer.() -> Unit = {},
         block: suspend (DefaultOversqliteClient) -> T,
     ): T {
-        val server = newServer().apply(configureServer)
+        val server = newServer(registeredTableSpecs ?: registeredTableSpecsFor(syncTables)).apply(configureServer)
         server.start()
         val http = newHttpClient(server)
         try {
@@ -169,6 +175,17 @@ open class BundleClientContractTestSupport {
             db.close()
         }
     }
+
+    protected fun registeredTableSpecsFor(syncTables: List<SyncTable>): List<RegisteredTableSpec> =
+        syncTables.map { table ->
+            val keyColumns = table.syncKeyColumns.takeIf(List<String>::isNotEmpty)
+                ?: listOf(requireNotNull(table.syncKeyColumnName))
+            RegisteredTableSpec(
+                schema = "main",
+                table = table.tableName.lowercase(),
+                syncKeyColumns = keyColumns.map(String::lowercase),
+            )
+        }
 
     protected suspend fun <T> withConnectedClient(
         db: SafeSQLiteConnection,

@@ -109,6 +109,7 @@ class DefaultOversqliteClient(
         db = db,
         config = config,
         remoteApi = remoteApi,
+        fetchCapabilities = ::fetchValidatedCapabilities,
         sourceStateStore = sourceStateStore,
         outboxStateStore = outboxStateStore,
         attachmentStateStore = attachmentStateStore,
@@ -212,9 +213,7 @@ class DefaultOversqliteClient(
             downloadsPaused = { downloadsPaused },
             connectedRuntimeState = ::requireConnectedRuntimeState,
             fetchCapabilities = { sourceId ->
-                withTransientRetry("automatic downloads capability check") {
-                    remoteApi.fetchCapabilities(sourceId)
-                }
+                fetchValidatedCapabilities(sourceId, "automatic downloads capability check")
             },
             pullToStable = { pullToStable() },
             log = { message -> verboseLog(message) },
@@ -551,9 +550,7 @@ class DefaultOversqliteClient(
     }
 
     private suspend fun verifyConnectLifecycleSupported() {
-        val capabilities = withTransientRetry("attach() capability gate") {
-            remoteApi.fetchCapabilities(requireCurrentSourceId())
-        }
+        val capabilities = fetchValidatedCapabilities(requireCurrentSourceId(), "attach() capability gate")
         if (!capabilities.features.getOrElse("connect_lifecycle") { false }) {
             throw ConnectLifecycleUnsupportedException("connect_lifecycle capability is absent")
         }
@@ -561,9 +558,15 @@ class DefaultOversqliteClient(
 
     private suspend fun verifyProtocolGate(operation: String) {
         requireConnectedRuntimeState(operation)
-        withTransientRetry("$operation capability gate") {
-            remoteApi.fetchCapabilities(requireCurrentSourceId())
-        }
+        fetchValidatedCapabilities(requireCurrentSourceId(), "$operation capability gate")
+    }
+
+    private suspend fun fetchValidatedCapabilities(
+        sourceId: String,
+        operation: String,
+    ): CapabilitiesResponse = withTransientRetry(operation) {
+        remoteApi.fetchCapabilities(sourceId)
+            .requireMatchingSyncTableContract(requireValidatedConfig())
     }
 
     private suspend fun beginRemoteReplace(
@@ -658,9 +661,7 @@ class DefaultOversqliteClient(
         setProgress(operation, OversqlitePhase.STAGING_REMOTE_STATE)
         val sourceId = resolveSourceIdOrCurrent(state.sourceId)
         val limits = negotiateSnapshotLimits(
-            withTransientRetry("remote_replace snapshot capability negotiation") {
-                remoteApi.fetchCapabilities(sourceId)
-            },
+            fetchValidatedCapabilities(sourceId, "remote_replace snapshot capability negotiation"),
             config,
         )
         val session = withTransientRetry("remote_replace snapshot create") {
