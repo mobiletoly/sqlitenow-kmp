@@ -27,6 +27,138 @@ public struct SQLiteNowSyncAuth: Sendable {
     }
 }
 
+public struct SQLiteNowTransientRetryPolicy: Equatable, Sendable {
+    public var maxAttempts: Int
+    public var initialBackoffMillis: Int64
+    public var maxBackoffMillis: Int64
+    public var jitterRatio: Double
+
+    public init(
+        maxAttempts: Int = 3,
+        initialBackoffMillis: Int64 = 150,
+        maxBackoffMillis: Int64 = 1_500,
+        jitterRatio: Double = 0.2
+    ) {
+        self.maxAttempts = maxAttempts
+        self.initialBackoffMillis = initialBackoffMillis
+        self.maxBackoffMillis = maxBackoffMillis
+        self.jitterRatio = jitterRatio
+    }
+}
+
+public struct SQLiteNowSnapshotCapacityRetryPolicy: Equatable, Sendable {
+    public var enabled: Bool
+    public var maxWaitMillis: Int64
+    public var fallbackDelayMillis: Int64
+    public var jitterRatio: Double
+
+    public init(
+        enabled: Bool = true,
+        maxWaitMillis: Int64 = 30_000,
+        fallbackDelayMillis: Int64 = 1_000,
+        jitterRatio: Double = 1.0
+    ) {
+        self.enabled = enabled
+        self.maxWaitMillis = maxWaitMillis
+        self.fallbackDelayMillis = fallbackDelayMillis
+        self.jitterRatio = jitterRatio
+    }
+}
+
+public struct SQLiteNowSyncConfig: Equatable, Sendable {
+    public var schema: String
+    public var uploadLimit: Int
+    public var downloadLimit: Int
+    public var snapshotChunkRows: Int
+    public var snapshotChunkBytes: Int64
+    public var snapshotApplyBatchRows: Int
+    public var snapshotApplyBatchBytes: Int64
+    public var verboseLogs: Bool
+    public var transientRetryPolicy: SQLiteNowTransientRetryPolicy
+    public var snapshotCapacityRetryPolicy: SQLiteNowSnapshotCapacityRetryPolicy
+
+    public init(
+        schema: String = "main",
+        uploadLimit: Int = 200,
+        downloadLimit: Int = 1_000,
+        snapshotChunkRows: Int = 1_000,
+        snapshotChunkBytes: Int64 = 4 * 1_024 * 1_024,
+        snapshotApplyBatchRows: Int = 256,
+        snapshotApplyBatchBytes: Int64 = 4 * 1_024 * 1_024,
+        verboseLogs: Bool = false,
+        transientRetryPolicy: SQLiteNowTransientRetryPolicy = .init(),
+        snapshotCapacityRetryPolicy: SQLiteNowSnapshotCapacityRetryPolicy = .init()
+    ) {
+        self.schema = schema
+        self.uploadLimit = uploadLimit
+        self.downloadLimit = downloadLimit
+        self.snapshotChunkRows = snapshotChunkRows
+        self.snapshotChunkBytes = snapshotChunkBytes
+        self.snapshotApplyBatchRows = snapshotApplyBatchRows
+        self.snapshotApplyBatchBytes = snapshotApplyBatchBytes
+        self.verboseLogs = verboseLogs
+        self.transientRetryPolicy = transientRetryPolicy
+        self.snapshotCapacityRetryPolicy = snapshotCapacityRetryPolicy
+    }
+
+    internal func runtimeConfig(
+        syncTables: [SQLiteNowSyncRuntimeTableSpec]
+    ) throws -> SQLiteNowSyncRuntimeConfig {
+        guard snapshotChunkRows > 0 else {
+            throw SQLiteNowError.misuse(message: "snapshotChunkRows must be positive")
+        }
+        guard snapshotChunkBytes > 0 else {
+            throw SQLiteNowError.misuse(message: "snapshotChunkBytes must be positive")
+        }
+        guard snapshotApplyBatchRows > 0 else {
+            throw SQLiteNowError.misuse(message: "snapshotApplyBatchRows must be positive")
+        }
+        guard snapshotApplyBatchBytes > 0 else {
+            throw SQLiteNowError.misuse(message: "snapshotApplyBatchBytes must be positive")
+        }
+        guard snapshotCapacityRetryPolicy.maxWaitMillis > 0 else {
+            throw SQLiteNowError.misuse(message: "snapshotCapacityRetryPolicy.maxWaitMillis must be positive")
+        }
+        guard snapshotCapacityRetryPolicy.fallbackDelayMillis > 0 else {
+            throw SQLiteNowError.misuse(message: "snapshotCapacityRetryPolicy.fallbackDelayMillis must be positive")
+        }
+        guard (0.0...1.0).contains(snapshotCapacityRetryPolicy.jitterRatio) else {
+            throw SQLiteNowError.misuse(message: "snapshotCapacityRetryPolicy.jitterRatio must be within 0...1")
+        }
+
+        return SQLiteNowSyncRuntimeConfig(
+            schema: schema,
+            syncTables: syncTables,
+            uploadLimit: try sqliteNowSyncInt32(uploadLimit, field: "uploadLimit"),
+            downloadLimit: try sqliteNowSyncInt32(downloadLimit, field: "downloadLimit"),
+            snapshotChunkRows: try sqliteNowSyncInt32(snapshotChunkRows, field: "snapshotChunkRows"),
+            snapshotChunkBytes: snapshotChunkBytes,
+            snapshotApplyBatchRows: try sqliteNowSyncInt32(snapshotApplyBatchRows, field: "snapshotApplyBatchRows"),
+            snapshotApplyBatchBytes: snapshotApplyBatchBytes,
+            verboseLogs: verboseLogs,
+            transientRetryPolicy: SQLiteNowSyncRuntimeTransientRetryPolicy(
+                maxAttempts: try sqliteNowSyncInt32(transientRetryPolicy.maxAttempts, field: "transientRetryPolicy.maxAttempts"),
+                initialBackoffMillis: transientRetryPolicy.initialBackoffMillis,
+                maxBackoffMillis: transientRetryPolicy.maxBackoffMillis,
+                jitterRatio: transientRetryPolicy.jitterRatio
+            ),
+            snapshotCapacityRetryPolicy: SQLiteNowSyncRuntimeSnapshotCapacityRetryPolicy(
+                enabled: snapshotCapacityRetryPolicy.enabled,
+                maxWaitMillis: snapshotCapacityRetryPolicy.maxWaitMillis,
+                fallbackDelayMillis: snapshotCapacityRetryPolicy.fallbackDelayMillis,
+                jitterRatio: snapshotCapacityRetryPolicy.jitterRatio
+            )
+        )
+    }
+}
+
+private func sqliteNowSyncInt32(_ value: Int, field: String) throws -> Int32 {
+    guard let converted = Int32(exactly: value) else {
+        throw SQLiteNowError.misuse(message: "\(field) is outside the 32-bit signed integer range")
+    }
+    return converted
+}
+
 public enum SQLiteNowAuthorityStatus: Equatable, Sendable {
     case pendingLocalSeed
     case authoritativeEmpty
@@ -502,6 +634,22 @@ public final class SQLiteNowSyncClient {
             let result = try await runtime.attach(userId: userId)
             return SQLiteNowAttachResult(result)
         }
+    }
+
+    public func pauseUploads() async throws {
+        _ = try await mapRuntimeErrors { try await runtime.pauseUploads() }
+    }
+
+    public func resumeUploads() async throws {
+        _ = try await mapRuntimeErrors { try await runtime.resumeUploads() }
+    }
+
+    public func pauseDownloads() async throws {
+        _ = try await mapRuntimeErrors { try await runtime.pauseDownloads() }
+    }
+
+    public func resumeDownloads() async throws {
+        _ = try await mapRuntimeErrors { try await runtime.resumeDownloads() }
     }
 
     public func sourceInfo() async throws -> SQLiteNowSourceInfo {

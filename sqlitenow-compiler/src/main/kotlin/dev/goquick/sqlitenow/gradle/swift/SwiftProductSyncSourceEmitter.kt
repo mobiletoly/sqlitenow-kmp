@@ -30,10 +30,7 @@ internal class SwiftProductSyncSourceEmitter(
         writer.indent {
             line("baseURL: URL,")
             line("auth: SQLiteNowSyncAuth,")
-            line("schema: String = \"main\",")
-            line("uploadLimit: Int = 200,")
-            line("downloadLimit: Int = 1000,")
-            line("verboseLogs: Bool = false,")
+            line("config: SQLiteNowSyncConfig = .init(),")
             line("resolver: SQLiteNowSyncResolver? = nil")
         }
         writer.line(") throws -> SQLiteNowSyncClient {")
@@ -43,26 +40,18 @@ internal class SwiftProductSyncSourceEmitter(
                 line("throw SQLiteNowError.misuse(message: \"Call open() before makeSyncClient(...).\")")
             }
             line("}")
-            line("let runtimeConfig = SQLiteNowSyncRuntimeConfig(")
+            line("let runtimeConfig = try config.runtimeConfig(syncTables: [")
             indent {
-                line("schema: schema,")
-                line("syncTables: [")
-                indent {
-                    syncTables.forEachIndexed { index, syncTable ->
-                        val suffix = if (index == syncTables.lastIndex) "" else ","
-                        line(
-                            "SQLiteNowSyncRuntimeTableSpec(tableName: " +
-                                "${syncTable.table.name.toSwiftStringLiteral()}, " +
-                                "syncKeyColumnName: ${syncTable.syncKeyColumnName.toSwiftStringLiteral()})$suffix"
-                        )
-                    }
+                syncTables.forEachIndexed { index, syncTable ->
+                    val suffix = if (index == syncTables.lastIndex) "" else ","
+                    line(
+                        "SQLiteNowSyncRuntimeTableSpec(tableName: " +
+                            "${syncTable.table.name.toSwiftStringLiteral()}, " +
+                            "syncKeyColumnName: ${syncTable.syncKeyColumnName.toSwiftStringLiteral()})$suffix"
+                    )
                 }
-                line("],")
-                line("uploadLimit: Int32(uploadLimit),")
-                line("downloadLimit: Int32(downloadLimit),")
-                line("verboseLogs: verboseLogs")
             }
-            line(")")
+            line("])")
             line("let runtimeClient = SQLiteNowSyncRuntimeClient(")
             indent {
                 line("coreDatabase: runtime,")

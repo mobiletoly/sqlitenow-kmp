@@ -59,6 +59,7 @@ internal class SwiftOverlayEmitter(
             line("case observation(message: String, underlying: Error?)")
             if (swiftOversqliteEnabled) {
                 line("case sync(message: String, underlying: Error?)")
+                line("case `protocol`(message: String, underlying: Error?)")
             }
             line("case unknown(message: String, underlying: Error?)")
             line()
@@ -73,6 +74,7 @@ internal class SwiftOverlayEmitter(
                 line("case let .observation(message, _): return message")
                 if (swiftOversqliteEnabled) {
                     line("case let .sync(message, _): return message")
+                    line("case let .protocol(message, _): return message")
                 }
                 line("case let .unknown(message, _): return message")
                 line("}")
@@ -115,6 +117,7 @@ internal class SwiftOverlayEmitter(
                 line("case \"adapter\": return .adapter(message: payload.message, underlying: underlying)")
                 if (swiftOversqliteEnabled) {
                     line("case \"network\", \"auth\", \"conflict\": return .sync(message: payload.message, underlying: underlying)")
+                    line("case \"protocol\": return .protocol(message: payload.message, underlying: underlying)")
                 }
                 line("default: return .unknown(message: payload.message, underlying: underlying)")
                 line("}")
@@ -377,6 +380,127 @@ internal class SwiftOverlayEmitter(
                 line(")")
             }
             line("}")
+        }
+        line("}")
+        line()
+        line("public struct SQLiteNowTransientRetryPolicy: Equatable, Sendable {")
+        indent {
+            line("public var maxAttempts: Int")
+            line("public var initialBackoffMillis: Int64")
+            line("public var maxBackoffMillis: Int64")
+            line("public var jitterRatio: Double")
+            line()
+            line("public init(")
+            indent {
+                line("maxAttempts: Int = 3,")
+                line("initialBackoffMillis: Int64 = 150,")
+                line("maxBackoffMillis: Int64 = 1_500,")
+                line("jitterRatio: Double = 0.2")
+            }
+            line(") {")
+            indent {
+                line("self.maxAttempts = maxAttempts")
+                line("self.initialBackoffMillis = initialBackoffMillis")
+                line("self.maxBackoffMillis = maxBackoffMillis")
+                line("self.jitterRatio = jitterRatio")
+            }
+            line("}")
+        }
+        line("}")
+        line()
+        line("public struct SQLiteNowSnapshotCapacityRetryPolicy: Equatable, Sendable {")
+        indent {
+            line("public var enabled: Bool")
+            line("public var maxWaitMillis: Int64")
+            line("public var fallbackDelayMillis: Int64")
+            line("public var jitterRatio: Double")
+            line()
+            line("public init(")
+            indent {
+                line("enabled: Bool = true,")
+                line("maxWaitMillis: Int64 = 30_000,")
+                line("fallbackDelayMillis: Int64 = 1_000,")
+                line("jitterRatio: Double = 1.0")
+            }
+            line(") {")
+            indent {
+                line("self.enabled = enabled")
+                line("self.maxWaitMillis = maxWaitMillis")
+                line("self.fallbackDelayMillis = fallbackDelayMillis")
+                line("self.jitterRatio = jitterRatio")
+            }
+            line("}")
+        }
+        line("}")
+        line()
+        line("public struct SQLiteNowSyncConfig: Equatable, Sendable {")
+        indent {
+            line("public var schema: String")
+            line("public var uploadLimit: Int")
+            line("public var downloadLimit: Int")
+            line("public var snapshotChunkRows: Int")
+            line("public var snapshotChunkBytes: Int64")
+            line("public var snapshotApplyBatchRows: Int")
+            line("public var snapshotApplyBatchBytes: Int64")
+            line("public var verboseLogs: Bool")
+            line("public var transientRetryPolicy: SQLiteNowTransientRetryPolicy")
+            line("public var snapshotCapacityRetryPolicy: SQLiteNowSnapshotCapacityRetryPolicy")
+            line()
+            line("public init(")
+            indent {
+                line("schema: String = \"main\",")
+                line("uploadLimit: Int = 200,")
+                line("downloadLimit: Int = 1_000,")
+                line("snapshotChunkRows: Int = 1_000,")
+                line("snapshotChunkBytes: Int64 = 4 * 1_024 * 1_024,")
+                line("snapshotApplyBatchRows: Int = 256,")
+                line("snapshotApplyBatchBytes: Int64 = 4 * 1_024 * 1_024,")
+                line("verboseLogs: Bool = false,")
+                line("transientRetryPolicy: SQLiteNowTransientRetryPolicy = .init(),")
+                line("snapshotCapacityRetryPolicy: SQLiteNowSnapshotCapacityRetryPolicy = .init()")
+            }
+            line(") {")
+            indent {
+                line("self.schema = schema")
+                line("self.uploadLimit = uploadLimit")
+                line("self.downloadLimit = downloadLimit")
+                line("self.snapshotChunkRows = snapshotChunkRows")
+                line("self.snapshotChunkBytes = snapshotChunkBytes")
+                line("self.snapshotApplyBatchRows = snapshotApplyBatchRows")
+                line("self.snapshotApplyBatchBytes = snapshotApplyBatchBytes")
+                line("self.verboseLogs = verboseLogs")
+                line("self.transientRetryPolicy = transientRetryPolicy")
+                line("self.snapshotCapacityRetryPolicy = snapshotCapacityRetryPolicy")
+            }
+            line("}")
+            line()
+            line("fileprivate func validate() throws {")
+            indent {
+                line("guard snapshotChunkRows > 0 else { throw SQLiteNowError.misuse(message: \"snapshotChunkRows must be positive\", underlying: nil) }")
+                line("guard snapshotChunkBytes > 0 else { throw SQLiteNowError.misuse(message: \"snapshotChunkBytes must be positive\", underlying: nil) }")
+                line("guard snapshotApplyBatchRows > 0 else { throw SQLiteNowError.misuse(message: \"snapshotApplyBatchRows must be positive\", underlying: nil) }")
+                line("guard snapshotApplyBatchBytes > 0 else { throw SQLiteNowError.misuse(message: \"snapshotApplyBatchBytes must be positive\", underlying: nil) }")
+                line("guard snapshotCapacityRetryPolicy.maxWaitMillis > 0 else { throw SQLiteNowError.misuse(message: \"snapshotCapacityRetryPolicy.maxWaitMillis must be positive\", underlying: nil) }")
+                line("guard snapshotCapacityRetryPolicy.fallbackDelayMillis > 0 else { throw SQLiteNowError.misuse(message: \"snapshotCapacityRetryPolicy.fallbackDelayMillis must be positive\", underlying: nil) }")
+                line("guard (0.0...1.0).contains(snapshotCapacityRetryPolicy.jitterRatio) else { throw SQLiteNowError.misuse(message: \"snapshotCapacityRetryPolicy.jitterRatio must be within 0...1\", underlying: nil) }")
+                line("_ = try sqliteNowSyncInt32(uploadLimit, field: \"uploadLimit\")")
+                line("_ = try sqliteNowSyncInt32(downloadLimit, field: \"downloadLimit\")")
+                line("_ = try sqliteNowSyncInt32(snapshotChunkRows, field: \"snapshotChunkRows\")")
+                line("_ = try sqliteNowSyncInt32(snapshotApplyBatchRows, field: \"snapshotApplyBatchRows\")")
+                line("_ = try sqliteNowSyncInt32(transientRetryPolicy.maxAttempts, field: \"transientRetryPolicy.maxAttempts\")")
+            }
+            line("}")
+        }
+        line("}")
+        line()
+        line("private func sqliteNowSyncInt32(_ value: Int, field: String) throws -> Int32 {")
+        indent {
+            line("guard let converted = Int32(exactly: value) else {")
+            indent {
+                line("throw SQLiteNowError.misuse(message: \"\\(field) is outside the 32-bit signed integer range\", underlying: nil)")
+            }
+            line("}")
+            line("return converted")
         }
         line("}")
         line()
@@ -693,6 +817,72 @@ internal class SwiftOverlayEmitter(
         }
         line("}")
         line()
+        line("public struct SQLiteNowSyncConflict: Equatable, Sendable {")
+        indent {
+            line("public let schema: String")
+            line("public let table: String")
+            line("public let keyJson: String")
+            line("public let localOp: String")
+            line("public let localPayloadJson: String?")
+            line("public let baseRowVersion: Int64")
+            line("public let serverRowVersion: Int64")
+            line("public let serverRowDeleted: Bool")
+            line("public let serverRowJson: String?")
+            line()
+            line("fileprivate init(_ bridge: ${databaseName}SyncConflictBridge) {")
+            indent {
+                line("schema = bridge.schema")
+                line("table = bridge.table")
+                line("keyJson = bridge.keyJson")
+                line("localOp = bridge.localOp")
+                line("localPayloadJson = bridge.localPayloadJson")
+                line("baseRowVersion = bridge.baseRowVersion")
+                line("serverRowVersion = bridge.serverRowVersion")
+                line("serverRowDeleted = bridge.serverRowDeleted")
+                line("serverRowJson = bridge.serverRowJson")
+            }
+            line("}")
+        }
+        line("}")
+        line()
+        line("public enum SQLiteNowSyncResolverResult: Equatable, Sendable {")
+        indent {
+            line("case acceptServer")
+            line("case keepLocal")
+            line("case keepMerged(payloadJson: String)")
+            line()
+            line("fileprivate var bridgeResult: ${databaseName}SyncResolverResultBridge {")
+            indent {
+                line("switch self {")
+                line("case .acceptServer:")
+                indent { line("return ${databaseName}SyncResolverResultBridge(kind: \"acceptServer\", mergedPayloadJson: nil)") }
+                line("case .keepLocal:")
+                indent { line("return ${databaseName}SyncResolverResultBridge(kind: \"keepLocal\", mergedPayloadJson: nil)") }
+                line("case let .keepMerged(payloadJson):")
+                indent { line("return ${databaseName}SyncResolverResultBridge(kind: \"keepMerged\", mergedPayloadJson: payloadJson)") }
+                line("}")
+            }
+            line("}")
+        }
+        line("}")
+        line()
+        line("public struct SQLiteNowSyncResolver: @unchecked Sendable {")
+        indent {
+            line("fileprivate let resolveBlock: @Sendable (SQLiteNowSyncConflict) -> SQLiteNowSyncResolverResult")
+            line()
+            line("public init(resolve: @escaping @Sendable (SQLiteNowSyncConflict) -> SQLiteNowSyncResolverResult) {")
+            indent { line("resolveBlock = resolve") }
+            line("}")
+            line()
+            line("public static let serverWins = SQLiteNowSyncResolver { _ in .acceptServer }")
+            line("public static let clientWins = SQLiteNowSyncResolver { _ in .keepLocal }")
+            line()
+            line("fileprivate func resolve(_ bridge: ${databaseName}SyncConflictBridge) -> ${databaseName}SyncResolverResultBridge {")
+            indent { line("resolveBlock(SQLiteNowSyncConflict(bridge)).bridgeResult") }
+            line("}")
+        }
+        line("}")
+        line()
         line("public final class SQLiteNowAutomaticDownloads {")
         indent {
             line("private let observation: ${databaseName}Observation")
@@ -739,6 +929,30 @@ internal class SwiftOverlayEmitter(
                     line("return SQLiteNowAttachResult(result)")
                 }
                 line("}")
+            }
+            line("}")
+            line()
+            line("public func pauseUploads() async throws {")
+            indent {
+                line("try await mapSQLiteNowErrors { try await bridge.pauseUploads() }")
+            }
+            line("}")
+            line()
+            line("public func resumeUploads() async throws {")
+            indent {
+                line("try await mapSQLiteNowErrors { try await bridge.resumeUploads() }")
+            }
+            line("}")
+            line()
+            line("public func pauseDownloads() async throws {")
+            indent {
+                line("try await mapSQLiteNowErrors { try await bridge.pauseDownloads() }")
+            }
+            line("}")
+            line()
+            line("public func resumeDownloads() async throws {")
+            indent {
+                line("try await mapSQLiteNowErrors { try await bridge.resumeDownloads() }")
             }
             line("}")
             line()
@@ -994,22 +1208,34 @@ internal class SwiftOverlayEmitter(
                 indent {
                     line("baseURL: URL,")
                     line("auth: SQLiteNowSyncAuth,")
-                    line("schema: String = \"main\",")
-                    line("uploadLimit: Int = 200,")
-                    line("downloadLimit: Int = 1000,")
-                    line("verboseLogs: Bool = false")
+                    line("config: SQLiteNowSyncConfig = .init(),")
+                    line("resolver: SQLiteNowSyncResolver? = nil")
                 }
-                line(") -> SQLiteNowSyncClient {")
+                line(") throws -> SQLiteNowSyncClient {")
                 indent {
+                    line("try config.validate()")
                     line("let syncBridge = bridge.makeSyncClient(")
                     indent {
                         line("baseUrl: baseURL.absoluteString,")
                         line("accessTokenProvider: auth.accessTokenProvider,")
                         line("refreshedAccessTokenProvider: auth.refreshedAccessTokenProvider,")
-                        line("schema: schema,")
-                        line("uploadLimit: Int32(uploadLimit),")
-                        line("downloadLimit: Int32(downloadLimit),")
-                        line("verboseLogs: verboseLogs")
+                        line("schema: config.schema,")
+                        line("uploadLimit: try sqliteNowSyncInt32(config.uploadLimit, field: \"uploadLimit\"),")
+                        line("downloadLimit: try sqliteNowSyncInt32(config.downloadLimit, field: \"downloadLimit\"),")
+                        line("snapshotChunkRows: try sqliteNowSyncInt32(config.snapshotChunkRows, field: \"snapshotChunkRows\"),")
+                        line("snapshotChunkBytes: config.snapshotChunkBytes,")
+                        line("snapshotApplyBatchRows: try sqliteNowSyncInt32(config.snapshotApplyBatchRows, field: \"snapshotApplyBatchRows\"),")
+                        line("snapshotApplyBatchBytes: config.snapshotApplyBatchBytes,")
+                        line("verboseLogs: config.verboseLogs,")
+                        line("transientMaxAttempts: try sqliteNowSyncInt32(config.transientRetryPolicy.maxAttempts, field: \"transientRetryPolicy.maxAttempts\"),")
+                        line("transientInitialBackoffMillis: config.transientRetryPolicy.initialBackoffMillis,")
+                        line("transientMaxBackoffMillis: config.transientRetryPolicy.maxBackoffMillis,")
+                        line("transientJitterRatio: config.transientRetryPolicy.jitterRatio,")
+                        line("capacityRetryEnabled: config.snapshotCapacityRetryPolicy.enabled,")
+                        line("capacityRetryMaxWaitMillis: config.snapshotCapacityRetryPolicy.maxWaitMillis,")
+                        line("capacityRetryFallbackDelayMillis: config.snapshotCapacityRetryPolicy.fallbackDelayMillis,")
+                        line("capacityRetryJitterRatio: config.snapshotCapacityRetryPolicy.jitterRatio,")
+                        line("resolver: resolver.map { resolver in { conflict in resolver.resolve(conflict) } }")
                     }
                     line(")")
                     line("return SQLiteNowSyncClient(bridge: syncBridge)")

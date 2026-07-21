@@ -82,13 +82,31 @@ internal class DatabaseOversqliteEmitter(
                     .build()
             )
             .addParameter(
+                ParameterSpec.builder("snapshotChunkRows", Int::class).defaultValue("1000").build()
+            )
+            .addParameter(
+                ParameterSpec.builder("snapshotChunkBytes", Long::class)
+                    .defaultValue("4L * 1024L * 1024L")
+                    .build()
+            )
+            .addParameter(
+                ParameterSpec.builder("snapshotApplyBatchRows", Int::class).defaultValue("256").build()
+            )
+            .addParameter(
+                ParameterSpec.builder("snapshotApplyBatchBytes", Long::class)
+                    .defaultValue("4L * 1024L * 1024L")
+                    .build()
+            )
+            .addParameter(
                 ParameterSpec.builder("verboseLogs", Boolean::class).defaultValue("false")
                     .build()
             )
+            .addParameter(transientRetryPolicyParameter())
+            .addParameter(snapshotCapacityRetryPolicyParameter())
             .addParameter(syncTablesParameter())
             .returns(ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteConfig"))
             .addStatement(
-                "return %T(schema, syncTables, uploadLimit, downloadLimit, verboseLogs = verboseLogs)",
+                "return %T(schema = schema, syncTables = syncTables, uploadLimit = uploadLimit, downloadLimit = downloadLimit, snapshotChunkRows = snapshotChunkRows, snapshotChunkBytes = snapshotChunkBytes, snapshotApplyBatchRows = snapshotApplyBatchRows, snapshotApplyBatchBytes = snapshotApplyBatchBytes, verboseLogs = verboseLogs, transientRetryPolicy = transientRetryPolicy, snapshotCapacityRetryPolicy = snapshotCapacityRetryPolicy)",
                 ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteConfig")
             )
             .build()
@@ -151,12 +169,32 @@ internal class DatabaseOversqliteEmitter(
                     .build()
             )
             .addParameter(
+                ParameterSpec.builder("snapshotChunkRows", Int::class).defaultValue("1000").build()
+            )
+            .addParameter(
+                ParameterSpec.builder("snapshotChunkBytes", Long::class)
+                    .defaultValue("4L * 1024L * 1024L")
+                    .build()
+            )
+            .addParameter(
+                ParameterSpec.builder("snapshotApplyBatchRows", Int::class).defaultValue("256").build()
+            )
+            .addParameter(
+                ParameterSpec.builder("snapshotApplyBatchBytes", Long::class)
+                    .defaultValue("4L * 1024L * 1024L")
+                    .build()
+            )
+            .addParameter(
                 ParameterSpec.builder("verboseLogs", Boolean::class).defaultValue("false")
                     .build()
             )
+            .addParameter(transientRetryPolicyParameter())
+            .addParameter(snapshotCapacityRetryPolicyParameter())
             .addParameter(syncTablesParameter())
             .returns(ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteClient"))
-            .addStatement("val cfg = buildOversqliteConfig(schema, uploadLimit, downloadLimit, verboseLogs, syncTables)")
+            .addStatement(
+                "val cfg = buildOversqliteConfig(schema = schema, uploadLimit = uploadLimit, downloadLimit = downloadLimit, snapshotChunkRows = snapshotChunkRows, snapshotChunkBytes = snapshotChunkBytes, snapshotApplyBatchRows = snapshotApplyBatchRows, snapshotApplyBatchBytes = snapshotApplyBatchBytes, verboseLogs = verboseLogs, transientRetryPolicy = transientRetryPolicy, snapshotCapacityRetryPolicy = snapshotCapacityRetryPolicy, syncTables = syncTables)"
+            )
             .addStatement(
                 "return %T(db = this.connection(), config = cfg, http = httpClient, resolver = resolver)",
                 ClassName("dev.goquick.sqlitenow.oversqlite", "DefaultOversqliteClient"),
@@ -170,5 +208,19 @@ internal class DatabaseOversqliteEmitter(
             "syncTables",
             ClassName("kotlin.collections", "List").parameterizedBy(syncTableType),
         ).defaultValue("Companion.syncTables").build()
+    }
+
+    private fun transientRetryPolicyParameter(): ParameterSpec {
+        val type = ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteTransientRetryPolicy")
+        return ParameterSpec.builder("transientRetryPolicy", type)
+            .defaultValue("%T()", type)
+            .build()
+    }
+
+    private fun snapshotCapacityRetryPolicyParameter(): ParameterSpec {
+        val type = ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteSnapshotCapacityRetryPolicy")
+        return ParameterSpec.builder("snapshotCapacityRetryPolicy", type)
+            .defaultValue("%T()", type)
+            .build()
     }
 }

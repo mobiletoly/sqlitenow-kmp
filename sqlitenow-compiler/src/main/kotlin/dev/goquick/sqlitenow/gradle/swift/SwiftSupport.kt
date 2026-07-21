@@ -154,6 +154,7 @@ internal fun String.sqliteSwiftType(nullable: Boolean, explicitType: String? = n
     explicitType?.let { return it.toSwiftTypeName().withSwiftNullable(nullable) }
     val normalized = uppercase(Locale.ROOT)
     val swiftType = when {
+        "BOOL" in normalized -> "Bool"
         "INT" in normalized -> "Int64"
         "REAL" in normalized || "FLOA" in normalized || "DOUB" in normalized -> "Double"
         "BLOB" in normalized -> "Data"
@@ -166,6 +167,7 @@ internal fun String.sqliteBridgeKotlinType(nullable: Boolean, explicitType: Stri
     explicitType?.let { return it.toBridgeKotlinType().withKotlinNullable(nullable) }
     val normalized = uppercase(Locale.ROOT)
     val rawType = when {
+        "BOOL" in normalized -> "Boolean"
         "INT" in normalized -> "Long"
         "REAL" in normalized || "FLOA" in normalized || "DOUB" in normalized -> "Double"
         "BLOB" in normalized -> "ByteArray"

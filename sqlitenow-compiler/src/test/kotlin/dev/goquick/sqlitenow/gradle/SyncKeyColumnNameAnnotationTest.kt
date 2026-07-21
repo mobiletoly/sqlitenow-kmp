@@ -67,9 +67,22 @@ class SyncKeyColumnNameAnnotationTest {
             "Should generate buildOversqliteConfig function"
         )
         assertTrue(
-            generatedContent.contains("OversqliteConfig(schema, syncTables"),
+            generatedContent.contains("OversqliteConfig(schema = schema, syncTables = syncTables"),
             "buildOversqliteConfig should use syncTables parameter"
         )
+        listOf(
+            "snapshot chunk row default" to "snapshotChunkRows: Int = 1000",
+            "snapshot chunk byte default" to "snapshotChunkBytes: Long = 4L * 1024L * 1024L",
+            "snapshot apply row default" to "snapshotApplyBatchRows: Int = 256",
+            "snapshot apply byte default" to "snapshotApplyBatchBytes: Long = 4L * 1024L * 1024L",
+            "transient retry default" to "transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy()",
+            "capacity retry default" to "snapshotCapacityRetryPolicy: OversqliteSnapshotCapacityRetryPolicy = OversqliteSnapshotCapacityRetryPolicy()",
+            "explicit snapshot forwarding" to "snapshotChunkRows = snapshotChunkRows",
+            "explicit transient forwarding" to "transientRetryPolicy = transientRetryPolicy",
+            "explicit capacity forwarding" to "snapshotCapacityRetryPolicy = snapshotCapacityRetryPolicy",
+        ).forEach { (scenario, expected) ->
+            assertTrue(generatedContent.contains(expected), "Missing generated helper scenario: $scenario")
+        }
         assertTrue(
             generatedContent.contains("fun buildOversqliteAutomaticDownloadConfig"),
             "Should generate automatic download config helper"

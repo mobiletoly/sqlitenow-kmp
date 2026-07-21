@@ -37,6 +37,7 @@ internal class SwiftProductSupportEmitter(
             line("case observation(message: String)")
             line("case adapter(message: String)")
             if (syncEnabled) line("case sync(message: String)")
+            if (syncEnabled) line("case `protocol`(message: String)")
             line("case unknown(message: String)")
             line()
             line("public var description: String {")
@@ -49,6 +50,7 @@ internal class SwiftProductSupportEmitter(
                 line("case let .observation(message): return message")
                 line("case let .adapter(message): return message")
                 if (syncEnabled) line("case let .sync(message): return message")
+                if (syncEnabled) line("case let .protocol(message): return message")
                 line("case let .unknown(message): return message")
                 line("}")
             }
@@ -111,6 +113,7 @@ internal class SwiftProductSupportEmitter(
                     line("case \"cancelled\": return .cancelled(message: payload.message)")
                     line("case \"state\": return .misuse(message: payload.message)")
                     line("case \"network\", \"auth\", \"conflict\": return .sync(message: payload.message)")
+                    line("case \"protocol\": return .protocol(message: payload.message)")
                     line("default: return .unknown(message: payload.message)")
                     line("}")
                 }

@@ -232,6 +232,7 @@ class SqliteNowSwiftProductEmitterTest {
         )
 
         val swift = swiftOutputDir.readGeneratedSwiftFiles()
+        val databaseSwift = swiftOutputDir.resolve("HybridSyncProofDatabase.swift").readText()
         val supportSwift = swiftOutputDir.resolve("SQLiteNowSupport.swift").readText()
         val syncSupportSwift = swiftOutputDir.resolve("SQLiteNowSyncSupport.swift").readText()
         assertTrue(swift.contains("@preconcurrency import SQLiteNowSyncRuntime"))
@@ -248,6 +249,32 @@ class SqliteNowSwiftProductEmitterTest {
         assertFalse(syncSupportSwift.contains("refreshTokenProvider"))
         assertFalse(syncSupportSwift.contains("refreshToken: (@Sendable () -> String?)? = nil"))
         assertTrue(syncSupportSwift.contains("public final class SQLiteNowSyncClient"))
+        listOf(
+            "sync config type" to "public struct SQLiteNowSyncConfig: Equatable, Sendable",
+            "transient retry type" to "public struct SQLiteNowTransientRetryPolicy: Equatable, Sendable",
+            "capacity retry type" to "public struct SQLiteNowSnapshotCapacityRetryPolicy: Equatable, Sendable",
+            "schema default" to "schema: String = \"main\"",
+            "upload default" to "uploadLimit: Int = 200",
+            "download default" to "downloadLimit: Int = 1_000",
+            "snapshot chunk row default" to "snapshotChunkRows: Int = 1_000",
+            "snapshot chunk byte default" to "snapshotChunkBytes: Int64 = 4 * 1_024 * 1_024",
+            "snapshot apply row default" to "snapshotApplyBatchRows: Int = 256",
+            "snapshot apply byte default" to "snapshotApplyBatchBytes: Int64 = 4 * 1_024 * 1_024",
+            "config factory argument" to "config: SQLiteNowSyncConfig = .init()",
+            "resolver factory argument" to "resolver: SQLiteNowSyncResolver? = nil",
+            "protocol error declaration" to "case `protocol`(message: String)",
+            "protocol payload mapping" to "case \"protocol\": return .protocol(message: payload.message)",
+            "pause uploads" to "public func pauseUploads() async throws",
+            "resume uploads" to "public func resumeUploads() async throws",
+            "pause downloads" to "public func pauseDownloads() async throws",
+            "resume downloads" to "public func resumeDownloads() async throws",
+        ).forEach { (scenario, expected) ->
+            assertTrue(swift.contains(expected), "Missing modern Swift sync scenario: $scenario")
+        }
+        assertFalse(databaseSwift.contains("schema: String = \"main\","), "Old flat schema argument must be removed.")
+        assertFalse(databaseSwift.contains("uploadLimit: Int = 200,"), "Old flat upload argument must be removed.")
+        assertFalse(databaseSwift.contains("downloadLimit: Int = 1000,"), "Old flat download argument must be removed.")
+        assertFalse(databaseSwift.contains("verboseLogs: Bool = false,"), "Old flat logging argument must be removed.")
         assertTrue(supportSwift.contains("catch let error as CancellationError"))
         assertTrue(syncSupportSwift.contains("public func progress() -> AsyncThrowingStream<SQLiteNowSyncProgress, Error>"))
         assertTrue(syncSupportSwift.contains("public func startAutomaticDownloads("))

@@ -26,6 +26,8 @@ import dev.goquick.sqlitenow.oversqlite.OversqliteAutomaticDownloadConfig
 import dev.goquick.sqlitenow.oversqlite.OversqliteCategorizedException
 import dev.goquick.sqlitenow.oversqlite.OversqliteConfig
 import dev.goquick.sqlitenow.oversqlite.OversqliteProgress
+import dev.goquick.sqlitenow.oversqlite.OversqliteSnapshotCapacityRetryPolicy
+import dev.goquick.sqlitenow.oversqlite.OversqliteTransientRetryPolicy
 import dev.goquick.sqlitenow.oversqlite.PendingSyncStatus
 import dev.goquick.sqlitenow.oversqlite.PushReport
 import dev.goquick.sqlitenow.oversqlite.RemoteSyncReport
@@ -69,7 +71,27 @@ class SQLiteNowSyncRuntimeConfig(
     val syncTables: List<SQLiteNowSyncRuntimeTableSpec>,
     val uploadLimit: Int,
     val downloadLimit: Int,
+    val snapshotChunkRows: Int,
+    val snapshotChunkBytes: Long,
+    val snapshotApplyBatchRows: Int,
+    val snapshotApplyBatchBytes: Long,
     val verboseLogs: Boolean,
+    val transientRetryPolicy: SQLiteNowSyncRuntimeTransientRetryPolicy,
+    val snapshotCapacityRetryPolicy: SQLiteNowSyncRuntimeSnapshotCapacityRetryPolicy,
+)
+
+class SQLiteNowSyncRuntimeTransientRetryPolicy(
+    val maxAttempts: Int,
+    val initialBackoffMillis: Long,
+    val maxBackoffMillis: Long,
+    val jitterRatio: Double,
+)
+
+class SQLiteNowSyncRuntimeSnapshotCapacityRetryPolicy(
+    val enabled: Boolean,
+    val maxWaitMillis: Long,
+    val fallbackDelayMillis: Long,
+    val jitterRatio: Double,
 )
 
 class SQLiteNowSyncRuntimeAuth(
@@ -246,6 +268,26 @@ class SQLiteNowSyncRuntimeClient(
     }
 
     @Throws(SQLiteNowSyncRuntimeException::class, CancellationException::class)
+    suspend fun pauseUploads() = mapSyncRuntimeErrors {
+        client.pauseUploads()
+    }
+
+    @Throws(SQLiteNowSyncRuntimeException::class, CancellationException::class)
+    suspend fun resumeUploads() = mapSyncRuntimeErrors {
+        client.resumeUploads()
+    }
+
+    @Throws(SQLiteNowSyncRuntimeException::class, CancellationException::class)
+    suspend fun pauseDownloads() = mapSyncRuntimeErrors {
+        client.pauseDownloads()
+    }
+
+    @Throws(SQLiteNowSyncRuntimeException::class, CancellationException::class)
+    suspend fun resumeDownloads() = mapSyncRuntimeErrors {
+        client.resumeDownloads()
+    }
+
+    @Throws(SQLiteNowSyncRuntimeException::class, CancellationException::class)
     suspend fun sourceInfo(): SQLiteNowSyncRuntimeSourceInfo = mapSyncRuntimeErrors {
         client.sourceInfo().runtimeGet().toRuntimeSourceInfo()
     }
@@ -379,7 +421,23 @@ private fun SQLiteNowSyncRuntimeConfig.toOversqliteConfig(): OversqliteConfig =
         },
         uploadLimit = uploadLimit,
         downloadLimit = downloadLimit,
+        snapshotChunkRows = snapshotChunkRows,
+        snapshotChunkBytes = snapshotChunkBytes,
+        snapshotApplyBatchRows = snapshotApplyBatchRows,
+        snapshotApplyBatchBytes = snapshotApplyBatchBytes,
         verboseLogs = verboseLogs,
+        transientRetryPolicy = OversqliteTransientRetryPolicy(
+            maxAttempts = transientRetryPolicy.maxAttempts,
+            initialBackoffMillis = transientRetryPolicy.initialBackoffMillis,
+            maxBackoffMillis = transientRetryPolicy.maxBackoffMillis,
+            jitterRatio = transientRetryPolicy.jitterRatio,
+        ),
+        snapshotCapacityRetryPolicy = OversqliteSnapshotCapacityRetryPolicy(
+            enabled = snapshotCapacityRetryPolicy.enabled,
+            maxWaitMillis = snapshotCapacityRetryPolicy.maxWaitMillis,
+            fallbackDelayMillis = snapshotCapacityRetryPolicy.fallbackDelayMillis,
+            jitterRatio = snapshotCapacityRetryPolicy.jitterRatio,
+        ),
     )
 
 private fun SQLiteNowSyncRuntimeAutomaticDownloadConfig.toOversqliteAutomaticDownloadConfig() =

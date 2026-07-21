@@ -66,14 +66,20 @@ internal class SwiftKotlinBridgeEmitter(
             if (swiftOversqliteEnabled) {
                 line("import dev.goquick.sqlitenow.oversqlite.AttachResult")
                 line("import dev.goquick.sqlitenow.oversqlite.BundleChangeWatchMode")
+                line("import dev.goquick.sqlitenow.oversqlite.ConflictContext")
                 line("import dev.goquick.sqlitenow.oversqlite.DetachOutcome")
                 line("import dev.goquick.sqlitenow.oversqlite.OversqliteCategorizedException")
                 line("import dev.goquick.sqlitenow.oversqlite.OversqliteProgress")
+                line("import dev.goquick.sqlitenow.oversqlite.OversqliteSnapshotCapacityRetryPolicy")
+                line("import dev.goquick.sqlitenow.oversqlite.OversqliteTransientRetryPolicy")
                 line("import dev.goquick.sqlitenow.oversqlite.PendingSyncStatus")
+                line("import dev.goquick.sqlitenow.oversqlite.MergeResult")
                 line("import dev.goquick.sqlitenow.oversqlite.PushReport")
                 line("import dev.goquick.sqlitenow.oversqlite.RemoteSyncReport")
+                line("import dev.goquick.sqlitenow.oversqlite.Resolver")
                 line("import dev.goquick.sqlitenow.oversqlite.RestoreSummary")
                 line("import dev.goquick.sqlitenow.oversqlite.SourceInfo")
+                line("import dev.goquick.sqlitenow.oversqlite.ServerWinsResolver")
                 line("import dev.goquick.sqlitenow.oversqlite.SyncReport")
                 line("import dev.goquick.sqlitenow.oversqlite.SyncThenDetachResult")
                 line("import dev.goquick.sqlitenow.oversqlite.SyncStatus")
@@ -87,6 +93,9 @@ internal class SwiftKotlinBridgeEmitter(
                 line("import io.ktor.client.plugins.defaultRequest")
                 line("import io.ktor.serialization.kotlinx.json.json")
                 line("import kotlinx.serialization.json.Json")
+                line("import kotlinx.serialization.json.JsonElement")
+                line("import kotlinx.serialization.json.buildJsonObject")
+                line("import kotlinx.serialization.json.put")
             }
             line("import dev.goquick.sqlitenow.core.SelectRunners")
             line("import dev.goquick.sqlitenow.core.sqlite.SqliteException")
@@ -329,6 +338,62 @@ internal class SwiftKotlinBridgeEmitter(
             line("public val bundleChangeWatchReconnectMaxMillis: Long,")
         }
         line(")")
+        line()
+        line("public class ${databaseName}SyncConflictBridge(")
+        indent {
+            line("public val schema: String,")
+            line("public val table: String,")
+            line("public val keyJson: String,")
+            line("public val localOp: String,")
+            line("public val localPayloadJson: String?,")
+            line("public val baseRowVersion: Long,")
+            line("public val serverRowVersion: Long,")
+            line("public val serverRowDeleted: Boolean,")
+            line("public val serverRowJson: String?,")
+        }
+        line(")")
+        line()
+        line("public class ${databaseName}SyncResolverResultBridge(")
+        indent {
+            line("public val kind: String,")
+            line("public val mergedPayloadJson: String?,")
+        }
+        line(")")
+        line()
+        line("private fun ConflictContext.to${databaseName}SyncConflictBridge(): ${databaseName}SyncConflictBridge =")
+        indent {
+            line("${databaseName}SyncConflictBridge(")
+            indent {
+                line("schema = schema,")
+                line("table = table,")
+                line("keyJson = key.toJsonString(),")
+                line("localOp = localOp,")
+                line("localPayloadJson = localPayload?.jsonString(),")
+                line("baseRowVersion = baseRowVersion,")
+                line("serverRowVersion = serverRowVersion,")
+                line("serverRowDeleted = serverRowDeleted,")
+                line("serverRowJson = serverRow?.jsonString(),")
+            }
+            line(")")
+        }
+        line()
+        line("private fun Map<String, String>.toJsonString(): String =")
+        indent {
+            line("buildJsonObject {")
+            indent { line("forEach { (key, value) -> put(key, value) }") }
+            line("}.toString()")
+        }
+        line()
+        line("private fun JsonElement.jsonString(): String = toString()")
+        line()
+        line("private fun ${databaseName}SyncResolverResultBridge.toMergeResult(json: Json): MergeResult =")
+        indent {
+            line("when (kind) {")
+            line("\"keepLocal\" -> MergeResult.KeepLocal")
+            line("\"keepMerged\" -> MergeResult.KeepMerged(json.parseToJsonElement(requireNotNull(mergedPayloadJson) { \"keepMerged resolver result requires mergedPayloadJson\" }))")
+            line("else -> MergeResult.AcceptServer")
+            line("}")
+        }
         line()
         line("private fun PendingSyncStatus.to${databaseName}PendingSyncStatusBridge(): ${databaseName}PendingSyncStatusBridge =")
         indent {
@@ -894,7 +959,20 @@ internal class SwiftKotlinBridgeEmitter(
                     line("schema: String,")
                     line("uploadLimit: Int,")
                     line("downloadLimit: Int,")
+                    line("snapshotChunkRows: Int,")
+                    line("snapshotChunkBytes: Long,")
+                    line("snapshotApplyBatchRows: Int,")
+                    line("snapshotApplyBatchBytes: Long,")
                     line("verboseLogs: Boolean,")
+                    line("transientMaxAttempts: Int,")
+                    line("transientInitialBackoffMillis: Long,")
+                    line("transientMaxBackoffMillis: Long,")
+                    line("transientJitterRatio: Double,")
+                    line("capacityRetryEnabled: Boolean,")
+                    line("capacityRetryMaxWaitMillis: Long,")
+                    line("capacityRetryFallbackDelayMillis: Long,")
+                    line("capacityRetryJitterRatio: Double,")
+                    line("resolver: ((${databaseName}SyncConflictBridge) -> ${databaseName}SyncResolverResultBridge)?,")
                 }
                 line("): ${databaseName}SyncBridge =")
                 indent {
@@ -907,7 +985,20 @@ internal class SwiftKotlinBridgeEmitter(
                         line("schema = schema,")
                         line("uploadLimit = uploadLimit,")
                         line("downloadLimit = downloadLimit,")
+                        line("snapshotChunkRows = snapshotChunkRows,")
+                        line("snapshotChunkBytes = snapshotChunkBytes,")
+                        line("snapshotApplyBatchRows = snapshotApplyBatchRows,")
+                        line("snapshotApplyBatchBytes = snapshotApplyBatchBytes,")
                         line("verboseLogs = verboseLogs,")
+                        line("transientMaxAttempts = transientMaxAttempts,")
+                        line("transientInitialBackoffMillis = transientInitialBackoffMillis,")
+                        line("transientMaxBackoffMillis = transientMaxBackoffMillis,")
+                        line("transientJitterRatio = transientJitterRatio,")
+                        line("capacityRetryEnabled = capacityRetryEnabled,")
+                        line("capacityRetryMaxWaitMillis = capacityRetryMaxWaitMillis,")
+                        line("capacityRetryFallbackDelayMillis = capacityRetryFallbackDelayMillis,")
+                        line("capacityRetryJitterRatio = capacityRetryJitterRatio,")
+                        line("resolver = resolver,")
                     }
                     line(")")
                 }
@@ -998,11 +1089,25 @@ internal class SwiftKotlinBridgeEmitter(
             line("schema: String,")
             line("uploadLimit: Int,")
             line("downloadLimit: Int,")
+            line("snapshotChunkRows: Int,")
+            line("snapshotChunkBytes: Long,")
+            line("snapshotApplyBatchRows: Int,")
+            line("snapshotApplyBatchBytes: Long,")
             line("verboseLogs: Boolean,")
+            line("transientMaxAttempts: Int,")
+            line("transientInitialBackoffMillis: Long,")
+            line("transientMaxBackoffMillis: Long,")
+            line("transientJitterRatio: Double,")
+            line("capacityRetryEnabled: Boolean,")
+            line("capacityRetryMaxWaitMillis: Long,")
+            line("capacityRetryFallbackDelayMillis: Long,")
+            line("capacityRetryJitterRatio: Double,")
+            line("resolver: ((${databaseName}SyncConflictBridge) -> ${databaseName}SyncResolverResultBridge)?,")
         }
         line(") {")
         indent {
             line("private val auth = ${databaseName}SyncAuth(accessTokenProvider, refreshedAccessTokenProvider)")
+            line("private val json = Json { ignoreUnknownKeys = true }")
             line("private val httpClient = ${databaseName}SyncHttpClient(baseUrl, auth)")
             line("private val client = database.newOversqliteClient(")
             indent {
@@ -1010,7 +1115,34 @@ internal class SwiftKotlinBridgeEmitter(
                 line("httpClient = httpClient,")
                 line("uploadLimit = uploadLimit,")
                 line("downloadLimit = downloadLimit,")
+                line("snapshotChunkRows = snapshotChunkRows,")
+                line("snapshotChunkBytes = snapshotChunkBytes,")
+                line("snapshotApplyBatchRows = snapshotApplyBatchRows,")
+                line("snapshotApplyBatchBytes = snapshotApplyBatchBytes,")
                 line("verboseLogs = verboseLogs,")
+                line("transientRetryPolicy = OversqliteTransientRetryPolicy(")
+                indent {
+                    line("maxAttempts = transientMaxAttempts,")
+                    line("initialBackoffMillis = transientInitialBackoffMillis,")
+                    line("maxBackoffMillis = transientMaxBackoffMillis,")
+                    line("jitterRatio = transientJitterRatio,")
+                }
+                line("),")
+                line("snapshotCapacityRetryPolicy = OversqliteSnapshotCapacityRetryPolicy(")
+                indent {
+                    line("enabled = capacityRetryEnabled,")
+                    line("maxWaitMillis = capacityRetryMaxWaitMillis,")
+                    line("fallbackDelayMillis = capacityRetryFallbackDelayMillis,")
+                    line("jitterRatio = capacityRetryJitterRatio,")
+                }
+                line("),")
+                line("resolver = resolver?.let { resolve ->")
+                indent {
+                    line("Resolver { conflict ->")
+                    indent { line("resolve(conflict.to${databaseName}SyncConflictBridge()).toMergeResult(json)") }
+                    line("}")
+                }
+                line("} ?: ServerWinsResolver,")
             }
             line(")")
             line("private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)")
@@ -1027,6 +1159,34 @@ internal class SwiftKotlinBridgeEmitter(
             indent {
                 line("mapSwiftOverlayErrors { client.attach(userId).getOrThrow().to${databaseName}AttachResultBridge() }")
             }
+            line()
+            line("@Throws(Exception::class)")
+            line("public suspend fun pauseUploads() {")
+            indent {
+                line("mapSwiftOverlayErrors { client.pauseUploads() }")
+            }
+            line("}")
+            line()
+            line("@Throws(Exception::class)")
+            line("public suspend fun resumeUploads() {")
+            indent {
+                line("mapSwiftOverlayErrors { client.resumeUploads() }")
+            }
+            line("}")
+            line()
+            line("@Throws(Exception::class)")
+            line("public suspend fun pauseDownloads() {")
+            indent {
+                line("mapSwiftOverlayErrors { client.pauseDownloads() }")
+            }
+            line("}")
+            line()
+            line("@Throws(Exception::class)")
+            line("public suspend fun resumeDownloads() {")
+            indent {
+                line("mapSwiftOverlayErrors { client.resumeDownloads() }")
+            }
+            line("}")
             line()
             line("@Throws(Exception::class)")
             line("public suspend fun sourceInfo(): ${databaseName}SourceInfoBridge =")

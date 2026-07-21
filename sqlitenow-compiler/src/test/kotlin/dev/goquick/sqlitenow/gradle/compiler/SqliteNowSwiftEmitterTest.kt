@@ -246,6 +246,31 @@ class SqliteNowSwiftEmitterTest {
         assertTrue(swift.contains("public func startAutomaticDownloads("))
         assertTrue(swift.contains("SQLiteNowBundleChangeWatchMode"))
         assertTrue(swift.contains("return SQLiteNowSyncClient(bridge: syncBridge)"))
+        listOf(
+            "sync config type" to "public struct SQLiteNowSyncConfig: Equatable, Sendable",
+            "transient retry type" to "public struct SQLiteNowTransientRetryPolicy: Equatable, Sendable",
+            "capacity retry type" to "public struct SQLiteNowSnapshotCapacityRetryPolicy: Equatable, Sendable",
+            "config factory argument" to "config: SQLiteNowSyncConfig = .init(),",
+            "resolver factory argument" to "resolver: SQLiteNowSyncResolver? = nil",
+            "throwing factory" to ") throws -> SQLiteNowSyncClient",
+            "protocol error declaration" to "case `protocol`(message: String, underlying: Error?)",
+            "protocol payload mapping" to "case \"protocol\": return .protocol(message: payload.message, underlying: underlying)",
+            "pause uploads" to "public func pauseUploads() async throws",
+            "resume uploads" to "public func resumeUploads() async throws",
+            "pause downloads" to "public func pauseDownloads() async throws",
+            "resume downloads" to "public func resumeDownloads() async throws",
+            "resolver bridge" to "public class SyncAppDatabaseSyncResolverResultBridge(",
+            "snapshot forwarding" to "snapshotChunkRows = snapshotChunkRows",
+            "transient forwarding" to "transientRetryPolicy = OversqliteTransientRetryPolicy(",
+            "capacity forwarding" to "snapshotCapacityRetryPolicy = OversqliteSnapshotCapacityRetryPolicy(",
+        ).forEach { (scenario, expected) ->
+            val output = if (scenario.endsWith("forwarding") || scenario == "resolver bridge") bridge else swift
+            assertTrue(output.contains(expected), "Missing legacy Swift sync scenario: $scenario")
+        }
+        assertFalse(
+            swift.contains("auth: SQLiteNowSyncAuth,\n        schema: String = \"main\","),
+            "Old flat sync factory arguments must be removed.",
+        )
     }
 
     @Test

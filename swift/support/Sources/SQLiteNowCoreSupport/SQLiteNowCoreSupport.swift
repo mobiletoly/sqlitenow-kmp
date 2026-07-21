@@ -9,6 +9,7 @@ public enum SQLiteNowError: Error, CustomStringConvertible, Equatable {
     case observation(message: String)
     case adapter(message: String)
     case sync(message: String)
+    case `protocol`(message: String)
     case unknown(message: String)
 
     public var description: String {
@@ -20,6 +21,7 @@ public enum SQLiteNowError: Error, CustomStringConvertible, Equatable {
         case let .observation(message): return message
         case let .adapter(message): return message
         case let .sync(message): return message
+        case let .protocol(message): return message
         case let .unknown(message): return message
         }
     }

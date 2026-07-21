@@ -1,0 +1,6 @@
+-- @@{ enableSync=true }
+CREATE TABLE team_members (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL,
+    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED
+);

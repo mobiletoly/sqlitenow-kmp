@@ -147,8 +147,7 @@ final class SyncSampleViewModel: ObservableObject {
                 let sync = try db.makeSyncClient(
                     baseURL: baseURL,
                     auth: store.auth,
-                    schema: "business",
-                    verboseLogs: false
+                    config: .init(schema: "business", verboseLogs: false)
                 )
                 syncClient = sync
                 statusText = "Opening sync"

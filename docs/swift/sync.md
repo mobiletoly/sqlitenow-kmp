@@ -100,10 +100,20 @@ try await db.open()
 let sync = try db.makeSyncClient(
     baseURL: URL(string: "https://sync.example.com")!,
     auth: .bearer(accessToken: { tokenStore.currentAccessToken() }),
-    schema: "business",
-    verboseLogs: false
+    config: SQLiteNowSyncConfig(
+        schema: "business",
+        snapshotChunkRows: 500,
+        snapshotApplyBatchRows: 128,
+        verboseLogs: false
+    )
 )
 ```
+
+Before 1.0, the flat `schema`, upload/download limit, and logging arguments were
+replaced by `SQLiteNowSyncConfig`. Migrate an older call such as
+`makeSyncClient(baseURL:auth:schema:verboseLogs:)` by moving those values into
+the `config:` argument. The config also exposes snapshot chunk/apply limits and
+the transient and snapshot-capacity retry policies with the same defaults as KMP.
 
 The Swift app does not import Ktor, Kotlin `StateFlow`, Kotlin `Result`, or the
 internal bridge framework module.
@@ -130,6 +140,15 @@ case let .unknown(raw):
 
 let report = try await sync.sync()
 print("Pending rows:", report.status.pending.pendingRowCount)
+```
+
+Uploads and downloads can be controlled independently:
+
+```swift
+try await sync.pauseUploads()
+try await sync.resumeUploads()
+try await sync.pauseDownloads()
+try await sync.resumeDownloads()
 ```
 
 If `sourceInfo()` reports checkpoint rebuild is required, normal `sync()` resumes it automatically;

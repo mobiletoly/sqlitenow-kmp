@@ -3,6 +3,94 @@ import Foundation
 import XCTest
 
 final class SyncFixtureRealserverTests: XCTestCase {
+    func testFreshReaderRestoresTypedSnapshotExactly() async throws {
+        let realserver = try await requireRealserverConfig()
+        try await resetRealserver(baseURL: realserver.baseURL)
+
+        let userId = "swift-typed-snapshot-\(UUID().uuidString)"
+        let rowId = UUID().uuidString.lowercased()
+        let writer = SyncFixtureDatabase(path: temporaryDatabaseURL(prefix: "typed-writer"))
+        let reader = SyncFixtureDatabase(path: temporaryDatabaseURL(prefix: "typed-reader"))
+
+        try await withOpenDatabases([writer, reader]) {
+            let writerSourceId = try await bootstrapSourceId(database: writer, baseURL: realserver.baseURL)
+            let readerSourceId = try await bootstrapSourceId(database: reader, baseURL: realserver.baseURL)
+            let writerToken = try await issueDummySigninToken(baseURL: realserver.baseURL, userId: userId, sourceId: writerSourceId)
+            let readerToken = try await issueDummySigninToken(baseURL: realserver.baseURL, userId: userId, sourceId: readerSourceId)
+            let smallSnapshotConfig = SQLiteNowSyncConfig(
+                schema: "business",
+                snapshotChunkRows: 1,
+                // The reference server advertises a 4 MiB maximum row, which is also
+                // the minimum valid client chunk/apply byte budget.
+                snapshotChunkBytes: 4 * 1_024 * 1_024,
+                snapshotApplyBatchRows: 1,
+                snapshotApplyBatchBytes: 4 * 1_024 * 1_024
+            )
+            let writerSync = try writer.makeSyncClient(
+                baseURL: realserver.baseURL,
+                auth: .bearer(token: writerToken),
+                config: smallSnapshotConfig
+            )
+            defer {
+                writerSync.close()
+            }
+
+            try await writerSync.open()
+            try requireConnected(try await writerSync.attach(userId: userId))
+            try await writer.typedRows.insert(
+                TypedRowsInsertParams(
+                    id: rowId,
+                    name: "Typed Rich",
+                    note: "swift-snapshot",
+                    countValue: 9_007_199_254_740_993,
+                    smallCount: -32_768,
+                    mediumCount: 2_147_483_647,
+                    exactAmount: "12345678901234567890.1234567890",
+                    enabledFlag: true,
+                    rating: 1.25,
+                    float4Value: 3.5,
+                    data: Data([0xca, 0xfe, 0xba, 0xbe]),
+                    createdAt: "2026-03-24T18:42:11Z"
+                )
+            )
+            try await assertPushCommitted(writerSync)
+
+            // The reader remains unattached until the writer's authoritative state is committed.
+            let readerSync = try reader.makeSyncClient(
+                baseURL: realserver.baseURL,
+                auth: .bearer(token: readerToken),
+                config: smallSnapshotConfig
+            )
+            defer {
+                readerSync.close()
+            }
+            try await readerSync.open()
+            let restore = try requireUsedRemoteState(try await readerSync.attach(userId: userId))
+            XCTAssertGreaterThan(restore.rowCount, 0)
+
+            let rows = try await reader.typedRows.selectAll().list()
+            XCTAssertEqual(rows.count, 1)
+            let row = try XCTUnwrap(rows.first)
+            XCTAssertEqual(row.id, rowId)
+            XCTAssertEqual(row.name, "Typed Rich")
+            XCTAssertEqual(row.note, "swift-snapshot")
+            XCTAssertEqual(row.countValue, 9_007_199_254_740_993)
+            XCTAssertEqual(row.smallCount, -32_768)
+            XCTAssertEqual(row.mediumCount, 2_147_483_647)
+            XCTAssertEqual(row.exactAmount, "12345678901234567890.1234567890")
+            XCTAssertTrue(row.enabledFlag)
+            XCTAssertEqual(row.rating, 1.25)
+            XCTAssertEqual(row.float4Value, 3.5)
+            XCTAssertEqual(row.data, Data([0xca, 0xfe, 0xba, 0xbe]))
+
+            let formatter = ISO8601DateFormatter()
+            XCTAssertEqual(
+                formatter.date(from: try XCTUnwrap(row.createdAt)),
+                formatter.date(from: "2026-03-24T18:42:11Z")
+            )
+        }
+    }
+
     func testGeneratedSyncPackagePushesAndPullsAgainstRealserver() async throws {
         let config = try await requireRealserverConfig()
         try await resetRealserver(baseURL: config.baseURL)
@@ -23,8 +111,16 @@ final class SyncFixtureRealserverTests: XCTestCase {
             let readerSourceId = try await bootstrapSourceId(database: reader, baseURL: config.baseURL)
             let writerToken = try await issueDummySigninToken(baseURL: config.baseURL, userId: userId, sourceId: writerSourceId)
             let readerToken = try await issueDummySigninToken(baseURL: config.baseURL, userId: userId, sourceId: readerSourceId)
-            let writerSync = try writer.makeSyncClient(baseURL: config.baseURL, auth: .bearer(token: writerToken), schema: "business")
-            let readerSync = try reader.makeSyncClient(baseURL: config.baseURL, auth: .bearer(token: readerToken), schema: "business")
+            let writerSync = try writer.makeSyncClient(
+                baseURL: config.baseURL,
+                auth: .bearer(token: writerToken),
+                config: .init(schema: "business")
+            )
+            let readerSync = try reader.makeSyncClient(
+                baseURL: config.baseURL,
+                auth: .bearer(token: readerToken),
+                config: .init(schema: "business")
+            )
             defer {
                 writerSync.close()
                 readerSync.close()
@@ -136,6 +232,26 @@ final class SyncFixtureRealserverTests: XCTestCase {
             throw RealserverSmokeError.unexpectedAttachResult("retryLater(\(retryAfterSeconds))")
         case let .unknown(kind):
             XCTFail("Expected connected attach result, got unknown(\(kind)).", file: file, line: line)
+            throw RealserverSmokeError.unexpectedAttachResult("unknown(\(kind))")
+        }
+    }
+
+    private func requireUsedRemoteState(
+        _ result: SQLiteNowAttachResult,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws -> SQLiteNowRestoreSummary {
+        switch result {
+        case let .connected(outcome, _, restore):
+            XCTAssertEqual(outcome, .usedRemoteState, file: file, line: line)
+            guard let restore else {
+                XCTFail("Expected fresh-reader attach to include a restore summary.", file: file, line: line)
+                throw RealserverSmokeError.unexpectedAttachResult("missing restore summary")
+            }
+            return restore
+        case let .retryLater(retryAfterSeconds):
+            throw RealserverSmokeError.unexpectedAttachResult("retryLater(\(retryAfterSeconds))")
+        case let .unknown(kind):
             throw RealserverSmokeError.unexpectedAttachResult("unknown(\(kind))")
         }
     }

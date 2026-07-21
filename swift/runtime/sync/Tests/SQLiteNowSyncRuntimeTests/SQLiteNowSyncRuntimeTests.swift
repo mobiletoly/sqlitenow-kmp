@@ -43,12 +43,32 @@ final class SQLiteNowSyncRuntimeTests: XCTestCase {
                 ],
                 uploadLimit: 200,
                 downloadLimit: 1000,
-                verboseLogs: false
+                snapshotChunkRows: 1000,
+                snapshotChunkBytes: 4 * 1024 * 1024,
+                snapshotApplyBatchRows: 256,
+                snapshotApplyBatchBytes: 4 * 1024 * 1024,
+                verboseLogs: false,
+                transientRetryPolicy: SQLiteNowSyncRuntimeTransientRetryPolicy(
+                    maxAttempts: 3,
+                    initialBackoffMillis: 150,
+                    maxBackoffMillis: 1500,
+                    jitterRatio: 0.2
+                ),
+                snapshotCapacityRetryPolicy: SQLiteNowSyncRuntimeSnapshotCapacityRetryPolicy(
+                    enabled: true,
+                    maxWaitMillis: 30_000,
+                    fallbackDelayMillis: 1_000,
+                    jitterRatio: 1.0
+                )
             ),
             resolver: nil
         )
 
         try await client.open()
+        try await client.pauseUploads()
+        try await client.resumeUploads()
+        try await client.pauseDownloads()
+        try await client.resumeDownloads()
 
         let sourceInfo = try await client.sourceInfo()
         XCTAssertFalse(sourceInfo.currentSourceId.isEmpty)
@@ -71,6 +91,45 @@ final class SQLiteNowSyncRuntimeTests: XCTestCase {
 
         client.close()
         try await core.close()
+    }
+
+    func testRuntimeConfigurationExportsEveryOversqliteField() {
+        let transient = SQLiteNowSyncRuntimeTransientRetryPolicy(
+            maxAttempts: 7,
+            initialBackoffMillis: 11,
+            maxBackoffMillis: 22,
+            jitterRatio: 0.4
+        )
+        let capacity = SQLiteNowSyncRuntimeSnapshotCapacityRetryPolicy(
+            enabled: false,
+            maxWaitMillis: 33,
+            fallbackDelayMillis: 44,
+            jitterRatio: 0.5
+        )
+        let config = SQLiteNowSyncRuntimeConfig(
+            schema: "business",
+            syncTables: [],
+            uploadLimit: 5,
+            downloadLimit: 6,
+            snapshotChunkRows: 7,
+            snapshotChunkBytes: 8,
+            snapshotApplyBatchRows: 9,
+            snapshotApplyBatchBytes: 10,
+            verboseLogs: true,
+            transientRetryPolicy: transient,
+            snapshotCapacityRetryPolicy: capacity
+        )
+
+        XCTAssertEqual(config.schema, "business")
+        XCTAssertEqual(config.uploadLimit, 5)
+        XCTAssertEqual(config.downloadLimit, 6)
+        XCTAssertEqual(config.snapshotChunkRows, 7)
+        XCTAssertEqual(config.snapshotChunkBytes, 8)
+        XCTAssertEqual(config.snapshotApplyBatchRows, 9)
+        XCTAssertEqual(config.snapshotApplyBatchBytes, 10)
+        XCTAssertTrue(config.verboseLogs)
+        XCTAssertEqual(config.transientRetryPolicy.maxAttempts, 7)
+        XCTAssertEqual(config.snapshotCapacityRetryPolicy.maxWaitMillis, 33)
     }
 
     func testResolverCallbackUsesRuntimeJsonPayloads() {
