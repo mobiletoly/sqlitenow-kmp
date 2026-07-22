@@ -41,6 +41,8 @@ import kotlin.test.assertTrue
 class SnapshotHttpBoundsContractTest : BundleClientContractTestSupport() {
     private companion object {
         const val streamingProbeBytes = 32 * 1024 * 1024
+        const val retirementTimeoutProbeMillis = 500L
+        const val retirementTimeoutCompletionBoundMillis = 5_000L
     }
 
     @Test
@@ -816,26 +818,32 @@ class SnapshotHttpBoundsContractTest : BundleClientContractTestSupport() {
 
         val successProbe = HangingResponseProbe()
         withSnapshotApi(
-            retirementTimeoutMillis = 50,
+            retirementTimeoutMillis = retirementTimeoutProbeMillis,
             configure = {
                 createContext("/sync/snapshot-sessions/success") { exchange ->
                     successProbe.respond(exchange)
                 }
             },
         ) { api ->
+            val startedNanos = System.nanoTime()
             val result = try {
                 "primary-result"
             } finally {
                 api.deleteSnapshotSessionBestEffort("success", "source")
             }
             assertEquals("primary-result", result)
+            assertTrue(
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos) <
+                    retirementTimeoutCompletionBoundMillis,
+                "best-effort retirement exceeded its completion bound",
+            )
             successProbe.assertStarted()
             successProbe.release()
         }
 
         val failureProbe = HangingResponseProbe()
         withSnapshotApi(
-            retirementTimeoutMillis = 50,
+            retirementTimeoutMillis = retirementTimeoutProbeMillis,
             configure = {
                 createContext("/sync/snapshot-sessions/failure") { exchange ->
                     failureProbe.respond(exchange)
@@ -843,6 +851,7 @@ class SnapshotHttpBoundsContractTest : BundleClientContractTestSupport() {
             },
         ) { api ->
             val primary = IllegalStateException("primary failure")
+            val startedNanos = System.nanoTime()
             val error = runCatching {
                 try {
                     throw primary
@@ -851,6 +860,11 @@ class SnapshotHttpBoundsContractTest : BundleClientContractTestSupport() {
                 }
             }.exceptionOrNull()
             assertSame(primary, error)
+            assertTrue(
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos) <
+                    retirementTimeoutCompletionBoundMillis,
+                "best-effort retirement exceeded its completion bound",
+            )
             failureProbe.assertStarted()
             failureProbe.release()
         }
@@ -860,7 +874,7 @@ class SnapshotHttpBoundsContractTest : BundleClientContractTestSupport() {
     fun cancelledCallerStillAttemptsNonCancellableRetirement() = runBlocking {
         val probe = HangingResponseProbe()
         withSnapshotApi(
-            retirementTimeoutMillis = 50,
+            retirementTimeoutMillis = retirementTimeoutProbeMillis,
             configure = {
                 createContext("/sync/snapshot-sessions/cancelled") { exchange ->
                     probe.respond(exchange)
