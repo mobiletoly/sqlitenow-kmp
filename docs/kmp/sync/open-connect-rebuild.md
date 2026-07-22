@@ -3,6 +3,7 @@ layout: doc
 title: Open, Attach, and Rebuild
 permalink: /kmp/sync/open-connect-rebuild/
 parent: KMP Sync
+parent_url: /kmp/sync/
 ---
 
 # Open, Attach, and Rebuild

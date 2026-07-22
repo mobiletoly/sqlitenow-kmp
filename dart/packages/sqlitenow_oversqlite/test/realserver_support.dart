@@ -6,10 +6,9 @@ import 'package:sqlitenow_runtime/sqlitenow_runtime.dart';
 import 'package:sqlitenow_oversqlite/sqlitenow_oversqlite.dart';
 import 'package:test/test.dart';
 
-const businessSyncTables = [
-  SyncTable(tableName: 'users', syncKeyColumnName: 'id'),
-  SyncTable(tableName: 'posts', syncKeyColumnName: 'id'),
-];
+import 'generated/rich_real_server_db.dart';
+
+const businessSyncTables = RichRealServerDb.syncTables;
 
 final realserverRandom = Random();
 
@@ -49,27 +48,9 @@ Future<RealServerConfig> requireRealServerConfig() async {
 }
 
 Future<SqliteNowDatabase> openBusinessDatabase() async {
-  final database = SqliteNowDatabase.inMemory();
-  await database.open(
-    preInit: (connection) async {
-      await connection.execute('''CREATE TABLE users (
-  id TEXT PRIMARY KEY NOT NULL,
-  name TEXT NOT NULL,
-  email TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-)''');
-      await connection.execute('''CREATE TABLE posts (
-  id TEXT PRIMARY KEY NOT NULL,
-  title TEXT NOT NULL,
-  content TEXT NOT NULL,
-  author_id TEXT REFERENCES users(id) DEFERRABLE INITIALLY DEFERRED,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-)''');
-    },
-  );
-  return database;
+  final database = RichRealServerDb.inMemory();
+  await database.open();
+  return database.runtimeDatabase;
 }
 
 DefaultOversqliteClient newRealServerClient(

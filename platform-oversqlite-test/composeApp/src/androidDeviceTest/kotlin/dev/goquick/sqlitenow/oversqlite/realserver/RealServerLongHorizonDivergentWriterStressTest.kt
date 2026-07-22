@@ -38,7 +38,6 @@ class RealServerLongHorizonDivergentWriterStressTest {
                 db = leaderDb,
                 config = config,
                 http = leaderHttp,
-                syncTables = richSchemaSyncTables,
                 uploadLimit = 8,
                 downloadLimit = 2,
             )
@@ -46,7 +45,6 @@ class RealServerLongHorizonDivergentWriterStressTest {
                 db = writerDb,
                 config = config,
                 http = writerHttp,
-                syncTables = richSchemaSyncTables,
                 uploadLimit = 8,
                 downloadLimit = 2,
             )
@@ -54,7 +52,6 @@ class RealServerLongHorizonDivergentWriterStressTest {
                 db = observerDb,
                 config = config,
                 http = observerHttp,
-                syncTables = richSchemaSyncTables,
                 uploadLimit = 8,
                 downloadLimit = 2,
             )

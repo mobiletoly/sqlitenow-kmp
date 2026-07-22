@@ -3,6 +3,7 @@ layout: doc
 title: Reactive Updates
 permalink: /kmp/sync/reactive-updates/
 parent: KMP Sync
+parent_url: /kmp/sync/
 ---
 
 # Reactive Updates

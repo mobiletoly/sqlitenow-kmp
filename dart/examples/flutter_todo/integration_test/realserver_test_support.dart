@@ -19,11 +19,7 @@ const realserverBaseUrl = String.fromEnvironment(
   defaultValue: 'http://10.0.2.2:8080',
 );
 
-const businessSyncTables = [
-  SyncTable(tableName: 'users', syncKeyColumnName: 'id'),
-  SyncTable(tableName: 'posts', syncKeyColumnName: 'id'),
-];
-
+final businessSyncTables = RichRealServerDb.syncTables;
 final richSyncTables = RichRealServerDb.syncTables;
 
 final realserverRandom = Random();
@@ -235,27 +231,9 @@ Future<RichDevice> openRichDevice({
 }
 
 Future<SqliteNowDatabase> openBusinessDatabase(String path) async {
-  final database = SqliteNowDatabase(path: path);
-  await database.open(
-    preInit: (connection) async {
-      await connection.execute('''CREATE TABLE users (
-  id TEXT PRIMARY KEY NOT NULL,
-  name TEXT NOT NULL,
-  email TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-)''');
-      await connection.execute('''CREATE TABLE posts (
-  id TEXT PRIMARY KEY NOT NULL,
-  title TEXT NOT NULL,
-  content TEXT NOT NULL,
-  author_id TEXT REFERENCES users(id) DEFERRABLE INITIALLY DEFERRED,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-)''');
-    },
-  );
-  return database;
+  final database = RichRealServerDb(path: path);
+  await database.open();
+  return database.runtimeDatabase;
 }
 
 DefaultOversqliteClient newBusinessClient(

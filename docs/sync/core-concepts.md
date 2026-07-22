@@ -3,6 +3,7 @@ layout: doc
 title: Sync Core Concepts
 permalink: /sync/core-concepts/
 parent: Sync
+parent_url: /sync/
 ---
 
 # Sync Core Concepts

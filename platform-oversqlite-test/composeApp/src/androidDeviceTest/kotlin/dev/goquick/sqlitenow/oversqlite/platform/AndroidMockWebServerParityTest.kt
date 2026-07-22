@@ -41,9 +41,9 @@ class AndroidMockWebServerParityTest {
         val http = newMockWebServerHttpClient(server)
         val database = RealServerGeneratedDatabase(":memory:", VersionBasedDatabaseMigrations(), debug = true)
         try {
-            enqueueCapabilities(server)
+            enqueueCapabilities(server, *RealServerGeneratedDatabase.syncTables.map { it.tableName }.toTypedArray())
             enqueueInitializeEmptyConnect(server)
-            enqueueCapabilities(server)
+            enqueueCapabilities(server, *RealServerGeneratedDatabase.syncTables.map { it.tableName }.toTypedArray())
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -160,9 +160,9 @@ class AndroidMockWebServerParityTest {
             )
             client.open().getOrThrow()
             val sourceId = client.sourceInfo().getOrThrow().currentSourceId
-            enqueueCapabilities(server)
+            enqueueCapabilities(server, "users")
             enqueueInitializeEmptyConnect(server)
-            enqueueCapabilities(server)
+            enqueueCapabilities(server, "users")
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -228,7 +228,7 @@ class AndroidMockWebServerParityTest {
                     """.trimIndent()
                 )
             )
-            enqueueCapabilities(server)
+            enqueueCapabilities(server, "users")
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -256,8 +256,8 @@ class AndroidMockWebServerParityTest {
                     """.trimIndent()
                 )
             )
-            enqueueCapabilities(server)
-            enqueueCapabilities(server)
+            enqueueCapabilities(server, "users")
+            enqueueCapabilities(server, "users")
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -402,9 +402,9 @@ class AndroidMockWebServerParityTest {
         val http = newMockWebServerHttpClient(server)
         try {
             db.execSQL("CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)")
-            enqueueCapabilities(server)
+            enqueueCapabilities(server, "users")
             enqueueInitializeEmptyConnect(server)
-            enqueueCapabilities(server)
+            enqueueCapabilities(server, "users")
             server.enqueue(
                 MockResponse.Builder()
                     .code(409)
@@ -412,7 +412,7 @@ class AndroidMockWebServerParityTest {
                     .body("""{"error":"history_pruned","message":"after_bundle_seq 0 is below retained floor 5"}""")
                     .build()
             )
-            enqueueCapabilities(server)
+            enqueueCapabilities(server, "users")
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -533,11 +533,11 @@ class AndroidMockWebServerParityTest {
                 """.trimIndent()
             )
 
-            enqueueCapabilities(server)
+            enqueueCapabilities(server, "files")
             enqueueInitializeEmptyConnect(server)
-            enqueueCapabilities(server)
+            enqueueCapabilities(server, "files")
             enqueueInitializeEmptyConnect(server)
-            enqueueCapabilities(server)
+            enqueueCapabilities(server, "files")
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -569,8 +569,8 @@ class AndroidMockWebServerParityTest {
                     """.trimIndent()
                 )
             )
-            enqueueCapabilities(server)
-            enqueueCapabilities(server)
+            enqueueCapabilities(server, "files")
+            enqueueCapabilities(server, "files")
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -830,7 +830,8 @@ class AndroidMockWebServerParityTest {
             .build()
     }
 
-    private fun enqueueCapabilities(server: MockWebServer, table: String = "users") {
+    private fun enqueueCapabilities(server: MockWebServer, vararg tables: String) {
+        require(tables.isNotEmpty()) { "capabilities must advertise the client's complete sync table set" }
         server.enqueue(
             jsonMockResponse(
                 testJson.encodeToString(
@@ -838,7 +839,7 @@ class AndroidMockWebServerParityTest {
                     CapabilitiesResponse(
                         protocolVersion = "v1",
                         schemaVersion = 1,
-                        registeredTableSpecs = testRegisteredTableSpecs(table),
+                        registeredTableSpecs = testRegisteredTableSpecs(*tables),
                         features = mapOf("connect_lifecycle" to true),
                         bundleLimits = testBundleCapabilitiesLimits(),
                     ),

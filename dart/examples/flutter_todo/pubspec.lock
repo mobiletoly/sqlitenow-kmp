@@ -365,21 +365,21 @@ packages:
       path: "../../packages/sqlitenow_cli"
       relative: true
     source: path
-    version: "0.10.0"
+    version: "0.15.0"
   sqlitenow_oversqlite:
     dependency: "direct dev"
     description:
       path: "../../packages/sqlitenow_oversqlite"
       relative: true
     source: path
-    version: "0.10.0"
+    version: "0.15.0"
   sqlitenow_runtime:
     dependency: "direct main"
     description:
       path: "../../packages/sqlitenow_runtime"
       relative: true
     source: path
-    version: "0.10.0"
+    version: "0.15.0"
   stack_trace:
     dependency: transitive
     description:

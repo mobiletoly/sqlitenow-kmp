@@ -3,6 +3,7 @@ layout: doc
 title: Server Setup
 permalink: /sync/server-setup/
 parent: Sync
+parent_url: /sync/
 ---
 
 # Server Setup

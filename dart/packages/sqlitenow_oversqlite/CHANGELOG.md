@@ -1,4 +1,4 @@
-# Unreleased
+# 0.15.0
 
 - Reject future checkpoints with `checkpoint_ahead` and automatically resume durable authoritative
   snapshot recovery for pruned or poisoned checkpoints. Recovery preserves pending offline work

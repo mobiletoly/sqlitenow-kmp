@@ -23,6 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       code_changed: ${{ github.event_name == 'workflow_call' && 'true' || steps.filter.outputs.code }}
+      swift_changed: ${{ github.event_name == 'workflow_call' && 'true' || steps.swift_filter.outputs.swift }}
     steps:
     - uses: actions/checkout@v7
       if: ${{ github.event_name != 'workflow_call' }}
@@ -37,6 +38,26 @@ jobs:
             - '**'
             - '!**/*.md'
             - '!docs/**'
+    - name: Detect Swift-related changes
+      if: ${{ github.event_name != 'workflow_call' }}
+      id: swift_filter
+      uses: dorny/paths-filter@v4
+      with:
+        filters: |
+          swift:
+            - 'swift/**'
+            - 'sqlitenow-compiler/**'
+            - 'sqlitenow-gradle-plugin/**'
+            - 'library-core/**'
+            - 'library-oversqlite/**'
+            - 'gradle/**'
+            - 'build.gradle.kts'
+            - 'settings.gradle.kts'
+            - 'gradle.properties'
+            - 'gradlew'
+            - 'gradlew.bat'
+            - '.github/workflows/gradle.yml'
+            - '.github/workflows/publish.yml'
 
   build:
     needs: changes
@@ -49,13 +70,11 @@ jobs:
             os: macos-26
           - target: :library-core:macosArm64Test
             os: macos-26
-          - target: swiftHybridSupportGate
-            os: macos-26
-          - target: swiftPmPluginDistributionPreflight
-            os: macos-26
           - target: :sqlitenow-gradle-plugin:test
             os: ubuntu-latest
           - target: :library-core:jvmTest
+            os: ubuntu-latest
+          - target: oversqliteComprehensive
             os: ubuntu-latest
           - target: ":library-core:linuxX64Test :library-core:compileTestKotlinLinuxArm64"
             os: ubuntu-latest
@@ -79,6 +98,38 @@ jobs:
       uses: gradle/actions/setup-gradle@v6
     - name: Build with Gradle
       run: ./gradlew ${{ matrix.target }}
+
+  swift-tests:
+    name: Swift regular tests
+    needs: changes
+    if: ${{ needs.changes.outputs.swift_changed == 'true' }}
+    runs-on: macos-26
+
+    steps:
+    - uses: actions/checkout@v7
+    - name: Validate Gradle Wrapper
+      uses: gradle/actions/wrapper-validation@v6
+    - uses: actions/cache@v6
+      with:
+        path: ~/.konan
+        key: ${{ runner.os }}-${{ hashFiles('**/.lock') }}
+    - name: Set up JDK 17
+      uses: actions/setup-java@v5
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+    - name: Set up Gradle
+      uses: gradle/actions/setup-gradle@v6
+    - name: Test Swift generator package
+      run: swift test --package-path swift/plugin/sqlitenow-plugin
+    - name: Test generated core fixture package
+      run: ./gradlew :swift:fixtures:package:core:swiftTest --no-daemon --no-configuration-cache
+    - name: Test Swift core runtime package
+      run: swift test --package-path swift/runtime/core
+    - name: Test generated sync fixture package
+      run: ./gradlew :swift:fixtures:package:sync:swiftTest --no-daemon --no-configuration-cache
+    - name: Test Swift sync runtime package
+      run: swift test --package-path swift/runtime/sync
 
   dart-flutter:
     name: Dart and Flutter

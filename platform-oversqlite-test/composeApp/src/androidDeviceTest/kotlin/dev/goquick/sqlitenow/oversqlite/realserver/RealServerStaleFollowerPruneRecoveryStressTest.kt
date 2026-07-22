@@ -31,7 +31,6 @@ class RealServerStaleFollowerPruneRecoveryStressTest {
                 db = leaderDb,
                 config = config,
                 http = leaderHttp,
-                syncTables = richSchemaSyncTables,
                 uploadLimit = 8,
                 downloadLimit = 2,
             )
@@ -39,7 +38,6 @@ class RealServerStaleFollowerPruneRecoveryStressTest {
                 db = followerDb,
                 config = config,
                 http = followerHttp,
-                syncTables = richSchemaSyncTables,
                 uploadLimit = 8,
                 downloadLimit = 2,
             )

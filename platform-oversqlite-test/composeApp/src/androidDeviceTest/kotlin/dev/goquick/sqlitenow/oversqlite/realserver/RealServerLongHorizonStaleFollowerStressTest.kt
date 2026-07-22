@@ -33,7 +33,6 @@ class RealServerLongHorizonStaleFollowerStressTest {
                 db = leaderDb,
                 config = config,
                 http = leaderHttp,
-                syncTables = richSchemaSyncTables,
                 uploadLimit = uploadLimit,
                 downloadLimit = 2,
             )
@@ -41,7 +40,6 @@ class RealServerLongHorizonStaleFollowerStressTest {
                 db = followerDb,
                 config = config,
                 http = followerHttp,
-                syncTables = richSchemaSyncTables,
                 uploadLimit = uploadLimit,
                 downloadLimit = 2,
             )

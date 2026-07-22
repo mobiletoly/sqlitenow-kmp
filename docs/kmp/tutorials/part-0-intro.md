@@ -3,6 +3,7 @@ layout: doc
 title: Part 0 – Series Overview
 permalink: /kmp/tutorials/part-0-intro/
 parent: Tutorials
+parent_url: /kmp/tutorials/
 nav_order: 0
 ---
 

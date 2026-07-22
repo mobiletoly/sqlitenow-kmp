@@ -3,6 +3,7 @@ layout: doc
 title: Getting Started with Sync
 permalink: /kmp/sync/getting-started/
 parent: KMP Sync
+parent_url: /kmp/sync/
 ---
 
 # Getting Started with Sync

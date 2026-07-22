@@ -23,10 +23,6 @@ kotlin {
             enable = true
         }
 
-        withHostTestBuilder {
-            sourceSetTreeName = "test"
-        }
-
         withDeviceTestBuilder {
             sourceSetTreeName = "test"
         }
@@ -95,6 +91,7 @@ kotlin {
         }
 
         jsMain.dependencies {
+            implementation(devNpm("copy-webpack-plugin", "11.0.0"))
             implementation(libs.kotlinx.browser)
         }
 

@@ -54,7 +54,6 @@ internal class RealServerSnapshotProfileJvmTest : RealServerSupport() {
             val sourceId = bootstrapManagedSourceId(
                 db = database,
                 baseUrl = realServer.baseUrl,
-                syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
             )
             val token = issueDummySigninToken(realServer.baseUrl, userId, sourceId)
             val profileHttp = newRealServerHttpClient(realServer.baseUrl, token)
@@ -62,7 +61,6 @@ internal class RealServerSnapshotProfileJvmTest : RealServerSupport() {
             val profileClient = newRealServerClient(
                 db = database,
                 http = profileHttp,
-                syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
                 snapshotChunkRows = 1_000,
                 transientRetryPolicy = OversqliteTransientRetryPolicy(maxAttempts = 1),
             )

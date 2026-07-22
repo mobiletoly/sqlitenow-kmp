@@ -1,7 +1,6 @@
 package dev.goquick.sqlitenow.oversqlite.realserver
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.goquick.sqlitenow.oversqlite.SyncTable
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -17,16 +16,6 @@ class RealServerRichSchemaStressTest {
         val userId = randomUserId()
         val deviceA = randomSourceId("rich-a")
         val deviceB = randomSourceId("rich-b")
-        val syncTables = listOf(
-            SyncTable("users", syncKeyColumnName = "id"),
-            SyncTable("posts", syncKeyColumnName = "id"),
-            SyncTable("categories", syncKeyColumnName = "id"),
-            SyncTable("teams", syncKeyColumnName = "id"),
-            SyncTable("team_members", syncKeyColumnName = "id"),
-            SyncTable("files", syncKeyColumnName = "id"),
-            SyncTable("file_reviews", syncKeyColumnName = "id"),
-        )
-
         val tokenA = issueDummySigninToken(config.baseUrl, userId, deviceA)
         val tokenB = issueDummySigninToken(config.baseUrl, userId, deviceB)
         val httpA = newAuthenticatedHttpClient(config.baseUrl, tokenA)
@@ -41,7 +30,6 @@ class RealServerRichSchemaStressTest {
                 db = dbA,
                 config = config,
                 http = httpA,
-                syncTables = syncTables,
                 uploadLimit = 20,
                 downloadLimit = 2,
             )
@@ -49,7 +37,6 @@ class RealServerRichSchemaStressTest {
                 db = dbB,
                 config = config,
                 http = httpB,
-                syncTables = syncTables,
                 uploadLimit = 20,
                 downloadLimit = 2,
             )

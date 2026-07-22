@@ -154,6 +154,13 @@ Map<String, Object?> _capabilities() => {
   'protocol_version': 'v1',
   'schema_version': 1,
   'features': {'connect_lifecycle': true},
+  'registered_table_specs': [
+    {
+      'schema': 'main',
+      'table': 'users',
+      'sync_key_columns': ['id'],
+    },
+  ],
   'bundle_limits': {
     'max_rows_per_bundle': 1000,
     'max_bytes_per_bundle': 4194304,

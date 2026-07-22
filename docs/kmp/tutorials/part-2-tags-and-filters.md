@@ -3,6 +3,7 @@ layout: doc
 title: Part 2 – Tags, Filters, and Richer Types
 permalink: /kmp/tutorials/part-2-tags-and-filters/
 parent: Tutorials
+parent_url: /kmp/tutorials/
 nav_order: 2
 ---
 

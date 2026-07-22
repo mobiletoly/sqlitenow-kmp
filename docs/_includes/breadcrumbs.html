@@ -1,8 +1,8 @@
 {% if page.parent %}
 <nav class="breadcrumbs">
-  <a href="{{ site.baseurl }}/">Home</a>
+  <a href="{{ "/" | relative_url }}">Home</a>
   <span class="separator">›</span>
-  <a href="{{ site.baseurl }}/{{ page.parent | downcase }}/">{{ page.parent }}</a>
+  <a href="{{ page.parent_url | relative_url }}">{{ page.parent }}</a>
   <span class="separator">›</span>
   <span class="current">{{ page.title }}</span>
 </nav>

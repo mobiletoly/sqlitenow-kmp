@@ -111,7 +111,23 @@ internal class RealServerBundleChangeWatchTest : RealServerSupport() {
 
                 assertEquals("User watch", scalarText(observerDb, "SELECT name FROM users WHERE id = '$rowUserId'"))
                 assertEquals("Title watch", scalarText(observerDb, "SELECT title FROM posts WHERE id = '$rowPostId'"))
-                assertFalse(observer.syncStatus().getOrThrow().pending.hasPendingSyncData)
+                var observerStatus: SyncStatus? = null
+                eventually {
+                    observer.syncStatus().fold(
+                        onSuccess = { status ->
+                            observerStatus = status
+                            true
+                        },
+                        onFailure = { error ->
+                            if (error is SyncOperationInProgressException) {
+                                false
+                            } else {
+                                throw error
+                            }
+                        },
+                    )
+                }
+                assertFalse(requireNotNull(observerStatus).pending.hasPendingSyncData)
             } finally {
                 worker.cancelAndJoin()
             }

@@ -8,6 +8,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -52,7 +53,7 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
 
                     assertEquals(listOf("Ada"), receiveNext(emissions))
                 } finally {
-                    collector.cancel()
+                    collector.cancelAndJoin()
                 }
             } finally {
                 follower.close()
@@ -92,7 +93,7 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
 
                     assertEquals(listOf("Ada"), receiveNext(emissions))
                 } finally {
-                    collector.cancel()
+                    collector.cancelAndJoin()
                 }
             } finally {
                 follower.close()
@@ -132,7 +133,7 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
 
                     assertEquals(listOf("Ada"), receiveNext(emissions))
                 } finally {
-                    collector.cancel()
+                    collector.cancelAndJoin()
                 }
             } finally {
                 follower.close()
@@ -164,7 +165,7 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
 
                     assertEquals(listOf("Ada"), receiveNext(emissions))
                 } finally {
-                    collector.cancel()
+                    collector.cancelAndJoin()
                 }
             } finally {
                 client.close()
@@ -225,7 +226,7 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
                     assertEquals(listOf("Server Wins"), receiveNext(emissions))
                 } finally {
                     server.conflictOverride = null
-                    collector.cancel()
+                    collector.cancelAndJoin()
                 }
             } finally {
                 follower.close()
@@ -276,7 +277,7 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
                         assertEquals(expected, duplicate)
                     }
                 } finally {
-                    collector.cancel()
+                    collector.cancelAndJoin()
                 }
             } finally {
                 follower.close()
@@ -321,7 +322,7 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
                     assertTrue(sourceAfter != sourceBefore)
                     assertEquals(listOf("Ada"), receiveNext(emissions))
                 } finally {
-                    collector.cancel()
+                    collector.cancelAndJoin()
                 }
             } finally {
                 follower.close()
@@ -362,7 +363,7 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
 
                     assertEquals(emptyList(), receiveNext(emissions))
                 } finally {
-                    collector.cancel()
+                    collector.cancelAndJoin()
                 }
             } finally {
                 follower.close()
@@ -394,7 +395,7 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
                     assertEquals(DetachOutcome.BLOCKED_UNSYNCED_DATA, client.detach().getOrThrow())
                     assertNull(withTimeoutOrNull(300) { emissions.receive() })
                 } finally {
-                    collector.cancel()
+                    collector.cancelAndJoin()
                 }
             } finally {
                 client.close()
@@ -431,7 +432,7 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
                     assertEquals(DetachOutcome.DETACHED, client.detach().getOrThrow())
                     assertNull(withTimeoutOrNull(300) { emissions.receive() })
                 } finally {
-                    collector.cancel()
+                    collector.cancelAndJoin()
                 }
             } finally {
                 client.close()
@@ -492,32 +493,38 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
         dbName: String,
     ) : SqliteNowDatabase(dbName, ReactiveSyncMigration()) {
         fun userNamesFlow(): Flow<List<String>> = createReactiveQueryFlow(setOf("users")) {
-            connection().prepare("SELECT name FROM users ORDER BY id").use { statement ->
-                buildList {
-                    while (statement.step()) {
-                        add(statement.getText(0))
+            val conn = connection()
+            conn.withExclusiveAccess {
+                conn.prepare("SELECT name FROM users ORDER BY id").use { statement ->
+                    buildList {
+                        while (statement.step()) {
+                            add(statement.getText(0))
+                        }
                     }
                 }
             }
         }
 
         fun usersAndPostsFlow(): Flow<UsersAndPosts> = createReactiveQueryFlow(setOf("users", "posts")) {
-            UsersAndPosts(
-                users = connection().prepare("SELECT name FROM users ORDER BY id").use { statement ->
-                    buildList {
-                        while (statement.step()) {
-                            add(statement.getText(0))
+            val conn = connection()
+            conn.withExclusiveAccess {
+                UsersAndPosts(
+                    users = conn.prepare("SELECT name FROM users ORDER BY id").use { statement ->
+                        buildList {
+                            while (statement.step()) {
+                                add(statement.getText(0))
+                            }
                         }
-                    }
-                },
-                posts = connection().prepare("SELECT title FROM posts ORDER BY id").use { statement ->
-                    buildList {
-                        while (statement.step()) {
-                            add(statement.getText(0))
+                    },
+                    posts = conn.prepare("SELECT title FROM posts ORDER BY id").use { statement ->
+                        buildList {
+                            while (statement.step()) {
+                                add(statement.getText(0))
+                            }
                         }
-                    }
-                },
-            )
+                    },
+                )
+            }
         }
     }
 

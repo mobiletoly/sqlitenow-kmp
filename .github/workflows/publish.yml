@@ -82,8 +82,26 @@ jobs:
       - name: Validate Gradle plugin
         run: ./gradlew :sqlitenow-gradle-plugin:test --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
 
-      - name: Validate Swift support gate
-        run: ./gradlew swiftHybridSupportGate --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
+      - name: Validate core runtime
+        run: ./gradlew :library-core:jvmTest --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
+
+      - name: Validate Oversqlite
+        run: ./gradlew oversqliteComprehensive --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
+
+      - name: Test Swift generator package
+        run: swift test --package-path swift/plugin/sqlitenow-plugin
+
+      - name: Test generated core fixture package
+        run: ./gradlew :swift:fixtures:package:core:swiftTest --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
+
+      - name: Test Swift core runtime package
+        run: swift test --package-path swift/runtime/core
+
+      - name: Test generated sync fixture package
+        run: ./gradlew :swift:fixtures:package:sync:swiftTest --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false
+
+      - name: Test Swift sync runtime package
+        run: swift test --package-path swift/runtime/sync
 
       - name: Build and validate Swift runtime release artifacts
         run: ./gradlew swiftRuntimeReleaseArtifactManifestDefaults -Psqlitenow.swiftRuntimeArtifactBaseUrl="${SQLITENOW_SWIFT_RUNTIME_ARTIFACT_BASE_URL}" --no-daemon --no-configuration-cache -Dorg.gradle.vfs.watch=false

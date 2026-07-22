@@ -1,7 +1,6 @@
 package dev.goquick.sqlitenow.oversqlite.realserver
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.goquick.sqlitenow.oversqlite.SyncTable
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -18,12 +17,6 @@ class RealServerFkTopologyTest {
         val seedDevice = randomSourceId("fk-seed")
         val pullDevice = randomSourceId("fk-pull")
         val hydrateDevice = randomSourceId("fk-hydrate")
-        val syncTables = listOf(
-            SyncTable("categories", syncKeyColumnName = "id"),
-            SyncTable("teams", syncKeyColumnName = "id"),
-            SyncTable("team_members", syncKeyColumnName = "id"),
-        )
-
         val seedToken = issueDummySigninToken(config.baseUrl, userId, seedDevice)
         val pullToken = issueDummySigninToken(config.baseUrl, userId, pullDevice)
         val hydrateToken = issueDummySigninToken(config.baseUrl, userId, hydrateDevice)
@@ -38,9 +31,9 @@ class RealServerFkTopologyTest {
             createBusinessRichSchemaTables(pullDb)
             createBusinessRichSchemaTables(hydrateDb)
 
-            val seedClient = newRealServerClient(seedDb, config, seedHttp, syncTables = syncTables)
-            val pullClient = newRealServerClient(pullDb, config, pullHttp, syncTables = syncTables)
-            val hydrateClient = newRealServerClient(hydrateDb, config, hydrateHttp, syncTables = syncTables)
+            val seedClient = newRealServerClient(seedDb, config, seedHttp)
+            val pullClient = newRealServerClient(pullDb, config, pullHttp)
+            val hydrateClient = newRealServerClient(hydrateDb, config, hydrateHttp)
 
             seedClient.openAndAttach(userId).getOrThrow()
             pullClient.openAndAttach(userId).getOrThrow()

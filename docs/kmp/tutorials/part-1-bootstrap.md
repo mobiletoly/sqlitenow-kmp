@@ -3,6 +3,7 @@ layout: doc
 title: Part 1 – Bootstrapping SQLiteNow in MoodTracker
 permalink: /kmp/tutorials/part-1-bootstrap/
 parent: Tutorials
+parent_url: /kmp/tutorials/
 nav_order: 1
 ---
 

@@ -306,6 +306,15 @@ Map<String, Object?> _capabilities() => {
   'protocol_version': 'v1',
   'schema_version': 1,
   'features': {'connect_lifecycle': true},
+  'registered_table_specs': businessSyncTables
+      .map(
+        (table) => {
+          'schema': 'business',
+          'table': table.tableName,
+          'sync_key_columns': [table.syncKeyColumnName],
+        },
+      )
+      .toList(),
   'bundle_limits': {
     'max_rows_per_bundle': 1000,
     'max_bytes_per_bundle': 4194304,

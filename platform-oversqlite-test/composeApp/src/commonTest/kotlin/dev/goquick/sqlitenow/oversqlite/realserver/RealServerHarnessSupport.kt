@@ -3,7 +3,6 @@ package dev.goquick.sqlitenow.oversqlite.realserver
 import dev.goquick.sqlitenow.oversqlite.*
 import dev.goquick.sqlitenow.oversqlite.platform.PlatformCrossTargetTestSupport
 import dev.goquick.sqlitenow.oversqlite.platformsupport.assertConnectedOutcome
-
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -128,29 +127,7 @@ internal open class RealServerHarnessSupport : PlatformCrossTargetTestSupport() 
     }
 
     protected suspend fun createBusinessSubsetTables(db: SafeSQLiteConnection) {
-        db.execSQL(
-            """
-            CREATE TABLE users (
-                id TEXT PRIMARY KEY NOT NULL,
-                name TEXT NOT NULL,
-                email TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-            """.trimIndent(),
-        )
-        db.execSQL(
-            """
-            CREATE TABLE posts (
-                id TEXT PRIMARY KEY NOT NULL,
-                title TEXT NOT NULL,
-                content TEXT NOT NULL,
-                author_id TEXT REFERENCES users(id) DEFERRABLE INITIALLY DEFERRED,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-            """.trimIndent(),
-        )
+        createProductionRealServerTables(db)
     }
 
     protected suspend fun bootstrapManagedSourceId(
@@ -208,10 +185,7 @@ internal open class RealServerHarnessSupport : PlatformCrossTargetTestSupport() 
             db = db,
             config = OversqliteConfig(
                 schema = "business",
-                syncTables = listOf(
-                    SyncTable("users", syncKeyColumnName = "id"),
-                    SyncTable("posts", syncKeyColumnName = "id"),
-                ),
+                syncTables = productionRealServerSyncTables,
                 uploadLimit = uploadLimit,
                 downloadLimit = downloadLimit,
                 snapshotChunkRows = snapshotChunkRows,

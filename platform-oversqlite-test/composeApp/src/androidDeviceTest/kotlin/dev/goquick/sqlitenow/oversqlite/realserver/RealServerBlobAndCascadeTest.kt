@@ -1,7 +1,6 @@
 package dev.goquick.sqlitenow.oversqlite.realserver
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.goquick.sqlitenow.oversqlite.SyncTable
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -18,11 +17,6 @@ class RealServerBlobAndCascadeTest {
         val seedDevice = randomSourceId("blob-seed")
         val pullDevice = randomSourceId("blob-pull")
         val hydrateDevice = randomSourceId("blob-hydrate")
-        val syncTables = listOf(
-            SyncTable("files", syncKeyColumnName = "id"),
-            SyncTable("file_reviews", syncKeyColumnName = "id"),
-        )
-
         val seedToken = issueDummySigninToken(config.baseUrl, userId, seedDevice)
         val pullToken = issueDummySigninToken(config.baseUrl, userId, pullDevice)
         val hydrateToken = issueDummySigninToken(config.baseUrl, userId, hydrateDevice)
@@ -37,9 +31,9 @@ class RealServerBlobAndCascadeTest {
             createBusinessBlobKeyTables(pullDb)
             createBusinessBlobKeyTables(hydrateDb)
 
-            val seedClient = newRealServerClient(seedDb, config, seedHttp, syncTables = syncTables)
-            val pullClient = newRealServerClient(pullDb, config, pullHttp, syncTables = syncTables)
-            val hydrateClient = newRealServerClient(hydrateDb, config, hydrateHttp, syncTables = syncTables)
+            val seedClient = newRealServerClient(seedDb, config, seedHttp)
+            val pullClient = newRealServerClient(pullDb, config, pullHttp)
+            val hydrateClient = newRealServerClient(hydrateDb, config, hydrateHttp)
 
             seedClient.openAndAttach(userId).getOrThrow()
             pullClient.openAndAttach(userId).getOrThrow()

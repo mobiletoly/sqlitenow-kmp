@@ -3,6 +3,7 @@ layout: doc
 title: Part 3 – Reactive Mood Dashboard
 permalink: /kmp/tutorials/part-3-reactive-ui/
 parent: Tutorials
+parent_url: /kmp/tutorials/
 nav_order: 3
 ---
 

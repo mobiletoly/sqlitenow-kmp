@@ -8,6 +8,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -325,7 +326,7 @@ internal class SharedInvalidationBehaviorFixtureTest : CrossTargetSyncTestSuppor
                 )
             }
         } finally {
-            collector.cancel()
+            collector.cancelAndJoin()
         }
     }
 
@@ -385,32 +386,38 @@ internal class SharedInvalidationBehaviorFixtureTest : CrossTargetSyncTestSuppor
         }
 
         private fun userNamesFlow(): Flow<Any> = createReactiveQueryFlow(setOf("users")) {
-            connection().prepare("SELECT name FROM users ORDER BY id").use { statement ->
-                buildList {
-                    while (statement.step()) {
-                        add(statement.getText(0))
+            val conn = connection()
+            conn.withExclusiveAccess {
+                conn.prepare("SELECT name FROM users ORDER BY id").use { statement ->
+                    buildList {
+                        while (statement.step()) {
+                            add(statement.getText(0))
+                        }
                     }
                 }
             }
         }
 
         private fun usersAndPostsFlow(): Flow<Any> = createReactiveQueryFlow(setOf("users", "posts")) {
-            UsersAndPosts(
-                users = connection().prepare("SELECT name FROM users ORDER BY id").use { statement ->
-                    buildList {
-                        while (statement.step()) {
-                            add(statement.getText(0))
+            val conn = connection()
+            conn.withExclusiveAccess {
+                UsersAndPosts(
+                    users = conn.prepare("SELECT name FROM users ORDER BY id").use { statement ->
+                        buildList {
+                            while (statement.step()) {
+                                add(statement.getText(0))
+                            }
                         }
-                    }
-                },
-                posts = connection().prepare("SELECT title FROM posts ORDER BY id").use { statement ->
-                    buildList {
-                        while (statement.step()) {
-                            add(statement.getText(0))
+                    },
+                    posts = conn.prepare("SELECT title FROM posts ORDER BY id").use { statement ->
+                        buildList {
+                            while (statement.step()) {
+                                add(statement.getText(0))
+                            }
                         }
-                    }
-                },
-            )
+                    },
+                )
+            }
         }
     }
 

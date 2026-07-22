@@ -42,20 +42,6 @@ import java.util.UUID
 private val e2eJson = Json { ignoreUnknownKeys = true }
 private const val expectedRealServerAppName = "nethttp-server-example"
 
-internal val richSchemaSyncTables = listOf(
-    SyncTable("users", syncKeyColumnName = "id"),
-    SyncTable("posts", syncKeyColumnName = "id"),
-    SyncTable("categories", syncKeyColumnName = "id"),
-    SyncTable("teams", syncKeyColumnName = "id"),
-    SyncTable("team_members", syncKeyColumnName = "id"),
-    SyncTable("files", syncKeyColumnName = "id"),
-    SyncTable("file_reviews", syncKeyColumnName = "id"),
-	SyncTable(
-		"typed_rows",
-		syncKeyColumnName = "id",
-	),
-)
-
 internal data class HotGraphIds(
     val userId: String,
     val postId: String,
@@ -278,29 +264,7 @@ internal suspend fun setRetainedBundleFloor(
 }
 
 internal suspend fun createBusinessSubsetTables(db: SafeSQLiteConnection) {
-    db.execSQL(
-        """
-        CREATE TABLE users (
-            id TEXT PRIMARY KEY NOT NULL,
-            name TEXT NOT NULL,
-            email TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-        """.trimIndent()
-    )
-    db.execSQL(
-        """
-        CREATE TABLE posts (
-            id TEXT PRIMARY KEY NOT NULL,
-            title TEXT NOT NULL,
-            content TEXT NOT NULL,
-            author_id TEXT REFERENCES users(id) DEFERRABLE INITIALLY DEFERRED,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-        """.trimIndent()
-    )
+    createProductionRealServerTables(db)
 }
 
 internal suspend fun insertBusinessUserAndPost(
@@ -324,91 +288,11 @@ internal suspend fun insertBusinessUserAndPost(
 }
 
 internal suspend fun createBusinessRichSchemaTables(db: SafeSQLiteConnection) {
-    createBusinessSubsetTables(db)
-    db.execSQL(
-        """
-        CREATE TABLE categories (
-            id TEXT PRIMARY KEY NOT NULL,
-            name TEXT NOT NULL,
-            parent_id TEXT REFERENCES categories(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED
-        )
-        """.trimIndent()
-    )
-    db.execSQL(
-        """
-        CREATE TABLE teams (
-            id TEXT PRIMARY KEY NOT NULL,
-            name TEXT NOT NULL,
-            captain_member_id TEXT REFERENCES team_members(id) DEFERRABLE INITIALLY DEFERRED
-        )
-        """.trimIndent()
-    )
-    db.execSQL(
-        """
-        CREATE TABLE team_members (
-            id TEXT PRIMARY KEY NOT NULL,
-            name TEXT NOT NULL,
-            team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED
-        )
-        """.trimIndent()
-    )
-    db.execSQL(
-        """
-        CREATE TABLE files (
-            id BLOB PRIMARY KEY NOT NULL,
-            name TEXT NOT NULL,
-            data BLOB NOT NULL
-        )
-        """.trimIndent()
-    )
-    db.execSQL(
-        """
-        CREATE TABLE file_reviews (
-            id BLOB PRIMARY KEY NOT NULL,
-            review TEXT NOT NULL,
-            file_id BLOB NOT NULL REFERENCES files(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED
-        )
-        """.trimIndent()
-    )
-    db.execSQL(
-        """
-        CREATE TABLE typed_rows (
-            id TEXT PRIMARY KEY NOT NULL,
-            name TEXT NOT NULL,
-            note TEXT NULL,
-            count_value INTEGER NULL,
-            small_count INTEGER NULL,
-            medium_count INTEGER NULL,
-            exact_amount TEXT NULL,
-            enabled_flag INTEGER NOT NULL,
-            rating REAL NULL,
-            float4_value REAL NULL,
-            data BLOB NULL,
-            created_at TEXT NULL
-        )
-        """.trimIndent()
-    )
+    createProductionRealServerTables(db)
 }
 
 internal suspend fun createBusinessBlobKeyTables(db: SafeSQLiteConnection) {
-    db.execSQL(
-        """
-        CREATE TABLE files (
-            id BLOB PRIMARY KEY NOT NULL,
-            name TEXT NOT NULL,
-            data BLOB NOT NULL
-        )
-        """.trimIndent()
-    )
-    db.execSQL(
-        """
-        CREATE TABLE file_reviews (
-            id BLOB PRIMARY KEY NOT NULL,
-            review TEXT NOT NULL,
-            file_id BLOB NOT NULL REFERENCES files(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED
-        )
-        """.trimIndent()
-    )
+    createProductionRealServerTables(db)
 }
 
 internal suspend fun createBusinessIntegerKeyTables(db: SafeSQLiteConnection) {
@@ -990,10 +874,7 @@ internal fun newRealServerClient(
     db: SafeSQLiteConnection,
     config: RealServerConfig,
     http: HttpClient,
-    syncTables: List<SyncTable> = listOf(
-        SyncTable("users", syncKeyColumnName = "id"),
-        SyncTable("posts", syncKeyColumnName = "id"),
-    ),
+    syncTables: List<SyncTable> = productionRealServerSyncTables,
     uploadLimit: Int = 200,
     downloadLimit: Int = 1000,
     transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy(),

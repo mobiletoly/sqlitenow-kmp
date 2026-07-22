@@ -1,6 +1,6 @@
 const path = require("path");
 const CopyWebpackPlugin = require("copy-webpack-plugin");
-const webpack = require("webpack");
+const sqljsWebpack = require("webpack");
 
 config.resolve = config.resolve || {};
 config.resolve.fallback = Object.assign(config.resolve.fallback || {}, {
@@ -27,7 +27,7 @@ config.module.rules.push({
 
 config.plugins = config.plugins || [];
 config.plugins.push(
-  new webpack.NormalModuleReplacementPlugin(/^node:/, (resource) => {
+  new sqljsWebpack.NormalModuleReplacementPlugin(/^node:/, (resource) => {
     resource.request = resource.request.replace(/^node:/, "");
   })
 );

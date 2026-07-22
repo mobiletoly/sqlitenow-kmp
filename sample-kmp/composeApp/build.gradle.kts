@@ -105,6 +105,7 @@ kotlin {
             implementation(libs.jetbrains.compose.foundation)
             implementation(libs.jetbrains.compose.material)
             implementation(libs.jetbrains.compose.ui)
+            implementation(devNpm("copy-webpack-plugin", "11.0.0"))
             implementation(npm("sql.js", "1.13.0"))
         }
 

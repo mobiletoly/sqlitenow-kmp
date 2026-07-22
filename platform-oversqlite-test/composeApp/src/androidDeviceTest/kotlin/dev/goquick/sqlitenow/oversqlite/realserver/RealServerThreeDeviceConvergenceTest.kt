@@ -36,7 +36,6 @@ class RealServerThreeDeviceConvergenceTest {
                 db = dbA,
                 config = config,
                 http = httpA,
-                syncTables = richSchemaSyncTables,
                 uploadLimit = 8,
                 downloadLimit = 2,
             )
@@ -44,7 +43,6 @@ class RealServerThreeDeviceConvergenceTest {
                 db = dbB,
                 config = config,
                 http = httpB,
-                syncTables = richSchemaSyncTables,
                 uploadLimit = 8,
                 downloadLimit = 2,
             )
@@ -52,7 +50,6 @@ class RealServerThreeDeviceConvergenceTest {
                 db = dbC,
                 config = config,
                 http = httpC,
-                syncTables = richSchemaSyncTables,
                 uploadLimit = 8,
                 downloadLimit = 2,
             )

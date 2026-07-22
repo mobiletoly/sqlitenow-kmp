@@ -1,10 +1,13 @@
 package dev.goquick.sqlitenow.oversqlite.platform
 
+import dev.goquick.sqlitenow.core.BundledSqliteConnectionProvider
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.sqlite.use
 import dev.goquick.sqlitenow.oversqlite.platform.generated.RealServerGeneratedDatabase
 import dev.goquick.sqlitenow.oversqlite.platform.generated.VersionBasedDatabaseMigrations
 import dev.goquick.sqlitenow.oversqlite.realserver.RichNumericScenario
+import dev.goquick.sqlitenow.oversqlite.realserver.createProductionRealServerTables
+import dev.goquick.sqlitenow.oversqlite.realserver.productionRealServerSyncTables
 import dev.goquick.sqlitenow.oversqlite.realserver.richNumericScenarios
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.Serializable
@@ -39,6 +42,14 @@ class GeneratedRichSchemaManifestJvmTest {
             .map { it.tableName to it.syncKeyColumnName }
             .sortedBy { it.first }
         assertEquals(expectedSyncTables, actualSyncTables)
+        val fixtureSyncTables = productionRealServerSyncTables
+            .map { it.tableName to it.syncKeyColumnName }
+            .sortedBy { it.first }
+        assertEquals(
+            expectedSyncTables,
+            fixtureSyncTables,
+            "shared real-server fixture must register the authoritative manifest",
+        )
 
         val database = RealServerGeneratedDatabase(
             dbName = ":memory:",
@@ -47,12 +58,26 @@ class GeneratedRichSchemaManifestJvmTest {
         )
         try {
             database.open()
-            val connection = database.connection()
-            for (table in manifest.tables) {
-                assertTableMatchesManifest(connection, table)
-            }
+            assertDatabaseMatchesManifest(database.connection(), manifest)
         } finally {
             database.close()
+        }
+
+        val fixtureConnection = BundledSqliteConnectionProvider.openConnection(":memory:", debug = true)
+        try {
+            createProductionRealServerTables(fixtureConnection)
+            assertDatabaseMatchesManifest(fixtureConnection, manifest)
+        } finally {
+            fixtureConnection.close()
+        }
+    }
+
+    private suspend fun assertDatabaseMatchesManifest(
+        connection: SafeSQLiteConnection,
+        manifest: RichSchemaManifest,
+    ) {
+        for (table in manifest.tables) {
+            assertTableMatchesManifest(connection, table)
         }
     }
 

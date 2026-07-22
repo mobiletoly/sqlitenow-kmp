@@ -3,6 +3,7 @@ layout: doc
 title: Sync Operations Reference
 permalink: /kmp/sync/sync-operations/
 parent: KMP Sync
+parent_url: /kmp/sync/
 ---
 
 # Sync Operations Reference

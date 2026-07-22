@@ -8,7 +8,6 @@ import dev.goquick.sqlitenow.core.TransactionMode
 import dev.goquick.sqlitenow.core.sqlite.use
 import dev.goquick.sqlitenow.oversqlite.AttachResult
 import dev.goquick.sqlitenow.oversqlite.OversqliteClient
-import dev.goquick.sqlitenow.oversqlite.SyncTable
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
@@ -32,7 +31,6 @@ class RealServerSharedConnectionStressTest {
         val config = requireRealServerConfig()
         resetRealServerState(config.baseUrl)
 
-        val syncTables = listOf(SyncTable("users", syncKeyColumnName = "id"))
         val userId = randomUserId("shared-connection")
         val seedSourceId = randomSourceId("shared-seed")
         val activeSourceId = randomSourceId("shared-active")
@@ -67,7 +65,6 @@ class RealServerSharedConnectionStressTest {
                 db = seedDb,
                 config = config,
                 http = seedHttp,
-                syncTables = syncTables,
                 uploadLimit = 4,
                 downloadLimit = 1,
             )
@@ -75,7 +72,6 @@ class RealServerSharedConnectionStressTest {
                 db = activeDb,
                 config = config,
                 http = activeHttp,
-                syncTables = syncTables,
                 uploadLimit = 4,
                 downloadLimit = 1,
             )

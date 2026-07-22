@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - docs/**
+      - scripts/check-docs-local-links.py
       - .github/workflows/pages.yml
   workflow_dispatch:
 
@@ -34,6 +35,9 @@ jobs:
         with:
           source: ./docs
           destination: ./_site
+
+      - name: Check generated local links
+        run: python3 scripts/check-docs-local-links.py --site-dir ./_site --baseurl /sqlitenow-kmp
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5

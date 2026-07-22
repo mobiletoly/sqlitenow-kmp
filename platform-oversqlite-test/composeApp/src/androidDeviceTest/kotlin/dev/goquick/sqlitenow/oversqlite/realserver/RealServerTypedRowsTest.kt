@@ -1,7 +1,6 @@
 package dev.goquick.sqlitenow.oversqlite.realserver
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.goquick.sqlitenow.oversqlite.SyncTable
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -18,13 +17,6 @@ class RealServerTypedRowsTest {
         val seedDevice = randomSourceId("typed-seed")
         val activeDevice = randomSourceId("typed-active")
         val hydrateDevice = randomSourceId("typed-hydrate")
-		val syncTables = listOf(
-			SyncTable(
-				"typed_rows",
-				syncKeyColumnName = "id",
-			),
-		)
-
         val seedToken = issueDummySigninToken(config.baseUrl, userId, seedDevice)
         val activeToken = issueDummySigninToken(config.baseUrl, userId, activeDevice)
         val hydrateToken = issueDummySigninToken(config.baseUrl, userId, hydrateDevice)
@@ -39,9 +31,9 @@ class RealServerTypedRowsTest {
             createBusinessRichSchemaTables(activeDb)
             createBusinessRichSchemaTables(hydrateDb)
 
-            val seedClient = newRealServerClient(seedDb, config, seedHttp, syncTables = syncTables)
-            val activeClient = newRealServerClient(activeDb, config, activeHttp, syncTables = syncTables)
-            val hydrateClient = newRealServerClient(hydrateDb, config, hydrateHttp, syncTables = syncTables)
+            val seedClient = newRealServerClient(seedDb, config, seedHttp)
+            val activeClient = newRealServerClient(activeDb, config, activeHttp)
+            val hydrateClient = newRealServerClient(hydrateDb, config, hydrateHttp)
 
             seedClient.openAndAttach(userId).getOrThrow()
             activeClient.openAndAttach(userId).getOrThrow()

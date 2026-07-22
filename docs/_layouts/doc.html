@@ -15,7 +15,7 @@ layout: default
   {% if page.parent %}
   <footer class="doc-footer">
     <div class="doc-nav">
-      <a href="{{ site.baseurl }}/{{ page.parent | downcase }}/" class="back-to-parent">
+      <a href="{{ page.parent_url | relative_url }}" class="back-to-parent">
         ← Back to {{ page.parent }}
       </a>
     </div>

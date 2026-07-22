@@ -10,6 +10,7 @@ import 'package:sqlitenow_oversqlite/src/runtime_state_store.dart';
 import 'package:sqlitenow_runtime/sqlitenow_runtime.dart';
 import 'package:test/test.dart';
 
+import 'generated/rich_real_server_db.dart';
 import 'realserver_support.dart';
 
 const _rowsEnvironment = 'OVERSQLITE_PHASE5_REALSERVER_ROWS';
@@ -61,28 +62,17 @@ void main() {
         'oversqlite-phase5-realserver-',
       );
       final databaseFile = File('${directory.path}/oversqlite.sqlite');
-      final database = SqliteNowDatabase(path: databaseFile.path);
+      final generatedDatabase = RichRealServerDb(path: databaseFile.path);
+      final database = generatedDatabase.runtimeDatabase;
       final diagnostics = SnapshotDiagnosticsRecorder();
       IoOversqliteHttpClient? transport;
       final stopwatch = Stopwatch();
       try {
-        await database.open(
-          preInit: (connection) async {
-            await connection.execute('''CREATE TABLE users (
-  id TEXT PRIMARY KEY NOT NULL,
-  name TEXT NOT NULL,
-  email TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-)''');
-            await connection.execute('PRAGMA journal_mode = WAL');
-          },
-        );
+        await generatedDatabase.open();
+        await database.connection.execute('PRAGMA journal_mode = WAL');
         final config = OversqliteConfig(
           schema: 'business',
-          syncTables: const [
-            SyncTable(tableName: 'users', syncKeyColumnName: 'id'),
-          ],
+          syncTables: RichRealServerDb.syncTables,
           snapshotChunkRows: 1000,
           snapshotChunkBytes: 4 * 1024 * 1024,
           snapshotApplyBatchRows: 256,
