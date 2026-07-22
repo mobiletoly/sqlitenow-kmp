@@ -766,7 +766,9 @@ class SnapshotHttpBoundsContractTest : BundleClientContractTestSupport() {
     @Test
     fun retirementDoesNotDrainTheResponseBody() = runBlocking {
         val probe = StreamingResponseProbe(streamingProbeBytes)
+        val logs = mutableListOf<String>()
         withSnapshotApi(
+            log = logs::add,
             configure = {
                 createContext("/sync/snapshot-sessions/snapshot") { exchange ->
                     assertEquals("DELETE", exchange.requestMethod)
@@ -777,6 +779,7 @@ class SnapshotHttpBoundsContractTest : BundleClientContractTestSupport() {
             api.deleteSnapshotSessionBestEffort("snapshot", "source")
             probe.assertClosedEarly()
         }
+        assertTrue(logs.none { "best-effort failure" in it })
     }
 
     @Test

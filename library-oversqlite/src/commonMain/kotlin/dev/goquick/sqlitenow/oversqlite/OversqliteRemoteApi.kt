@@ -36,8 +36,9 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readLineStrict
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.io.EOFException
@@ -72,6 +73,11 @@ private data class BoundedJsonBody(
     val raw: String,
     val byteCount: Long,
 )
+
+private val responseBodyAbandonedCancellation =
+    CancellationException("Oversqlite response body is no longer needed")
+
+private fun HttpResponse.cancelWithoutDraining() = cancel(responseBodyAbandonedCancellation)
 
 internal const val defaultSnapshotRetirementTimeoutMillis = 5_000L
 
@@ -571,7 +577,10 @@ internal class OversqliteRemoteApi(
                             }
                         },
                         consume = { response ->
-                            response.bodyAsChannel().cancel(null)
+                            val channel = response.bodyAsChannel()
+                            if (!channel.isClosedForRead) {
+                                response.cancelWithoutDraining()
+                            }
                         },
                     )
                 }
@@ -676,7 +685,7 @@ internal class OversqliteRemoteApi(
             ?.lowercase()
             .orEmpty()
         if (encoding !in setOf("", "identity", "gzip")) {
-            response.bodyAsChannel().cancel(null)
+            response.cancelWithoutDraining()
             throw SnapshotUnsupportedContentEncodingException(operation, "unsupported")
         }
         val channel = response.bodyAsChannel()
@@ -689,7 +698,7 @@ internal class OversqliteRemoteApi(
             body
         } finally {
             if (!channel.isClosedForRead) {
-                channel.cancel(null)
+                response.cancelWithoutDraining()
             }
         }
     }
