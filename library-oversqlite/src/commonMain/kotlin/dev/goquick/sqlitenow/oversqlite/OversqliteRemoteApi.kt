@@ -34,11 +34,16 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.util.AttributeKey
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readLineStrict
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.io.EOFException
@@ -77,7 +82,57 @@ private data class BoundedJsonBody(
 private val responseBodyAbandonedCancellation =
     CancellationException("Oversqlite response body is no longer needed")
 
-private fun HttpResponse.cancelWithoutDraining() = cancel(responseBodyAbandonedCancellation)
+private val streamingCallOwnerKey =
+    AttributeKey<StreamingCallOwner>("OversqliteStreamingCallOwner")
+
+private class StreamingCallOwner(private val callerJob: Job) {
+    var abandoned: Boolean = false
+        private set
+
+    fun cancelWithoutDraining(response: HttpResponse) {
+        abandoned = true
+        response.cancel(responseBodyAbandonedCancellation)
+        callerJob.cancel(responseBodyAbandonedCancellation)
+    }
+}
+
+private fun HttpResponse.cancelWithoutDraining() {
+    call.attributes[streamingCallOwnerKey].cancelWithoutDraining(this)
+}
+
+private suspend fun <T> executeStreamingCall(
+    prepareCall: suspend () -> HttpStatement,
+    consume: suspend (HttpResponse) -> T,
+): T = supervisorScope {
+    var owner: StreamingCallOwner? = null
+    var consumeOutcome: Result<T>? = null
+    val request = async {
+        val callOwner = StreamingCallOwner(
+            requireNotNull(currentCoroutineContext()[Job]) {
+                "Oversqlite streaming request requires a coroutine job"
+            },
+        )
+        owner = callOwner
+        prepareCall().execute { response ->
+            response.call.attributes.put(streamingCallOwnerKey, callOwner)
+            try {
+                consume(response).also { consumeOutcome = Result.success(it) }
+            } catch (error: Throwable) {
+                consumeOutcome = Result.failure(error)
+                throw error
+            }
+        }
+    }
+    try {
+        request.await()
+    } catch (error: Throwable) {
+        val outcome = consumeOutcome
+        if (owner?.abandoned == true && outcome != null) {
+            return@supervisorScope outcome.getOrThrow()
+        }
+        throw error
+    }
+}
 
 internal const val defaultSnapshotRetirementTimeoutMillis = 5_000L
 
@@ -148,46 +203,51 @@ internal class OversqliteRemoteApi(
         val path = "/sync/watch?after_bundle_seq=$normalizedAfterBundleSeq"
         log { "oversqlite http start op=bundle change watch method=GET path=$path" }
         try {
-            http.prepareGet("sync/watch") {
-                    header(sourceIdHeaderName, requireValidOversqliteSourceId(sourceId))
-                timeout {
-                    requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
-                }
-                url {
-                    parameters.append("after_bundle_seq", normalizedAfterBundleSeq.toString())
-                }
-            }.execute { response ->
-                log {
-                    "oversqlite http response op=bundle change watch method=GET path=$path " +
-                        "status=${response.status.value}"
-                }
-                if (response.status != HttpStatusCode.OK) {
-                    readBoundedJsonBody(
-                        operation = "bundle change watch",
-                        response = response,
-                        limit = snapshotControlBodyLimit,
-                        invalidUtf8 = { RemoteResponseDecodeException("bundle change watch") },
-                    )
+            executeStreamingCall(
+                prepareCall = {
+                    http.prepareGet("sync/watch") {
+                        header(sourceIdHeaderName, requireValidOversqliteSourceId(sourceId))
+                        timeout {
+                            requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
+                        }
+                        url {
+                            parameters.append("after_bundle_seq", normalizedAfterBundleSeq.toString())
+                        }
+                    }
+                },
+                consume = { response ->
                     log {
-                        "oversqlite http non-ok op=bundle change watch method=GET path=$path " +
+                        "oversqlite http response op=bundle change watch method=GET path=$path " +
                             "status=${response.status.value}"
                     }
-                    throw DownloadHttpException(response.status, "")
-                }
-                val parser = BundleChangeWatchSseParser(json)
-                val channel = response.bodyAsChannel()
-                while (!channel.isClosedForRead) {
-                    val line = try {
-                        channel.readLineStrict(limit = bundleChangeWatchMaxLineBytes.toLong() + 1L)
-                    } catch (_: EOFException) {
-                        break
-                    } ?: break
-                    for (event in parser.accept(line)) {
-                        onEvent(event)
+                    if (response.status != HttpStatusCode.OK) {
+                        readBoundedJsonBody(
+                            operation = "bundle change watch",
+                            response = response,
+                            limit = snapshotControlBodyLimit,
+                            invalidUtf8 = { RemoteResponseDecodeException("bundle change watch") },
+                        )
+                        log {
+                            "oversqlite http non-ok op=bundle change watch method=GET path=$path " +
+                                "status=${response.status.value}"
+                        }
+                        throw DownloadHttpException(response.status, "")
                     }
-                }
-                parser.finish()
-            }
+                    val parser = BundleChangeWatchSseParser(json)
+                    val channel = response.bodyAsChannel()
+                    while (!channel.isClosedForRead) {
+                        val line = try {
+                            channel.readLineStrict(limit = bundleChangeWatchMaxLineBytes.toLong() + 1L)
+                        } catch (_: EOFException) {
+                            break
+                        } ?: break
+                        for (event in parser.accept(line)) {
+                            onEvent(event)
+                        }
+                    }
+                    parser.finish()
+                },
+            )
         } catch (error: Throwable) {
             if (error is CancellationException) {
                 throw error
@@ -578,6 +638,7 @@ internal class OversqliteRemoteApi(
                         },
                         consume = { response ->
                             val channel = response.bodyAsChannel()
+                            channel.readBuffer((snapshotControlBodyLimit + 1L).toInt())
                             if (!channel.isClosedForRead) {
                                 response.cancelWithoutDraining()
                             }
@@ -928,13 +989,16 @@ internal class OversqliteRemoteApi(
     ): T {
         log { "oversqlite http start op=$operation method=$method path=$path" }
         return try {
-            prepareCall().execute { response ->
-                log {
-                    "oversqlite http response op=$operation method=$method path=$path " +
-                        "status=${response.status.value}"
-                }
-                consume(response)
-            }
+            executeStreamingCall(
+                prepareCall = { prepareCall() },
+                consume = { response ->
+                    log {
+                        "oversqlite http response op=$operation method=$method path=$path " +
+                            "status=${response.status.value}"
+                    }
+                    consume(response)
+                },
+            )
         } catch (error: Throwable) {
             if (error is CancellationException) {
                 throw error
