@@ -38,7 +38,6 @@ import io.ktor.util.AttributeKey
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readLineStrict
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
@@ -107,7 +106,7 @@ private suspend fun <T> executeStreamingCall(
 ): T = supervisorScope {
     var owner: StreamingCallOwner? = null
     var consumeOutcome: Result<T>? = null
-    val request = async(start = CoroutineStart.UNDISPATCHED) {
+    val request = async {
         val callOwner = StreamingCallOwner(
             requireNotNull(currentCoroutineContext()[Job]) {
                 "Oversqlite streaming request requires a coroutine job"

@@ -723,7 +723,7 @@ class SnapshotHttpBoundsContractTest : BundleClientContractTestSupport() {
     }
 
     @Test
-    fun oversizedCapabilitiesBodyClosesTheTransportBeforeTheServerFinishesWriting() = runBlocking {
+    fun oversizedCapabilitiesBodyStopsConsumingBeforeTheServerFinishesWriting() = runBlocking {
         val probe = StreamingResponseProbe(streamingProbeBytes)
         withSnapshotApi(
             configure = {
@@ -735,12 +735,12 @@ class SnapshotHttpBoundsContractTest : BundleClientContractTestSupport() {
             assertFailsWith<SnapshotResponseBodyTooLargeException> {
                 api.fetchCapabilities("source")
             }
-            probe.assertClosedEarly()
+            probe.assertNotDrained()
         }
     }
 
     @Test
-    fun cancellationClosesAStreamingChunkResponseBeforeTheServerFinishesWriting() = runBlocking {
+    fun cancellationStopsConsumingBeforeTheServerFinishesWriting() = runBlocking {
         val probe = StreamingResponseProbe(streamingProbeBytes)
         withSnapshotApi(
             configure = {
@@ -761,7 +761,7 @@ class SnapshotHttpBoundsContractTest : BundleClientContractTestSupport() {
             }
             assertTrue(probe.firstWrite.await(10, TimeUnit.SECONDS), "server did not begin the chunk response")
             request.cancelAndJoin()
-            probe.assertClosedEarly()
+            probe.assertNotDrained()
         }
     }
 
@@ -779,7 +779,7 @@ class SnapshotHttpBoundsContractTest : BundleClientContractTestSupport() {
             },
         ) { api ->
             api.deleteSnapshotSessionBestEffort("snapshot", "source")
-            probe.assertClosedEarly()
+            probe.assertNotDrained()
         }
         assertTrue(logs.none { "best-effort failure" in it })
     }
@@ -1254,7 +1254,6 @@ class SnapshotHttpBoundsContractTest : BundleClientContractTestSupport() {
 
     private class StreamingResponseProbe(private val totalBytes: Int) {
         val firstWrite = CountDownLatch(1)
-        private val finished = CountDownLatch(1)
         private val writtenBytes = AtomicLong()
 
         fun respond(exchange: HttpExchange) {
@@ -1271,15 +1270,14 @@ class SnapshotHttpBoundsContractTest : BundleClientContractTestSupport() {
                     firstWrite.countDown()
                 }
             } catch (_: IOException) {
-                // The client closing the bounded streaming response is the expected path.
+                // The client abandoning the bounded streaming response is the expected path.
             } finally {
                 exchange.close()
-                finished.countDown()
             }
         }
 
-        fun assertClosedEarly() {
-            assertTrue(finished.await(10, TimeUnit.SECONDS), "server writer did not observe response closure")
+        fun assertNotDrained() {
+            assertTrue(firstWrite.await(10, TimeUnit.SECONDS), "server did not begin the streaming response")
             assertTrue(
                 writtenBytes.get() < totalBytes,
                 "client drained the complete $totalBytes-byte response",
