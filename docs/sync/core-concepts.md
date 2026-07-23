@@ -60,6 +60,14 @@ rows once when bootstrap policy allows it.
 
 It never talks to the server and never attaches an account.
 
+For KMP JS/Wasm browsers, the generated client uses the database's ordinary
+packaged worker and deterministic direct-OPFS target; it does not inject a
+snapshot backend. A one-time byte-level legacy import, when needed, completes
+before generated schema migrations and before this Oversqlite lifecycle opens
+its ten control tables. Retained legacy bytes and migration/health markers are
+local storage evidence, not a replacement source identity or a remote rebuild.
+JS Node uses the same default provider with transient in-memory storage.
+
 ### `attach(userId)`
 
 `attach(userId)` is the authenticated lifecycle step. It may:

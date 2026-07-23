@@ -37,9 +37,12 @@ private const val DEFAULT_STORAGE_NAME = "SqliteNow"
 private const val DEFAULT_STORE_NAME = "sqlite-databases"
 
 /**
- * Simple [SqlitePersistence] implementation backed by IndexedDB.
+ * Source-compatible IndexedDB implementation for importing retained legacy database bytes.
  *
- * Uses dynamic interop instead of typed wrappers so it works in both browser and Node test environments.
+ * The direct JS browser worker may call [load] when explicitly configured as a custom migration
+ * source. It never calls [persist] or [clear], and ordinary/default browser storage is direct OPFS.
+ * Uses dynamic interop instead of typed wrappers so construction remains compatible in browser and
+ * Node test environments.
  */
 class IndexedDbSqlitePersistence(
     private val storageName: String = DEFAULT_STORAGE_NAME,

@@ -15,14 +15,4 @@
  */
 package dev.goquick.sqlitenow.core
 
-internal actual fun sqliteDefaultPersistence(dbName: String): SqlitePersistence? {
-    if (dbName.isBlank() || dbName.isInMemoryPath()) return null
-    return chooseDefaultWebPersistence(dbName)
-}
-
-internal expect fun chooseDefaultWebPersistence(dbName: String): SqlitePersistence
-internal expect fun forceWebPersistenceOverride(override: Boolean?)
-
-private fun String.isInMemoryPath(): Boolean {
-    return this == ":memory:" || startsWith(":memory:") || startsWith(":temp:")
-}
+internal actual fun sqliteDefaultPersistence(dbName: String): SqlitePersistence? = null

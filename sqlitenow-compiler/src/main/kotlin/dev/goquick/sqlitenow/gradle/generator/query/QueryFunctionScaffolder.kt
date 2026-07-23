@@ -52,7 +52,7 @@ internal class QueryFunctionScaffolder(
         ),
         STATEMENT(
             parameterName = "statement",
-            typeName = ClassName("dev.goquick.sqlitenow.core.sqlite", "SqliteStatement"),
+            typeName = ClassName("androidx.sqlite", "SQLiteStatement"),
         ),
     }
 

@@ -19,7 +19,9 @@ package dev.goquick.sqlitenow.core
  * Hook for propagating trace/logging context across SQLite dispatcher hops.
  *
  * Implementations should capture context on the caller thread and restore it while
- * the database work runs on the connection dispatcher.
+ * the database work runs on the connection dispatcher. [withCaptured] must remain
+ * cancellation-cooperative: it must not swallow cancellation or suspend indefinitely
+ * after its coroutine is cancelled.
  */
 interface SqliteNowContextHook {
     fun capture(): Any?

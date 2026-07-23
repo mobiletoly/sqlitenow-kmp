@@ -1,6 +1,5 @@
 @file:OptIn(org.jetbrains.kotlin.gradle.ExperimentalWasmDsl::class)
 
-import org.gradle.api.file.DuplicatesStrategy
 import org.gradle.api.tasks.JavaExec
 import org.gradle.api.tasks.testing.Test
 import org.gradle.language.jvm.tasks.ProcessResources
@@ -141,12 +140,6 @@ kotlin {
             }
         }
 
-        val webMain by getting {
-            dependencies {
-                implementation(npm("sql.js", "1.13.0"))
-            }
-        }
-
         jsMain.dependencies {
             implementation(libs.ktor.client.js)
             implementation(libs.kotlinx.browser)
@@ -164,24 +157,26 @@ kotlin {
     }
 }
 
+val sqliteWorkerResourceNamespace = "sqlitenow-worker-v1"
+mapOf(
+    "jsTestProcessResources" to "jsProcessResources",
+    "wasmJsTestProcessResources" to "wasmJsProcessResources",
+).forEach { (testResourcesTaskName, coreResourcesTaskName) ->
+    val coreResources =
+        project(":library-core").tasks.named<ProcessResources>(coreResourcesTaskName)
+
+    tasks.named<ProcessResources>(testResourcesTaskName) {
+        dependsOn(coreResources)
+        from(coreResources.map { it.destinationDir }) {
+            include("$sqliteWorkerResourceNamespace/**")
+        }
+    }
+}
+
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEach {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
     }
-}
-
-val libraryCoreProject = project(":library-core")
-val librarySqlJsResource = libraryCoreProject.layout.buildDirectory.file("processedResources/wasmJs/main/sqlitenow-sqljs.js")
-val librarySqlWasmBinary = libraryCoreProject.layout.buildDirectory.file("processedResources/wasmJs/main/sql-wasm.wasm")
-val libraryIndexedDbResource =
-    libraryCoreProject.layout.buildDirectory.file("processedResources/wasmJs/main/sqlitenow-indexeddb.js")
-
-tasks.named<ProcessResources>("wasmJsProcessResources") {
-    dependsOn(libraryCoreProject.tasks.named("wasmJsProcessResources"))
-    from(librarySqlJsResource)
-    from(librarySqlWasmBinary)
-    from(libraryIndexedDbResource)
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
 val jvmTest by tasks.existing(Test::class)

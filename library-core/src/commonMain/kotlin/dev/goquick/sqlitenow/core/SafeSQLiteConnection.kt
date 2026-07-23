@@ -15,19 +15,35 @@
  */
 package dev.goquick.sqlitenow.core
 
+import androidx.sqlite.SQLiteConnection
+import androidx.sqlite.SQLiteStatement
+import androidx.sqlite.async.executeSQL
+import androidx.sqlite.async.prepare
 import dev.goquick.sqlitenow.common.sqliteNowLogger
-import dev.goquick.sqlitenow.core.sqlite.SqliteConnection
-import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
+import dev.goquick.sqlitenow.core.sqlite.clearTrackedSQLiteStatementObservers
+import dev.goquick.sqlitenow.core.sqlite.executeSqliteNowSql
+import dev.goquick.sqlitenow.core.sqlite.SqliteException
+import dev.goquick.sqlitenow.core.sqlite.trackSQLiteStatement
+import dev.goquick.sqlitenow.core.sqlite.wrapAndroidxSqliteAsyncCall
+import dev.goquick.sqlitenow.core.sqlite.wrapAndroidxSqliteCall
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.ContinuationInterceptor
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.coroutineContext
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * A thread-safe wrapper around SQLiteConnection that ensures that only one coroutine
@@ -37,27 +53,34 @@ import kotlinx.coroutines.withContext
  * from multiple coroutines.
  */
 class SafeSQLiteConnection internal constructor(
-    val ref: SqliteConnection,
+    val ref: SQLiteConnection,
     val debug: Boolean = false,
     private val persistenceController: PersistenceController = NoopPersistenceController(),
     private val executionContextHook: SqliteNowContextHook? = null,
     private val executionContext: SqliteConnectionExecutionContext,
+    private val ordinaryCloseCleanupTimeoutMillis: Long =
+        DEFAULT_ORDINARY_CLOSE_CLEANUP_TIMEOUT_MILLIS,
 ) {
     val dispatcher: CoroutineDispatcher = executionContext.dispatcher
     private var activeTransactionDepth: Int = 0
     private var activeTransactionToken: Any? = null
     private var tableInvalidationListener: ((Set<String>) -> Unit)? = null
     private val connectionMutex = Mutex()
+    private val closeCoordinationMutex = Mutex()
     @kotlin.concurrent.Volatile
     private var state = ConnectionState.OPEN
+    private var executionContextClosed = false
+    private var closeAttempt: CloseAttempt? = null
     private var fatalFailure: Throwable? = null
     private val liveStatements = mutableListOf<LiveStatement>()
+    internal var beforeTransactionCommitForTest: (() -> Unit)? = null
     internal var beforeTransactionRollbackForTest: (() -> Unit)? = null
 
     internal val restoredFromSnapshot: Boolean
         get() = persistenceController.restoredFromSnapshot
 
-    private fun isInTransaction(): Boolean = activeTransactionDepth > 0 || ref.inTransaction()
+    private fun isInTransaction(): Boolean =
+        activeTransactionDepth > 0 || wrapAndroidxSqliteCall { ref.inTransaction() }
 
     internal suspend fun <T> withDispatcherContext(block: suspend () -> T): T {
         val hook = executionContextHook
@@ -89,7 +112,7 @@ class SafeSQLiteConnection internal constructor(
             if (state != ConnectionState.OPEN) {
                 if (state == ConnectionState.FATAL) {
                     val failure = withContext(dispatcher + ConnectionOwnerContext(this, ownerToken)) {
-                        disposeFatalConnection(null)
+                        withContext(NonCancellable) { disposeFatalConnection(null) }
                     }
                     throw failure ?: closedConnectionFailure()
                 }
@@ -116,7 +139,9 @@ class SafeSQLiteConnection internal constructor(
             throw t
         } finally {
             if (state == ConnectionState.FATAL) {
-                val disposalFailure = disposeFatalConnection(primaryFailure)
+                val disposalFailure = withContext(NonCancellable) {
+                    disposeFatalConnection(primaryFailure)
+                }
                 if (primaryFailure == null && disposalFailure != null) throw disposalFailure
             }
         }
@@ -130,16 +155,26 @@ class SafeSQLiteConnection internal constructor(
                 notifyOperationComplete()
                 result
             }
-        } catch (e: Exception) {
-            // Combine the original creation trace and the actual exception trace
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: SqliteException) {
             val combinedMessage = buildString {
-                appendLine(e.message ?: "")
+                appendLine(failure.message ?: "")
                 appendLine(creationTrace)
                 appendLine("Original exception stack:")
-                appendLine(e.stackTraceToString())
+                appendLine(failure.stackTraceToString())
             }
-            // Rethrow so your test harness prints full detail
-            throw SqliteNowException(combinedMessage, e)
+            throw SqliteException(combinedMessage, failure.cause ?: failure).also { traced ->
+                failure.suppressedExceptions.forEach(traced::addSuppressed)
+            }
+        } catch (failure: Exception) {
+            val combinedMessage = buildString {
+                appendLine(failure.message ?: "")
+                appendLine(creationTrace)
+                appendLine("Original exception stack:")
+                appendLine(failure.stackTraceToString())
+            }
+            throw SqliteNowException(combinedMessage, failure)
         }
     }
 
@@ -155,41 +190,127 @@ class SafeSQLiteConnection internal constructor(
     suspend fun execSQL(sql: String) {
         sqliteNowLogger.d { "SafeSQLiteConnection.execSQL: $sql" }
         withDispatcherContext {
-            ref.execSQL(sql)
+            wrapAndroidxSqliteAsyncCall { executeSqliteNowSql(ref, sql) }
             notifyOperationComplete()
         }
     }
 
-    suspend fun prepare(sql: String): SqliteStatement {
+    suspend fun prepare(sql: String): SQLiteStatement {
         sqliteNowLogger.d { "SafeSQLiteConnection.prepare: $sql" }
         return withDispatcherContext {
-            ref.prepare(sql).also(::registerStatement)
+            registerStatement(wrapAndroidxSqliteAsyncCall { ref.prepare(sql) })
         }
     }
 
     suspend fun close() {
-        if (state == ConnectionState.CLOSED) return
         if (coroutineContext[ConnectionOwnerContext]?.connection === this) {
             throw IllegalStateException("Cannot close SQLite connection from its active owner context")
         }
 
+        val cleanupController = ref as? SuspendSQLiteConnectionCleanup
+        if (cleanupController == null) {
+            closeOrdinaryConnection()
+            return
+        }
+
+        val callerContext = coroutineContext
+        val cancellationSignal = callerContext[Job]?.let(::Job)
+        val (attempt, isOwner) = withContext(NonCancellable) {
+            claimCloseAttempt()
+        }
+        val primaryFailure = try {
+            withContext(NonCancellable) {
+                if (isOwner) {
+                    performWorkerClose(attempt, cancellationSignal, cleanupController)
+                } else {
+                    awaitCloseAttempt(attempt, cancellationSignal)
+                }
+            }
+        } finally {
+            cancellationSignal?.complete()
+        }
+        try {
+            callerContext.ensureActive()
+        } catch (cancellation: CancellationException) {
+            primaryFailure?.let { cancellation.addSuppressed(it) }
+            throw cancellation
+        }
+        primaryFailure?.let { throw it }
+    }
+
+    private suspend fun closeOrdinaryConnection() {
         val hook = executionContextHook
-        val captured = hook?.capture()
+        var captured: Any? = null
+        var captureSucceeded = hook == null
+        var primaryFailure: Throwable? = null
+        if (hook != null) {
+            try {
+                captured = hook.capture()
+                captureSucceeded = true
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (captureFailure: Throwable) {
+                primaryFailure = appendFailure(primaryFailure, captureFailure)
+            }
+        }
+
         val ownerToken = Any()
         connectionMutex.lock()
-        var primaryFailure: Throwable? = null
         var performedClose = false
         try {
             if (state == ConnectionState.CLOSED) return
             performedClose = true
-            primaryFailure = withContext(dispatcher + ConnectionOwnerContext(this, ownerToken)) {
-                val closeBlock: suspend () -> Throwable? = { closeOwnedResources() }
-                if (hook != null) hook.withCaptured(captured, closeBlock) else closeBlock()
+            var cleanupInvoked = false
+            val closeOutcome = OrdinaryCloseOutcome()
+            try {
+                withContext(
+                    dispatcher + ConnectionOwnerContext(this@SafeSQLiteConnection, ownerToken),
+                ) {
+                    val closeBlock: suspend () -> Unit = {
+                        cleanupInvoked = true
+                        withContext(NonCancellable) {
+                            runOrdinaryCloseWithDeadline(closeOutcome) {
+                                closeOwnedResources(closeOutcome)
+                            }
+                        }
+                    }
+                    if (hook != null && captureSucceeded) {
+                        hook.withCaptured(captured, closeBlock)
+                    } else {
+                        closeBlock()
+                    }
+                }
+            } catch (cancellation: CancellationException) {
+                primaryFailure = appendFailure(cancellation, primaryFailure)
+            } catch (hookOrCloseFailure: Throwable) {
+                primaryFailure = appendFailure(primaryFailure, hookOrCloseFailure)
+            }
+            primaryFailure = appendFailure(primaryFailure, closeOutcome.failure)
+            if (!cleanupInvoked) {
+                val fallbackOutcome = OrdinaryCloseOutcome()
+                try {
+                    withContext(NonCancellable) {
+                        runOrdinaryCloseWithDeadline(fallbackOutcome) {
+                            withContext(
+                                dispatcher +
+                                    ConnectionOwnerContext(
+                                        this@SafeSQLiteConnection,
+                                        ownerToken,
+                                    ),
+                            ) {
+                                closeOwnedResources(fallbackOutcome)
+                            }
+                        }
+                    }
+                } catch (cleanupFailure: Throwable) {
+                    primaryFailure = appendFailure(primaryFailure, cleanupFailure)
+                }
+                primaryFailure = appendFailure(primaryFailure, fallbackOutcome.failure)
             }
         } finally {
-            if (performedClose) {
+            if (performedClose && state == ConnectionState.CLOSED) {
                 try {
-                    executionContext.close()
+                    closeExecutionContextOnce()
                 } catch (executionFailure: Throwable) {
                     primaryFailure = appendFailure(primaryFailure, executionFailure)
                 }
@@ -199,9 +320,266 @@ class SafeSQLiteConnection internal constructor(
         primaryFailure?.let { throw it }
     }
 
+    private suspend fun runOrdinaryCloseWithDeadline(
+        outcome: OrdinaryCloseOutcome,
+        block: suspend () -> Unit,
+    ) {
+        val completed = withTimeoutOrNull(ordinaryCloseCleanupTimeoutMillis) {
+            block()
+            true
+        } ?: false
+        if (!completed) {
+            val cleanupFailure = outcome.failure
+            outcome.failure = SqliteException(
+                "SQLite ordinary connection close exceeded the " +
+                    "${ordinaryCloseCleanupTimeoutMillis}ms cleanup deadline.",
+                cleanupFailure,
+            ).also { deadlineFailure ->
+                cleanupFailure?.suppressedExceptions?.forEach {
+                    appendFailure(deadlineFailure, it)
+                }
+            }
+        }
+    }
+
+    private suspend fun claimCloseAttempt(): Pair<CloseAttempt, Boolean> =
+        closeCoordinationMutex.withLock {
+            closeAttempt?.takeUnless { it.completed.isCompleted }?.let {
+                return@withLock it to false
+            }
+            if (state == ConnectionState.CLOSED) {
+                val completedAttempt = CloseAttempt()
+                completedAttempt.completed.complete(null)
+                return@withLock completedAttempt to false
+            }
+            val attempt = CloseAttempt()
+            closeAttempt = attempt
+            attempt to true
+        }
+
+    private suspend fun performWorkerClose(
+        attempt: CloseAttempt,
+        cancellationSignal: Job?,
+        cleanupController: SuspendSQLiteConnectionCleanup,
+    ): Throwable? = coroutineScope {
+        var primaryFailure: Throwable? = null
+        val cleanup = async {
+            try {
+                performCooperativeWorkerClose()
+            } catch (cancellation: CancellationException) {
+                CloseWorkResult(
+                    failure = cancellation,
+                    performedClose = false,
+                    forceRequired = true,
+                )
+            }
+        }
+        try {
+            val completedBeforeForce = if (cancellationSignal == null) {
+                select<CloseWorkResult?> {
+                    cleanup.onAwait { it }
+                    attempt.forceRequested.onAwait { null }
+                }
+            } else {
+                select<CloseWorkResult?> {
+                    cleanup.onAwait { it }
+                    attempt.forceRequested.onAwait { null }
+                    cancellationSignal.onJoin {
+                        attempt.forceRequested.complete(Unit)
+                        null
+                    }
+                }
+            }
+
+            val result = if (completedBeforeForce != null) {
+                completedBeforeForce
+            } else {
+                val deadline = async {
+                    runCatching { cleanupController.awaitCleanupDeadline() }.exceptionOrNull()
+                }
+                try {
+                    select<CloseWorkResult?> {
+                        cleanup.onAwait { it }
+                        deadline.onAwait { deadlineFailure ->
+                            deadlineFailure?.let {
+                                primaryFailure = appendFailure(primaryFailure, it)
+                            }
+                            null
+                        }
+                    }
+                } finally {
+                    if (!deadline.isCompleted) deadline.cancel()
+                }
+            }
+
+            if (result != null) {
+                primaryFailure = appendFailure(primaryFailure, result.failure)
+                if (result.forceRequired) {
+                    primaryFailure = forceWorkerClose(
+                        primaryFailure = primaryFailure,
+                        cleanupController = cleanupController,
+                    )
+                } else if (result.performedClose) {
+                    try {
+                        closeExecutionContextOnce()
+                    } catch (executionFailure: Throwable) {
+                        primaryFailure = appendFailure(primaryFailure, executionFailure)
+                    }
+                }
+            } else {
+                cleanup.cancelAndJoin()
+                primaryFailure = forceWorkerClose(
+                    primaryFailure = appendFailure(
+                        primaryFailure,
+                        SqliteException(
+                            "SQLite connection close exceeded the " +
+                                "${cleanupController.cleanupTimeoutMillis}ms cleanup deadline.",
+                        ),
+                    ),
+                    cleanupController = cleanupController,
+                )
+            }
+        } catch (cleanupCancellation: CancellationException) {
+            if (!cleanup.isCompleted) cleanup.cancelAndJoin()
+            primaryFailure = forceWorkerClose(
+                primaryFailure = appendFailure(primaryFailure, cleanupCancellation),
+                cleanupController = cleanupController,
+            )
+        } catch (cleanupFailure: Throwable) {
+            if (!cleanup.isCompleted) cleanup.cancelAndJoin()
+            primaryFailure = forceWorkerClose(
+                primaryFailure = appendFailure(primaryFailure, cleanupFailure),
+                cleanupController = cleanupController,
+            )
+        } finally {
+            attempt.completed.complete(primaryFailure)
+        }
+        primaryFailure
+    }
+
+    private suspend fun forceWorkerClose(
+        primaryFailure: Throwable?,
+        cleanupController: SuspendSQLiteConnectionCleanup,
+    ): Throwable? {
+        var failure = primaryFailure
+        state = ConnectionState.CLOSING
+        try {
+            cleanupController.forceCleanup()
+        } catch (forceFailure: Throwable) {
+            failure = appendFailure(failure, forceFailure)
+        } finally {
+            state = ConnectionState.CLOSED
+            fatalFailure = null
+            clearLiveStatementObservers()
+        }
+        try {
+            closeExecutionContextOnce()
+        } catch (executionFailure: Throwable) {
+            failure = appendFailure(failure, executionFailure)
+        }
+        return failure
+    }
+
+    private suspend fun performCooperativeWorkerClose(): CloseWorkResult {
+        val hook = executionContextHook
+        var captured: Any? = null
+        val ownerToken = Any()
+        var primaryFailure: Throwable? = null
+        var captureSucceeded = hook == null
+        if (hook != null) {
+            try {
+                captured = hook.capture()
+                captureSucceeded = true
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (captureFailure: Throwable) {
+                primaryFailure = appendFailure(primaryFailure, captureFailure)
+            }
+        }
+
+        var lockAcquired = false
+        var performedClose = false
+        try {
+            connectionMutex.lock()
+            lockAcquired = true
+            if (state != ConnectionState.CLOSED) {
+                performedClose = true
+                var cleanupInvoked = false
+                try {
+                    val closeFailure = withContext(
+                        dispatcher + ConnectionOwnerContext(this@SafeSQLiteConnection, ownerToken),
+                    ) {
+                        val closeBlock: suspend () -> Throwable? = {
+                            cleanupInvoked = true
+                            closeOwnedResources()
+                        }
+                        if (hook != null && captureSucceeded) {
+                            hook.withCaptured(captured, closeBlock)
+                        } else {
+                            closeBlock()
+                        }
+                    }
+                    primaryFailure = appendFailure(primaryFailure, closeFailure)
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (hookOrCloseFailure: Throwable) {
+                    primaryFailure = appendFailure(primaryFailure, hookOrCloseFailure)
+                }
+                if (!cleanupInvoked) {
+                    try {
+                        val fallbackFailure = withContext(
+                            dispatcher +
+                                ConnectionOwnerContext(this@SafeSQLiteConnection, ownerToken),
+                        ) {
+                            closeOwnedResources()
+                        }
+                        primaryFailure = appendFailure(primaryFailure, fallbackFailure)
+                    } catch (cancellation: CancellationException) {
+                        throw cancellation
+                    } catch (cleanupFailure: Throwable) {
+                        primaryFailure = appendFailure(primaryFailure, cleanupFailure)
+                    }
+                }
+            }
+        } finally {
+            if (lockAcquired) connectionMutex.unlock()
+        }
+        return CloseWorkResult(primaryFailure, performedClose)
+    }
+
+    private suspend fun awaitCloseAttempt(
+        attempt: CloseAttempt,
+        cancellationSignal: Job?,
+    ): Throwable? {
+        if (cancellationSignal == null) return attempt.completed.await()
+        if (cancellationSignal.isCompleted) {
+            attempt.forceRequested.complete(Unit)
+            return attempt.completed.await()
+        }
+        return select {
+            attempt.completed.onAwait { it }
+            cancellationSignal.onJoin {
+                attempt.forceRequested.complete(Unit)
+                attempt.completed.await()
+            }
+        }
+    }
+
+    private suspend fun closeExecutionContextOnce() {
+        val shouldClose = closeCoordinationMutex.withLock {
+            if (executionContextClosed) {
+                false
+            } else {
+                executionContextClosed = true
+                true
+            }
+        }
+        if (shouldClose) executionContext.close()
+    }
+
     suspend fun inTransaction(): Boolean {
         return withDispatcherContext {
-            ref.inTransaction()
+            wrapAndroidxSqliteCall { ref.inTransaction() }
         }
     }
 
@@ -213,18 +591,21 @@ class SafeSQLiteConnection internal constructor(
      */
     suspend fun <T> transaction(mode: TransactionMode = TransactionMode.DEFERRED, block: suspend () -> T): T {
         return withDispatcherContext {
-            val alreadyInTransaction = activeTransactionDepth > 0 || ref.inTransaction()
+            val alreadyInTransaction =
+                activeTransactionDepth > 0 || wrapAndroidxSqliteCall { ref.inTransaction() }
             val transactionToken = activeTransactionToken ?: Any()
             if (!alreadyInTransaction) {
                 when (mode) {
-                    TransactionMode.DEFERRED -> ref.execSQL("BEGIN")
-                    TransactionMode.IMMEDIATE -> ref.execSQL("BEGIN IMMEDIATE")
-                    TransactionMode.EXCLUSIVE -> ref.execSQL("BEGIN EXCLUSIVE")
+                    TransactionMode.DEFERRED -> wrapAndroidxSqliteAsyncCall { ref.executeSQL("BEGIN") }
+                    TransactionMode.IMMEDIATE ->
+                        wrapAndroidxSqliteAsyncCall { ref.executeSQL("BEGIN IMMEDIATE") }
+                    TransactionMode.EXCLUSIVE ->
+                        wrapAndroidxSqliteAsyncCall { ref.executeSQL("BEGIN EXCLUSIVE") }
                 }
                 activeTransactionToken = transactionToken
             }
             activeTransactionDepth++
-            var committed = false
+            var transactionEnded = alreadyInTransaction
             try {
                 val result = block()
                 if (!alreadyInTransaction) {
@@ -234,21 +615,34 @@ class SafeSQLiteConnection internal constructor(
                     }
                     if (statementFailure != null) throw statementFailure
                     coroutineContext.ensureActive()
-                    ref.execSQL("COMMIT")
-                    committed = true
+                    beforeTransactionCommitForTest?.invoke()
+                    wrapAndroidxSqliteAsyncCall { ref.executeSQL("COMMIT") }
+                    transactionEnded = true
                     notifyTransactionCommitted()
                 }
                 result
             } catch (e: Throwable) {
-                if (!alreadyInTransaction && !committed) {
+                if (!alreadyInTransaction && !transactionEnded) {
                     withContext(NonCancellable) {
                         closeLiveStatements(primary = e, transactionToken = transactionToken)
-                        try {
-                            beforeTransactionRollbackForTest?.invoke()
-                            ref.execSQL("ROLLBACK")
-                        } catch (rollbackFailure: Throwable) {
-                            appendFailure(e, rollbackFailure)
-                            markFatal(rollbackFailure)
+                        val rollbackNeeded = try {
+                            wrapAndroidxSqliteCall { ref.inTransaction() }
+                        } catch (stateFailure: Throwable) {
+                            appendFailure(e, stateFailure)
+                            markFatal(stateFailure)
+                            false
+                        }
+                        if (rollbackNeeded) {
+                            try {
+                                beforeTransactionRollbackForTest?.invoke()
+                                wrapAndroidxSqliteAsyncCall { ref.executeSQL("ROLLBACK") }
+                                transactionEnded = true
+                            } catch (rollbackFailure: Throwable) {
+                                appendFailure(e, rollbackFailure)
+                                markFatal(rollbackFailure)
+                            }
+                        } else if (state != ConnectionState.FATAL) {
+                            transactionEnded = true
                         }
                     }
                 }
@@ -283,18 +677,23 @@ class SafeSQLiteConnection internal constructor(
         }
     }
 
-    private fun registerStatement(statement: SqliteStatement) {
-        val record = LiveStatement(
+    private fun registerStatement(statement: SQLiteStatement): SQLiteStatement {
+        lateinit var record: LiveStatement
+        val trackedStatement = trackSQLiteStatement(
             statement = statement,
+            cleanupFailureObserver = ::markFatal,
+            beforeCloseObserver = { record.closeAttempted = true },
+            closeSuccessObserver = {
+                liveStatements.remove(record)
+                clearTrackedSQLiteStatementObservers(record.statement)
+            },
+        )
+        record = LiveStatement(
+            statement = trackedStatement,
             transactionToken = activeTransactionToken,
         )
         liveStatements += record
-        statement.cleanupFailureObserver = ::markFatal
-        statement.beforeCloseObserver = { record.closeAttempted = true }
-        statement.closeSuccessObserver = {
-            liveStatements.remove(record)
-            clearStatementObservers(statement)
-        }
+        return trackedStatement
     }
 
     private fun markFatal(failure: Throwable) {
@@ -321,7 +720,9 @@ class SafeSQLiteConnection internal constructor(
         return failure
     }
 
-    private suspend fun closeOwnedResources(): Throwable? {
+    private suspend fun closeOwnedResources(
+        outcome: OrdinaryCloseOutcome? = null,
+    ): Throwable? {
         val fatal = state == ConnectionState.FATAL
         state = ConnectionState.CLOSING
         var failure = if (fatal) fatalFailure else null
@@ -334,32 +735,43 @@ class SafeSQLiteConnection internal constructor(
             }
         }
         try {
-            ref.close()
+            wrapAndroidxSqliteCall { ref.close() }
         } catch (rawCloseFailure: Throwable) {
             failure = appendFailure(failure, rawCloseFailure)
+        }
+        try {
+            (ref as? SuspendSQLiteConnectionCleanup)?.awaitCleanup()
+        } catch (cleanupFailure: Throwable) {
+            failure = appendFailure(failure, cleanupFailure)
         } finally {
             state = ConnectionState.CLOSED
             fatalFailure = null
             clearLiveStatementObservers()
+            outcome?.failure = failure
         }
         return failure
     }
 
-    private fun disposeFatalConnection(primary: Throwable?): Throwable? {
+    private suspend fun disposeFatalConnection(primary: Throwable?): Throwable? {
         if (state == ConnectionState.CLOSED) return primary
         state = ConnectionState.CLOSING
         var failure = appendFailure(primary, fatalFailure)
         failure = closeLiveStatements(failure)
         try {
-            ref.close()
+            wrapAndroidxSqliteCall { ref.close() }
         } catch (rawCloseFailure: Throwable) {
             failure = appendFailure(failure, rawCloseFailure)
+        }
+        try {
+            (ref as? SuspendSQLiteConnectionCleanup)?.awaitCleanup()
+        } catch (cleanupFailure: Throwable) {
+            failure = appendFailure(failure, cleanupFailure)
         } finally {
             state = ConnectionState.CLOSED
             fatalFailure = null
             clearLiveStatementObservers()
             try {
-                executionContext.close()
+                closeExecutionContextOnce()
             } catch (executionFailure: Throwable) {
                 failure = appendFailure(failure, executionFailure)
             }
@@ -368,24 +780,33 @@ class SafeSQLiteConnection internal constructor(
     }
 
     private fun clearLiveStatementObservers() {
-        liveStatements.forEach { clearStatementObservers(it.statement) }
+        liveStatements.forEach { clearTrackedSQLiteStatementObservers(it.statement) }
         liveStatements.clear()
-    }
-
-    private fun clearStatementObservers(statement: SqliteStatement) {
-        statement.cleanupFailureObserver = null
-        statement.beforeCloseObserver = null
-        statement.closeSuccessObserver = null
     }
 
     private fun closedConnectionFailure(): IllegalStateException =
         IllegalStateException("SQLite connection is closed")
 
     private class LiveStatement(
-        val statement: SqliteStatement,
+        val statement: SQLiteStatement,
         val transactionToken: Any?,
         var closeAttempted: Boolean = false,
     )
+
+    private class CloseAttempt {
+        val forceRequested = CompletableDeferred<Unit>()
+        val completed = CompletableDeferred<Throwable?>()
+    }
+
+    private data class CloseWorkResult(
+        val failure: Throwable?,
+        val performedClose: Boolean,
+        val forceRequired: Boolean = false,
+    )
+
+    private class OrdinaryCloseOutcome {
+        var failure: Throwable? = null
+    }
 
     private enum class ConnectionState { OPEN, FATAL, CLOSING, CLOSED }
 
@@ -397,7 +818,7 @@ class SafeSQLiteConnection internal constructor(
      */
     internal suspend fun persistSnapshotNow() {
         withDispatcherContext {
-            if (activeTransactionDepth > 0 || ref.inTransaction()) {
+            if (activeTransactionDepth > 0 || wrapAndroidxSqliteCall { ref.inTransaction() }) {
                 throw IllegalStateException("Cannot flush persistence while a transaction is active")
             }
             persistenceController.flush(ref)
@@ -449,7 +870,9 @@ private class ConnectionOwnerContext(
     companion object Key : CoroutineContext.Key<ConnectionOwnerContext>
 }
 
-internal expect fun exportConnectionBytes(connection: SqliteConnection): ByteArray?
+internal expect fun exportConnectionBytes(connection: SQLiteConnection): ByteArray?
+
+private const val DEFAULT_ORDINARY_CLOSE_CLEANUP_TIMEOUT_MILLIS = 5_000L
 
 /**
  * Transaction modes supported by SQLite.

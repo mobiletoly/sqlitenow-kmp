@@ -17,15 +17,9 @@
 
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.window.ComposeViewport
-import dev.goquick.sqlitenow.core.SqliteConnectionConfig
-import dev.goquick.sqlitenow.core.persistence.IndexedDbSqlitePersistence
 import dev.goquick.sqlitenow.samplesynckmp.App
-import dev.goquick.sqlitenow.samplesynckmp.db
 
 fun main() {
-    db.connectionConfig = SqliteConnectionConfig(
-        persistence = IndexedDbSqlitePersistence(storageName = "SqliteNowSampleSync")
-    )
     ComposeViewport("root") {
         App()
     }

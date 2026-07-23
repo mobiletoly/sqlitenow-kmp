@@ -2,7 +2,6 @@ package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -45,7 +44,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun sync_cancellationPropagates_releasesGate_andRecoversFrozenBundle() = runTest {
+    fun sync_cancellationPropagates_releasesGate_andRecoversFrozenBundle() = runOwnedWebDatabaseTest {
         val db = newDb()
         val server = MockSyncServer()
         val http = server.newHttpClient()
@@ -192,7 +191,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun chunkedPushPullAndHydrate_convergeAcrossClients() = runTest {
+    fun chunkedPushPullAndHydrate_convergeAcrossClients() = runOwnedWebDatabaseTest {
         val server = MockSyncServer()
         val dbA = newDb()
         val dbB = newDb()
@@ -253,7 +252,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun pullToStable_succeedsWithoutSqliteNowInvalidationBinding() = runTest {
+    fun pullToStable_succeedsWithoutSqliteNowInvalidationBinding() = runOwnedWebDatabaseTest {
         val server = MockSyncServer()
         val leaderDb = newDb()
         val followerDb = newDb()
@@ -286,7 +285,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun pushPending_doesNotSkipEarlierUnseenPeerBundles() = runTest {
+    fun pushPending_doesNotSkipEarlierUnseenPeerBundles() = runOwnedWebDatabaseTest {
         val server = MockSyncServer()
         val dbA = newDb()
         val dbB = newDb()
@@ -321,7 +320,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun threeDevices_pushWithoutPull_thenAllPull_converge() = runTest {
+    fun threeDevices_pushWithoutPull_thenAllPull_converge() = runOwnedWebDatabaseTest {
         val server = MockSyncServer()
         val dbA = newDb()
         val dbB = newDb()
@@ -384,7 +383,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun restartAfterOwnPushBeforePull_stillFetchesEarlierPeerBundles() = runTest {
+    fun restartAfterOwnPushBeforePull_stillFetchesEarlierPeerBundles() = runOwnedWebDatabaseTest {
         val server = MockSyncServer()
         val dbA = newDb()
         val dbB = newDb()
@@ -430,7 +429,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun conflictingPush_withUnseenPeerBundles_clientWinsStillConverges() = runTest {
+    fun conflictingPush_withUnseenPeerBundles_clientWinsStillConverges() = runOwnedWebDatabaseTest {
         val server = MockSyncServer()
         val dbA = newDb()
         val dbB = newDb()
@@ -493,7 +492,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun conflictingPush_keepLocalResolverAutoRetriesAndWins() = runTest {
+    fun conflictingPush_keepLocalResolverAutoRetriesAndWins() = runOwnedWebDatabaseTest {
         withThreeClientSync(clientBResolver = Resolver { MergeResult.KeepLocal }) {
             prepareUserNameConflict(localName = "Local Name")
 
@@ -507,7 +506,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun conflictingPush_updatedAtResolverKeepsNewerLocalIntent() = runTest {
+    fun conflictingPush_updatedAtResolverKeepsNewerLocalIntent() = runOwnedWebDatabaseTest {
         assertUpdatedAtConflictResolution(
             serverName = "Server Older",
             serverUpdatedAt = "2026-03-24T00:00:10Z",
@@ -519,7 +518,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun conflictingPush_updatedAtResolverAcceptsNewerServerState() = runTest {
+    fun conflictingPush_updatedAtResolverAcceptsNewerServerState() = runOwnedWebDatabaseTest {
         assertUpdatedAtConflictResolution(
             serverName = "Server Newer",
             serverUpdatedAt = "2026-03-24T00:00:20Z",
@@ -531,7 +530,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun conflictingPush_clientWinsResolverAutoRetriesAndWins() = runTest {
+    fun conflictingPush_clientWinsResolverAutoRetriesAndWins() = runOwnedWebDatabaseTest {
         withThreeClientSync(clientBResolver = ClientWinsResolver) {
             prepareUserNameConflict(localName = "Client Wins")
             pushClientBAndObserveUser(expectedClientName = "Client Wins")
@@ -539,7 +538,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun conflictingPush_keepMergedResolverCommitsMergedPayload() = runTest {
+    fun conflictingPush_keepMergedResolverCommitsMergedPayload() = runOwnedWebDatabaseTest {
         withThreeClientSync(
             clientBResolver = Resolver {
                 MergeResult.KeepMerged(
@@ -556,7 +555,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun conflictingPush_preservesSiblingRowsFromRejectedBundle() = runTest {
+    fun conflictingPush_preservesSiblingRowsFromRejectedBundle() = runOwnedWebDatabaseTest {
         withThreeClientSync(clientBResolver = ClientWinsResolver) {
             prepareUserNameConflict(localName = "Client Name") {
                 insertPost(dbB, "p1", "u1", "Sibling Post")
@@ -568,7 +567,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun conflictingPush_retryExhaustionLeavesReplayableDirtyState() = runTest {
+    fun conflictingPush_retryExhaustionLeavesReplayableDirtyState() = runOwnedWebDatabaseTest {
         val server = MockSyncServer()
         val dbA = newDb()
         val dbB = newDb()
@@ -640,7 +639,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun historyPruned_pullRebuildsThroughSnapshotWithoutSourceRotation() = runTest {
+    fun historyPruned_pullRebuildsThroughSnapshotWithoutSourceRotation() = runOwnedWebDatabaseTest {
         val server = MockSyncServer()
         val leaderDb = newDb()
         val followerDb = newDb()
@@ -690,7 +689,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun recover_rotatesSourceAndAllowsFollowupPush() = runTest {
+    fun recover_rotatesSourceAndAllowsFollowupPush() = runOwnedWebDatabaseTest {
         val server = MockSyncServer()
         val seedDb = newDb()
         val recoverDb = newDb()
@@ -759,7 +758,8 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun sourceRetiredOnPushCreate_persistsReplacementAcrossRestartAndRotatedRebuildReusesIt() = runTest {
+    fun sourceRetiredOnPushCreate_persistsReplacementAcrossRestartAndRotatedRebuildReusesIt() =
+        runOwnedWebDatabaseTest {
         val server = MockSyncServer()
         val db = newDb()
         val verifyDb = newDb()
@@ -827,7 +827,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun sourceRetiredOnPushCommit_entersDurableSourceRecovery() = runTest {
+    fun sourceRetiredOnPushCommit_entersDurableSourceRecovery() = runOwnedWebDatabaseTest {
         val server = MockSyncServer()
         val db = newDb()
         val http = server.newHttpClient()
@@ -861,7 +861,8 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun sourceRetiredOnSnapshotCreateFromPull_adoptsReplacementAndKeepsCurrentSourceUnchanged() = runTest {
+    fun sourceRetiredOnSnapshotCreateFromPull_adoptsReplacementAndKeepsCurrentSourceUnchanged() =
+        runOwnedWebDatabaseTest {
         val server = MockSyncServer()
         val leaderDb = newDb()
         val followerDb = newDb()
@@ -911,7 +912,8 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun rotatedSnapshotSourceReplacementInvalid_failsClosedWithoutSwitchingCurrentSource() = runTest {
+    fun rotatedSnapshotSourceReplacementInvalid_failsClosedWithoutSwitchingCurrentSource() =
+        runOwnedWebDatabaseTest {
         val server = MockSyncServer()
         val db = newDb()
         val http = server.newHttpClient()
@@ -946,7 +948,8 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun rotatedSnapshotSourceRetiredWithDifferentReplacement_failsClosedOnDivergence() = runTest {
+    fun rotatedSnapshotSourceRetiredWithDifferentReplacement_failsClosedOnDivergence() =
+        runOwnedWebDatabaseTest {
         val server = MockSyncServer()
         val db = newDb()
         val http = server.newHttpClient()

@@ -1,5 +1,6 @@
 import java.io.File
 import java.security.MessageDigest
+import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.bundling.Zip
 
 val swiftRuntimeMode = extra["swiftRuntimeMode"] as? String
@@ -245,3 +246,19 @@ registerSwiftRuntimeArtifactTask(
     xcframeworkDirectory = releaseRuntimeXcframeworkDir,
     artifactsDirectory = releaseRuntimeArtifactsDir,
 )
+
+tasks.register<Exec>("swiftTest") {
+    group = "verification"
+    description = "Runs SwiftPM tests against the packaged $swiftRuntimeMode runtime XCFramework."
+
+    dependsOn("packageDebugRuntimeXcframework")
+
+    inputs.file(layout.projectDirectory.file("Package.swift"))
+    inputs.dir(layout.projectDirectory.dir("Tests"))
+    inputs.dir(runtimeXcframeworkDir)
+    outputs.upToDateWhen { false }
+
+    workingDir = projectDir
+    executable = findExecutableOnPath("swift")?.absolutePath ?: "swift"
+    args("test")
+}

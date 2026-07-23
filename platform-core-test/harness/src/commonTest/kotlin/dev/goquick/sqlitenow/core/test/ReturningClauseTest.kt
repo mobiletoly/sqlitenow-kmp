@@ -19,11 +19,12 @@ class ReturningClauseTest {
     private lateinit var database: LibraryTestDatabase
 
     private fun runDatabaseTest(block: suspend () -> Unit) = runPlatformTest {
-        database = TestDatabaseHelper.createDatabase()
+        val lease = TestDatabaseHelper.createDatabaseLease()
+        database = lease.database
         try {
             block()
         } finally {
-            database.close()
+            lease.closeAndCleanup()
         }
     }
 

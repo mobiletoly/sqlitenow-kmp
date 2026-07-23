@@ -33,8 +33,8 @@ collections—see [Dynamic Fields]({{ site.baseurl }}/kmp/sql-reference/dynamic-
 
 Because everything happens at compile time, there are no runtime reflection penalties or
 annotation processors to wrestle with. The runtime handles connection management, migrations,
-reactive flows, and per-platform persistence (IndexedDB snapshots on web, `:memory:` toggles
-for tests, bundled drivers elsewhere).
+reactive flows, direct OPFS persistence through the default worker in supported browsers,
+transient in-memory execution on JS Node, and bundled platform drivers elsewhere.
 
 ### How is SQLiteNow different?
 

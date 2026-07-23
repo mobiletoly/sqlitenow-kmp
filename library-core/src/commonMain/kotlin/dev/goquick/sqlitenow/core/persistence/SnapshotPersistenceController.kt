@@ -15,11 +15,11 @@
  */
 package dev.goquick.sqlitenow.core.persistence
 
+import androidx.sqlite.SQLiteConnection
 import dev.goquick.sqlitenow.common.sqliteNowLogger
 import dev.goquick.sqlitenow.core.PersistenceController
 import dev.goquick.sqlitenow.core.SqlitePersistence
 import dev.goquick.sqlitenow.core.exportConnectionBytes
-import dev.goquick.sqlitenow.core.sqlite.SqliteConnection
 import kotlinx.coroutines.CancellationException
 
 /**
@@ -32,25 +32,25 @@ internal class SnapshotPersistenceController(
     override val restoredFromSnapshot: Boolean,
 ) : PersistenceController {
 
-    override suspend fun onOperationComplete(connection: SqliteConnection, inTransaction: Boolean) {
+    override suspend fun onOperationComplete(connection: SQLiteConnection, inTransaction: Boolean) {
         if (!autoFlush || inTransaction) return
         persistSnapshot(connection, force = false)
     }
 
-    override suspend fun onTransactionCommitted(connection: SqliteConnection) {
+    override suspend fun onTransactionCommitted(connection: SQLiteConnection) {
         if (!autoFlush) return
         persistSnapshot(connection, force = false)
     }
 
-    override suspend fun flush(connection: SqliteConnection) {
+    override suspend fun flush(connection: SQLiteConnection) {
         persistSnapshot(connection, force = true)
     }
 
-    override suspend fun onClose(connection: SqliteConnection) {
+    override suspend fun onClose(connection: SQLiteConnection) {
         persistSnapshot(connection, force = true)
     }
 
-    private suspend fun persistSnapshot(connection: SqliteConnection, force: Boolean) {
+    private suspend fun persistSnapshot(connection: SQLiteConnection, force: Boolean) {
         try {
             val bytes = exportConnectionBytes(connection) ?: return
             persistence.persist(dbName, bytes)

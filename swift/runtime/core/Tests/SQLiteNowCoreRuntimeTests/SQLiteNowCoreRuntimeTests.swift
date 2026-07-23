@@ -83,6 +83,35 @@ final class SQLiteNowCoreRuntimeTests: XCTestCase {
         try await db.close()
     }
 
+    func testTableObservationIsActiveWhenObserveReturns() async throws {
+        let db = SQLiteNowCoreRuntimeDatabase(
+            path: temporaryDatabaseURL().path,
+            migrationPlan: Self.migrationPlan(),
+            debug: false
+        )
+        try await db.open()
+
+        let changed = expectation(description: "table observer receives immediate invalidation")
+        let observer = RecordingTableObserver(onChanged: {
+            changed.fulfill()
+        })
+        let handle = db.observeTables(
+            tableNames: ["runtime_item", "unrelated_table"],
+            observer: observer
+        )
+
+        try await db.execute(
+            sql: "UPDATE runtime_item SET is_done = 1 WHERE id = 1",
+            bindValues: [],
+            affectedTables: ["runtime_item"]
+        )
+
+        let result = await XCTWaiter.fulfillment(of: [changed], timeout: 5)
+        XCTAssertEqual(result, .completed)
+        handle.cancel()
+        try await db.close()
+    }
+
     func testRuntimeExceptionPayloadIsReachableFromSwift() async throws {
         let db = SQLiteNowCoreRuntimeDatabase(
             path: temporaryDatabaseURL().path,
@@ -185,8 +214,13 @@ final class SQLiteNowCoreRuntimeTests: XCTestCase {
 
 private final class RecordingTableObserver: SQLiteNowCoreRuntimeTableObserver, @unchecked Sendable {
     private let lock = NSLock()
+    private let onChangedBlock: @Sendable () -> Void
     private var changedCount = 0
     private var errors: [SQLiteNowCoreRuntimeErrorPayload] = []
+
+    init(onChanged: @escaping @Sendable () -> Void = {}) {
+        self.onChangedBlock = onChanged
+    }
 
     var errorCount: Int {
         lock.lock()
@@ -198,6 +232,7 @@ private final class RecordingTableObserver: SQLiteNowCoreRuntimeTableObserver, @
         lock.lock()
         changedCount += 1
         lock.unlock()
+        onChangedBlock()
     }
 
     func onError(payload: SQLiteNowCoreRuntimeErrorPayload) {

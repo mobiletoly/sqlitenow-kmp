@@ -1,15 +1,14 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import io.ktor.client.HttpClient
-import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 
 internal class RealServerRichSchemaTest : RealServerSupport() {
     @Test
-    fun businessRichV0Schema_pushPullAndRebuild_workAgainstRealServer() = runTest {
-        val config = requireRealServerConfig() ?: return@runTest
+    fun businessRichV0Schema_pushPullAndRebuild_workAgainstRealServer() = runOwnedWebDatabaseTest {
+        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("realserver-rich-user")

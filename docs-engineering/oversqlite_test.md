@@ -56,7 +56,7 @@ server.
 It should:
 
 - mirror the same behavior families that `comprehensive` covers
-- run on Android emulator/device, iOS simulator, JVM runtime harness, macOS, JS Node, and Wasm
+- run on Android emulator/device, iOS simulator, JVM runtime harness, macOS arm64, JS Node, and Wasm
   browser surfaces
 - stay local-only for now
 
@@ -102,7 +102,8 @@ Relevant suite tasks:
 - `platform`
 - `realserver`
 
-It provides Android, JVM, iOS, macOS, JS Node, and Wasm browser runtime surfaces.
+It provides Android, JVM, iOS, macOS arm64, JS Node, and Wasm browser runtime surfaces. Repository
+development and JVM execution on macOS require Apple Silicon; Intel macOS is unsupported.
 
 ## Behavior Responsibility
 
@@ -157,7 +158,7 @@ Prefer these suite-level tasks over broad target tasks.
 | JVM                 | `./gradlew oversqlitePlatformJvm`               |
 | Android emulator    | `./gradlew oversqlitePlatformAndroid`           |
 | iOS simulator       | `./gradlew oversqlitePlatformIosSimulatorArm64` |
-| macOS               | `./gradlew oversqlitePlatformMacosArm64`        |
+| macOS arm64         | `./gradlew oversqlitePlatformMacosArm64`        |
 | JS Node             | `./gradlew oversqlitePlatformJsNode`            |
 | Wasm browser        | `./gradlew oversqlitePlatformWasmBrowser`       |
 
@@ -198,8 +199,8 @@ Optional overrides:
 | JVM runtime harness heavy mode      | `./gradlew oversqliteRealserverJvmHarnessHeavy`                                                                    |
 | iOS simulator                       | `./gradlew oversqliteRealserverIosSimulatorArm64`                                                                  |
 | iOS simulator heavy mode            | `./gradlew oversqliteRealserverIosSimulatorArm64Heavy`                                                             |
-| macOS                               | `./gradlew oversqliteRealserverMacosArm64`                                                                         |
-| macOS heavy mode                    | `./gradlew oversqliteRealserverMacosArm64Heavy`                                                                    |
+| macOS arm64                         | `./gradlew oversqliteRealserverMacosArm64`                                                                         |
+| macOS arm64 heavy mode              | `./gradlew oversqliteRealserverMacosArm64Heavy`                                                                    |
 | JS Node                             | `./gradlew oversqliteRealserverJsNode`                                                                             |
 | JS Node heavy mode                  | `./gradlew oversqliteRealserverJsNodeHeavy`                                                                        |
 | Wasm browser                        | `./gradlew oversqliteRealserverWasmBrowser`                                                                        |
@@ -289,8 +290,8 @@ Examples of broad target tasks that are not suite names:
 | Suite           | Module / Area                                         | Platforms                                                                         |
 |-----------------|-------------------------------------------------------|-----------------------------------------------------------------------------------|
 | `comprehensive` | `:library-oversqlite`                                 | host-side JVM entry point today                                                   |
-| `platform`      | `:platform-oversqlite-test:composeApp`                | Android, JVM, iOS, macOS, JS Node, Wasm browser                                   |
-| `realserver`    | `:library-oversqlite` and `:platform-oversqlite-test:composeApp` | shared JVM plus Android, JVM, iOS, macOS, JS Node, Wasm browser runtime harnesses |
+| `platform`      | `:platform-oversqlite-test:composeApp`                | Android, JVM, iOS, macOS arm64, JS Node, Wasm browser                                   |
+| `realserver`    | `:library-oversqlite` and `:platform-oversqlite-test:composeApp` | shared JVM plus Android, JVM, iOS, macOS arm64, JS Node, Wasm browser runtime harnesses |
 | Dart realserver | `dart/packages/sqlitenow_oversqlite` and `dart/examples/flutter_todo` | host package tests plus opt-in Flutter Android integration fixture                |
 
 ## CI/CD Policy

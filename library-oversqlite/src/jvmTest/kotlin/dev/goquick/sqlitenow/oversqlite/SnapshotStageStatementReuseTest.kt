@@ -11,7 +11,6 @@ import androidx.sqlite.SQLiteStatement
 import dev.goquick.sqlitenow.core.BundledSqliteConnectionProvider
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.TransactionMode
-import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
 import dev.goquick.sqlitenow.core.sqlite.use
 import java.lang.management.ManagementFactory
 import java.nio.file.Files
@@ -1020,7 +1019,7 @@ class SnapshotStageStatementReuseTest : BundleClientContractTestSupport() {
         var clearCalls: Int = 0
             private set
 
-        override fun invoke(statement: SqliteStatement) {
+        override fun invoke(statement: SQLiteStatement) {
             calls++
             if (calls != failAtCall) {
                 DefaultReusableStatementCleanup(statement)
@@ -1255,11 +1254,11 @@ internal class JvmStatementCleanupFault private constructor(
             mode: JvmCleanupFailureMode,
             sqlMatcher: (String) -> Boolean,
         ): JvmStatementCleanupFault {
-            val delegateField = db.ref.javaClass.declaredFields.single { it.name == "delegate" }
-            delegateField.isAccessible = true
-            val originalConnection = delegateField.get(db.ref) as SQLiteConnection
+            val connectionField = SafeSQLiteConnection::class.java.getDeclaredField("ref")
+            connectionField.isAccessible = true
+            val originalConnection = connectionField.get(db) as SQLiteConnection
             return JvmStatementCleanupFault(mode, originalConnection, sqlMatcher).also { fault ->
-                delegateField.set(db.ref, fault.connection)
+                connectionField.set(db, fault.connection)
             }
         }
     }

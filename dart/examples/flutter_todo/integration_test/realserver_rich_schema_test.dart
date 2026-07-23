@@ -5,13 +5,14 @@ import 'package:integration_test/integration_test.dart';
 import 'package:sqlitenow_oversqlite/sqlitenow_oversqlite.dart';
 
 import 'realserver_test_support.dart';
+import 'rich_numeric_scenarios.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   group('Flutter Android realserver rich generated schema', () {
     testWidgets(
-      'generated schema preserves topology, typed rows, blob keys, pull, and rebuild',
+      'generated schema preserves topology, numeric bounds, blob keys, pull, and rebuild',
       skip: !realserverEnabled,
       (tester) async {
         final config = await requireRealServerConfig();
@@ -62,12 +63,22 @@ void main() {
           data: Uint8List.fromList([0xde, 0xad, 0xbe, 0xef]),
           createdAt: '2026-03-24T18:42:11Z',
         );
+        final numericRows = [
+          for (final scenario in richNumericScenarios)
+            typedRowFixtureFromNumericScenario(scenario),
+        ];
         await insertBlobKeyPair(seed.database, blob);
         await insertTypedRow(seed.database, typedSeed);
+        for (final row in numericRows) {
+          await insertTypedRow(seed.database, row);
+        }
         expect(
           (await seed.client.pushPending()).outcome,
           PushOutcome.committed,
         );
+        for (final row in numericRows) {
+          await assertTypedRowState(seed.database, row);
+        }
 
         final typedActive = TypedRowFixture(
           id: realserverUuid(),
@@ -106,6 +117,9 @@ void main() {
           await assertBlobKeyState(device.database, blob);
           await assertTypedRowState(device.database, typedSeed);
           await assertTypedRowState(device.database, typedActive);
+          for (final row in numericRows) {
+            await assertTypedRowState(device.database, row);
+          }
           await expectForeignKeyIntegrity(device.database.runtimeDatabase);
           await expectCleanSyncTables(device.database.runtimeDatabase);
         }

@@ -1,6 +1,10 @@
 import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
+import org.gradle.api.file.DuplicatesStrategy
+import org.gradle.api.tasks.Copy
+import org.gradle.language.jvm.tasks.ProcessResources
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
+import org.jetbrains.kotlin.gradle.tasks.BaseKotlinCompile
 
 plugins {
     id(libs.plugins.kotlinMultiplatform.get().pluginId)
@@ -71,6 +75,7 @@ kotlin {
             implementation(libs.ktor.client.auth)
             implementation(libs.ktor.serialization.kotlinx.json)
 
+            implementation(project(":library-core"))
             implementation(project(":library-oversqlite"))
         }
 
@@ -78,6 +83,22 @@ kotlin {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutines.test)
             implementation("io.ktor:ktor-client-mock:${libs.versions.ktor.get()}")
+        }
+
+        val webTest by getting {
+            kotlin.srcDir(rootProject.file("library-core/src/legacySqlJsWebTest/kotlin"))
+            dependencies {
+                implementation(npm("sql.js", "1.13.0"))
+            }
+        }
+
+        val jsTest by getting {
+            kotlin.srcDir(rootProject.file("library-core/src/legacySqlJsJsTest/kotlin"))
+        }
+
+        val wasmJsTest by getting {
+            kotlin.srcDir(rootProject.file("library-core/src/legacySqlJsWasmJsTest/kotlin"))
+            resources.srcDir(rootProject.file("library-core/src/legacySqlJsWasmJsTest/resources"))
         }
 
         val nativeMain by getting {
@@ -107,14 +128,7 @@ kotlin {
             implementation(libs.ktor.client.darwin)
         }
 
-        val webMain by getting {
-            dependencies {
-                implementation(npm("sql.js", "1.13.0"))
-            }
-        }
-
         jsMain.dependencies {
-            implementation(devNpm("copy-webpack-plugin", "11.0.0"))
             implementation(libs.ktor.client.js)
             implementation(libs.kotlinx.browser)
         }
@@ -138,9 +152,42 @@ kotlin {
     }
 }
 
+val legacySqlJsFixtureModuleDir = rootProject.layout.buildDirectory.dir("js/node_modules/sql.js/dist")
+val legacySqlJsFixtureWasmDir = layout.buildDirectory.dir("generated/test-fixtures/sqljs/wasm")
+
+val copyLegacySqlJsFixtureWasm by tasks.registering(Copy::class) {
+    dependsOn(rootProject.tasks.named("kotlinNpmInstall"))
+    from(legacySqlJsFixtureModuleDir.map { it.file("sql-wasm.wasm") })
+    into(legacySqlJsFixtureWasmDir)
+}
+
+tasks.named<ProcessResources>("wasmJsTestProcessResources") {
+    dependsOn(copyLegacySqlJsFixtureWasm)
+    from(legacySqlJsFixtureWasmDir)
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEach {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
+    }
+}
+
+val coreProject = project(":library-core")
+val oversqliteProject = project(":library-oversqlite")
+
+listOf("Js", "WasmJs").forEach { targetSuffix ->
+    val coreMainCompile =
+        coreProject.tasks.named<BaseKotlinCompile>("compileKotlin$targetSuffix")
+    val oversqliteMainCompile =
+        oversqliteProject.tasks.named<BaseKotlinCompile>("compileKotlin$targetSuffix")
+
+    tasks.named<BaseKotlinCompile>("compileTestKotlin$targetSuffix") {
+        dependsOn(coreMainCompile, oversqliteMainCompile)
+        friendPaths.from(
+            coreMainCompile.flatMap { it.destinationDirectory },
+            oversqliteMainCompile.flatMap { it.destinationDirectory },
+        )
     }
 }
 
@@ -151,16 +198,4 @@ sqliteNow {
             oversqlite = true
         }
     }
-}
-
-val libraryProject = project(":library-core")
-val librarySqlJsResource = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sqlitenow-sqljs.js")
-val librarySqlWasmBinary = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sql-wasm.wasm")
-val libraryIndexedDbResource = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sqlitenow-indexeddb.js")
-
-tasks.named<ProcessResources>("wasmJsProcessResources") {
-    dependsOn(libraryProject.tasks.named("wasmJsProcessResources"))
-    from(librarySqlJsResource)
-    from(librarySqlWasmBinary)
-    from(libraryIndexedDbResource)
 }

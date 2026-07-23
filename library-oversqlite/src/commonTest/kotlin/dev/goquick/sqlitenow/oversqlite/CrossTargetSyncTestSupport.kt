@@ -1,6 +1,9 @@
 package dev.goquick.sqlitenow.oversqlite
 
+import androidx.sqlite.async.step
+import dev.goquick.sqlitenow.common.PlatformType
 import dev.goquick.sqlitenow.common.initializePlatformTestContext
+import dev.goquick.sqlitenow.common.platform
 import dev.goquick.sqlitenow.core.BundledSqliteConnectionProvider
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.sqlite.use
@@ -19,6 +22,10 @@ import io.ktor.serialization.kotlinx.json.json
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -26,6 +33,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlin.random.Random
 
 internal fun computeCommittedBundleHashForTest(rows: List<BundleRow>): String {
     val logicalRows = rows.mapIndexed { index, row ->
@@ -49,17 +57,71 @@ internal fun computeCommittedBundleHashForTest(rows: List<BundleRow>): String {
 internal open class CrossTargetSyncTestSupport {
     private companion object {
         const val sourceIdHeaderName = "Oversync-Source-ID"
+        var webDatabaseSequence: Long = 0
     }
+
+    private val ownedWebDatabaseNames = linkedSetOf<String>()
 
     protected val json = Json { ignoreUnknownKeys = true }
 
+    protected fun runOwnedWebDatabaseTest(testBody: suspend TestScope.() -> Unit) = runTest {
+        var primaryFailure: Throwable? = null
+        try {
+            testBody()
+        } catch (failure: Throwable) {
+            primaryFailure = failure
+        }
+        try {
+            withContext(NonCancellable) {
+                cleanupOwnedWebDatabases()
+            }
+        } catch (cleanupFailure: Throwable) {
+            val primary = primaryFailure
+            if (primary == null) {
+                primaryFailure = cleanupFailure
+            } else {
+                primary.addSuppressed(cleanupFailure)
+            }
+        }
+        primaryFailure?.let { throw it }
+    }
+
+    private suspend fun cleanupOwnedWebDatabases() {
+        var primaryFailure: Throwable? = null
+        ownedWebDatabaseNames.forEach { dbName ->
+            try {
+                cleanupDirectWorkerTestDatabase(dbName)
+            } catch (failure: Throwable) {
+                val primary = primaryFailure
+                if (primary == null) {
+                    primaryFailure = failure
+                } else {
+                    primary.addSuppressed(failure)
+                }
+            }
+        }
+        ownedWebDatabaseNames.clear()
+        primaryFailure?.let { throw it }
+    }
+
     protected suspend fun newDb(): SafeSQLiteConnection {
         initializePlatformTestContext()
-        return BundledSqliteConnectionProvider.openConnection(":memory:", debug = true)
+        val dbName = if (platform() == PlatformType.JS) {
+            webDatabaseSequence += 1
+            "sqlitenow-oversqlite-test-$webDatabaseSequence-${Random.nextLong()}.db".also {
+                ownedWebDatabaseNames += it
+            }
+        } else {
+            ":memory:"
+        }
+        return BundledSqliteConnectionProvider.openConnection(dbName, debug = true)
     }
 
     protected suspend fun newFileBackedDb(path: String): SafeSQLiteConnection {
         initializePlatformTestContext()
+        if (platform() == PlatformType.JS) {
+            ownedWebDatabaseNames += path
+        }
         return BundledSqliteConnectionProvider.openConnection(
             dbName = path,
             debug = true,

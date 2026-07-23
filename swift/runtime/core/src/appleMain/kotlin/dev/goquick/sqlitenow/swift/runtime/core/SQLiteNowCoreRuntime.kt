@@ -17,17 +17,19 @@
  */
 package dev.goquick.sqlitenow.swift.runtime.core
 
+import androidx.sqlite.SQLiteStatement
+import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.core.DatabaseMigrations
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.SqliteNowDatabase
 import dev.goquick.sqlitenow.core.TransactionMode
 import dev.goquick.sqlitenow.core.sqlite.SqliteException
-import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
 import dev.goquick.sqlitenow.core.sqlite.use
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.usePinned
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -100,7 +102,7 @@ class SQLiteNowCoreRuntimeBindValue private constructor(
         dataValue = dataValue,
     )
 
-    internal fun bind(statement: SqliteStatement, index: Int) {
+    internal fun bind(statement: SQLiteStatement, index: Int) {
         when (kind) {
             KIND_NULL -> statement.bindNull(index)
             KIND_INT64 -> statement.bindLong(index, int64Value)
@@ -306,7 +308,7 @@ class SQLiteNowCoreRuntimeDatabase(
     ): SQLiteNowCoreRuntimeCancelHandle {
         database.enableTableChangeNotifications()
         val scope = observerScope
-        val job = scope.launch {
+        val job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
                 database.tableChangeFlow(tableNames.toSet()).collect {
                     observer.onChanged()
@@ -390,14 +392,14 @@ private class SQLiteNowCoreMigrationException(
     cause: Throwable,
 ) : RuntimeException(message, cause)
 
-private fun List<SQLiteNowCoreRuntimeBindValue>.bindAll(statement: SqliteStatement) {
+private fun List<SQLiteNowCoreRuntimeBindValue>.bindAll(statement: SQLiteStatement) {
     forEachIndexed { index, value ->
         value.bind(statement, index + 1)
     }
 }
 
 private fun readRow(
-    statement: SqliteStatement,
+    statement: SQLiteStatement,
     columnTypes: List<String>,
 ): SQLiteNowCoreRuntimeRow {
     val cells = columnTypes.mapIndexed { index, type ->

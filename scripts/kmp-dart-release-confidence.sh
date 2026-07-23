@@ -91,7 +91,8 @@ EOF
 }
 
 run_kmp_local() {
-  run_gradle :sqlitenow-compiler:test :sqlitenow-gradle-plugin:test
+  run_gradle :sqlitenow-compiler:test
+  run_gradle :sqlitenow-gradle-plugin:test
   run_gradle :library-core:jvmTest :library-core:jsTest :library-core:wasmJsBrowserTest
   run_gradle :library-oversqlite:jsNodeTest :library-oversqlite:wasmJsBrowserTest
   run_gradle \
@@ -131,6 +132,20 @@ run_dart_flutter_local() {
   run flutter pub get
   run flutter analyze
   run flutter pub run sqlitenow_cli generate
+  run flutter test
+  popd >/dev/null
+
+  pushd examples/flutter_samplesync >/dev/null
+  run flutter pub get
+  run flutter pub run sqlitenow_cli generate
+  run git diff --exit-code -- lib/src/db/generated
+  if [[ -n "$(git ls-files --others --exclude-standard -- lib/src/db/generated)" ]]; then
+    echo "Untracked Flutter SampleSync generated output detected." >&2
+    git ls-files --others --exclude-standard -- lib/src/db/generated >&2
+    exit 1
+  fi
+  run dart format --output=none --set-exit-if-changed lib test integration_test
+  run flutter analyze
   run flutter test
   popd >/dev/null
   popd >/dev/null

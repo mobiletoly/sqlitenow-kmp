@@ -1,7 +1,10 @@
-import org.gradle.language.jvm.tasks.ProcessResources
 import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
+import org.gradle.api.file.DuplicatesStrategy
+import org.gradle.api.tasks.Copy
+import org.gradle.language.jvm.tasks.ProcessResources
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
+import org.jetbrains.kotlin.gradle.tasks.BaseKotlinCompile
 
 plugins {
     id(libs.plugins.kotlinMultiplatform.get().pluginId)
@@ -84,14 +87,24 @@ kotlin {
             implementation(libs.sqlite.bundled)
         }
 
-        val webMain by getting {
+        val webTest by getting {
+            kotlin.srcDir(rootProject.file("library-core/src/legacySqlJsWebTest/kotlin"))
             dependencies {
+                implementation(npm("@sqlite.org/sqlite-wasm", "3.53.0-build1"))
                 implementation(npm("sql.js", "1.13.0"))
             }
         }
 
+        val jsTest by getting {
+            kotlin.srcDir(rootProject.file("library-core/src/legacySqlJsJsTest/kotlin"))
+        }
+
+        val wasmJsTest by getting {
+            kotlin.srcDir(rootProject.file("library-core/src/legacySqlJsWasmJsTest/kotlin"))
+            resources.srcDir(rootProject.file("library-core/src/legacySqlJsWasmJsTest/resources"))
+        }
+
         jsMain.dependencies {
-            implementation(devNpm("copy-webpack-plugin", "11.0.0"))
             implementation(libs.kotlinx.browser)
         }
 
@@ -113,9 +126,36 @@ kotlin {
     }
 }
 
+val legacySqlJsFixtureModuleDir = rootProject.layout.buildDirectory.dir("js/node_modules/sql.js/dist")
+val legacySqlJsFixtureWasmDir = layout.buildDirectory.dir("generated/test-fixtures/sqljs/wasm")
+
+val copyLegacySqlJsFixtureWasm by tasks.registering(Copy::class) {
+    dependsOn(rootProject.tasks.named("kotlinNpmInstall"))
+    from(legacySqlJsFixtureModuleDir.map { it.file("sql-wasm.wasm") })
+    into(legacySqlJsFixtureWasmDir)
+}
+
+tasks.named<ProcessResources>("wasmJsTestProcessResources") {
+    dependsOn(copyLegacySqlJsFixtureWasm)
+    from(legacySqlJsFixtureWasmDir)
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEach {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
+    }
+}
+
+val coreProject = project(":library-core")
+
+listOf("Js", "WasmJs").forEach { targetSuffix ->
+    val coreMainCompile =
+        coreProject.tasks.named<BaseKotlinCompile>("compileKotlin$targetSuffix")
+
+    tasks.named<BaseKotlinCompile>("compileTestKotlin$targetSuffix") {
+        dependsOn(coreMainCompile)
+        friendPaths.from(coreMainCompile.flatMap { it.destinationDirectory })
     }
 }
 
@@ -129,17 +169,9 @@ sqliteNow {
             packageName = "dev.goquick.sqlitenow.core.test.migration.db"
             debug = true
         }
+        create("Phase6WorkerValueDatabase") {
+            packageName = "dev.goquick.sqlitenow.core.test.phase6.db"
+            debug = true
+        }
     }
-}
-
-val libraryProject = project(":library-core")
-val librarySqlJsResource = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sqlitenow-sqljs.js")
-val librarySqlWasmBinary = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sql-wasm.wasm")
-val libraryIndexedDbResource = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sqlitenow-indexeddb.js")
-
-tasks.named<ProcessResources>("wasmJsProcessResources") {
-    dependsOn(libraryProject.tasks.named("wasmJsProcessResources"))
-    from(librarySqlJsResource)
-    from(librarySqlWasmBinary)
-    from(libraryIndexedDbResource)
 }

@@ -5,6 +5,7 @@ import dev.goquick.sqlitenow.gradle.swift.SwiftPackageMinimumPlatforms
 import dev.goquick.sqlitenow.gradle.swift.SwiftProductRuntimeMode
 import dev.goquick.sqlitenow.gradle.swift.swiftPackageGeneratorConfigInputs
 import dev.goquick.sqlitenow.gradle.swift.swiftPackageSourceInputDigest
+import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import java.io.File
 import java.nio.file.Path
@@ -25,6 +26,167 @@ class SqliteNowPluginFunctionalTest {
 
     @TempDir
     lateinit var tempDir: Path
+
+    @Test
+    @DisplayName("Obsolete SQLiteNow raw statement source fails to compile without a compatibility shim")
+    fun obsoleteSqliteNowRawStatementImportFailsToCompile() {
+        val projectDir = tempDir.resolve("obsolete-raw-statement-project").toFile().apply { mkdirs() }
+
+        writeSettingsGradle(projectDir, includeRepoBuild = true)
+        writeJvmBuildGradle(
+            projectDir = projectDir,
+            kotlinBody = """
+                sourceSets {
+                    commonMain.dependencies {
+                        implementation("dev.goquick.sqlitenow:core")
+                    }
+                }
+            """.trimIndent(),
+        )
+        writeFixtureFile(
+            projectDir,
+            "src/commonMain/kotlin/fixture/ObsoleteRawStatementUsage.kt",
+            """
+                package fixture
+
+                import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
+
+                fun bindObsoleteStatement(statement: SqliteStatement) {
+                    statement.bindLong(1, 27L)
+                }
+            """.trimIndent(),
+        )
+
+        val result = runGradleAndFail(projectDir, "compileKotlinJvm", "--stacktrace")
+
+        assertTrue(
+            result.output.contains("Unresolved reference 'SqliteStatement'"),
+            "The removed raw type must remain a source-breaking compile failure. Output:\n${result.output}",
+        )
+    }
+
+    @Test
+    @DisplayName("External web consumers cannot import the internal SQLite worker provider")
+    fun externalWorkerProviderImportFailsToCompile() {
+        val projectDir = tempDir.resolve("internal-worker-provider-project").toFile().apply { mkdirs() }
+
+        writeSettingsGradle(projectDir, includeRepoBuild = true)
+        writeBuildGradle(
+            projectDir,
+            """
+                plugins {
+                    kotlin("multiplatform") version "2.4.0"
+                }
+
+                repositories {
+                    google()
+                    mavenCentral()
+                }
+
+                kotlin {
+                    js {
+                        nodejs()
+                    }
+
+                    sourceSets {
+                        jsMain.dependencies {
+                            implementation("dev.goquick.sqlitenow:core")
+                        }
+                    }
+                }
+            """.trimIndent(),
+        )
+        writeFixtureFile(
+            projectDir,
+            "src/jsMain/kotlin/fixture/InternalWorkerProviderUsage.kt",
+            """
+                package fixture
+
+                import dev.goquick.sqlitenow.core.worker.SqliteWorkerConnectionProvider
+
+                fun createWorkerProvider() = SqliteWorkerConnectionProvider()
+            """.trimIndent(),
+        )
+
+        val result = runGradleAndFail(projectDir, "compileKotlinJs", "--stacktrace")
+
+        assertTrue(
+            result.output.contains("SqliteWorkerConnectionProvider") &&
+                result.output.contains("internal", ignoreCase = true),
+            "The internal worker provider must be rejected without diagnostic suppressions. " +
+                "Output:\n${result.output}",
+        )
+    }
+
+    @Test
+    @DisplayName("External web consumers compile the public worker factory without remote URLs or SQL.js calls")
+    fun externalWebConsumerCompilesWorkerFactory() {
+        val projectDir = tempDir.resolve("public-worker-factory-project").toFile().apply { mkdirs() }
+
+        writeSettingsGradle(projectDir, includeRepoBuild = true)
+        writeBuildGradle(
+            projectDir,
+            """
+                plugins {
+                    kotlin("multiplatform") version "2.4.0"
+                    id("dev.goquick.sqlitenow")
+                }
+
+                repositories {
+                    google()
+                    mavenCentral()
+                }
+
+                kotlin {
+                    js {
+                        browser()
+                    }
+                    wasmJs {
+                        browser()
+                    }
+
+                    sourceSets {
+                        jsMain.dependencies {
+                            implementation("dev.goquick.sqlitenow:core")
+                        }
+                        wasmJsMain.dependencies {
+                            implementation("dev.goquick.sqlitenow:core")
+                        }
+                    }
+                }
+            """.trimIndent(),
+        )
+        val usage = """
+            package fixture
+
+            import dev.goquick.sqlitenow.core.SqliteConnectionProvider
+            import dev.goquick.sqlitenow.core.worker.sqliteWorkerConnectionProvider
+
+            val packagedWorkerProvider: SqliteConnectionProvider =
+                sqliteWorkerConnectionProvider()
+            val relativeWorkerProvider: SqliteConnectionProvider =
+                sqliteWorkerConnectionProvider("./sqlite-3.53.0-build1/worker.mjs")
+        """.trimIndent()
+        writeFixtureFile(
+            projectDir,
+            "src/jsMain/kotlin/fixture/PublicWorkerProviderUsage.kt",
+            usage,
+        )
+        writeFixtureFile(
+            projectDir,
+            "src/wasmJsMain/kotlin/fixture/PublicWorkerProviderUsage.kt",
+            usage,
+        )
+        assertFalse(usage.contains("http://") || usage.contains("https://"))
+        assertFalse(usage.contains("sql.js"))
+
+        runGradle(
+            projectDir,
+            "compileKotlinJs",
+            "compileKotlinWasmJs",
+            "--stacktrace",
+        )
+    }
 
     @Test
     @DisplayName("Plugin generates and compiles migration code for a real project fixture")
@@ -383,11 +545,11 @@ class SqliteNowPluginFunctionalTest {
     }
 
     @Test
-    @DisplayName("Plugin extracts SQLiteNow wasm resources for a real wasmJs target")
-    fun pluginExtractsWasmResourcesForRealWasmTarget() {
-        val projectDir = tempDir.resolve("real-wasm-project").toFile().apply { mkdirs() }
+    @DisplayName("Plugin extracts manifest-owned worker resources for real JS and wasmJs targets")
+    fun pluginExtractsWorkerResourcesForRealWebTargets() {
+        val projectDir = tempDir.resolve("real-web-project").toFile().apply { mkdirs() }
         val fakeKlib = projectDir.resolve("libs/sqlitenow-real.klib").also {
-            writeFakeKlib(it, marker = "real-wasm")
+            writeFakeKlib(it, marker = "real-web")
         }
 
         writeSettingsGradle(projectDir)
@@ -408,6 +570,9 @@ class SqliteNowPluginFunctionalTest {
                 }
 
                 kotlin {
+                    js {
+                        browser()
+                    }
                     wasmJs {
                         browser()
                     }
@@ -421,9 +586,64 @@ class SqliteNowPluginFunctionalTest {
             """.trimIndent(),
         )
 
-        runGradle(projectDir, "wasmJsProcessResources", "--stacktrace")
+        runGradle(
+            projectDir,
+            "jsProcessResources",
+            "wasmJsProcessResources",
+            "--stacktrace",
+        )
 
-        assertExtractedResources(projectDir.resolve("build"), marker = "real-wasm")
+        assertExtractedResources(
+            projectDir.resolve("build/processedResources/js/main"),
+            marker = "real-web",
+        )
+        assertExtractedResources(
+            projectDir.resolve("build/processedResources/wasmJs/main"),
+            marker = "real-web",
+        )
+
+        val staleVersionedAsset = projectDir.resolve(
+            "build/processedResources/js/main/" +
+                "sqlitenow-worker-v1/sqlite-3.52.0-build1/stale-worker.mjs"
+        )
+        staleVersionedAsset.parentFile.mkdirs()
+        staleVersionedAsset.writeText("stale")
+        val staleLegacyAssets = listOf(
+            "sqlitenow-sqljs.js",
+            "sqlitenow-indexeddb.js",
+            "sql-wasm.wasm",
+        ).map { relative ->
+            projectDir.resolve("build/processedResources/wasmJs/main/$relative").also {
+                it.writeText("stale")
+            }
+        }
+
+        runGradle(
+            projectDir,
+            "jsProcessResources",
+            "wasmJsProcessResources",
+            "--rerun-tasks",
+            "--stacktrace",
+        )
+
+        assertFalse(
+            staleVersionedAsset.exists(),
+            "A resource rerun must remove the previous versioned worker namespace",
+        )
+        staleLegacyAssets.forEach { asset ->
+            assertFalse(
+                asset.exists(),
+                "A resource rerun must remove obsolete ${asset.name}",
+            )
+        }
+        assertExtractedResources(
+            projectDir.resolve("build/processedResources/js/main"),
+            marker = "real-web",
+        )
+        assertExtractedResources(
+            projectDir.resolve("build/processedResources/wasmJs/main"),
+            marker = "real-web",
+        )
     }
 
     @Test
@@ -471,14 +691,17 @@ class SqliteNowPluginFunctionalTest {
 
         runGradle(projectDir, "wasmJsProcessResources", "--stacktrace")
 
-        assertExtractedResources(projectDir.resolve("build/custom-wasm-resources"), marker = "fallback-wasm")
+        assertExtractedResources(
+            projectDir.resolve("build/custom-wasm-resources"),
+            marker = "fallback-wasm",
+        )
     }
 
     @Test
     @DisplayName("Plugin recognizes SQLiteNow project dependencies even when the klib file name does not contain sqlitenow")
     fun pluginRecognizesSqliteNowProjectDependencies() {
         val projectDir = tempDir.resolve("project-dependency-wasm").toFile().apply { mkdirs() }
-        val fakeCoreDir = projectDir.resolve("fakecore").apply { mkdirs() }
+        val fakeCoreDir = projectDir.resolve("library-core").apply { mkdirs() }
         val fakeKlib = fakeCoreDir.resolve("libs/totally-unrelated.klib").also {
             writeFakeKlib(it, marker = "project-dependency")
         }
@@ -491,10 +714,10 @@ class SqliteNowPluginFunctionalTest {
                 group = "dev.goquick.sqlitenow"
                 version = "1.0.0"
 
-                configurations.create("sqlitenowWasm")
+                configurations.create("sqlitenowWeb")
 
                 artifacts {
-                    add("sqlitenowWasm", file("${fakeKlib.toPath().invariantSeparatorsPathString}"))
+                    add("sqlitenowWeb", file("${fakeKlib.toPath().invariantSeparatorsPathString}"))
                 }
             """.trimIndent(),
         )
@@ -523,23 +746,155 @@ class SqliteNowPluginFunctionalTest {
                 }
 
                 configurations.create("wasmJsMainCompileClasspath")
+                configurations.create("jsMainCompileClasspath")
 
                 dependencies {
                     add(
                         "wasmJsMainCompileClasspath",
-                        project(mapOf("path" to ":fakecore", "configuration" to "sqlitenowWasm"))
+                        project(mapOf("path" to ":library-core", "configuration" to "sqlitenowWeb"))
+                    )
+                    add(
+                        "jsMainCompileClasspath",
+                        project(mapOf("path" to ":library-core", "configuration" to "sqlitenowWeb"))
                     )
                 }
 
                 tasks.register<ProcessResources>("wasmJsProcessResources") {
                     destinationDir = layout.buildDirectory.dir("custom-wasm-resources").get().asFile
                 }
+                tasks.register<ProcessResources>("jsProcessResources") {
+                    destinationDir = layout.buildDirectory.dir("custom-js-resources").get().asFile
+                }
             """.trimIndent(),
         )
 
-        runGradle(projectDir, ":app:wasmJsProcessResources", "--stacktrace")
+        runGradle(
+            projectDir,
+            ":app:jsProcessResources",
+            ":app:wasmJsProcessResources",
+            "--stacktrace",
+        )
 
-        assertExtractedResources(appDir.resolve("build/custom-wasm-resources"), marker = "project-dependency")
+        assertExtractedResources(
+            appDir.resolve("build/custom-js-resources"),
+            marker = "project-dependency",
+        )
+        assertExtractedResources(
+            appDir.resolve("build/custom-wasm-resources"),
+            marker = "project-dependency",
+        )
+    }
+
+    @Test
+    @DisplayName("Plugin extracts worker resources from a published SQLiteNow Core klib")
+    fun pluginRecognizesPublishedCoreKlib() {
+        val projectDir = tempDir.resolve("published-core-klib").toFile().apply { mkdirs() }
+        val repositoryDir = projectDir.resolve("repository")
+        writePublishedCoreKlib(
+            repositoryDir = repositoryDir,
+            version = "1.0.0",
+            marker = "published-core",
+        )
+
+        writeSettingsGradle(projectDir)
+        writeBuildGradle(
+            projectDir,
+            """
+                import org.gradle.language.jvm.tasks.ProcessResources
+
+                plugins {
+                    kotlin("multiplatform") version "2.4.0"
+                    id("dev.goquick.sqlitenow")
+                }
+
+                repositories {
+                    maven {
+                        url = uri("${repositoryDir.toPath().invariantSeparatorsPathString}")
+                    }
+                }
+
+                kotlin {
+                    jvm()
+                }
+
+                configurations.create("jsMainCompileClasspath")
+
+                dependencies {
+                    add(
+                        "jsMainCompileClasspath",
+                        "dev.goquick.sqlitenow:core:1.0.0@klib"
+                    )
+                }
+
+                tasks.register<ProcessResources>("jsProcessResources") {
+                    destinationDir = layout.buildDirectory.dir("published-js-resources").get().asFile
+                }
+            """.trimIndent(),
+        )
+
+        runGradle(projectDir, "jsProcessResources", "--stacktrace")
+
+        assertExtractedResources(
+            projectDir.resolve("build/published-js-resources"),
+            marker = "published-core",
+        )
+    }
+
+    @Test
+    @DisplayName("Plugin rejects ambiguous worker manifests instead of selecting one by order")
+    fun pluginRejectsAmbiguousWorkerManifestKlibs() {
+        val projectDir = tempDir.resolve("ambiguous-worker-klibs").toFile().apply { mkdirs() }
+        val firstKlib = projectDir.resolve("libs/first.klib").also {
+            writeFakeKlib(it, marker = "first")
+        }
+        val secondKlib = projectDir.resolve("libs/second.klib").also {
+            writeFakeKlib(it, marker = "second")
+        }
+
+        writeSettingsGradle(projectDir)
+        writeBuildGradle(
+            projectDir,
+            """
+                import org.gradle.language.jvm.tasks.ProcessResources
+
+                plugins {
+                    kotlin("multiplatform") version "2.4.0"
+                    id("dev.goquick.sqlitenow")
+                }
+
+                repositories {
+                    google()
+                    mavenCentral()
+                }
+
+                kotlin {
+                    jvm()
+                }
+
+                configurations.create("jsMainCompileClasspath")
+
+                dependencies {
+                    add(
+                        "jsMainCompileClasspath",
+                        files(
+                            "${firstKlib.toPath().invariantSeparatorsPathString}",
+                            "${secondKlib.toPath().invariantSeparatorsPathString}",
+                        )
+                    )
+                }
+
+                tasks.register<ProcessResources>("jsProcessResources") {
+                    destinationDir = layout.buildDirectory.dir("ambiguous-js-resources").get().asFile
+                }
+            """.trimIndent(),
+        )
+
+        val result = runGradleAndFail(projectDir, "jsProcessResources", "--stacktrace")
+
+        assertTrue(
+            result.output.contains("Ambiguous SQLiteNow Core worker resources"),
+            "Ambiguous manifest-owned klibs must fail deterministically. Output:\n${result.output}",
+        )
     }
 
     @Test
@@ -797,7 +1152,7 @@ class SqliteNowPluginFunctionalTest {
 
                 rootProject.name = "project-dependency-wasm"
                 include(":app")
-                include(":fakecore")
+                include(":library-core")
             """.trimIndent()
         )
     }
@@ -1080,7 +1435,55 @@ class SqliteNowPluginFunctionalTest {
             writeZipEntry(zip, "sqlitenow-sqljs.js", "sqljs-$marker")
             writeZipEntry(zip, "sqlitenow-indexeddb.js", "indexeddb-$marker")
             writeZipEntry(zip, "sql-wasm.wasm", "wasm-$marker")
+            val assets = fakeWorkerAssets(marker)
+            val manifest = mapOf(
+                "schema" to "sqlitenow-worker-asset-manifest-v1",
+                "resourceNamespace" to "sqlitenow-worker-v1",
+                "cacheVersion" to "sqlite-3.53.0-build1",
+                "assets" to assets.map { (path, value) ->
+                    mapOf("path" to path, "marker" to value)
+                },
+            )
+            writeZipEntry(
+                zip,
+                "sqlitenow-worker-v1/asset-manifest.json",
+                JsonOutput.prettyPrint(JsonOutput.toJson(manifest)),
+            )
+            assets.forEach { (path, value) ->
+                writeZipEntry(zip, "sqlitenow-worker-v1/$path", value)
+            }
         }
+    }
+
+    private fun fakeWorkerAssets(marker: String): Map<String, String> = linkedMapOf(
+        "client.mjs" to "client-$marker",
+        "sqlite-3.53.0-build1/worker.mjs" to "worker-$marker",
+        "sqlite-3.53.0-build1/vendor/index.mjs" to "browser-$marker",
+        "sqlite-3.53.0-build1/vendor/node.mjs" to "node-$marker",
+        "sqlite-3.53.0-build1/vendor/sqlite3.wasm" to "sqlite-wasm-$marker",
+        "licenses/sqlite-wasm-Apache-2.0.txt" to "license-$marker",
+    )
+
+    private fun writePublishedCoreKlib(
+        repositoryDir: File,
+        version: String,
+        marker: String,
+    ) {
+        val moduleDir = repositoryDir.resolve("dev/goquick/sqlitenow/core/$version")
+        val artifact = moduleDir.resolve("core-$version.klib")
+        writeFakeKlib(artifact, marker)
+        moduleDir.resolve("core-$version.pom").writeText(
+            """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                  <modelVersion>4.0.0</modelVersion>
+                  <groupId>dev.goquick.sqlitenow</groupId>
+                  <artifactId>core</artifactId>
+                  <version>$version</version>
+                  <packaging>klib</packaging>
+                </project>
+            """.trimIndent(),
+        )
     }
 
     private fun writeZipEntry(zip: ZipOutputStream, name: String, value: String) {
@@ -1089,17 +1492,38 @@ class SqliteNowPluginFunctionalTest {
         zip.closeEntry()
     }
 
-    private fun assertExtractedResources(root: File, marker: String) {
-        val sqlJs = root.walkTopDown().firstOrNull { it.name == "sqlitenow-sqljs.js" }
-        val indexedDb = root.walkTopDown().firstOrNull { it.name == "sqlitenow-indexeddb.js" }
-        val wasm = root.walkTopDown().firstOrNull { it.name == "sql-wasm.wasm" }
+    private fun assertExtractedResources(
+        root: File,
+        marker: String,
+    ) {
+        val namespaceRoot = root.resolve("sqlitenow-worker-v1")
+        val manifestFile = namespaceRoot.resolve("asset-manifest.json")
+        assertTrue(manifestFile.isFile, "Authored worker asset manifest should be extracted")
+        @Suppress("UNCHECKED_CAST")
+        val manifest = JsonSlurper().parse(manifestFile) as Map<String, Any?>
+        @Suppress("UNCHECKED_CAST")
+        val assets = manifest["assets"] as List<Map<String, String>>
+        val expectedAssets = fakeWorkerAssets(marker)
+        assertEquals(expectedAssets.keys, assets.map { it.getValue("path") }.toSet())
+        assets.forEach { asset ->
+            val path = asset.getValue("path")
+            val file = namespaceRoot.resolve(path)
+            assertTrue(file.isFile, "Manifest asset should be extracted: $path")
+            assertEquals(asset.getValue("marker"), file.readText(), path)
+        }
 
-        assertNotNull(sqlJs, "sqlitenow-sqljs.js should be extracted")
-        assertNotNull(indexedDb, "sqlitenow-indexeddb.js should be extracted")
-        assertNotNull(wasm, "sql-wasm.wasm should be extracted")
-        assertEquals("sqljs-$marker", sqlJs.readText())
-        assertEquals("indexeddb-$marker", indexedDb.readText())
-        assertEquals("wasm-$marker", wasm.readText())
+        val sqlJsFiles = mapOf(
+            "sqlitenow-sqljs.js" to "sqljs-$marker",
+            "sqlitenow-indexeddb.js" to "indexeddb-$marker",
+            "sql-wasm.wasm" to "wasm-$marker",
+        )
+        sqlJsFiles.forEach { (path, _) ->
+            val file = root.resolve(path)
+            assertFalse(file.exists(), "$path must not be extracted from Core klibs")
+        }
+        assertFalse(root.resolve("sqlitenow-sqlite-worker-client.mjs").exists())
+        assertFalse(root.resolve("sqlitenow-sqlite-worker.mjs").exists())
+        assertFalse(root.resolve("sqlitenow-sqlite-worker").exists())
     }
 
     private fun assertGeneratedTreeContains(root: File, expectedSnippet: String) {

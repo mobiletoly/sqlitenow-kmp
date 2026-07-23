@@ -15,18 +15,18 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
+import androidx.sqlite.SQLiteStatement
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
-import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 
 internal class StatementCacheOperations(
-    val prepare: suspend (SafeSQLiteConnection, String) -> SqliteStatement = { db, sql -> db.prepare(sql) },
-    val reset: (SqliteStatement) -> Unit = { statement -> statement.reset() },
-    val clearBindings: (SqliteStatement) -> Unit = { statement -> statement.clearBindings() },
-    val close: suspend (SqliteStatement) -> Unit = { statement -> statement.close() },
+    val prepare: suspend (SafeSQLiteConnection, String) -> SQLiteStatement = { db, sql -> db.prepare(sql) },
+    val reset: (SQLiteStatement) -> Unit = { statement -> statement.reset() },
+    val clearBindings: (SQLiteStatement) -> Unit = { statement -> statement.clearBindings() },
+    val close: suspend (SQLiteStatement) -> Unit = { statement -> statement.close() },
 ) {
-    fun resetAndClear(statement: SqliteStatement, primary: Throwable? = null) {
+    fun resetAndClear(statement: SQLiteStatement, primary: Throwable? = null) {
         resetAndClearReusableStatement(
             statement = statement,
             primary = primary,
@@ -37,10 +37,10 @@ internal class StatementCacheOperations(
 }
 
 internal fun resetAndClearReusableStatement(
-    statement: SqliteStatement,
+    statement: SQLiteStatement,
     primary: Throwable? = null,
-    reset: (SqliteStatement) -> Unit = { it.reset() },
-    clearBindings: (SqliteStatement) -> Unit = { it.clearBindings() },
+    reset: (SQLiteStatement) -> Unit = { it.reset() },
+    clearBindings: (SQLiteStatement) -> Unit = { it.clearBindings() },
 ) {
     var cleanupFailure: Throwable? = null
     try {
@@ -64,7 +64,7 @@ internal fun resetAndClearReusableStatement(
     }
 }
 
-internal typealias ReusableStatementCleanup = (SqliteStatement) -> Unit
+internal typealias ReusableStatementCleanup = (SQLiteStatement) -> Unit
 
 internal val DefaultReusableStatementCleanup: ReusableStatementCleanup = { statement ->
     resetAndClearReusableStatement(statement)
@@ -74,10 +74,10 @@ internal class StatementCache(
     private val db: SafeSQLiteConnection,
     private val operations: StatementCacheOperations = StatementCacheOperations(),
 ) {
-    private val statements = linkedMapOf<String, SqliteStatement>()
+    private val statements = linkedMapOf<String, SQLiteStatement>()
     private var closed = false
 
-    suspend fun get(sql: String): SqliteStatement {
+    suspend fun get(sql: String): SQLiteStatement {
         return db.withExclusiveAccess {
             check(!closed) { "statement cache is already closed" }
 
@@ -86,7 +86,7 @@ internal class StatementCache(
         }
     }
 
-    suspend fun release(statement: SqliteStatement) {
+    suspend fun release(statement: SQLiteStatement) {
         db.withExclusiveAccess {
             check(!closed) { "statement cache is already closed" }
             operations.resetAndClear(statement)

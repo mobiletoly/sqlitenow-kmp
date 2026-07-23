@@ -10,6 +10,14 @@ Oversqlite is the SQLiteNow sync runtime for Kotlin Multiplatform apps. The KMP
 docs cover generated bridge setup, local lifecycle, account attachment, sync
 operations, reactive updates, and recovery.
 
+On JS and Wasm, generated `newOversqliteClient(...)` construction uses the
+database's ordinary bundled provider, which is the packaged worker by default.
+Browser state lives in the same deterministic direct OPFS database as Core;
+there is no separate provider injection or snapshot configuration. JS Node
+remains transient. The worker preserves all Oversqlite control tables and
+local-first, pending/dirty/prepared-outbox, interrupted-apply, invalidation, and
+numeric-wire behavior.
+
 ## Start Here
 
 Follow the KMP setup guide when enabling sync in a Gradle-managed SQLiteNow

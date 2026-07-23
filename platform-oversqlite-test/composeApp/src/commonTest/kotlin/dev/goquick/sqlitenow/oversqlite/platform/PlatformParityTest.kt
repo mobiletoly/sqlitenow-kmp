@@ -94,6 +94,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             dbA.close()
             dbB.close()
             dbC.close()
+            cleanupPhase6OwnedStorage()
         }
     }
 
@@ -128,6 +129,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             followerHttp.close()
             leaderDb.close()
             followerDb.close()
+            cleanupPhase6OwnedStorage()
         }
     }
 
@@ -164,6 +166,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
         } finally {
             dbA.close()
             dbB.close()
+            cleanupPhase6OwnedStorage()
         }
     }
 
@@ -228,6 +231,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             dbA.close()
             dbB.close()
             dbC.close()
+            cleanupPhase6OwnedStorage()
         }
     }
 
@@ -275,6 +279,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             restartedHttpB.close()
             dbA.close()
             dbB.close()
+            cleanupPhase6OwnedStorage()
         }
     }
 
@@ -338,6 +343,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             dbA.close()
             dbB.close()
             dbC.close()
+            cleanupPhase6OwnedStorage()
         }
     }
 
@@ -391,6 +397,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             dbA.close()
             dbB.close()
             observerDb.close()
+            cleanupPhase6OwnedStorage()
         }
     }
 
@@ -448,6 +455,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             dbA.close()
             dbB.close()
             observerDb.close()
+            cleanupPhase6OwnedStorage()
         }
     }
 
@@ -505,6 +513,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             dbA.close()
             dbB.close()
             observerDb.close()
+            cleanupPhase6OwnedStorage()
         }
     }
 
@@ -555,6 +564,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             dbA.close()
             dbB.close()
             observerDb.close()
+            cleanupPhase6OwnedStorage()
         }
     }
 
@@ -615,6 +625,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             dbA.close()
             dbB.close()
             observerDb.close()
+            cleanupPhase6OwnedStorage()
         }
     }
 
@@ -667,6 +678,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             dbA.close()
             dbB.close()
             observerDb.close()
+            cleanupPhase6OwnedStorage()
         }
     }
 
@@ -740,6 +752,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             httpB.close()
             dbA.close()
             dbB.close()
+            cleanupPhase6OwnedStorage()
         }
     }
 
@@ -790,6 +803,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             followerHttp.close()
             leaderDb.close()
             followerDb.close()
+            cleanupPhase6OwnedStorage()
         }
     }
 
@@ -853,6 +867,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             verifyHttp.close()
             activeDb.close()
             verifyDb.close()
+            cleanupPhase6OwnedStorage()
         }
     }
 
@@ -909,6 +924,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             verifyHttp.close()
             activeDb.close()
             verifyDb.close()
+            cleanupPhase6OwnedStorage()
         }
     }
 }

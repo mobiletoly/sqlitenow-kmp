@@ -61,8 +61,8 @@ Representative entry points:
 
 `:platform-core-test:harness` owns the `platform` surface.
 
-It provides Android, JVM, iOS simulator, macOS, Linux, JS Node, and Wasm browser runtime surfaces for
-generated-code validation.
+It provides Android, JVM, iOS simulator, macOS arm64, Linux, JS Node, and Wasm browser runtime
+surfaces for generated-code validation.
 
 ## Entry Points
 
@@ -104,7 +104,11 @@ host-agnostic guarantee.
 ## Host Prerequisites
 
 - `corePlatformAndroid` requires an Android emulator or connected device.
-- `corePlatformIosSimulatorArm64` and `corePlatformMacosArm64` require macOS.
+- Repository development on macOS requires Apple Silicon; Intel macOS hosts fail during Gradle
+  settings evaluation.
+- `corePlatformIosSimulatorArm64` and `corePlatformMacosArm64` require Apple Silicon macOS.
+- The JVM runtime on macOS is Apple Silicon-only because AndroidX SQLite 2.7 does not publish an
+  Intel macOS bundled JNI payload.
 - `corePlatformLinuxX64` and `corePlatformLinuxArm64` require compatible Linux hosts.
 - `corePlatformJsNode` requires the normal Kotlin/JS Node toolchain.
 - `corePlatformWasmBrowser` requires a working local browser test environment.

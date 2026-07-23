@@ -9,7 +9,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
@@ -19,8 +18,8 @@ import kotlin.test.assertTrue
 
 internal class RealServerBundleChangeWatchTest : RealServerSupport() {
     @Test
-    fun watchEnabledCapabilityProbe_reportsBundleChangeWatch() = runTest {
-        val config = requireRealServerConfig() ?: return@runTest
+    fun watchEnabledCapabilityProbe_reportsBundleChangeWatch() = runOwnedWebDatabaseTest {
+        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
 
         val db = newDb()
         var http: HttpClient? = null
@@ -45,8 +44,8 @@ internal class RealServerBundleChangeWatchTest : RealServerSupport() {
     }
 
     @Test
-    fun watchTriggeredTwoClientConvergence_usesSseWakeup() = runTest {
-        val config = requireRealServerConfig() ?: return@runTest
+    fun watchTriggeredTwoClientConvergence_usesSseWakeup() = runOwnedWebDatabaseTest {
+        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("watch-user")
@@ -140,8 +139,8 @@ internal class RealServerBundleChangeWatchTest : RealServerSupport() {
     }
 
     @Test
-    fun watchCancellation_stopsIdleWorkerPromptly() = runTest {
-        val config = requireRealServerConfig() ?: return@runTest
+    fun watchCancellation_stopsIdleWorkerPromptly() = runOwnedWebDatabaseTest {
+        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("watch-cancel-user")

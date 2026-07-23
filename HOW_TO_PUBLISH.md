@@ -22,7 +22,7 @@ This guide describes the steps of publishing a library built with Kotlin Multipl
 This guide assumes that you are:
 
 - Creating an open-source library.
-- Using macOS or Linux. If you are a Windows user, use [GnuPG or Gpg4win](https://gnupg.org/download) to generate a key pair.
+- Using Apple Silicon macOS or Linux. Intel macOS is unsupported by this repository. If you are a Windows user, use [GnuPG or Gpg4win](https://gnupg.org/download) to generate a key pair.
 - Either not registered on Maven Central yet, or have an existing account that’s suitable for [publishing to the Central Portal](https://central.sonatype.org/publish-ea/publish-ea-guide/) (created after March 12th, 2024, or migrated to the Central Portal by their support).
 - Publishing your library in a GitHub repository.
 - Using GitHub Actions for continuous integration.
@@ -281,10 +281,13 @@ on:
 jobs:
   publish:
     name: Release build and publish
-    runs-on: macOS-latest
+    runs-on: macos-26
     steps:
       - name: Check out code
         uses: actions/checkout@v4
+      - name: Require Apple Silicon macOS host
+        shell: bash
+        run: test "$(uname -m)" = "arm64"
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:

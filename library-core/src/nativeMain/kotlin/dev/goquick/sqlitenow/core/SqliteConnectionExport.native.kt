@@ -15,6 +15,6 @@
  */
 package dev.goquick.sqlitenow.core
 
-import dev.goquick.sqlitenow.core.sqlite.SqliteConnection
+import androidx.sqlite.SQLiteConnection
 
-internal actual fun exportConnectionBytes(connection: SqliteConnection): ByteArray? = null
+internal actual fun exportConnectionBytes(connection: SQLiteConnection): ByteArray? = null

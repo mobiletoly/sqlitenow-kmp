@@ -1,5 +1,7 @@
 package dev.goquick.sqlitenow.oversqlite.realserver
 
+import androidx.sqlite.SQLiteStatement
+import androidx.sqlite.async.step
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.goquick.sqlitenow.core.BundledSqliteConnectionProvider
@@ -200,8 +202,8 @@ class RealServerSharedConnectionStressTest {
         }
     }
 
-    private fun bindSeedUser(
-        statement: dev.goquick.sqlitenow.core.sqlite.SqliteStatement,
+    private suspend fun bindSeedUser(
+        statement: SQLiteStatement,
         id: String,
         name: String,
         email: String,

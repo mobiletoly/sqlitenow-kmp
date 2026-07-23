@@ -16,20 +16,159 @@
 package dev.goquick.sqlitenow.core.sqlite
 
 internal class SqliteTransactionState {
-    private var transactionDepth = 0
+    private var explicitTransactionActive = false
+    private val savepoints = mutableListOf<String>()
 
-    fun observeExecSql(sql: String) {
-        val normalized = sql.trim()
-        when {
-            normalized.startsWith("BEGIN", ignoreCase = true) -> transactionDepth++
-            normalized.startsWith("COMMIT", ignoreCase = true) -> if (transactionDepth > 0) transactionDepth--
-            normalized.startsWith("ROLLBACK", ignoreCase = true) -> if (transactionDepth > 0) transactionDepth--
+    fun observeSuccessfulStatement(normalizedSql: String) {
+        val tokens = TransactionControlTokens(normalizedSql)
+        when (tokens.nextKeyword()) {
+            "BEGIN" -> {
+                explicitTransactionActive = true
+                savepoints.clear()
+            }
+
+            "COMMIT", "END" -> finishTransaction()
+            "ROLLBACK" -> observeRollback(tokens)
+            "SAVEPOINT" -> tokens.nextIdentifier()?.let { savepoints += it.canonicalSavepointName() }
+            "RELEASE" -> observeRelease(tokens)
         }
     }
 
-    fun inTransaction(): Boolean = transactionDepth > 0
+    fun inTransaction(): Boolean = explicitTransactionActive || savepoints.isNotEmpty()
 
     fun reset() {
-        transactionDepth = 0
+        finishTransaction()
+    }
+
+    private fun observeRollback(tokens: TransactionControlTokens) {
+        var token = tokens.nextKeyword()
+        if (token == "TRANSACTION") {
+            token = tokens.nextKeyword()
+        }
+        if (token != "TO") {
+            finishTransaction()
+            return
+        }
+
+        if (tokens.peekKeyword() == "SAVEPOINT") {
+            tokens.nextKeyword()
+        }
+        val savepoint = tokens.nextIdentifier()?.canonicalSavepointName() ?: return
+        val index = savepoints.indexOfLast { it == savepoint }
+        if (index >= 0) {
+            savepoints.subList(index + 1, savepoints.size).clear()
+        }
+    }
+
+    private fun observeRelease(tokens: TransactionControlTokens) {
+        if (tokens.peekKeyword() == "SAVEPOINT") {
+            tokens.nextKeyword()
+        }
+        val savepoint = tokens.nextIdentifier()?.canonicalSavepointName() ?: return
+        val index = savepoints.indexOfLast { it == savepoint }
+        if (index >= 0) {
+            savepoints.subList(index, savepoints.size).clear()
+        }
+    }
+
+    private fun finishTransaction() {
+        explicitTransactionActive = false
+        savepoints.clear()
+    }
+}
+
+private class TransactionControlTokens(
+    private val sql: String,
+) {
+    private var offset = 0
+    private var peeked: String? = null
+
+    fun nextKeyword(): String? = nextIdentifier()?.uppercase()
+
+    fun peekKeyword(): String? {
+        if (peeked == null) {
+            peeked = readIdentifier()
+        }
+        return peeked?.uppercase()
+    }
+
+    fun nextIdentifier(): String? {
+        val buffered = peeked
+        if (buffered != null) {
+            peeked = null
+            return buffered
+        }
+        return readIdentifier()
+    }
+
+    private fun readIdentifier(): String? {
+        skipSeparators()
+        if (offset >= sql.length) return null
+
+        return when (val opening = sql[offset]) {
+            '"', '\'', '`' -> readQuotedIdentifier(opening)
+            '[' -> readBracketedIdentifier()
+            else -> readUnquotedIdentifier()
+        }
+    }
+
+    private fun skipSeparators() {
+        while (offset < sql.length && (sql[offset].isWhitespace() || sql[offset] == ';')) {
+            offset++
+        }
+    }
+
+    private fun readQuotedIdentifier(quote: Char): String {
+        offset++
+        val result = StringBuilder()
+        while (offset < sql.length) {
+            val current = sql[offset++]
+            if (current != quote) {
+                result.append(current)
+                continue
+            }
+            if (offset < sql.length && sql[offset] == quote) {
+                result.append(quote)
+                offset++
+                continue
+            }
+            break
+        }
+        return result.toString()
+    }
+
+    private fun readBracketedIdentifier(): String {
+        offset++
+        val start = offset
+        while (offset < sql.length && sql[offset] != ']') {
+            offset++
+        }
+        val result = sql.substring(start, offset)
+        if (offset < sql.length) {
+            offset++
+        }
+        return result
+    }
+
+    private fun readUnquotedIdentifier(): String {
+        val start = offset
+        while (
+            offset < sql.length &&
+            !sql[offset].isWhitespace() &&
+            sql[offset] != ';' &&
+            sql[offset] != '"' &&
+            sql[offset] != '\'' &&
+            sql[offset] != '`' &&
+            sql[offset] != '['
+        ) {
+            offset++
+        }
+        return sql.substring(start, offset)
+    }
+}
+
+private fun String.canonicalSavepointName(): String = buildString(length) {
+    for (character in this@canonicalSavepointName) {
+        append(if (character in 'A'..'Z') character.lowercaseChar() else character)
     }
 }

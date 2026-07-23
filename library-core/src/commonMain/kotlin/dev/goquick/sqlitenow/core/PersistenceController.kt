@@ -15,7 +15,7 @@
  */
 package dev.goquick.sqlitenow.core
 
-import dev.goquick.sqlitenow.core.sqlite.SqliteConnection
+import androidx.sqlite.SQLiteConnection
 
 /**
  * Coordinates persistence-related lifecycle hooks for a [SafeSQLiteConnection].
@@ -30,29 +30,29 @@ internal interface PersistenceController {
      * Called after an operation completes (e.g., execSQL or a statement-driven block).
      * Implementations can use [inTransaction] to decide whether to flush.
      */
-    suspend fun onOperationComplete(connection: SqliteConnection, inTransaction: Boolean)
+    suspend fun onOperationComplete(connection: SQLiteConnection, inTransaction: Boolean)
 
     /**
      * Called after the outermost transaction successfully commits.
      */
-    suspend fun onTransactionCommitted(connection: SqliteConnection)
+    suspend fun onTransactionCommitted(connection: SQLiteConnection)
 
     /**
      * Forces persistence to flush any pending changes.
      */
-    suspend fun flush(connection: SqliteConnection)
+    suspend fun flush(connection: SQLiteConnection)
 
     /**
      * Invoked before the connection is closed to allow final flushing or cleanup.
      */
-    suspend fun onClose(connection: SqliteConnection)
+    suspend fun onClose(connection: SQLiteConnection)
 }
 
 internal class NoopPersistenceController(
     override val restoredFromSnapshot: Boolean = false,
 ) : PersistenceController {
-    override suspend fun onOperationComplete(connection: SqliteConnection, inTransaction: Boolean) = Unit
-    override suspend fun onTransactionCommitted(connection: SqliteConnection) = Unit
-    override suspend fun flush(connection: SqliteConnection) = Unit
-    override suspend fun onClose(connection: SqliteConnection) = Unit
+    override suspend fun onOperationComplete(connection: SQLiteConnection, inTransaction: Boolean) = Unit
+    override suspend fun onTransactionCommitted(connection: SQLiteConnection) = Unit
+    override suspend fun flush(connection: SQLiteConnection) = Unit
+    override suspend fun onClose(connection: SQLiteConnection) = Unit
 }

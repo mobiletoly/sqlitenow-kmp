@@ -7,3 +7,5 @@ internal expect fun createTempSqliteNowTestDbPath(prefix: String): String
 internal expect fun createSqliteNowTestConnectionConfig(path: String): SqliteConnectionConfig
 
 internal expect suspend fun deleteTempSqliteNowTestDbArtifacts(path: String)
+
+internal expect suspend fun cleanupDirectWorkerTestDatabase(dbName: String)

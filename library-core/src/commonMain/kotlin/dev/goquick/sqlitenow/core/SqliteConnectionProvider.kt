@@ -15,9 +15,11 @@
  */
 package dev.goquick.sqlitenow.core
 
+import androidx.sqlite.SQLiteConnection
+import dev.goquick.sqlitenow.common.PlatformType
+import dev.goquick.sqlitenow.common.platform
 import dev.goquick.sqlitenow.common.sqliteNowLogger
 import dev.goquick.sqlitenow.core.persistence.SnapshotPersistenceController
-import dev.goquick.sqlitenow.core.sqlite.SqliteConnection
 import kotlinx.coroutines.withContext
 
 /**
@@ -37,8 +39,10 @@ fun interface SqliteConnectionProvider {
 }
 
 /**
- * Default provider backed by the bundled SQLite driver for non-JS targets.
- * JS actual provides a stub connection for now.
+ * Default provider backed by the bundled SQLite driver.
+ *
+ * Web targets use SQLiteNow's packaged worker. Other targets retain their platform driver and
+ * persistence behavior.
  */
 object BundledSqliteConnectionProvider : SqliteConnectionProvider {
     override suspend fun openConnection(
@@ -46,7 +50,12 @@ object BundledSqliteConnectionProvider : SqliteConnectionProvider {
         debug: Boolean,
         config: SqliteConnectionConfig,
     ): SafeSQLiteConnection {
-        val persistence = config.persistence?.takeUnless { dbName.isInMemoryPath() }
+        val usesDirectWebWorker = platform() == PlatformType.JS
+        val persistence = if (usesDirectWebWorker) {
+            null
+        } else {
+            config.persistence?.takeUnless { dbName.isInMemoryPath() }
+        }
         val restoredBytes = if (persistence != null) {
             try {
                 val bytes = persistence.load(dbName)
@@ -70,7 +79,11 @@ object BundledSqliteConnectionProvider : SqliteConnectionProvider {
                     dbName = dbName,
                     debug = debug,
                     initialBytes = restoredBytes,
-                    config = config.copy(persistence = persistence),
+                    config = if (usesDirectWebWorker) {
+                        config
+                    } else {
+                        config.copy(persistence = persistence)
+                    },
                 )
             }
             val persistenceController = if (persistence != null) {
@@ -102,7 +115,7 @@ internal expect suspend fun openBundledSqliteConnection(
     debug: Boolean,
     initialBytes: ByteArray?,
     config: SqliteConnectionConfig,
-): SqliteConnection
+): SQLiteConnection
 
 private fun String.isInMemoryPath(): Boolean {
     if (isEmpty()) return true

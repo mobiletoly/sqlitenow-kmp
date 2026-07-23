@@ -9,6 +9,7 @@ import 'package:sqlitenow_runtime/sqlitenow_runtime.dart';
 import 'package:sqlitenow_oversqlite/sqlitenow_oversqlite.dart';
 
 import 'generated/rich_real_server_db.dart';
+import 'rich_numeric_scenarios.dart';
 
 const realserverEnabled = bool.fromEnvironment('OVERSQLITE_REALSERVER_TESTS');
 const heavyRealserverEnabled = bool.fromEnvironment(
@@ -501,18 +502,55 @@ Future<void> insertTypedRow(
   TypedRowFixture row,
 ) async {
   await database.connection.execute(
-    '''INSERT INTO typed_rows(id, name, note, count_value, enabled_flag, rating, data, created_at)
-VALUES(?, ?, ?, ?, ?, ?, ?, ?)''',
+    '''INSERT INTO typed_rows(id, name, note, count_value, small_count, medium_count, exact_amount, enabled_flag, rating, float4_value, data, created_at)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
     parameters: [
       row.id,
       row.name,
       row.note,
       row.countValue,
+      row.smallCount,
+      row.mediumCount,
+      row.localExactAmount,
       row.enabledFlag,
       row.rating,
+      row.float4Value,
       row.data,
       row.createdAt,
     ],
+  );
+}
+
+TypedRowFixture typedRowFixtureFromNumericScenario(
+  RichNumericScenario scenario,
+) {
+  final local = scenario.local;
+  final committed = scenario.committed;
+  int? integer(String name) =>
+      local[name] == null ? null : int.parse(local[name]!);
+  double? real(String name) =>
+      local[name] == null ? null : double.parse(local[name]!);
+  double? committedReal(String name) =>
+      committed[name] == null ? null : double.parse(committed[name]!);
+
+  return TypedRowFixture(
+    id: realserverUuid(),
+    name: scenario.name,
+    note: null,
+    countValue: integer('count_value'),
+    smallCount: integer('small_count'),
+    mediumCount: integer('medium_count'),
+    localExactAmount: local['exact_amount'],
+    expectedExactAmount: committed['exact_amount'],
+    enabledFlag: local['enabled_flag'] == null
+        ? 1
+        : int.parse(local['enabled_flag']!),
+    rating: real('rating'),
+    expectedRating: committedReal('rating'),
+    float4Value: real('float4_value'),
+    expectedFloat4Value: committedReal('float4_value'),
+    data: null,
+    createdAt: null,
   );
 }
 
@@ -586,8 +624,12 @@ Future<void> assertTypedRowState(
   expect(actual.name, row.name);
   expect(actual.note, row.note);
   expect(actual.countValue, row.countValue);
+  expect(actual.smallCount, row.smallCount);
+  expect(actual.mediumCount, row.mediumCount);
+  expect(actual.exactAmount, row.expectedExactAmount ?? row.localExactAmount);
   expect(actual.enabledFlag, row.enabledFlag);
-  expect(actual.rating, row.rating);
+  expect(actual.rating, row.expectedRating ?? row.rating);
+  expect(actual.float4Value, row.expectedFloat4Value ?? row.float4Value);
   expect(actual.data, row.data);
   if (row.createdAt == null) {
     expect(actual.createdAt, isNull);
@@ -791,14 +833,28 @@ final class TypedRowFixture {
     required this.rating,
     required this.data,
     required this.createdAt,
+    this.smallCount,
+    this.mediumCount,
+    this.localExactAmount,
+    this.expectedExactAmount,
+    this.expectedRating,
+    this.float4Value,
+    this.expectedFloat4Value,
   });
 
   final String id;
   final String name;
   final String? note;
   final int? countValue;
+  final int? smallCount;
+  final int? mediumCount;
+  final String? localExactAmount;
+  final String? expectedExactAmount;
   final int enabledFlag;
   final double? rating;
+  final double? expectedRating;
+  final double? float4Value;
+  final double? expectedFloat4Value;
   final Uint8List? data;
   final String? createdAt;
 }

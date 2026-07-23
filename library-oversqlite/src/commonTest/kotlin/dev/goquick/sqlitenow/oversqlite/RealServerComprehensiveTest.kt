@@ -1,7 +1,6 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import io.ktor.client.call.body
-import kotlinx.coroutines.test.runTest
 import io.ktor.client.HttpClient
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -19,8 +18,8 @@ import kotlin.test.assertTrue
 
 internal class RealServerComprehensiveTest : RealServerSupport() {
     @Test
-    fun openConnectPushPullAndFreshAttach_workAgainstRealServer() = runTest {
-        val config = requireRealServerConfig() ?: return@runTest
+    fun openConnectPushPullAndFreshAttach_workAgainstRealServer() = runOwnedWebDatabaseTest {
+        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("realserver-user")
@@ -94,8 +93,9 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
     }
 
     @Test
-    fun connectRetryLater_pendingSyncStatus_andDetachLifecycle_workAgainstRealServer() = runTest {
-        val config = requireRealServerConfig() ?: return@runTest
+    fun connectRetryLater_pendingSyncStatus_andDetachLifecycle_workAgainstRealServer() =
+        runOwnedWebDatabaseTest {
+        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("lease-user")
@@ -161,8 +161,8 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
     }
 
     @Test
-    fun syncThenDetach_flushesAndDetaches_workAgainstRealServer() = runTest {
-        val config = requireRealServerConfig() ?: return@runTest
+    fun syncThenDetach_flushesAndDetaches_workAgainstRealServer() = runOwnedWebDatabaseTest {
+        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("sync-detach-user")
@@ -219,8 +219,9 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
     }
 
     @Test
-    fun syncThenDetach_returnsBlockedWhenFreshWritesKeepArriving_againstRealServer() = runTest {
-        val config = requireRealServerConfig() ?: return@runTest
+    fun syncThenDetach_returnsBlockedWhenFreshWritesKeepArriving_againstRealServer() =
+        runOwnedWebDatabaseTest {
+        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("blocked-detach-user")
@@ -277,8 +278,8 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
     }
 
     @Test
-    fun openIsLocalOnly_andSameUserOfflineResume_workAgainstRealServer() = runTest {
-        val config = requireRealServerConfig() ?: return@runTest
+    fun openIsLocalOnly_andSameUserOfflineResume_workAgainstRealServer() = runOwnedWebDatabaseTest {
+        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("resume-user")
@@ -339,8 +340,9 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
     }
 
     @Test
-    fun sameInstall_canAlternateUsersAndSeeCorrectRemoteDataAgainstRealServer() = runTest {
-        val config = requireRealServerConfig() ?: return@runTest
+    fun sameInstall_canAlternateUsersAndSeeCorrectRemoteDataAgainstRealServer() =
+        runOwnedWebDatabaseTest {
+        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("source-user")
@@ -434,8 +436,8 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
     }
 
     @Test
-    fun sameInstall_heavyMultiChunkAlternationAgainstRealServer() = runTest {
-        val config = requireRealServerConfig() ?: return@runTest
+    fun sameInstall_heavyMultiChunkAlternationAgainstRealServer() = runOwnedWebDatabaseTest {
+        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("heavy-user-a")
@@ -562,8 +564,9 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
     }
 
     @Test
-    fun sameInstall_localSeedThenRemoteAuthoritativeRestore_usesFreshSourceAfterDetachAgainstRealServer() = runTest {
-        val config = requireRealServerConfig() ?: return@runTest
+    fun sameInstall_localSeedThenRemoteAuthoritativeRestore_usesFreshSourceAfterDetachAgainstRealServer() =
+        runOwnedWebDatabaseTest {
+        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
         resetRealServerState(config.baseUrl)
 
         val seedUserId = randomRealServerId("seed-local-user")
@@ -684,8 +687,8 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
     }
 
     @Test
-    fun freshSourceAfterDetach_restartsLocalSequence_againstRealServer() = runTest {
-        val config = requireRealServerConfig() ?: return@runTest
+    fun freshSourceAfterDetach_restartsLocalSequence_againstRealServer() = runOwnedWebDatabaseTest {
+        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("reuse-user")
@@ -759,8 +762,9 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
     }
 
     @Test
-    fun rotatedRebuild_usesRequestedReplacementAndOldSourceReturnsStructuredSourceRetired_againstRealServer() = runTest {
-        val config = requireRealServerConfig() ?: return@runTest
+    fun rotatedRebuild_usesRequestedReplacementAndOldSourceReturnsStructuredSourceRetired_againstRealServer() =
+        runOwnedWebDatabaseTest {
+        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("retired-user")

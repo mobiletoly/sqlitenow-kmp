@@ -1,9 +1,9 @@
 package dev.goquick.sqlitenow.oversqlite.platform
 
+import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.oversqlite.*
 import dev.goquick.sqlitenow.oversqlite.platformsupport.canonicalizeJsonElement
 import dev.goquick.sqlitenow.oversqlite.platformsupport.sha256Hex
-import dev.goquick.sqlitenow.core.BundledSqliteConnectionProvider
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.sqlite.use
 import io.ktor.client.HttpClient
@@ -30,6 +30,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.coroutines.CancellationException
 
 internal open class PlatformCrossTargetTestSupport {
     private companion object {
@@ -37,13 +38,22 @@ internal open class PlatformCrossTargetTestSupport {
     }
 
     protected val json = Json { ignoreUnknownKeys = true }
+    protected val phase6OwnedStorage = Phase6OwnedStorage()
 
     protected suspend fun newDb(): SafeSQLiteConnection {
-        return BundledSqliteConnectionProvider.openConnection(":memory:", debug = true)
+        val dbName = phase6OwnedStorage.newDatabaseName()
+        return oversqliteTestConnectionProvider().openConnection(
+            dbName = dbName,
+            debug = true,
+        )
+    }
+
+    protected suspend fun cleanupPhase6OwnedStorage() {
+        phase6OwnedStorage.cleanup()
     }
 
     protected suspend fun newFileBackedDb(path: String): SafeSQLiteConnection {
-        return BundledSqliteConnectionProvider.openConnection(
+        return oversqliteTestConnectionProvider().openConnection(
             dbName = path,
             debug = true,
             config = createSqliteNowTestConnectionConfig(path),
@@ -55,18 +65,27 @@ internal open class PlatformCrossTargetTestSupport {
         http: HttpClient,
         uploadLimit: Int = 200,
         downloadLimit: Int = 1000,
+        snapshotChunkRows: Int = 1000,
+        snapshotChunkBytes: Long = 4L * 1024L * 1024L,
+        snapshotApplyBatchRows: Int = 256,
+        snapshotApplyBatchBytes: Long = 4L * 1024L * 1024L,
         resolver: Resolver = ServerWinsResolver,
+        syncTables: List<SyncTable> = listOf(
+            SyncTable("users", syncKeyColumnName = "id"),
+            SyncTable("posts", syncKeyColumnName = "id"),
+        ),
     ): DefaultOversqliteClient {
         return DefaultOversqliteClient(
             db = db,
             config = OversqliteConfig(
                 schema = "main",
-                syncTables = listOf(
-                    SyncTable("users", syncKeyColumnName = "id"),
-                    SyncTable("posts", syncKeyColumnName = "id"),
-                ),
+                syncTables = syncTables,
                 uploadLimit = uploadLimit,
                 downloadLimit = downloadLimit,
+                snapshotChunkRows = snapshotChunkRows,
+                snapshotChunkBytes = snapshotChunkBytes,
+                snapshotApplyBatchRows = snapshotApplyBatchRows,
+                snapshotApplyBatchBytes = snapshotApplyBatchBytes,
             ),
             http = http,
             resolver = resolver,
@@ -146,7 +165,11 @@ internal open class PlatformCrossTargetTestSupport {
         db.execSQL("UPDATE users SET name = '$name' WHERE id = '$id'")
     }
 
-    protected class MockSyncServer {
+    protected class MockSyncServer(
+        private val registeredTableSpecs: List<RegisteredTableSpec> =
+            testRegisteredTableSpecs("users", "posts"),
+        private val bundleLimits: BundleCapabilitiesLimits = testBundleCapabilitiesLimits(),
+    ) {
         private val json = Json { ignoreUnknownKeys = true }
         private val liveRows = linkedMapOf<String, LiveRow>()
         private val bundles = mutableListOf<StoredBundle>()
@@ -159,7 +182,18 @@ internal open class PlatformCrossTargetTestSupport {
 
         var retainedBundleFloor: Long = 0
         var uploadedChunkCount: Int = 0
+        var maxRequestBodyBytes: Int = 0
+        var maxResponseBodyBytes: Int = 0
+        var snapshotChunkRequestCount: Int = 0
+        var committedBundleRowsRequestCount: Int = 0
+        var pullRequestCount: Int = 0
+        var cancelNextRequestPathPrefix: String? = null
+        val requestCounts = linkedMapOf<String, Int>()
+        val requestBodies = mutableListOf<Pair<String, String>>()
+        var authoritativePayloadTransform:
+            ((PushRequestRow) -> kotlinx.serialization.json.JsonElement?)? = null
         var conflictOverride: ((PushRequestRow, Long, kotlinx.serialization.json.JsonElement?) -> PushConflictDetails?)? = null
+        var rejectPushCreate: Boolean = false
         var sourceRetiredOnPushCreate: SourceRetiredResponse? = null
         var sourceRetiredOnPushCommit: SourceRetiredResponse? = null
         var sourceRetiredOnSnapshotCreate: SourceRetiredResponse? = null
@@ -184,7 +218,17 @@ internal open class PlatformCrossTargetTestSupport {
             }
         }
 
-        private suspend fun MockRequestHandleScope.handle(request: HttpRequestData) = when {
+        private suspend fun MockRequestHandleScope.handle(
+            request: HttpRequestData,
+        ): io.ktor.client.request.HttpResponseData {
+            val path = request.url.encodedPath
+            requestCounts[path] = requestCounts.getOrElse(path) { 0 } + 1
+            val cancelledPrefix = cancelNextRequestPathPrefix
+            if (cancelledPrefix != null && path.startsWith(cancelledPrefix)) {
+                cancelNextRequestPathPrefix = null
+                throw CancellationException("Phase 6 cancelled $path")
+            }
+            return when {
             request.method.value == "GET" && request.url.encodedPath == "/sync/capabilities" ->
                 jsonResponse(
                     json.encodeToString(
@@ -192,9 +236,9 @@ internal open class PlatformCrossTargetTestSupport {
                         CapabilitiesResponse(
                             protocolVersion = "v1",
                             schemaVersion = 1,
-                            registeredTableSpecs = testRegisteredTableSpecs("users", "posts"),
+                            registeredTableSpecs = registeredTableSpecs,
                             features = mapOf("connect_lifecycle" to true),
-                            bundleLimits = testBundleCapabilitiesLimits(),
+                            bundleLimits = bundleLimits,
                         ),
                     ),
                 )
@@ -249,10 +293,11 @@ internal open class PlatformCrossTargetTestSupport {
                 status = HttpStatusCode.NotFound,
             )
         }
+        }
 
         private suspend fun MockRequestHandleScope.handleConnect(request: HttpRequestData) =
             try {
-                val connect = json.decodeFromString(ConnectRequest.serializer(), request.bodyText())
+                val connect = json.decodeFromString(ConnectRequest.serializer(), request.recordedBody())
                 val sourceId = request.headers[sourceIdHeaderName].orEmpty()
                 when {
                     scopeInitialized || bundles.isNotEmpty() -> {
@@ -336,8 +381,15 @@ internal open class PlatformCrossTargetTestSupport {
         private suspend fun MockRequestHandleScope.handleCreatePushSession(
             request: HttpRequestData,
         ): io.ktor.client.request.HttpResponseData {
+            if (rejectPushCreate) {
+                return errorResponse(
+                    error = "phase6_push_create_rejected",
+                    message = "Phase 6 test rejected push-session creation.",
+                    status = HttpStatusCode.BadRequest,
+                )
+            }
             return try {
-                val body = request.bodyText()
+                val body = request.recordedBody()
                 val create = json.decodeFromString(PushSessionCreateRequest.serializer(), body)
                 val sourceId = request.headers[sourceIdHeaderName].orEmpty()
                 val expectedInitializationId = initializationId
@@ -404,7 +456,7 @@ internal open class PlatformCrossTargetTestSupport {
                     .substringBefore("/chunks")
                 val session = pushSessions[pushId]
                     ?: return errorResponse("push_session_not_found", "unknown push session", HttpStatusCode.NotFound)
-                val chunk = json.decodeFromString(PushSessionChunkRequest.serializer(), request.bodyText())
+                val chunk = json.decodeFromString(PushSessionChunkRequest.serializer(), request.recordedBody())
                 if (chunk.startRowOrdinal != session.rows.size.toLong()) {
                     return errorResponse("push_chunk_out_of_order", "expected ordinal ${session.rows.size}", HttpStatusCode.Conflict)
                 }
@@ -498,7 +550,7 @@ internal open class PlatformCrossTargetTestSupport {
                         key = row.key,
                         op = row.op,
                         rowVersion = bundleSeq,
-                        payload = row.payload,
+                        payload = authoritativePayloadTransform?.invoke(row) ?: row.payload,
                     )
                 }
                 committedRows.forEach { row ->
@@ -549,6 +601,7 @@ internal open class PlatformCrossTargetTestSupport {
 
         private suspend fun MockRequestHandleScope.handleCommittedBundleRows(request: HttpRequestData) : io.ktor.client.request.HttpResponseData {
             return try {
+                committedBundleRowsRequestCount++
                 val bundleSeq = request.url.encodedPath
                     .removePrefix("/sync/committed-bundles/")
                     .substringBefore("/rows")
@@ -584,8 +637,8 @@ internal open class PlatformCrossTargetTestSupport {
 
         private suspend fun MockRequestHandleScope.handleCreateSnapshotSession(
             request: HttpRequestData,
-        ) = try {
-            val rawBody = request.bodyText().trim()
+        ): io.ktor.client.request.HttpResponseData = try {
+            val rawBody = request.recordedBody().trim()
             val createRequest = rawBody.takeIf { it.isNotEmpty() }?.let {
                 json.decodeFromString(SnapshotSessionCreateRequest.serializer(), it)
             }
@@ -626,6 +679,7 @@ internal open class PlatformCrossTargetTestSupport {
 
         private suspend fun MockRequestHandleScope.handleSnapshotChunk(request: HttpRequestData) : io.ktor.client.request.HttpResponseData {
             return try {
+                snapshotChunkRequestCount++
                 val snapshotId = request.url.encodedPath.removePrefix("/sync/snapshot-sessions/")
                 val session = snapshotSessions[snapshotId]
                     ?: return errorResponse("snapshot_not_found", "unknown snapshot", HttpStatusCode.NotFound)
@@ -658,6 +712,7 @@ internal open class PlatformCrossTargetTestSupport {
 
         private suspend fun MockRequestHandleScope.handlePull(request: HttpRequestData) : io.ktor.client.request.HttpResponseData {
             return try {
+                pullRequestCount++
                 val afterBundleSeq = request.url.parameters["after_bundle_seq"]?.toLongOrNull() ?: 0L
                 val maxBundles = request.url.parameters["max_bundles"]?.toIntOrNull() ?: 1000
                 val targetBundleSeq = request.url.parameters["target_bundle_seq"]?.toLongOrNull() ?: 0L
@@ -741,13 +796,16 @@ internal open class PlatformCrossTargetTestSupport {
         private fun MockRequestHandleScope.jsonResponse(
             body: String,
             status: HttpStatusCode = HttpStatusCode.OK,
-        ) = respond(
-            content = body,
-            status = status,
-            headers = Headers.build {
-                append(HttpHeaders.ContentType, ContentType.Application.Json.toString())
-            },
-        )
+        ): io.ktor.client.request.HttpResponseData {
+            maxResponseBodyBytes = maxOf(maxResponseBodyBytes, body.encodeToByteArray().size)
+            return respond(
+                content = body,
+                status = status,
+                headers = Headers.build {
+                    append(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+                },
+            )
+        }
 
         private fun MockRequestHandleScope.errorResponse(
             error: String,
@@ -794,6 +852,12 @@ internal open class PlatformCrossTargetTestSupport {
                 else -> error("unsupported request body type ${content::class.simpleName}")
             }
         }
+
+        private suspend fun HttpRequestData.recordedBody(): String =
+            bodyText().also { body ->
+                requestBodies += url.encodedPath to body
+                maxRequestBodyBytes = maxOf(maxRequestBodyBytes, body.encodeToByteArray().size)
+            }
 
         private data class LiveRow(
             val table: String,

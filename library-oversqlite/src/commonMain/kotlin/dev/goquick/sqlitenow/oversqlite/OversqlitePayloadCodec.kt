@@ -15,7 +15,7 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
-import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
+import androidx.sqlite.SQLiteStatement
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -198,7 +198,7 @@ private fun decodeRealPayloadValue(
 
 internal object OversqliteValueCodec {
     fun readLocalPayloadValue(
-        statement: SqliteStatement,
+        statement: SQLiteStatement,
         index: Int,
         column: ColumnInfo,
     ): JsonElement {
@@ -265,7 +265,7 @@ internal object OversqliteValueCodec {
     }
 
     fun bindPayloadValue(
-        statement: SqliteStatement,
+        statement: SQLiteStatement,
         index: Int,
         column: ColumnInfo,
         value: JsonElement,
@@ -338,7 +338,7 @@ internal object OversqliteValueCodec {
 
     fun encodeLocalPayloadObject(
         tableInfo: TableInfo,
-        statement: SqliteStatement,
+        statement: SQLiteStatement,
     ): JsonObject {
         return buildJsonObject {
             tableInfo.columns.forEachIndexed { index, column ->

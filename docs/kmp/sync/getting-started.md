@@ -24,6 +24,12 @@ You need:
 - a compatible oversqlite server
 - a Ktor `HttpClient` that already knows how to authenticate requests
 
+Web apps do not inject a separate SQLite provider. Generated
+`newOversqliteClient(...)` construction uses the ordinary database connection:
+the packaged direct-OPFS worker in supported JS/Wasm browsers and the transient
+worker in JS Node. Browser capability and COOP/COEP/CSP requirements are
+described in the [KMP getting-started guide]({{ site.baseurl }}/kmp/getting-started/).
+
 ## Step 1: Add Runtime Dependencies
 
 Sync-enabled databases use two SQLiteNow runtime artifacts:

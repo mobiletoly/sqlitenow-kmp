@@ -31,6 +31,15 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v7
 
+      - name: Require Apple Silicon macOS host
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(uname -m)" == "arm64" ]] || {
+            echo "SQLiteNow publishing does not support Intel macOS runners."
+            exit 1
+          }
+
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:

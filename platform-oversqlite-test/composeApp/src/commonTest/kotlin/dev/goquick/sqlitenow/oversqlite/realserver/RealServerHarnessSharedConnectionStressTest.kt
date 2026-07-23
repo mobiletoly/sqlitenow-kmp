@@ -1,5 +1,7 @@
 package dev.goquick.sqlitenow.oversqlite.realserver
 
+import androidx.sqlite.SQLiteStatement
+import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.oversqlite.*
 import dev.goquick.sqlitenow.oversqlite.platform.createSqliteNowTestConnectionConfig
 import dev.goquick.sqlitenow.oversqlite.platform.createTempSqliteNowTestDbPath
@@ -8,7 +10,6 @@ import dev.goquick.sqlitenow.common.PlatformType
 import dev.goquick.sqlitenow.common.platform
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.TransactionMode
-import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
 import dev.goquick.sqlitenow.core.sqlite.use
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.CompletableDeferred
@@ -200,8 +201,8 @@ internal class RealServerHarnessSharedConnectionStressTest : RealServerHarnessSu
         }
     }
 
-    private fun bindSeedUser(
-        statement: SqliteStatement,
+    private suspend fun bindSeedUser(
+        statement: SQLiteStatement,
         id: String,
         name: String,
         email: String,

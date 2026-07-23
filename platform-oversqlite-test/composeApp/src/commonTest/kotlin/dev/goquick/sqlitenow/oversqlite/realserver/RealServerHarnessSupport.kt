@@ -48,10 +48,8 @@ internal open class RealServerHarnessSupport : PlatformCrossTargetTestSupport() 
             ?.trim()
             .takeUnless { it.isNullOrEmpty() }
             ?: "http://localhost:8080"
-        val availability = serverHealthAvailable(baseUrl)
-        if (!availability) {
-            println("Skipping realserver tests; server unavailable at $baseUrl")
-            return null
+        check(serverHealthAvailable(baseUrl)) {
+            "Realserver tests are enabled, but /syncx/health is unavailable at $baseUrl"
         }
         val status = fetchRealServerStatus(baseUrl)
         check(status.appName == expectedRealServerAppName) {

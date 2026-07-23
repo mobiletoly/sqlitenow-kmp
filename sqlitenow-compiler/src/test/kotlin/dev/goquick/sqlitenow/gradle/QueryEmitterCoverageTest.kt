@@ -194,7 +194,7 @@ class QueryEmitterCoverageTest {
         val rendered = bindFunction.build().toString()
 
         assertTrue(rendered.contains("PersonQuery.SelectByBirthDate.bind("))
-        assertTrue(rendered.contains("statement: dev.goquick.sqlitenow.core.sqlite.SqliteStatement"))
+        assertTrue(rendered.contains("statement: androidx.sqlite.SQLiteStatement"))
         assertTrue(rendered.contains("params: fixture.db.PersonQuery.SelectByBirthDate.Params"))
         assertTrue(rendered.contains("birthDateToSqlValue"))
     }

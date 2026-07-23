@@ -15,6 +15,8 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
+import androidx.sqlite.SQLiteStatement
+import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.sqlite.use
 
@@ -329,7 +331,7 @@ internal class SyncRuntimeInitializer(
         keyJson: String,
         payload: String,
         dirtyOrdinal: Long,
-        statement: dev.goquick.sqlitenow.core.sqlite.SqliteStatement,
+        statement: SQLiteStatement,
     ) {
         statement.bindText(1, schemaName)
         statement.bindText(2, tableName)
@@ -340,7 +342,7 @@ internal class SyncRuntimeInitializer(
     }
 
     private fun capturedExistingRow(
-        statement: dev.goquick.sqlitenow.core.sqlite.SqliteStatement,
+        statement: SQLiteStatement,
         keyColumn: ColumnInfo,
     ): CapturedExistingRow = CapturedExistingRow(
         key = if (keyColumn.kind.isBlobKind()) {
@@ -353,7 +355,7 @@ internal class SyncRuntimeInitializer(
     )
 
     private fun bindCapturedKey(
-        statement: dev.goquick.sqlitenow.core.sqlite.SqliteStatement,
+        statement: SQLiteStatement,
         key: CapturedSyncKey,
     ) {
         when (key) {

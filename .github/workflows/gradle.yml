@@ -82,6 +82,15 @@ jobs:
 
     steps:
     - uses: actions/checkout@v7
+    - name: Require Apple Silicon macOS host
+      if: ${{ runner.os == 'macOS' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        [[ "$(uname -m)" == "arm64" ]] || {
+          echo "SQLiteNow CI does not support Intel macOS runners."
+          exit 1
+        }
     - name: Validate Gradle Wrapper
       uses: gradle/actions/wrapper-validation@v6
     - uses: actions/cache@v6
@@ -107,6 +116,14 @@ jobs:
 
     steps:
     - uses: actions/checkout@v7
+    - name: Require Apple Silicon macOS host
+      shell: bash
+      run: |
+        set -euo pipefail
+        [[ "$(uname -m)" == "arm64" ]] || {
+          echo "SQLiteNow CI does not support Intel macOS runners."
+          exit 1
+        }
     - name: Validate Gradle Wrapper
       uses: gradle/actions/wrapper-validation@v6
     - uses: actions/cache@v6
@@ -190,6 +207,16 @@ jobs:
           flutter pub run sqlitenow_cli generate
           flutter test
         )
+        (
+          cd examples/flutter_samplesync
+          flutter pub get
+          flutter pub run sqlitenow_cli generate
+          git diff --exit-code -- lib/src/db/generated
+          test -z "$(git ls-files --others --exclude-standard -- lib/src/db/generated)"
+          dart format --output=none --set-exit-if-changed lib test integration_test
+          flutter analyze
+          flutter test
+        )
 
   flutter-android-integration:
     name: Flutter Android Integration
@@ -217,11 +244,11 @@ jobs:
         echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
         sudo udevadm control --reload-rules
         sudo udevadm trigger --name-match=kvm
-    - name: Run Flutter todo integration test on Android
+    - name: Run Flutter integration tests on Android
       uses: reactivecircus/android-emulator-runner@v2
       with:
         api-level: 35
         target: google_apis
         arch: x86_64
         profile: pixel_6
-        script: bash -lc 'set -euo pipefail; cd dart; flutter pub get; cd examples/flutter_todo; flutter pub get; flutter pub run sqlitenow_cli generate; flutter test integration_test/app_smoke_test.dart -d emulator-5554'
+        script: bash -lc 'set -euo pipefail; cd dart; flutter pub get; cd examples/flutter_todo; flutter pub get; flutter pub run sqlitenow_cli generate; flutter test integration_test/app_smoke_test.dart -d emulator-5554; cd ../flutter_samplesync; flutter pub get; flutter pub run sqlitenow_cli generate; flutter test integration_test/app_smoke_test.dart -d emulator-5554'

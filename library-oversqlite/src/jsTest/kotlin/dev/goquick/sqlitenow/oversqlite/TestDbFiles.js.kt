@@ -2,6 +2,8 @@ package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.SqliteConnectionConfig
 import dev.goquick.sqlitenow.core.SqlitePersistence
+import kotlin.js.Promise
+import kotlinx.coroutines.await
 
 internal actual fun createTempSqliteNowTestDbPath(prefix: String): String =
     nodeJoinPath(nodeTempDir(), "$prefix-${randomSuffix()}.db")
@@ -12,6 +14,36 @@ internal actual fun createSqliteNowTestConnectionConfig(path: String): SqliteCon
 internal actual suspend fun deleteTempSqliteNowTestDbArtifacts(path: String) {
     nodeDeleteIfExists(path)
 }
+
+internal actual suspend fun cleanupDirectWorkerTestDatabase(dbName: String) {
+    cleanupDirectWorkerTestDatabaseJs(dbName).await()
+}
+
+@Suppress("UNUSED_PARAMETER")
+private fun cleanupDirectWorkerTestDatabaseJs(dbName: String): Promise<dynamic> =
+    js(
+        """
+        (() => {
+          if (typeof window === 'undefined') return Promise.resolve();
+          const bytes = new TextEncoder().encode(dbName);
+          return crypto.subtle.digest('SHA-256', bytes).then((digest) => {
+            const hash = Array.from(new Uint8Array(digest))
+              .map((byte) => byte.toString(16).padStart(2, '0')).join('');
+            const target = "sqlitenow-worker-v1-" + hash + ".sqlite3";
+            const ignoreMissing = (promise) => promise.catch((error) => {
+              if (!error || error.name !== 'NotFoundError') throw error;
+            });
+            return navigator.storage.getDirectory().then((root) =>
+              Promise.all(
+                [target, target + ".health.json", target + ".migration.json"].map(
+                  (name) => ignoreMissing(root.removeEntry(name))
+                )
+              )
+            );
+          });
+        })()
+        """,
+    ).unsafeCast<Promise<dynamic>>()
 
 private class NodeFileSqlitePersistence : SqlitePersistence {
     override suspend fun load(dbName: String): ByteArray? {

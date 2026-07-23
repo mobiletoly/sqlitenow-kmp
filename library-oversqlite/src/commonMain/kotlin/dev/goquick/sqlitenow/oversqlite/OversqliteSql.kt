@@ -15,8 +15,9 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
+import androidx.sqlite.SQLiteStatement
+import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
-import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
 import dev.goquick.sqlitenow.core.sqlite.use
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -24,8 +25,8 @@ import kotlinx.coroutines.withContext
 internal suspend inline fun <T> SafeSQLiteConnection.withPreparedStatement(
     sql: String,
     statementCache: StatementCache? = null,
-    crossinline closeStatement: (SqliteStatement) -> Unit = { it.close() },
-    crossinline block: suspend (SqliteStatement) -> T,
+    crossinline closeStatement: (SQLiteStatement) -> Unit = { it.close() },
+    crossinline block: suspend (SQLiteStatement) -> T,
 ): T {
     return withExclusiveAccess {
         val cached = statementCache?.get(sql)
@@ -84,7 +85,7 @@ internal suspend fun SafeSQLiteConnection.scalarLong(sql: String): Long {
 internal suspend inline fun <T> SafeSQLiteConnection.queryRequiredSingle(
     sql: String,
     missingMessage: String,
-    crossinline map: (SqliteStatement) -> T,
+    crossinline map: (SQLiteStatement) -> T,
 ): T {
     return withExclusiveAccess {
         prepare(sql).use { st ->
@@ -96,8 +97,8 @@ internal suspend inline fun <T> SafeSQLiteConnection.queryRequiredSingle(
 
 internal suspend inline fun <T> SafeSQLiteConnection.queryList(
     sql: String,
-    crossinline bind: (SqliteStatement) -> Unit = {},
-    crossinline map: suspend (SqliteStatement) -> T,
+    crossinline bind: (SQLiteStatement) -> Unit = {},
+    crossinline map: suspend (SQLiteStatement) -> T,
 ): List<T> {
     return withExclusiveAccess {
         prepare(sql).use { st ->

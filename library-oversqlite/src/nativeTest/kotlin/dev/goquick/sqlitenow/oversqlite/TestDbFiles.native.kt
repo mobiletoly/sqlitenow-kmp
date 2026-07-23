@@ -25,6 +25,8 @@ internal actual suspend fun deleteTempSqliteNowTestDbArtifacts(path: String) {
     deleteIfExists("$path-journal")
 }
 
+internal actual suspend fun cleanupDirectWorkerTestDatabase(dbName: String) = Unit
+
 private fun deleteIfExists(path: String) {
     remove(path)
 }

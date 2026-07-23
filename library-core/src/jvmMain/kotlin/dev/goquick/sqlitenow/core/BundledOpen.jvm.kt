@@ -15,7 +15,7 @@
  */
 package dev.goquick.sqlitenow.core
 
-import dev.goquick.sqlitenow.core.sqlite.SqliteConnection
+import androidx.sqlite.SQLiteConnection
 
 @Suppress("UNUSED_PARAMETER")
 internal actual suspend fun openBundledSqliteConnection(
@@ -23,6 +23,23 @@ internal actual suspend fun openBundledSqliteConnection(
     debug: Boolean,
     initialBytes: ByteArray?,
     config: SqliteConnectionConfig,
-): SqliteConnection {
-    return SqliteConnection(openBundledSqliteDriverConnection(dbName))
+): SQLiteConnection {
+    requireSupportedJvmHost(
+        osName = System.getProperty("os.name"),
+        osArch = System.getProperty("os.arch"),
+    )
+    return openBundledSqliteDriverConnection(dbName)
+}
+
+internal fun requireSupportedJvmHost(osName: String, osArch: String) {
+    val normalizedOs = osName.lowercase()
+    val normalizedArch = osArch.lowercase()
+    val isMac = normalizedOs.contains("mac") || normalizedOs.contains("darwin")
+    val isArm64 = normalizedArch.contains("aarch64") || normalizedArch.contains("arm64")
+    if (isMac && !isArm64) {
+        throw UnsupportedOperationException(
+            "SQLiteNow's JVM runtime does not support Intel macOS. " +
+                "AndroidX SQLite 2.7 does not provide the required osx_x64 JNI payload.",
+        )
+    }
 }

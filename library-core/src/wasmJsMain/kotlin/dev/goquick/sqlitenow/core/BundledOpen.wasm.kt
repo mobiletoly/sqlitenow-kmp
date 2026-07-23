@@ -15,43 +15,18 @@
  */
 package dev.goquick.sqlitenow.core
 
-import dev.goquick.sqlitenow.common.sqliteNowLogger
-import dev.goquick.sqlitenow.core.sqlite.SqlJsDatabaseHandle
-import dev.goquick.sqlitenow.core.sqlite.SqliteConnection
-import dev.goquick.sqlitenow.core.sqlite.dbCreate
-import dev.goquick.sqlitenow.core.sqlite.dbOpen
-import dev.goquick.sqlitenow.core.sqlite.ensureSqlJsLoaded
-import dev.goquick.sqlitenow.core.sqlite.toSqlJsArray
-import dev.goquick.sqlitenow.core.sqlite.wrapSqlite
+import androidx.sqlite.SQLiteConnection
+import dev.goquick.sqlitenow.core.worker.openSqliteWorkerConnection
 
+@Suppress("UNUSED_PARAMETER")
 internal actual suspend fun openBundledSqliteConnection(
     dbName: String,
     debug: Boolean,
     initialBytes: ByteArray?,
     config: SqliteConnectionConfig,
-): SqliteConnection {
-    ensureSqlJsLoaded()
-
-    val handle = wrapSqlite {
-        if (initialBytes != null) {
-            sqliteNowLogger.i { "[SqlJs][Wasm] Kotlin opening $dbName with snapshot bytes=${initialBytes.size}" }
-        }
-        val id = if (initialBytes != null && initialBytes.isNotEmpty()) {
-            dbOpen(initialBytes.toSqlJsArray())
-        } else {
-            sqliteNowLogger.i { "[SqlJs][Wasm] Kotlin opening $dbName without snapshot (new database)" }
-            dbCreate()
-        }
-        SqlJsDatabaseHandle(id)
+): SQLiteConnection {
+    check(initialBytes == null) {
+        "Bundled web worker opens must receive migration sources through worker discovery."
     }
-
-    if (debug) {
-        if (initialBytes != null) {
-            sqliteNowLogger.d { "[SqlJs][Wasm] Opening $dbName from snapshot (${initialBytes.size} bytes)" }
-        } else {
-            sqliteNowLogger.d { "[SqlJs][Wasm] Opening $dbName with empty in-memory database" }
-        }
-    }
-
-    return SqliteConnection(handle)
+    return openSqliteWorkerConnection(dbName = dbName, config = config)
 }

@@ -15,7 +15,7 @@
  */
 package dev.goquick.sqlitenow.core
 
-import dev.goquick.sqlitenow.core.sqlite.SqliteConnection
+import androidx.sqlite.SQLiteConnection
 
 @Suppress("UNUSED_PARAMETER")
 internal actual suspend fun openBundledSqliteConnection(
@@ -23,6 +23,6 @@ internal actual suspend fun openBundledSqliteConnection(
     debug: Boolean,
     initialBytes: ByteArray?,
     config: SqliteConnectionConfig,
-): SqliteConnection {
-    return SqliteConnection(openBundledSqliteDriverConnection(dbName))
+): SQLiteConnection {
+    return openBundledSqliteDriverConnection(dbName)
 }

@@ -1,8 +1,8 @@
 package dev.goquick.sqlitenow.oversqlite
 
+import androidx.sqlite.SQLiteStatement
 import dev.goquick.sqlitenow.core.BundledSqliteConnectionProvider
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
-import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
 import dev.goquick.sqlitenow.core.sqlite.getColumnNames
 import dev.goquick.sqlitenow.core.sqlite.use
 import kotlinx.coroutines.runBlocking
@@ -417,7 +417,7 @@ class SharedLocalContractFixtureTest : BundleClientContractTestSupport() {
     }
 
     private fun nullableString(
-        st: SqliteStatement,
+        st: SQLiteStatement,
         index: Int,
         normalizeTriggers: Boolean = false,
     ): JsonElement {

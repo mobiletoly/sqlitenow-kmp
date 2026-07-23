@@ -107,6 +107,17 @@ final class CoreFixtureTests: XCTestCase {
                 try await iterator.next()
             }
             try await db.task.updateDone(TaskUpdateDoneParams(isDone: true, id: 1))
+            let invalidated = expectation(description: "stream receives immediate invalidation")
+            Task {
+                defer { invalidated.fulfill() }
+                _ = try await next.value
+            }
+            let result = await XCTWaiter.fulfillment(of: [invalidated], timeout: 5)
+            guard result == .completed else {
+                next.cancel()
+                XCTFail("Timed out waiting for the stream invalidation")
+                return
+            }
             let updated = try await next.value
             XCTAssertEqual(updated?.first?.isDone, true)
         }

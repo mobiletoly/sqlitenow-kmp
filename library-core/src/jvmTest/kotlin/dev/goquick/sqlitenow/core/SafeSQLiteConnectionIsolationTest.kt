@@ -1,15 +1,19 @@
 package dev.goquick.sqlitenow.core
 
 import androidx.sqlite.SQLiteConnection
+import androidx.sqlite.SQLiteException as DriverSQLiteException
 import androidx.sqlite.SQLiteStatement
+import androidx.sqlite.async.step as asyncStep
 import dev.goquick.sqlitenow.common.SqliteNowLogger
 import dev.goquick.sqlitenow.common.sqliteNowLogger
-import dev.goquick.sqlitenow.core.sqlite.SqliteConnection
-import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
+import dev.goquick.sqlitenow.core.sqlite.SqliteException
+import dev.goquick.sqlitenow.core.sqlite.trackSQLiteStatement
 import dev.goquick.sqlitenow.core.sqlite.use
 import java.nio.file.Files
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import kotlin.coroutines.ContinuationInterceptor
+import kotlin.coroutines.CoroutineContext
 import kotlin.io.path.deleteIfExists
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -20,12 +24,16 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.supervisorScope
@@ -34,6 +42,28 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 
 class SafeSQLiteConnectionIsolationTest {
+    @Test
+    fun tracedContextPreservesCancellationAndSqliteExceptionClassification() = runBlocking {
+        val fixture = recordingConnection()
+        val cancellation = CancellationException("TRACE_CANCELLATION_SENTINEL")
+        val observedCancellation = assertFailsWith<CancellationException> {
+            fixture.connection.withContextAndTrace { throw cancellation }
+        }
+        assertSame(cancellation, observedCancellation)
+
+        val workerCause = IllegalStateException("WORKER_CAUSE_SENTINEL")
+        val cleanupFailure = IllegalStateException("WORKER_CLEANUP_SENTINEL")
+        val sqliteFailure = SqliteException("SQLITE_FAILURE_SENTINEL", workerCause).also {
+            it.addSuppressed(cleanupFailure)
+        }
+        val observedSqlite = assertFailsWith<SqliteException> {
+            fixture.connection.withContextAndTrace { throw sqliteFailure }
+        }
+        assertSame(workerCause, observedSqlite.cause)
+        assertEquals(listOf(cleanupFailure), observedSqlite.suppressed.toList())
+        fixture.connection.close()
+    }
+
     @Test
     fun sameOwnerClose_isRejectedBeforeTouchingResources() = runBlocking {
         val fixture = recordingConnection()
@@ -192,6 +222,37 @@ class SafeSQLiteConnectionIsolationTest {
     }
 
     @Test
+    fun closeContextFailuresDoNotBypassOwnedCleanup() = runBlocking {
+        listOf(
+            CloseContextFailureScenario(
+                name = "capture failure",
+                captureFailure = IllegalStateException("CLOSE_CONTEXT_CAPTURE_SENTINEL"),
+            ),
+            CloseContextFailureScenario(
+                name = "restore failure",
+                restoreFailure = IllegalStateException("CLOSE_CONTEXT_RESTORE_SENTINEL"),
+            ),
+        ).forEach { scenario ->
+            val fixture = recordingConnection(
+                executionContextHook = FailingCloseContextHook(
+                    captureFailure = scenario.captureFailure,
+                    restoreFailure = scenario.restoreFailure,
+                ),
+            )
+
+            val thrown = assertFailsWith<IllegalStateException>(scenario.name) {
+                fixture.connection.close()
+            }
+
+            assertSame(scenario.failure, thrown, scenario.name)
+            assertEquals(1, fixture.persistence.closeCalls, scenario.name)
+            assertEquals(1, fixture.raw.closeCalls, scenario.name)
+            assertEquals(1, fixture.raw.cleanupCalls, scenario.name)
+            assertEquals(1, fixture.execution.closeCalls, scenario.name)
+        }
+    }
+
+    @Test
     fun concurrentClose_attemptsEveryOwnedResourceExactlyOnce() = runBlocking {
         val fixture = recordingConnection()
 
@@ -207,10 +268,396 @@ class SafeSQLiteConnectionIsolationTest {
     }
 
     @Test
-    fun statementUse_suppressesCloseFailureOntoBodyFailure() {
+    fun cancelledOrdinaryCloseWhileMutexIsHeldHasNoCloseSideEffect() = runBlocking {
+        val fixture = recordingOrdinaryConnection()
+        val ownerEntered = CompletableDeferred<Unit>()
+        val releaseOwner = CompletableDeferred<Unit>()
+        val holder = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            fixture.connection.withExclusiveAccess {
+                ownerEntered.complete(Unit)
+                releaseOwner.await()
+            }
+        }
+        ownerEntered.await()
+
+        val closeStarted = CompletableDeferred<Unit>()
+        val closing = launch(Dispatchers.Default) {
+            closeStarted.complete(Unit)
+            fixture.connection.close()
+        }
+        closeStarted.await()
+        closing.cancel(CancellationException("cancel ordinary close before ownership"))
+        withTimeout(1_000) { closing.join() }
+
+        assertEquals(0, fixture.raw.closeCalls)
+        assertEquals(0, fixture.execution.closeCalls)
+
+        releaseOwner.complete(Unit)
+        holder.await()
+        fixture.connection.close()
+        assertEquals(1, fixture.raw.closeCalls)
+        assertEquals(1, fixture.execution.closeCalls)
+    }
+
+    @Test
+    fun cancelledOrdinaryCloseDuringContextRestorationPreservesCleanupOutcome() = runBlocking {
+        listOf(
+            CancelledOrdinaryCloseScenario(
+                name = "successful fallback",
+                cancellationMessage = "cancel ordinary close after ownership",
+            ),
+            CancelledOrdinaryCloseScenario(
+                name = "fallback cleanup failures",
+                cancellationMessage = "cancel before fallback failure",
+                rawCloseFailure = IllegalStateException("ORDINARY_RAW_CLOSE_SENTINEL"),
+                executionCloseFailure =
+                    IllegalStateException("ORDINARY_EXECUTION_CLOSE_SENTINEL"),
+            ),
+        ).forEach { scenario ->
+            val hook = SuspendingCloseContextHook()
+            val fixture = recordingOrdinaryConnection(
+                executionContextHook = hook,
+                rawCloseFailure = scenario.rawCloseFailure,
+                executionCloseFailure = scenario.executionCloseFailure,
+                executionDispatcher = Dispatchers.Default,
+            )
+            hook.suspendNextRestore()
+            val observed = CompletableDeferred<Throwable>()
+
+            supervisorScope {
+                val closing = launch {
+                    observed.complete(
+                        runCatching { fixture.connection.close() }
+                            .exceptionOrNull()
+                            ?: error("cancelled ordinary close unexpectedly succeeded"),
+                    )
+                }
+                hook.restoreEntered.await()
+                closing.cancel(CancellationException(scenario.cancellationMessage))
+                withTimeout(1_000) { closing.join() }
+            }
+
+            val cancellation = observed.await()
+            assertTrue(cancellation is CancellationException, scenario.name)
+            assertEquals(scenario.cancellationMessage, cancellation.message, scenario.name)
+            assertEquals(
+                scenario.expectedSuppressedFailures,
+                cancellation.suppressedExceptions.toList(),
+                scenario.name,
+            )
+            assertEquals(1, fixture.raw.closeCalls, scenario.name)
+            assertEquals(1, fixture.execution.closeCalls, scenario.name)
+            assertTrue(
+                runCatching { fixture.connection.withExclusiveAccess { Unit } }.isFailure,
+                scenario.name,
+            )
+
+            fixture.connection.close()
+            assertEquals(1, fixture.raw.closeCalls, scenario.name)
+            assertEquals(1, fixture.execution.closeCalls, scenario.name)
+        }
+    }
+
+    @Test
+    fun cancelledOrdinaryCloseAfterCleanupStartsRetainsCleanupFailures() = runBlocking {
+        val persistenceEntered = CompletableDeferred<Unit>()
+        val releasePersistence = CompletableDeferred<Unit>()
+        val rawCloseFailure = IllegalStateException("STARTED_RAW_CLOSE_SENTINEL")
+        val executionCloseFailure = IllegalStateException("STARTED_EXECUTION_CLOSE_SENTINEL")
+        val fixture = recordingOrdinaryConnection(
+            persistence = RecordingPersistenceController(
+                closeAction = {
+                    persistenceEntered.complete(Unit)
+                    releasePersistence.await()
+                },
+            ),
+            rawCloseFailure = rawCloseFailure,
+            executionCloseFailure = executionCloseFailure,
+            executionDispatcher = Dispatchers.Default,
+        )
+        val observed = CompletableDeferred<Throwable>()
+
+        supervisorScope {
+            val closing = launch {
+                observed.complete(
+                    runCatching { fixture.connection.close() }
+                        .exceptionOrNull()
+                        ?: error("cancelled ordinary close unexpectedly succeeded"),
+                )
+            }
+            persistenceEntered.await()
+            closing.cancel(CancellationException("cancel after cleanup starts"))
+            releasePersistence.complete(Unit)
+            withTimeout(1_000) { closing.join() }
+        }
+
+        val cancellation = observed.await()
+        assertTrue(cancellation is CancellationException)
+        assertEquals(
+            listOf(rawCloseFailure, executionCloseFailure),
+            cancellation.suppressedExceptions.toList(),
+        )
+        assertEquals(1, fixture.persistence.closeCalls)
+        assertEquals(1, fixture.raw.closeCalls)
+        assertEquals(1, fixture.execution.closeCalls)
+    }
+
+    @Test
+    fun cancelledOrdinaryCloseBoundsSuspendingFallbackPersistence() = runBlocking {
+        val hook = SuspendingCloseContextHook()
+        val persistenceEntered = CompletableDeferred<Unit>()
+        val fixture = recordingOrdinaryConnection(
+            executionContextHook = hook,
+            persistence = RecordingPersistenceController(
+                closeAction = {
+                    persistenceEntered.complete(Unit)
+                    awaitCancellation()
+                },
+            ),
+            executionDispatcher = Dispatchers.Default,
+            ordinaryCloseCleanupTimeoutMillis = 100,
+        )
+        hook.suspendNextRestore()
+        val observed = CompletableDeferred<Throwable>()
+
+        supervisorScope {
+            val closing = launch {
+                observed.complete(
+                    runCatching { fixture.connection.close() }
+                        .exceptionOrNull()
+                        ?: error("cancelled ordinary close unexpectedly succeeded"),
+                )
+            }
+            hook.restoreEntered.await()
+            closing.cancel(CancellationException("cancel before hanging fallback"))
+            withTimeout(1_000) { persistenceEntered.await() }
+            withTimeout(2_000) { closing.join() }
+        }
+
+        val cancellation = observed.await()
+        assertTrue(cancellation is CancellationException)
+        val deadlineFailure = cancellation.suppressedExceptions.single()
+        assertTrue(deadlineFailure is SqliteException)
+        assertTrue(deadlineFailure.message.orEmpty().contains("100ms cleanup deadline"))
+        assertTrue(deadlineFailure.cause is TimeoutCancellationException)
+        assertEquals(1, fixture.persistence.closeCalls)
+        assertEquals(1, fixture.raw.closeCalls)
+        assertEquals(1, fixture.execution.closeCalls)
+
+        fixture.connection.close()
+        assertEquals(1, fixture.persistence.closeCalls)
+        assertEquals(1, fixture.raw.closeCalls)
+        assertEquals(1, fixture.execution.closeCalls)
+    }
+
+    @Test
+    fun ordinaryFallbackDispatchFailureLeavesCleanupRetryable() = runBlocking {
+        val dispatcher = RejectNextDispatchDispatcher()
+        val hook = CancelOnceCloseContextHook {
+            dispatcher.rejectNextDispatch()
+        }
+        val fixture = recordingOrdinaryConnection(
+            executionContextHook = hook,
+            executionDispatcher = dispatcher,
+        )
+
+        val cancellation = assertFailsWith<CancellationException> {
+            fixture.connection.close()
+        }
+
+        assertEquals("cancel before fallback dispatch", cancellation.message)
+        assertTrue(
+            cancellation.suppressedExceptions.single() is RejectedExecutionException,
+        )
+        assertEquals(0, fixture.raw.closeCalls)
+        assertEquals(0, fixture.execution.closeCalls)
+
+        fixture.connection.close()
+        assertEquals(1, fixture.raw.closeCalls)
+        assertEquals(1, fixture.execution.closeCalls)
+    }
+
+    @Test
+    fun cancelledCloseCompletesSuspendCleanupAndSuppressesItsFailureOntoCancellation() =
+        runBlocking {
+            val cancellation = CancellationException("CANCELLED_CLOSE_SENTINEL")
+            val cleanupFailure = IllegalStateException("SUSPEND_CLEANUP_SENTINEL")
+            lateinit var fixture: RecordingFixture
+            val observed = CompletableDeferred<Throwable>()
+
+            supervisorScope {
+                val closing = launch {
+                    val callerJob = currentCoroutineContext()[Job] ?: error("missing caller job")
+                    fixture = recordingConnection(
+                        cleanupAction = {
+                            callerJob.cancel(cancellation)
+                            throw cleanupFailure
+                        },
+                    )
+                    observed.complete(
+                        runCatching { fixture.connection.close() }
+                            .exceptionOrNull()
+                            ?: error("cancelled close unexpectedly succeeded"),
+                    )
+                }
+                closing.join()
+            }
+
+            val thrown = observed.await()
+            assertTrue(thrown is CancellationException)
+            assertEquals(cancellation.message, thrown.message)
+            assertEquals(listOf(cleanupFailure), thrown.suppressed.toList())
+            assertEquals(1, fixture.raw.closeCalls)
+            assertEquals(1, fixture.raw.cleanupCalls)
+            assertEquals(1, fixture.execution.closeCalls)
+        }
+
+    @Test
+    fun cancellationAfterCloseStartsRequestsOneSharedBoundedForceCleanup() = runBlocking {
+        supervisorScope {
+            val fixture = recordingConnection()
+            val ownerEntered = CompletableDeferred<Unit>()
+            val releaseOwner = CompletableDeferred<Unit>()
+            val holder = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                fixture.connection.withExclusiveAccess {
+                    ownerEntered.complete(Unit)
+                    releaseOwner.await()
+                }
+            }
+            ownerEntered.await()
+
+            val closeOwner = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                fixture.connection.close()
+            }
+            val observedWaiterFailure = CompletableDeferred<Throwable>()
+            val cancelledWaiter = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                observedWaiterFailure.complete(
+                    runCatching { fixture.connection.close() }
+                        .exceptionOrNull()
+                        ?: error("cancelled close unexpectedly succeeded"),
+                )
+            }
+            val cancellation = CancellationException("ACTIVE_CLOSE_CANCELLATION_SENTINEL")
+            cancelledWaiter.cancel(cancellation)
+
+            val observedCancellation = observedWaiterFailure.await()
+            cancelledWaiter.join()
+            val ownerFailure = assertFailsWith<SqliteException> {
+                closeOwner.await()
+            }
+
+            assertTrue(observedCancellation is CancellationException)
+            assertEquals(cancellation.message, observedCancellation.message)
+            assertEquals(
+                ownerFailure.message,
+                observedCancellation.suppressed.single().message,
+            )
+            assertTrue(ownerFailure.message.orEmpty().contains("cleanup deadline"))
+            assertEquals(1, fixture.raw.forceCleanupCalls)
+            assertEquals(1, fixture.execution.closeCalls)
+
+            releaseOwner.complete(Unit)
+            holder.await()
+            fixture.connection.close()
+            assertEquals(1, fixture.raw.forceCleanupCalls)
+            assertEquals(1, fixture.execution.closeCalls)
+        }
+    }
+
+    @Test
+    fun workerCloseOwnerCancellationDuringContextRestorationReachesDeadline() = runBlocking {
+        val hook = SuspendingCloseContextHook()
+        val fixture = recordingConnection(executionContextHook = hook)
+        hook.suspendNextRestore()
+        val observed = CompletableDeferred<Throwable>()
+
+        supervisorScope {
+            val closing = launch {
+                observed.complete(
+                    runCatching { fixture.connection.close() }
+                        .exceptionOrNull()
+                        ?: error("cancelled close unexpectedly succeeded"),
+                )
+            }
+            hook.restoreEntered.await()
+            closing.cancel(CancellationException("cancel owner during context restoration"))
+            withTimeout(2_000) { closing.join() }
+        }
+
+        val cancellation = observed.await()
+        assertTrue(cancellation is CancellationException)
+        assertTrue(
+            cancellation.suppressedExceptions.single().message.orEmpty()
+                .contains("cleanup deadline"),
+        )
+        assertEquals(0, fixture.raw.closeCalls)
+        assertEquals(0, fixture.raw.cleanupCalls)
+        assertEquals(1, fixture.raw.forceCleanupCalls)
+        assertEquals(1, fixture.execution.closeCalls)
+        assertTrue(runCatching { fixture.connection.withExclusiveAccess { Unit } }.isFailure)
+    }
+
+    @Test
+    fun workerCloseWaiterCancellationDuringContextRestorationReachesSharedDeadline() =
+        runBlocking {
+            val hook = SuspendingCloseContextHook()
+            val fixture = recordingConnection(executionContextHook = hook)
+            hook.suspendNextRestore()
+            supervisorScope {
+                val owner = async { fixture.connection.close() }
+                hook.restoreEntered.await()
+                val waiterFailure = CompletableDeferred<Throwable>()
+                val waiter = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                    waiterFailure.complete(
+                        runCatching { fixture.connection.close() }
+                            .exceptionOrNull()
+                            ?: error("cancelled close unexpectedly succeeded"),
+                    )
+                }
+                waiter.cancel(CancellationException("cancel waiter during context restoration"))
+                withTimeout(2_000) { waiter.join() }
+
+                val ownerFailure = assertFailsWith<SqliteException> { owner.await() }
+                val waiterCancellation = waiterFailure.await()
+                assertTrue(waiterCancellation is CancellationException)
+                assertEquals(
+                    ownerFailure.message,
+                    waiterCancellation.suppressedExceptions.single().message,
+                )
+                assertTrue(ownerFailure.message.orEmpty().contains("cleanup deadline"))
+                assertEquals(0, fixture.raw.closeCalls)
+                assertEquals(0, fixture.raw.cleanupCalls)
+                assertEquals(1, fixture.raw.forceCleanupCalls)
+                assertEquals(1, fixture.execution.closeCalls)
+            }
+        }
+
+    @Test
+    fun workerContextCancellationForcesCleanupAndCompletesTheSharedAttempt() = runBlocking {
+        val cancellation = CancellationException("CONTEXT_RESTORATION_CANCELLATION_SENTINEL")
+        val fixture = recordingConnection(
+            executionContextHook = FailingCloseContextHook(restoreFailure = cancellation),
+        )
+
+        val thrown = assertFailsWith<CancellationException> {
+            fixture.connection.close()
+        }
+
+        assertSame(cancellation, thrown)
+        assertEquals(0, fixture.raw.closeCalls)
+        assertEquals(0, fixture.raw.cleanupCalls)
+        assertEquals(1, fixture.raw.forceCleanupCalls)
+        assertEquals(1, fixture.execution.closeCalls)
+        fixture.connection.close()
+        assertEquals(1, fixture.raw.forceCleanupCalls)
+        assertEquals(1, fixture.execution.closeCalls)
+    }
+
+    @Test
+    fun statementUse_suppressesCloseFailureOntoBodyFailure() = runBlocking {
         val bodyFailure = IllegalStateException("BODY_SENTINEL")
         val closeFailure = IllegalStateException("STATEMENT_CLOSE_SENTINEL")
-        val statement = SqliteStatement(RecordingRawStatement(closeFailure = closeFailure))
+        val statement: SQLiteStatement = RecordingRawStatement(closeFailure = closeFailure)
 
         val thrown = assertFailsWith<IllegalStateException> {
             statement.use { throw bodyFailure }
@@ -218,6 +665,83 @@ class SafeSQLiteConnectionIsolationTest {
 
         assertSame(bodyFailure, thrown)
         assertEquals(listOf(closeFailure), thrown.suppressed.toList())
+    }
+
+    @Test
+    fun statementUse_normalizesDriverCloseFailure() = runBlocking {
+        val driverFailure = DriverSQLiteException("STATEMENT_DRIVER_CLOSE_SENTINEL")
+        val statement: SQLiteStatement = RecordingRawStatement(closeFailure = driverFailure)
+
+        val thrown = assertFailsWith<SqliteException> {
+            statement.use { Unit }
+        }
+
+        assertSame(driverFailure, thrown.cause)
+    }
+
+    @Test
+    fun statementUse_preservesBodyAndSuppressesNormalizedDriverCloseFailure() = runBlocking {
+        val bodyFailure = IllegalStateException("BODY_SENTINEL")
+        val driverFailure = DriverSQLiteException("STATEMENT_DRIVER_CLOSE_SENTINEL")
+        val statement: SQLiteStatement = RecordingRawStatement(closeFailure = driverFailure)
+
+        val thrown = assertFailsWith<IllegalStateException> {
+            statement.use { throw bodyFailure }
+        }
+
+        assertSame(bodyFailure, thrown)
+        val suppressed = thrown.suppressed.single()
+        assertTrue(suppressed is SqliteException)
+        assertSame(driverFailure, suppressed.cause)
+    }
+
+    @Test
+    fun connectionClose_normalizesDriverFailure() = runBlocking {
+        val driverFailure = DriverSQLiteException("RAW_DRIVER_CLOSE_SENTINEL")
+        val fixture = recordingConnection(rawCloseFailure = driverFailure)
+
+        val thrown = assertFailsWith<SqliteException> {
+            fixture.connection.close()
+        }
+
+        assertSame(driverFailure, thrown.cause)
+        assertEquals(1, fixture.raw.closeCalls)
+        assertEquals(1, fixture.execution.closeCalls)
+    }
+
+    @Test
+    fun connectionClose_preservesPersistenceFailureAndSuppressesNormalizedDriverFailure() = runBlocking {
+        val persistenceFailure = IllegalStateException("CLOSE_PERSISTENCE_SENTINEL")
+        val driverFailure = DriverSQLiteException("RAW_DRIVER_CLOSE_SENTINEL")
+        val fixture = recordingConnection(
+            persistence = RecordingPersistenceController(closeFailure = persistenceFailure),
+            rawCloseFailure = driverFailure,
+        )
+
+        val thrown = assertFailsWith<IllegalStateException> {
+            fixture.connection.close()
+        }
+
+        assertSame(persistenceFailure, thrown)
+        val suppressed = thrown.suppressed.single()
+        assertTrue(suppressed is SqliteException)
+        assertSame(driverFailure, suppressed.cause)
+        assertEquals(1, fixture.raw.closeCalls)
+        assertEquals(1, fixture.execution.closeCalls)
+    }
+
+    @Test
+    fun asyncStep_invokesExactlyOneUnderlyingNonWebStep() = runBlocking {
+        val raw = RecordingRawStatement()
+        val statement = trackSQLiteStatement(
+            statement = raw,
+            cleanupFailureObserver = {},
+            beforeCloseObserver = {},
+            closeSuccessObserver = {},
+        )
+
+        assertFalse(statement.asyncStep())
+        assertEquals(1, raw.stepCalls)
     }
 
     @Test
@@ -276,6 +800,36 @@ class SafeSQLiteConnectionIsolationTest {
         assertEquals(listOf(resetFailure, rawCloseFailure), observed.suppressed.toList())
         assertEquals(1, observed.countIdentity(resetFailure))
         assertEquals(1, observed.countIdentity(rawCloseFailure))
+        assertEquals(1, fixture.raw.closeCalls)
+        assertEquals(1, fixture.execution.closeCalls)
+    }
+
+    @Test
+    fun fatalDisposal_normalizesDriverFailuresAndPreservesSuppressionOrder() = runBlocking {
+        val bodyFailure = IllegalStateException("BODY_FAILURE")
+        val resetDriverFailure = DriverSQLiteException("RESET_DRIVER_FAILURE")
+        val rawCloseDriverFailure = DriverSQLiteException("RAW_CLOSE_DRIVER_FAILURE")
+        val fixture = recordingConnection(
+            rawCloseFailure = rawCloseDriverFailure,
+            statements = ArrayDeque(listOf(RecordingRawStatement(resetFailure = resetDriverFailure))),
+        )
+
+        val observed = assertFailsWith<IllegalStateException> {
+            fixture.connection.withExclusiveAccess {
+                val statement = fixture.connection.prepare("fatal-driver-cleanup")
+                val resetFailure = runCatching { statement.reset() }.exceptionOrNull()
+                assertTrue(resetFailure is SqliteException)
+                assertSame(resetDriverFailure, resetFailure.cause)
+                throw bodyFailure
+            }
+        }
+
+        assertSame(bodyFailure, observed)
+        assertEquals(2, observed.suppressed.size)
+        assertTrue(observed.suppressed[0] is SqliteException)
+        assertSame(resetDriverFailure, observed.suppressed[0].cause)
+        assertTrue(observed.suppressed[1] is SqliteException)
+        assertSame(rawCloseDriverFailure, observed.suppressed[1].cause)
         assertEquals(1, fixture.raw.closeCalls)
         assertEquals(1, fixture.execution.closeCalls)
     }
@@ -558,6 +1112,95 @@ class SafeSQLiteConnectionIsolationTest {
         }
     }
 
+    private class FailingCloseContextHook(
+        private val captureFailure: Throwable? = null,
+        private val restoreFailure: Throwable? = null,
+    ) : SqliteNowContextHook {
+        override fun capture(): Any {
+            captureFailure?.let { throw it }
+            return Unit
+        }
+
+        override suspend fun <T> withCaptured(captured: Any?, block: suspend () -> T): T {
+            restoreFailure?.let { throw it }
+            return block()
+        }
+    }
+
+    private class SuspendingCloseContextHook : SqliteNowContextHook {
+        val restoreEntered = CompletableDeferred<Unit>()
+        private var suspendNext = false
+
+        fun suspendNextRestore() {
+            suspendNext = true
+        }
+
+        override fun capture(): Any = Unit
+
+        override suspend fun <T> withCaptured(captured: Any?, block: suspend () -> T): T {
+            if (suspendNext) {
+                suspendNext = false
+                restoreEntered.complete(Unit)
+                kotlinx.coroutines.awaitCancellation()
+            }
+            return block()
+        }
+    }
+
+    private class CancelOnceCloseContextHook(
+        private val beforeCancellation: () -> Unit,
+    ) : SqliteNowContextHook {
+        private var cancelNextRestore = true
+
+        override fun capture(): Any = Unit
+
+        override suspend fun <T> withCaptured(captured: Any?, block: suspend () -> T): T {
+            if (cancelNextRestore) {
+                cancelNextRestore = false
+                beforeCancellation()
+                throw CancellationException("cancel before fallback dispatch")
+            }
+            return block()
+        }
+    }
+
+    private class RejectNextDispatchDispatcher : CoroutineDispatcher() {
+        private var rejectNextDispatch = false
+
+        fun rejectNextDispatch() {
+            rejectNextDispatch = true
+        }
+
+        override fun isDispatchNeeded(context: CoroutineContext): Boolean = true
+
+        override fun dispatch(context: CoroutineContext, block: Runnable) {
+            if (rejectNextDispatch) {
+                rejectNextDispatch = false
+                throw RejectedExecutionException("ordinary fallback dispatch rejected")
+            }
+            block.run()
+        }
+    }
+
+    private data class CloseContextFailureScenario(
+        val name: String,
+        val captureFailure: Throwable? = null,
+        val restoreFailure: Throwable? = null,
+    ) {
+        val failure: Throwable
+            get() = checkNotNull(captureFailure ?: restoreFailure)
+    }
+
+    private data class CancelledOrdinaryCloseScenario(
+        val name: String,
+        val cancellationMessage: String,
+        val rawCloseFailure: Throwable? = null,
+        val executionCloseFailure: Throwable? = null,
+    ) {
+        val expectedSuppressedFailures: List<Throwable>
+            get() = listOfNotNull(rawCloseFailure, executionCloseFailure)
+    }
+
     private data class CapturedContext(
         val sequence: Int,
         val threadName: String,
@@ -568,17 +1211,48 @@ class SafeSQLiteConnectionIsolationTest {
         rawCloseFailure: Throwable? = null,
         executionCloseFailure: Throwable? = null,
         statements: ArrayDeque<RecordingRawStatement> = ArrayDeque(),
+        cleanupAction: (suspend () -> Unit)? = null,
+        executionContextHook: SqliteNowContextHook? = null,
     ): RecordingFixture {
         val raw = RecordingRawConnection(
             closeFailure = rawCloseFailure,
             statements = statements,
+            cleanupAction = cleanupAction,
         )
         val execution = RecordingExecutionContext(executionCloseFailure)
         return RecordingFixture(
             connection = SafeSQLiteConnection(
-                ref = SqliteConnection(raw),
+                ref = raw,
                 persistenceController = persistence,
+                executionContextHook = executionContextHook,
                 executionContext = execution,
+            ),
+            raw = raw,
+            persistence = persistence,
+            execution = execution,
+        )
+    }
+
+    private fun recordingOrdinaryConnection(
+        executionContextHook: SqliteNowContextHook? = null,
+        persistence: RecordingPersistenceController = RecordingPersistenceController(),
+        rawCloseFailure: Throwable? = null,
+        executionCloseFailure: Throwable? = null,
+        executionDispatcher: CoroutineDispatcher = Dispatchers.Unconfined,
+        ordinaryCloseCleanupTimeoutMillis: Long = 5_000,
+    ): RecordingOrdinaryFixture {
+        val raw = RecordingOrdinaryRawConnection(closeFailure = rawCloseFailure)
+        val execution = RecordingExecutionContext(
+            closeFailure = executionCloseFailure,
+            dispatcher = executionDispatcher,
+        )
+        return RecordingOrdinaryFixture(
+            connection = SafeSQLiteConnection(
+                ref = raw,
+                persistenceController = persistence,
+                executionContextHook = executionContextHook,
+                executionContext = execution,
+                ordinaryCloseCleanupTimeoutMillis = ordinaryCloseCleanupTimeoutMillis,
             ),
             raw = raw,
             persistence = persistence,
@@ -589,6 +1263,13 @@ class SafeSQLiteConnectionIsolationTest {
     private data class RecordingFixture(
         val connection: SafeSQLiteConnection,
         val raw: RecordingRawConnection,
+        val persistence: RecordingPersistenceController,
+        val execution: RecordingExecutionContext,
+    )
+
+    private data class RecordingOrdinaryFixture(
+        val connection: SafeSQLiteConnection,
+        val raw: RecordingOrdinaryRawConnection,
         val persistence: RecordingPersistenceController,
         val execution: RecordingExecutionContext,
     )
@@ -611,6 +1292,7 @@ class SafeSQLiteConnectionIsolationTest {
         private val operationFailure: Throwable? = null,
         private val commitFailure: Throwable? = null,
         private val closeFailure: Throwable? = null,
+        private val closeAction: suspend () -> Unit = {},
     ) : PersistenceController {
         override val restoredFromSnapshot: Boolean = false
         var closeCalls = 0
@@ -618,28 +1300,29 @@ class SafeSQLiteConnectionIsolationTest {
         var flushCalls = 0
             private set
 
-        override suspend fun onOperationComplete(connection: SqliteConnection, inTransaction: Boolean) {
+        override suspend fun onOperationComplete(connection: SQLiteConnection, inTransaction: Boolean) {
             if (!inTransaction) operationFailure?.let { throw it }
         }
 
-        override suspend fun onTransactionCommitted(connection: SqliteConnection) {
+        override suspend fun onTransactionCommitted(connection: SQLiteConnection) {
             commitFailure?.let { throw it }
         }
 
-        override suspend fun flush(connection: SqliteConnection) {
+        override suspend fun flush(connection: SQLiteConnection) {
             flushCalls++
         }
 
-        override suspend fun onClose(connection: SqliteConnection) {
+        override suspend fun onClose(connection: SQLiteConnection) {
             closeCalls++
+            closeAction()
             closeFailure?.let { throw it }
         }
     }
 
     private class RecordingExecutionContext(
         private val closeFailure: Throwable?,
+        override val dispatcher: CoroutineDispatcher = Dispatchers.Unconfined,
     ) : SqliteConnectionExecutionContext {
-        override val dispatcher = Dispatchers.Unconfined
         var closeCalls = 0
             private set
 
@@ -653,9 +1336,15 @@ class SafeSQLiteConnectionIsolationTest {
     private class RecordingRawConnection(
         private val closeFailure: Throwable?,
         private val statements: ArrayDeque<RecordingRawStatement>,
-    ) : SQLiteConnection {
+        private val cleanupAction: (suspend () -> Unit)?,
+    ) : SQLiteConnection, SuspendSQLiteConnectionCleanup {
+        override val cleanupTimeoutMillis: Int = 100
         val executedSql = mutableListOf<String>()
         var closeCalls = 0
+            private set
+        var cleanupCalls = 0
+            private set
+        var forceCleanupCalls = 0
             private set
         private var inTransaction = false
 
@@ -676,12 +1365,41 @@ class SafeSQLiteConnectionIsolationTest {
             closeFailure?.let { throw it }
         }
 
+        override suspend fun awaitCleanup() {
+            cleanupCalls++
+            cleanupAction?.invoke()
+        }
+
+        override suspend fun awaitCleanupDeadline() {
+            delay(cleanupTimeoutMillis.toLong())
+        }
+
+        override suspend fun forceCleanup() {
+            forceCleanupCalls++
+        }
+
         private fun recordExecution(sql: String) {
             executedSql += sql
             when (sql) {
                 "BEGIN", "BEGIN IMMEDIATE", "BEGIN EXCLUSIVE" -> inTransaction = true
                 "COMMIT", "ROLLBACK" -> inTransaction = false
             }
+        }
+    }
+
+    private class RecordingOrdinaryRawConnection(
+        private val closeFailure: Throwable?,
+    ) : SQLiteConnection {
+        var closeCalls = 0
+            private set
+
+        override fun inTransaction(): Boolean = false
+
+        override fun prepare(sql: String): SQLiteStatement = RecordingRawStatement(name = sql)
+
+        override fun close() {
+            closeCalls++
+            closeFailure?.let { throw it }
         }
     }
 
@@ -693,6 +1411,9 @@ class SafeSQLiteConnectionIsolationTest {
         private val closeAction: (() -> Unit)? = null,
         private val onStep: (() -> Unit)? = null,
     ) : SQLiteStatement {
+        var stepCalls: Int = 0
+            private set
+
         override fun bindBlob(index: Int, value: ByteArray) = Unit
         override fun bindDouble(index: Int, value: Double) = Unit
         override fun bindLong(index: Int, value: Long) = Unit
@@ -707,6 +1428,7 @@ class SafeSQLiteConnectionIsolationTest {
         override fun getColumnName(index: Int): String = ""
         override fun getColumnType(index: Int): Int = 5
         override fun step(): Boolean {
+            stepCalls++
             onStep?.invoke()
             return false
         }

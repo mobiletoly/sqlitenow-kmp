@@ -15,6 +15,7 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
+import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 
 internal const val attachmentBindingAnonymous = "anonymous"

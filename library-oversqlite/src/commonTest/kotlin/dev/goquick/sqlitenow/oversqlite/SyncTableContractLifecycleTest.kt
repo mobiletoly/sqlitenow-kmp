@@ -3,11 +3,10 @@ package dev.goquick.sqlitenow.oversqlite
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
-import kotlinx.coroutines.test.runTest
 
 internal class SyncTableContractLifecycleTest : CrossTargetSyncTestSupport() {
     @Test
-    fun mismatchRejectsInitialAttachBeforeConnectOrLifecycleBinding() = runTest {
+    fun mismatchRejectsInitialAttachBeforeConnectOrLifecycleBinding() = runOwnedWebDatabaseTest {
         val server = MockSyncServer().apply {
             registeredTableSpecs = listOf("users", "posts", "monitoring_focus").map { table ->
                 RegisteredTableSpec(
@@ -46,7 +45,7 @@ internal class SyncTableContractLifecycleTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun mismatchRejectsEveryRemoteOperationBeforeRemoteOrDurableSyncWork() = runTest {
+    fun mismatchRejectsEveryRemoteOperationBeforeRemoteOrDurableSyncWork() = runOwnedWebDatabaseTest {
         val server = MockSyncServer()
         val db = newDb()
         val http = server.newHttpClient()

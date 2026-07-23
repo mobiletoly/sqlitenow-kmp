@@ -8,7 +8,21 @@ permalink: /kmp/
 
 This path is for Kotlin Multiplatform apps using the SQLiteNow Gradle plugin and
 KMP runtime libraries. It covers Android, iOS, JVM, macOS, Linux, JavaScript,
-and Kotlin/Wasm targets.
+and Kotlin/Wasm targets. macOS targets, the JVM runtime on macOS, and repository
+development on macOS require Apple Silicon; Intel macOS is not supported.
+
+## Web Runtime
+
+Generated and handwritten databases use the packaged SQLite worker through
+`BundledSqliteConnectionProvider` by default. JS and Wasm browsers persist
+directly to deterministic OPFS targets. They require a secure context, Web
+Crypto, Web Locks, OPFS, official SQLite `OpfsDb`, and the COOP/COEP/CSP policy
+listed in the packaged worker manifest. Unsupported browsers fail clearly
+without a snapshot, IndexedDB operational, or in-memory fallback.
+
+JS Node uses a transient in-memory worker, so close/reopen begins empty.
+Android, JVM, iOS arm64, macOS arm64, and Linux continue to open their normal
+SQLite files in place.
 
 ## Start Here
 

@@ -1,9 +1,9 @@
 package dev.goquick.sqlitenow.oversqlite
 
+import androidx.sqlite.SQLiteStatement
 import com.sun.net.httpserver.HttpServer
 import dev.goquick.sqlitenow.core.BundledSqliteConnectionProvider
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
-import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
 import dev.goquick.sqlitenow.core.sqlite.getColumnNames
 import dev.goquick.sqlitenow.core.sqlite.use
 import io.ktor.client.HttpClient
@@ -363,7 +363,7 @@ open class SharedRuntimeStateFixtureSupport : BundleClientContractTestSupport() 
     }
 
     private fun normalizedValue(
-        st: SqliteStatement,
+        st: SQLiteStatement,
         index: Int,
         columnName: String,
         declaredType: String,
@@ -395,7 +395,7 @@ open class SharedRuntimeStateFixtureSupport : BundleClientContractTestSupport() 
             columnName == "replacement_source_id"
     }
 
-    private fun nullableString(st: SqliteStatement, index: Int): JsonElement {
+    private fun nullableString(st: SQLiteStatement, index: Int): JsonElement {
         return if (st.isNull(index)) JsonNull else JsonPrimitive(st.getText(index))
     }
 

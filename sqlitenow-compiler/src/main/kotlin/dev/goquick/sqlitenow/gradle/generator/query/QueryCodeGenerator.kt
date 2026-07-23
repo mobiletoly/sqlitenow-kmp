@@ -138,6 +138,7 @@ internal class QueryCodeGenerator(
             )
             .addImport("kotlinx.serialization", "encodeToString")
             .addImport("kotlinx.serialization.json", "Json")
+            .addImport("androidx.sqlite.async", "step")
             .addImport("dev.goquick.sqlitenow.core.sqlite", "use")
 
         if (!debug) {

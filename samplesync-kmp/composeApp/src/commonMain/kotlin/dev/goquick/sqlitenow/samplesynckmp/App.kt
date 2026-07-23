@@ -15,6 +15,7 @@
  */
 package dev.goquick.sqlitenow.samplesynckmp
 
+import androidx.sqlite.async.step
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -902,7 +903,7 @@ fun App() {
                                 baseUrl,
                                 user = displayUser,
                                 sourceId = installSourceId,
-                                password = password.ifBlank { "demo" })
+                                password = password)
 
                             // Save token first so the HttpClient can use it
                             AuthPrefs.set(AuthKeys.Token, token.token)
@@ -913,7 +914,7 @@ fun App() {
                                 baseUrl = baseUrl,
                                 user = finalUser,
                                 sourceId = installSourceId,
-                                password = password.ifBlank { "demo" },
+                                password = password,
                                 token = token,
                                 resourceScope = sessionResourceScope,
                                 onSuccess = { session ->
@@ -922,6 +923,7 @@ fun App() {
                                     signedIn = true
                                     skippedSignin = false
                                     showSigninDialog = false
+                                    username = finalUser
                                     AuthPrefs.set(AuthKeys.Username, finalUser)
                                     AuthPrefs.set(AuthKeys.SourceId, installSourceId)
                                 },
@@ -1081,7 +1083,7 @@ fun PersonCard(
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f)
                         )
-                        comments.take(3).forEach { c ->
+                        comments.forEach { c ->
                             Text(
                                 text = "• ${c.comment}",
                                 fontSize = 12.sp,

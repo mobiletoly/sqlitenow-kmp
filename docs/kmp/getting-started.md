@@ -25,7 +25,7 @@ with the latest SQLiteNow release version.
 ```toml
 [versions]
 sqlitenow = "X.Y.Z"
-sqlite = "2.6.2"
+sqlite = "2.7.0"
 kotlinx-datetime = "0.8.0"
 
 [libraries]
@@ -70,6 +70,31 @@ If you target Kotlin/Wasm, keep `sqlite-bundled` out of `commonMain`; that artif
 publish a `wasmJs` variant and will break dependency resolution for Wasm tasks.
 For iOS/JVM targets, add `sqlite-bundled` in those platform source sets too (`iosMain`,
 `jvmMain` or `desktopMain`) if you use `BundledSQLiteDriver` there.
+
+### JS and Wasm browser requirements
+
+No web connection provider or snapshot persistence configuration is required.
+The public `BundledSqliteConnectionProvider` used by generated and handwritten
+databases opens the packaged SQLite worker by default.
+
+JS and Wasm browsers store each logical database in direct OPFS using the
+deterministic target
+`sqlitenow-worker-v1-<SHA-256 UTF-8 logical name>.sqlite3`. This includes
+`:memory:`-shaped logical names: browsers do not switch those names to an
+in-memory database. Serve the app in a secure context with Web Crypto, Web
+Locks, OPFS, official SQLite `OpfsDb`, and the COOP/COEP/CSP worker policy
+declared by the packaged asset manifest. Missing capabilities fail clearly;
+there is no SQL.js, snapshot, IndexedDB operational, or memory fallback.
+
+The Gradle plugin extracts the complete versioned
+`sqlitenow-worker-v1/` namespace from the Core dependency. Do not copy a
+root-level Wasm file or legacy web scripts into the application.
+
+JS Node uses a transient in-memory worker. Closing and reopening the same
+logical name starts empty, and explicit custom persistence is rejected before
+its methods are invoked. Android, JVM, iOS arm64, macOS arm64, and Linux retain
+their platform driver and open their database files in place. Apple native and
+repository development on macOS remain arm64-only.
 
 Most likely you would need to update your project's root-level `build.gradle.kts` file as well:
 

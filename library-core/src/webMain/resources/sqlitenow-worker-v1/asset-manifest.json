@@ -1,0 +1,81 @@
+{
+  "schema": "sqlitenow-worker-asset-manifest-v1",
+  "protocol": "sqlitenow-sqlite-worker-v1",
+  "resourceNamespace": "sqlitenow-worker-v1",
+  "cacheVersion": "sqlite-3.53.0-build1",
+  "defaultWorkerModule": "sqlite-3.53.0-build1/worker.mjs",
+  "sqliteWasmDistribution": {
+    "package": "@sqlite.org/sqlite-wasm",
+    "version": "3.53.0-build1",
+    "license": "Apache-2.0",
+    "npmIntegrity": "sha512-PfWPWN2n+/37doa8oh2/oUXk4OOsRYZsxc1W1sDXIGb/Pu5Yrb+f2eyYpgQMGITVX7HVgxhs9P18Rc6I97ym/g==",
+    "tarballSha256": "fbbd5c542fad22ce1d90df1533025903a00a593f461f4a43b1e43e9897dfad9c"
+  },
+  "browserRequirements": {
+    "workerType": "module",
+    "workerSrc": [
+      "'self'"
+    ],
+    "scriptSrc": [
+      "'self'",
+      "'wasm-unsafe-eval'"
+    ],
+    "secureContext": true,
+    "crossOriginIsolation": true,
+    "forbiddenWorkerSchemes": [
+      "blob",
+      "data"
+    ]
+  },
+  "assets": [
+    {
+      "path": "client.mjs",
+      "role": "client",
+      "origin": "SQLiteNow",
+      "size": 64080,
+      "sha256": "20028f7fb4424d8115813c1277dcf8d03b21074ce58f37f4222f871fc575b1a5"
+    },
+    {
+      "path": "sqlite-3.53.0-build1/worker.mjs",
+      "role": "worker",
+      "origin": "SQLiteNow",
+      "size": 81820,
+      "sha256": "a50b96dc41e7f8a512ae561cce83c311604c701a0def52a1a7a272ea569746a1"
+    },
+    {
+      "path": "sqlite-3.53.0-build1/vendor/index.mjs",
+      "role": "sqlite-browser-support",
+      "origin": "@sqlite.org/sqlite-wasm@3.53.0-build1",
+      "size": 578559,
+      "sha256": "f80870f0fa03a39a3338d17ed3fbea04808d344c88e724d90d5f37b9b7b83154"
+    },
+    {
+      "path": "sqlite-3.53.0-build1/vendor/node.mjs",
+      "role": "sqlite-node-support",
+      "origin": "@sqlite.org/sqlite-wasm@3.53.0-build1",
+      "size": 474891,
+      "sha256": "d74e4b74920d1499b0bf349ced70372c55ac9a9ea72af718e5f6b23b0c1b29c4"
+    },
+    {
+      "path": "sqlite-3.53.0-build1/vendor/sqlite3.wasm",
+      "role": "sqlite-wasm",
+      "origin": "@sqlite.org/sqlite-wasm@3.53.0-build1",
+      "size": 864752,
+      "sha256": "02d7e48164395fa68f81c6ec33e9da5461be397dc57602ac0cd89b4bbba1d312"
+    },
+    {
+      "path": "sqlite-3.53.0-build1/vendor/sqlite3-opfs-async-proxy.js",
+      "role": "sqlite-opfs-async-proxy",
+      "origin": "@sqlite.org/sqlite-wasm@3.53.0-build1",
+      "size": 32289,
+      "sha256": "502762db7bd24130f345df6a42883166ec0a91815207940328c9739bb0f5ec2f"
+    },
+    {
+      "path": "licenses/sqlite-wasm-Apache-2.0.txt",
+      "role": "license",
+      "origin": "Apache-2.0",
+      "size": 11343,
+      "sha256": "535809c037bd6de96cd3e8d209755322dda35b5d28d1510d9d7f6fe1d441e380"
+    }
+  ]
+}

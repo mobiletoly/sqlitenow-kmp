@@ -1,8 +1,9 @@
 package dev.goquick.sqlitenow.oversqlite
 
+import androidx.sqlite.SQLiteStatement
+import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.TransactionMode
-import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
 import dev.goquick.sqlitenow.core.sqlite.use
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.CompletableDeferred
@@ -11,7 +12,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
@@ -25,8 +25,9 @@ internal class RealServerSharedConnectionStressTest : RealServerSupport() {
     }
 
     @Test
-    fun sharedConnectionSurvivesConcurrentAliasStarQueriesWhileSyncingAgainstRealServer() = runTest {
-        val config = requireRealServerConfig() ?: return@runTest
+    fun sharedConnectionSurvivesConcurrentAliasStarQueriesWhileSyncingAgainstRealServer() =
+        runOwnedWebDatabaseTest {
+        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
         val remoteUpdateRounds = if (realServerHeavyModeEnabled(config)) 160 else 40
         val localUpdateIterations = if (realServerHeavyModeEnabled(config)) 1_600 else 320
         val readerCoroutines = if (realServerHeavyModeEnabled(config)) 6 else 2
@@ -191,8 +192,8 @@ internal class RealServerSharedConnectionStressTest : RealServerSupport() {
         }
     }
 
-    private fun bindSeedUser(
-        statement: SqliteStatement,
+    private suspend fun bindSeedUser(
+        statement: SQLiteStatement,
         id: String,
         name: String,
         email: String,

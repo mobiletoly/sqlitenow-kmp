@@ -14,3 +14,8 @@ intentionally independent of the Kotlin Multiplatform generator and runtime.
   SQLiteNow compiler with the Dart backend.
 - `examples/dart_console`: minimal non-Flutter Dart project using generated
   SQLiteNow Dart code.
+- `examples/flutter_todo`: interactive core SQLiteNow Flutter example.
+- `examples/flutter_samplesync`: Android-first interactive Oversqlite example
+  matching the KMP SampleSync workflow. Its live lane uses
+  `go-oversync/examples/samplesync_server` and is intentionally separate from
+  the nethttp-server integration suite.

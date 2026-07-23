@@ -84,7 +84,7 @@ import AppDatabaseSQLiteNow
 
 ## Requirements
 
-- macOS with Xcode command line tools
+- Apple Silicon macOS with Xcode command line tools; Intel macOS is unsupported
 - SwiftPM with `swift-tools-version: 6.0` support
 - Java 17 or newer on `PATH`
 - A released SQLiteNow SwiftPM package version

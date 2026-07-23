@@ -9,7 +9,6 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
-import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
@@ -45,7 +44,7 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun automaticDownloads_pollingModePullsThroughAuthoritativePath() = runTest {
+    fun automaticDownloads_pollingModePullsThroughAuthoritativePath() = runOwnedWebDatabaseTest {
         val env = newTwoClientEnv()
         try {
             val worker = launch(Dispatchers.Default) {
@@ -77,7 +76,7 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun automaticDownloads_pollingModePropagatesProtocolMismatchWithoutRetry() = runTest {
+    fun automaticDownloads_pollingModePropagatesProtocolMismatchWithoutRetry() = runOwnedWebDatabaseTest {
         val env = newTwoClientEnv()
         try {
             val hostileProtocolVersion = "HOSTILE_PROTOCOL_VERSION_SECRET"
@@ -118,7 +117,7 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun automaticDownloads_pollingModePropagatesTableContractMismatchWithoutRetry() = runTest {
+    fun automaticDownloads_pollingModePropagatesTableContractMismatchWithoutRetry() = runOwnedWebDatabaseTest {
         val env = newTwoClientEnv()
         try {
             env.server.registeredTableSpecs = testRegisteredTableSpecs(
@@ -159,7 +158,7 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun automaticDownloads_pauseSuppressesBackgroundPullsOnly() = runTest {
+    fun automaticDownloads_pauseSuppressesBackgroundPullsOnly() = runOwnedWebDatabaseTest {
         val env = newTwoClientEnv()
         try {
             env.follower.pauseDownloads()
@@ -201,7 +200,7 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun automaticDownloads_autoWatchUsesWatchWakeupAndPullsAuthoritatively() = runTest {
+    fun automaticDownloads_autoWatchUsesWatchWakeupAndPullsAuthoritatively() = runOwnedWebDatabaseTest {
         val env = newTwoClientEnv {
             bundleChangeWatchSupported = true
         }
@@ -240,7 +239,7 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun automaticDownloads_activeWatchDoesNotRunTimerFallbackPulls() = runTest {
+    fun automaticDownloads_activeWatchDoesNotRunTimerFallbackPulls() = runOwnedWebDatabaseTest {
         val env = newTwoClientEnv {
             bundleChangeWatchSupported = true
             holdNextWatchResponseOpen()
@@ -273,7 +272,7 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun automaticDownloads_watchSetupErrorsFallBackToPull() = runTest {
+    fun automaticDownloads_watchSetupErrorsFallBackToPull() = runOwnedWebDatabaseTest {
         val setupErrors = listOf(
             HttpStatusCode.BadRequest to "invalid_request",
             HttpStatusCode.Unauthorized to "authentication_failed",
@@ -320,7 +319,7 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun automaticDownloads_watchReconnectUsesFreshCapabilitiesAndLatestDurableState() = runTest {
+    fun automaticDownloads_watchReconnectUsesFreshCapabilitiesAndLatestDurableState() = runOwnedWebDatabaseTest {
         val env = newTwoClientEnv {
             bundleChangeWatchSupported = true
         }
@@ -351,7 +350,7 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun automaticDownloads_heartbeatsDoNotTriggerPullsByThemselves() = runTest {
+    fun automaticDownloads_heartbeatsDoNotTriggerPullsByThemselves() = runOwnedWebDatabaseTest {
         val env = newTwoClientEnv {
             bundleChangeWatchSupported = true
             enqueueWatchResponse(
@@ -385,7 +384,7 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun automaticDownloads_streamEofAndMalformedStreamReconnectWithoutStallingPulls() = runTest {
+    fun automaticDownloads_streamEofAndMalformedStreamReconnectWithoutStallingPulls() = runOwnedWebDatabaseTest {
         val streamBodies = listOf(
             ": stream ended\n\n",
             """
@@ -424,7 +423,7 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun automaticDownloadsDoNotLogThrowableMessages() = runTest {
+    fun automaticDownloadsDoNotLogThrowableMessages() = runOwnedWebDatabaseTest {
         val sentinel = "customer-secret-throwable-message"
         val logs = mutableListOf<String>()
         val server = MockSyncServer()

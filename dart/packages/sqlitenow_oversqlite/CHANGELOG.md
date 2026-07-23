@@ -1,3 +1,9 @@
+# 0.16.0
+
+- Add KMP-parity numeric and Boolean transport coverage for the
+  `jcs_uniform_numeric_strings_v1` Oversqlite wire contract.
+- Add Flutter real-server regression coverage for rich numeric schemas.
+
 # 0.15.0
 
 - Reject future checkpoints with `checkpoint_ahead` and automatically resume durable authoritative

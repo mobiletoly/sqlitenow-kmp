@@ -1,0 +1,8 @@
+databases:
+  NowSampleSyncDatabase:
+    input: lib/src/db/sql/NowSampleSyncDatabase
+    output: lib/src/db/generated
+    package: samplesync.db
+    runtime: dart
+    oversqlite: true
+    schemaDatabaseFile: build/sqlitenow/samplesync-schema.db

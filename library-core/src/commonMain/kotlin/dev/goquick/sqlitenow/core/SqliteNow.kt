@@ -15,6 +15,7 @@
  */
 package dev.goquick.sqlitenow.core
 
+import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.common.KermitSqliteNowLogger
 import dev.goquick.sqlitenow.common.LogLevel
 import dev.goquick.sqlitenow.common.originalSqliteNowLogger
@@ -26,9 +27,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -39,8 +40,8 @@ import kotlin.concurrent.Volatile
  *
  * The generated types build on this implementation across every supported Kotlin target:
  * Android/JVM, iOS/Native, macOS/Native, Linux/Native, JavaScript, and Kotlin/Wasm.
- * On browser targets the runtime uses SQL.js under the hood (with optional IndexedDB
- * snapshots) while native targets rely on the bundled SQLite driver.
+ * Browser targets use SQLiteNow's packaged direct-OPFS worker by default, JS Node uses a
+ * transient in-memory worker, and non-web targets retain the bundled SQLite driver.
  */
 open class SqliteNowDatabase private constructor(
     private val dbName: String,
@@ -67,8 +68,10 @@ open class SqliteNowDatabase private constructor(
         }
 
     // Table change notification system
-    private val tableChangeFlows = mutableMapOf<String, MutableSharedFlow<Unit>>()
-    private val tableChangesFlowMutex = Mutex()
+    private val tableChanges = MutableSharedFlow<Set<String>>(
+        replay = 0,
+        extraBufferCapacity = 1,
+    )
     @Volatile
     private var tableChangeScope: CoroutineScope? = null
 
@@ -239,13 +242,12 @@ open class SqliteNowDatabase private constructor(
     fun isOpen(): Boolean = _conn != null
 
     /**
-     * Forces any external persistence layer to store the current database snapshot.
+     * Requests that an external persistence layer store the current database snapshot.
      *
-     * Targets that back databases with a real file system (Android/iOS/JVM) persist changes
-     * automatically, so calling this function is a no-op and safe to call.
-     * It is primarily useful for the Kotlin/JS runtime when an external persistence
-     * implementation (for example, `IndexedDbSqlitePersistence`) is configured and
-     * `autoFlushPersistence` is disabled.
+     * The JS/Wasm direct worker performs no whole-database snapshot exports, so this method is a
+     * documented no-op there. File-backed targets persist ordinary writes in place. The method is
+     * retained for source compatibility and for any non-web persistence implementation that
+     * supports an explicit flush.
      */
     suspend fun persistSnapshotNow() {
         conn.persistSnapshotNow()
@@ -281,16 +283,7 @@ open class SqliteNowDatabase private constructor(
         if (!enableTableChangeNotifications || affectedTables.isEmpty()) return
 
         tableChangeScope?.launch {
-            val flowsToNotify = tableChangesFlowMutex.withLock {
-                affectedTables.asSequence()
-                    .map { tableChangeFlows[it.lowercase()] }
-                    .filterNotNull()
-                    .toList()
-            }
-
-            flowsToNotify.forEach { flow ->
-                flow.emit(Unit)
-            }
+            tableChanges.emit(affectedTables.mapTo(linkedSetOf()) { it.lowercase() })
         }
     }
 
@@ -306,15 +299,10 @@ open class SqliteNowDatabase private constructor(
             return flow { } // Empty flow for queries with no affected tables
         }
 
-        // Get or create SharedFlows for each table
-        val flows = tableChangesFlowMutex.withLock {
-            affectedTables.map { tableName ->
-                tableChangeFlows.getOrPut(tableName.lowercase()) {
-                    MutableSharedFlow(replay = 0, extraBufferCapacity = 1)
-                }.asSharedFlow()
-            }
-        }
-        return merge(*flows.toTypedArray())
+        val normalizedTables = affectedTables.mapTo(linkedSetOf()) { it.lowercase() }
+        return tableChanges
+            .filter { changedTables -> changedTables.any(normalizedTables::contains) }
+            .transform { emit(Unit) }
     }
 
     /**

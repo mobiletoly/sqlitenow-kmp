@@ -102,13 +102,25 @@ Full examples are available in [`/sample-kmp`](./sample-kmp) for KMP,
 Supported target details:
 
 - Kotlin Multiplatform: Android, iOS, `macosArm64`, `linuxX64`, `linuxArm64`,
-  JVM desktop/server, JavaScript browser, and Kotlin/Wasm browser.
+  JVM desktop/server, JavaScript browser, and Kotlin/Wasm browser. macOS support,
+  including the JVM runtime and repository development host, requires Apple Silicon;
+  Intel macOS is not supported.
 - Flutter/Dart: Flutter native runtimes through Dart VM and `package:sqlite3`,
   plus pure Dart packages through the Dart runtime.
 - Native Swift local package: Apple platforms through generated SwiftPM
   packages with reusable arm64 runtime XCFramework artifacts.
-- JavaScript uses SQL.js with optional IndexedDB persistence. Kotlin/Wasm uses
-  the same SQL.js runtime with automatic OPFS or IndexedDB persistence.
+- JavaScript browser and Kotlin/Wasm browser use the packaged SQLite worker by
+  default and persist directly to a deterministic OPFS database. JavaScript
+  Node uses the same public default provider with a transient in-memory worker;
+  closing and reopening starts empty.
+
+Browser use requires a secure context with Web Crypto, Web Locks, OPFS, and the
+official SQLite `OpfsDb` implementation. Applications must serve the packaged
+worker with the manifest-documented COOP, COEP, and CSP policy. Missing
+capabilities fail clearly; SQLiteNow does not fall back to snapshots,
+IndexedDB operational storage, or an in-memory browser database. Android, JVM,
+iOS arm64, macOS arm64, and Linux continue to open their platform SQLite files
+in place.
 
 Native Swift support currently uses local generated Swift packages on Apple
 platforms. Core Swift apps can keep SQL in a Swift/Xcode repository, run the

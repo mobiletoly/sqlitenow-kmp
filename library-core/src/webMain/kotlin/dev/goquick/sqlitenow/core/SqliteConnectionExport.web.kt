@@ -15,10 +15,10 @@
  */
 package dev.goquick.sqlitenow.core
 
-import dev.goquick.sqlitenow.core.sqlite.SqliteConnection
+import androidx.sqlite.SQLiteConnection
 
-internal actual fun exportConnectionBytes(connection: SqliteConnection): ByteArray? {
+internal actual fun exportConnectionBytes(connection: SQLiteConnection): ByteArray? {
     return connection.exportSnapshotBytes()
 }
 
-internal expect fun SqliteConnection.exportSnapshotBytes(): ByteArray?
+internal expect fun SQLiteConnection.exportSnapshotBytes(): ByteArray?

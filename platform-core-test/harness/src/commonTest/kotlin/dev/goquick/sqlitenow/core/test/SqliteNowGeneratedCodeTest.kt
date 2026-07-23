@@ -1,5 +1,6 @@
 package dev.goquick.sqlitenow.core.test
 
+import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.core.sqlite.use
 import dev.goquick.sqlitenow.core.test.db.LibraryTestDatabase
 import dev.goquick.sqlitenow.core.test.db.PersonQuery
@@ -21,11 +22,12 @@ class SqliteNowGeneratedCodeTest {
     private lateinit var database: LibraryTestDatabase
 
     private fun runDatabaseTest(block: suspend () -> Unit) = runPlatformTest {
-        database = TestDatabaseHelper.createDatabase()
+        val lease = TestDatabaseHelper.createDatabaseLease()
+        database = lease.database
         try {
             block()
         } finally {
-            database.close()
+            lease.closeAndCleanup()
         }
     }
 

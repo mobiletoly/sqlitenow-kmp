@@ -15,6 +15,8 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
+import androidx.sqlite.SQLiteStatement
+import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.common.sqliteNowLogger
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.TransactionMode
@@ -155,7 +157,7 @@ class DefaultOversqliteClient(
     }
 
     internal fun setSnapshotStageStatementCloseForTest(
-        close: ((dev.goquick.sqlitenow.core.sqlite.SqliteStatement) -> Unit)?,
+        close: ((SQLiteStatement) -> Unit)?,
     ) {
         stageStore.snapshotStatementCloseForTest = close
     }

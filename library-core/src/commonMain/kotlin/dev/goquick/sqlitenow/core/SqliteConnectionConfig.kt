@@ -18,8 +18,11 @@ package dev.goquick.sqlitenow.core
 /**
  * Configuration applied when opening a database connection.
  *
- * Currently only used by the SQL.js (JS) implementation to enable client-side persistence,
- * but the contract lives in common code so callers can configure it from shared modules.
+ * On JS/Wasm, a non-null [persistence] is an optional source for one-time legacy byte import into
+ * the direct worker database. The worker may call only [SqlitePersistence.load] after requesting
+ * that source; direct writes do not call [SqlitePersistence.persist] or [SqlitePersistence.clear],
+ * and [autoFlushPersistence] has no snapshot-export role. Other targets retain their existing
+ * persistence behavior.
  */
 data class SqliteConnectionConfig(
     val persistence: SqlitePersistence? = null,
@@ -34,8 +37,10 @@ data class SqliteConnectionConfig(
 /**
  * Provides a storage mechanism for persisting a SQLite database.
  *
- * Implementations are expected to load the database bytes (if they exist) before the connection
- * is opened and to persist updated bytes whenever requested by the runtime.
+ * This source-compatible contract has target-specific semantics. On the JS/Wasm direct worker,
+ * an explicitly configured implementation is a one-time legacy import source: only [load] may be
+ * requested. The worker never calls [persist] or [clear]. Non-web targets retain their existing
+ * persistence behavior.
  */
 interface SqlitePersistence {
     /**

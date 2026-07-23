@@ -1,14 +1,17 @@
 import org.gradle.api.tasks.JavaExec
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
-import org.gradle.language.jvm.tasks.ProcessResources
 import org.jetbrains.kotlin.gradle.targets.jvm.KotlinJvmTarget
 
 val composeDesktopCurrentOsDependency = run {
     val os = System.getProperty("os.name").lowercase()
     val arch = System.getProperty("os.arch").lowercase()
     val targetId = when {
-        os.contains("mac") || os.contains("darwin") ->
-            if (arch.contains("aarch64") || arch.contains("arm64")) "macos-arm64" else "macos-x64"
+        os.contains("mac") || os.contains("darwin") -> {
+            require(arch.contains("aarch64") || arch.contains("arm64")) {
+                "SQLiteNow samples do not support Intel macOS hosts."
+            }
+            "macos-arm64"
+        }
         os.contains("win") ->
             if (arch.contains("aarch64") || arch.contains("arm64")) "windows-arm64" else "windows-x64"
         else ->
@@ -105,8 +108,6 @@ kotlin {
             implementation(libs.jetbrains.compose.foundation)
             implementation(libs.jetbrains.compose.material)
             implementation(libs.jetbrains.compose.ui)
-            implementation(devNpm("copy-webpack-plugin", "11.0.0"))
-            implementation(npm("sql.js", "1.13.0"))
         }
 
         wasmJsMain.dependencies {
@@ -114,7 +115,6 @@ kotlin {
             implementation(libs.jetbrains.compose.foundation)
             implementation(libs.jetbrains.compose.material)
             implementation(libs.jetbrains.compose.ui)
-            implementation(npm("sql.js", "1.13.0"))
         }
     }
 }
@@ -151,16 +151,4 @@ sqliteNow {
             debug = false
         }
     }
-}
-
-val libraryProject = project(":library-core")
-val librarySqlJsResource = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sqlitenow-sqljs.js")
-val librarySqlWasmBinary = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sql-wasm.wasm")
-val libraryIndexedDbResource = libraryProject.layout.buildDirectory.file("processedResources/wasmJs/main/sqlitenow-indexeddb.js")
-
-tasks.named<ProcessResources>("wasmJsProcessResources") {
-    dependsOn(libraryProject.tasks.named("wasmJsProcessResources"))
-    from(librarySqlJsResource)
-    from(librarySqlWasmBinary)
-    from(libraryIndexedDbResource)
 }

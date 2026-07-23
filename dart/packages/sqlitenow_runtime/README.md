@@ -15,10 +15,10 @@ Use the same version for the SQLiteNow runtime and generator:
 
 ```yaml
 dependencies:
-  sqlitenow_runtime: ^0.10.0
+  sqlitenow_runtime: ^0.16.0
 
 dev_dependencies:
-  sqlitenow_cli: ^0.10.0
+  sqlitenow_cli: ^0.16.0
 ```
 
 ## Define your database

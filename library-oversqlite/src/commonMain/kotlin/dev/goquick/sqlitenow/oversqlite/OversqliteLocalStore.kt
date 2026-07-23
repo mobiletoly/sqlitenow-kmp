@@ -15,8 +15,9 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
+import androidx.sqlite.SQLiteStatement
+import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
-import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -248,7 +249,7 @@ internal class OversqliteLocalStore(
     }
 
     private suspend fun bindPrimaryKey(
-        statement: dev.goquick.sqlitenow.core.sqlite.SqliteStatement,
+        statement: SQLiteStatement,
         index: Int,
         tableName: String,
         pkValue: String,
@@ -277,7 +278,7 @@ internal class OversqliteLocalStore(
     }
 
     private suspend fun bindPayloadValue(
-        statement: dev.goquick.sqlitenow.core.sqlite.SqliteStatement,
+        statement: SQLiteStatement,
         index: Int,
         column: ColumnInfo,
         value: JsonElement,
@@ -293,11 +294,11 @@ internal class SnapshotUpsertPlan(
 ) {
     internal class PreparedTable(
         val tableInfo: TableInfo,
-        val statement: SqliteStatement,
+        val statement: SQLiteStatement,
         var used: Boolean = false,
     )
 
-    fun upsertAuthoritativeRow(
+    suspend fun upsertAuthoritativeRow(
         tableName: String,
         payload: JsonObject,
     ) {

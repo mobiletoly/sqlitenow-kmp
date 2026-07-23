@@ -19,6 +19,18 @@ plugins {
     id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
 }
 
+val sqliteNowHostOs = System.getProperty("os.name").lowercase()
+val sqliteNowHostArch = System.getProperty("os.arch").lowercase()
+val sqliteNowHostIsMac = sqliteNowHostOs.contains("mac") || sqliteNowHostOs.contains("darwin")
+val sqliteNowHostIsArm64 =
+    sqliteNowHostArch.contains("aarch64") || sqliteNowHostArch.contains("arm64")
+if (sqliteNowHostIsMac && !sqliteNowHostIsArm64) {
+    throw GradleException(
+        "SQLiteNow repository development does not support Intel macOS hosts. " +
+            "Use an Apple Silicon macOS host or a supported Linux/Windows host.",
+    )
+}
+
 includeBuild("sqlitenow-compiler")
 
 dependencyResolutionManagement {

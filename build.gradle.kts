@@ -50,6 +50,21 @@ fun registerOversqliteExecTask(
     }
 }
 
+fun oversqliteWebEnv(
+    platform: Boolean,
+    realServer: Boolean,
+    heavy: Boolean,
+    baseUrl: String? = null,
+): Map<String, String> =
+    buildMap {
+        put("OVERSQLITE_PLATFORM_TESTS", platform.toString())
+        put("OVERSQLITE_REALSERVER_TESTS", realServer.toString())
+        put("OVERSQLITE_REALSERVER_HEAVY", heavy.toString())
+        if (baseUrl != null) {
+            put("OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL", baseUrl)
+        }
+    }
+
 fun sha256(file: File): String {
     val digest = MessageDigest.getInstance("SHA-256")
     file.inputStream().use { input ->
@@ -61,6 +76,47 @@ fun sha256(file: File): String {
         }
     }
     return digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+}
+
+fun verifyNoPhase7GeneratedProductionResidue(root: File, owner: String) {
+    check(root.isDirectory) { "$owner production output is missing: $root" }
+    val forbiddenAssetNames = setOf(
+        "sqlitenow-sqljs.js",
+        "sqlitenow-indexeddb.js",
+        "sql-wasm.wasm",
+    )
+    val forbiddenResolutionTokens = listOf(
+        "'sql.js",
+        "\"sql.js",
+        "require('sql.js",
+        "require(\"sql.js",
+        "from 'sql.js",
+        "from \"sql.js",
+        "SqlJsSQLiteConnection",
+        "sqlitenow-sqljs",
+        "sqlitenow-indexeddb",
+        "sql-wasm.wasm",
+    )
+    val files = root.walkTopDown()
+        .filter { it.isFile }
+        .toList()
+    val forbiddenAssets = files
+        .filter { it.name in forbiddenAssetNames }
+        .map { it.relativeTo(root).invariantSeparatorsPath }
+    check(forbiddenAssets.isEmpty()) {
+        "$owner contains forbidden SQL.js compatibility assets: ${forbiddenAssets.sorted()}"
+    }
+    val forbiddenMatches = files
+        .filter { it.extension in setOf("json", "js", "mjs", "cjs") }
+        .mapNotNull { file ->
+            val text = file.readText()
+            forbiddenResolutionTokens
+                .firstOrNull { token -> token in text }
+                ?.let { token -> "${file.relativeTo(root).invariantSeparatorsPath}: $token" }
+        }
+    check(forbiddenMatches.isEmpty()) {
+        "$owner still resolves SQL.js or legacy assets: ${forbiddenMatches.sorted()}"
+    }
 }
 
 tasks.register<Exec>("oversqliteCrossRepoConformance") {
@@ -878,6 +934,8 @@ tasks.register("swiftHybridSupportGate") {
     dependsOn(
         "sampleSwiftSupportGate",
         "sampleSyncSwiftSupportGate",
+        ":swift:runtime:core:swiftTest",
+        ":swift:runtime:sync:swiftTest",
         ":swift:fixtures:package:core:swiftTest",
         ":swift:fixtures:package:sync:swiftTest",
         ":library-core:jvmTest",
@@ -903,6 +961,7 @@ tasks.register("oversqlitePlatformAll") {
         "oversqlitePlatformIosSimulatorArm64",
         "oversqlitePlatformMacosArm64",
         "oversqlitePlatformJsNode",
+        "oversqlitePlatformJsBrowser",
         "oversqlitePlatformWasmBrowser",
     )
 }
@@ -954,8 +1013,17 @@ registerCorePlatformExecTask(
 
 registerCorePlatformExecTask(
     name = "corePlatformLinuxArm64",
-    description = "Runs the Linux arm64 SQLiteNow core platform harness on a compatible Linux ARM host.",
-    arguments = listOf(":platform-core-test:harness:linuxArm64Test"),
+    description = "Runs the Linux arm64 SQLiteNow core platform harness, or compiles and links it on other hosts.",
+    arguments = listOf(
+        if (
+            System.getProperty("os.name").startsWith("Linux", ignoreCase = true) &&
+            System.getProperty("os.arch") in setOf("aarch64", "arm64")
+        ) {
+            ":platform-core-test:harness:linuxArm64Test"
+        } else {
+            ":platform-core-test:harness:linkDebugTestLinuxArm64"
+        },
+    ),
 )
 
 registerCorePlatformExecTask(
@@ -969,6 +1037,207 @@ registerCorePlatformExecTask(
     description = "Runs the Wasm browser SQLiteNow core platform harness.",
     arguments = listOf(":platform-core-test:harness:wasmJsBrowserTest"),
 )
+
+val obsoletePhase0GeneratedPackageRoots = listOf(
+    layout.buildDirectory.dir("js/packages/sqlitenow-kmp-platform-core-test-sqlite27-proof"),
+    layout.buildDirectory.dir("js/packages/sqlitenow-kmp-platform-core-test-sqlite27-proof-test"),
+    layout.buildDirectory.dir("wasm/packages/sqlitenow-kmp-platform-core-test-sqlite27-proof"),
+    layout.buildDirectory.dir("wasm/packages/sqlitenow-kmp-platform-core-test-sqlite27-proof-test"),
+)
+
+val obsoletePhase7SqlJsGeneratedRoots = listOf(
+    layout.buildDirectory.dir("js/packages/sqlitenow-kmp-library-oversqlite-test"),
+    layout.buildDirectory.dir("wasm/packages/sqlitenow-kmp-library-oversqlite-test"),
+    project(":library-core").layout.buildDirectory.dir("generated/sqljs/wasm"),
+)
+
+val cleanObsoletePhase0GeneratedPackages by tasks.registering(org.gradle.api.tasks.Delete::class) {
+    delete(obsoletePhase0GeneratedPackageRoots)
+}
+
+val cleanObsoletePhase7SqlJsGeneratedState by tasks.registering(org.gradle.api.tasks.Delete::class) {
+    delete(obsoletePhase7SqlJsGeneratedRoots)
+}
+
+val verifyNoObsoletePhase0GeneratedPackages by tasks.registering {
+    group = "verification"
+    description = "Requires all generated package copies of the removed SQLite 2.7 Phase 0 proof to be absent."
+
+    doLast {
+        val retainedRoots = obsoletePhase0GeneratedPackageRoots
+            .map { it.get().asFile }
+            .filter { it.exists() }
+            .map { it.relativeTo(rootDir).invariantSeparatorsPath }
+        check(retainedRoots.isEmpty()) {
+            "Removed Phase 0 proof generated package roots remain: ${retainedRoots.sorted()}"
+        }
+    }
+}
+
+val verifyNoObsoletePhase7SqlJsGeneratedState by tasks.registering {
+    group = "verification"
+    description = "Requires obsolete generated SQL.js state and stale test-package residue to be absent."
+
+    doLast {
+        val generatedRoots = obsoletePhase7SqlJsGeneratedRoots.map { it.get().asFile }
+        val obsoleteFixtureRoot = generatedRoots.last()
+        check(!obsoleteFixtureRoot.exists()) {
+            "Obsolete generated SQL.js fixture root remains: " +
+                obsoleteFixtureRoot.relativeTo(rootDir).invariantSeparatorsPath
+        }
+
+        val forbiddenAssetNames = setOf(
+            "sqlitenow-sqljs.js",
+            "sqlitenow-indexeddb.js",
+            "sql-wasm.wasm",
+        )
+        val forbiddenResolutionTokens = listOf(
+            "sql.js/dist/sql-wasm.js",
+            "SqlJsSQLiteConnection",
+            "sqlitenow-sqljs",
+            "sqlitenow-indexeddb",
+        )
+        val genericSqlJsModuleSpecifier =
+            Regex("""["'`]sql\.js(?:/[^"'`]*)?["'`]""")
+        val genericResolutionRegressionCases = listOf(
+            """{"dependencies":{"sql.js":"1.13.0"}}""",
+            """const initSqlJs = require("sql.js")""",
+            """import initSqlJs from "sql.js/dist/sql-wasm.js"""",
+            """const initSqlJs = import("sql.js")""",
+            """const initSqlJs = import(`sql.js`)""",
+        )
+        check(genericResolutionRegressionCases.all(genericSqlJsModuleSpecifier::containsMatchIn)) {
+            "Generated-state SQL.js module-specifier verifier regression."
+        }
+        val residue = generatedRoots.dropLast(1)
+            .filter { it.isDirectory }
+            .flatMap { root ->
+                root.walkTopDown()
+                    .filter { it.isFile }
+                    .mapNotNull { file ->
+                        val relative = file.relativeTo(rootDir).invariantSeparatorsPath
+                        when {
+                            file.name in forbiddenAssetNames -> relative
+                            file.extension in setOf("json", "js", "mjs", "cjs") -> {
+                                val content = file.readText()
+                                forbiddenResolutionTokens
+                                    .firstOrNull { it in content }
+                                    ?.let { "$relative: $it" }
+                                    ?: genericSqlJsModuleSpecifier
+                                        .find(content)
+                                        ?.value
+                                        ?.let { "$relative: $it" }
+                            }
+                            else -> null
+                        }
+                    }
+                    .toList()
+            }
+        check(residue.isEmpty()) {
+            "Generated Oversqlite test packages retain SQL.js residue: ${residue.sorted()}"
+        }
+    }
+}
+
+val refreshPhase7GeneratedProductionOutputs by tasks.registering(Exec::class) {
+    group = "verification"
+    description = "Regenerates exact production Core-consumer sample JS/Wasm outputs."
+    dependsOn(
+        ":library-core:verifySqliteWorkerPublicationAssets",
+        cleanObsoletePhase0GeneratedPackages,
+        cleanObsoletePhase7SqlJsGeneratedState,
+    )
+    workingDir = rootDir
+
+    doFirst {
+        project.delete(
+            layout.buildDirectory.dir("js/packages/sqlitenow-kmp-sample-kmp-composeApp"),
+            layout.buildDirectory.dir("wasm/packages/sqlitenow-kmp-sample-kmp-composeApp"),
+            layout.buildDirectory.dir("js/packages/sqlitenow-kmp-samplesync-kmp-composeApp"),
+            layout.buildDirectory.dir("wasm/packages/sqlitenow-kmp-samplesync-kmp-composeApp"),
+            project(":sample-kmp:composeApp").layout.buildDirectory
+                .dir("compileSync/js/main/productionExecutable"),
+            project(":sample-kmp:composeApp").layout.buildDirectory
+                .dir("compileSync/wasmJs/main/productionExecutable"),
+            project(":sample-kmp:composeApp").layout.buildDirectory
+                .dir("kotlin-webpack/js/productionExecutable"),
+            project(":sample-kmp:composeApp").layout.buildDirectory
+                .dir("kotlin-webpack/wasmJs/productionExecutable"),
+            project(":samplesync-kmp:composeApp").layout.buildDirectory
+                .dir("compileSync/js/main/productionExecutable"),
+            project(":samplesync-kmp:composeApp").layout.buildDirectory
+                .dir("compileSync/wasmJs/main/productionExecutable"),
+            project(":samplesync-kmp:composeApp").layout.buildDirectory
+                .dir("kotlin-webpack/js/productionExecutable"),
+            project(":samplesync-kmp:composeApp").layout.buildDirectory
+                .dir("kotlin-webpack/wasmJs/productionExecutable"),
+        )
+    }
+    executable = rootProject.file("gradlew").absolutePath
+    args(
+        ":sample-kmp:composeApp:jsBrowserProductionWebpack",
+        ":sample-kmp:composeApp:wasmJsBrowserProductionWebpack",
+        ":samplesync-kmp:composeApp:jsBrowserProductionWebpack",
+        ":samplesync-kmp:composeApp:wasmJsBrowserProductionWebpack",
+        "--no-daemon",
+        "--rerun-tasks",
+        "--console=plain",
+    )
+}
+
+verifyNoObsoletePhase0GeneratedPackages {
+    mustRunAfter(
+        cleanObsoletePhase0GeneratedPackages,
+        refreshPhase7GeneratedProductionOutputs,
+    )
+}
+
+verifyNoObsoletePhase7SqlJsGeneratedState {
+    mustRunAfter(
+        cleanObsoletePhase7SqlJsGeneratedState,
+        refreshPhase7GeneratedProductionOutputs,
+    )
+}
+
+tasks.register("verifyPhase7GeneratedProductionOutputs") {
+    group = "verification"
+    description = "Regenerates and verifies production-shaped Core and sample web outputs."
+    dependsOn(
+        refreshPhase7GeneratedProductionOutputs,
+        verifyNoObsoletePhase0GeneratedPackages,
+        verifyNoObsoletePhase7SqlJsGeneratedState,
+    )
+
+    doLast {
+        listOf(
+            "js" to "sqlitenow-kmp-sample-kmp-composeApp",
+            "wasm" to "sqlitenow-kmp-sample-kmp-composeApp",
+            "js" to "sqlitenow-kmp-samplesync-kmp-composeApp",
+            "wasm" to "sqlitenow-kmp-samplesync-kmp-composeApp",
+        ).forEach { (target, packageName) ->
+            verifyNoPhase7GeneratedProductionResidue(
+                layout.buildDirectory.dir("$target/packages/$packageName").get().asFile,
+                "$packageName generated $target package",
+            )
+        }
+        listOf(
+            project(":sample-kmp:composeApp"),
+            project(":samplesync-kmp:composeApp"),
+        ).forEach { sampleProject ->
+            listOf(
+                "compileSync/js/main/productionExecutable",
+                "compileSync/wasmJs/main/productionExecutable",
+                "kotlin-webpack/js/productionExecutable",
+                "kotlin-webpack/wasmJs/productionExecutable",
+            ).forEach { relativePath ->
+                verifyNoPhase7GeneratedProductionResidue(
+                    sampleProject.layout.buildDirectory.dir(relativePath).get().asFile,
+                    "${sampleProject.path} $relativePath",
+                )
+            }
+        }
+    }
+}
 
 tasks.register("oversqliteRealserverJvm") {
     group = "verification"
@@ -992,6 +1261,7 @@ tasks.register("oversqliteRealserverAll") {
         "oversqliteRealserverIosSimulatorArm64",
         "oversqliteRealserverMacosArm64",
         "oversqliteRealserverJsNode",
+        "oversqliteRealserverJsBrowser",
         "oversqliteRealserverWasmBrowser",
     )
 }
@@ -1044,15 +1314,37 @@ registerOversqliteExecTask(
 
 registerOversqliteExecTask(
     name = "oversqlitePlatformJsNode",
-    description = "Runs the JS Node oversqlite platform suite.",
-    env = mapOf("OVERSQLITE_PLATFORM_TESTS" to "true"),
+    description = "Runs the JS Node default SQLite worker oversqlite platform suite.",
+    alwaysRun = true,
+    env = oversqliteWebEnv(
+        platform = true,
+        realServer = false,
+        heavy = false,
+    ),
     arguments = listOf(":platform-oversqlite-test:composeApp:jsNodeTest"),
 )
 
 registerOversqliteExecTask(
+    name = "oversqlitePlatformJsBrowser",
+    description = "Runs the JS browser default SQLite worker oversqlite platform suite.",
+    alwaysRun = true,
+    env = oversqliteWebEnv(
+        platform = true,
+        realServer = false,
+        heavy = false,
+    ),
+    arguments = listOf(":platform-oversqlite-test:composeApp:jsBrowserTest"),
+)
+
+registerOversqliteExecTask(
     name = "oversqlitePlatformWasmBrowser",
-    description = "Runs the Wasm browser oversqlite platform suite.",
-    env = mapOf("OVERSQLITE_PLATFORM_TESTS" to "true"),
+    description = "Runs the Wasm browser default SQLite worker oversqlite platform suite.",
+    alwaysRun = true,
+    env = oversqliteWebEnv(
+        platform = true,
+        realServer = false,
+        heavy = false,
+    ),
     arguments = listOf(":platform-oversqlite-test:composeApp:wasmJsBrowserTest"),
 )
 
@@ -1162,50 +1454,65 @@ registerOversqliteExecTask(
 
 registerOversqliteExecTask(
     name = "oversqliteRealserverJsNode",
-    description = "Runs the JS Node oversqlite realserver suite.",
+    description = "Runs the JS Node default SQLite worker oversqlite realserver suite.",
     alwaysRun = true,
-    env =
-        mapOf(
-            "OVERSQLITE_REALSERVER_TESTS" to "true",
-            "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL" to hostRealserverBaseUrl,
-        ),
+    env = oversqliteWebEnv(
+        platform = false,
+        realServer = true,
+        heavy = false,
+        baseUrl = hostRealserverBaseUrl,
+    ),
     arguments = listOf(":platform-oversqlite-test:composeApp:jsNodeTest"),
 )
 
 registerOversqliteExecTask(
-    name = "oversqliteRealserverJsNodeHeavy",
-    description = "Runs the JS Node oversqlite realserver suite in heavy mode.",
+    name = "oversqliteRealserverJsBrowser",
+    description = "Runs the JS browser default SQLite worker oversqlite realserver suite.",
     alwaysRun = true,
-    env =
-        mapOf(
-            "OVERSQLITE_REALSERVER_TESTS" to "true",
-            "OVERSQLITE_REALSERVER_HEAVY" to "true",
-            "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL" to hostRealserverBaseUrl,
-        ),
+    env = oversqliteWebEnv(
+        platform = false,
+        realServer = true,
+        heavy = false,
+        baseUrl = hostRealserverBaseUrl,
+    ),
+    arguments = listOf(":platform-oversqlite-test:composeApp:jsBrowserTest"),
+)
+
+registerOversqliteExecTask(
+    name = "oversqliteRealserverJsNodeHeavy",
+    description = "Runs the JS Node default SQLite worker oversqlite realserver suite in heavy mode.",
+    alwaysRun = true,
+    env = oversqliteWebEnv(
+        platform = false,
+        realServer = true,
+        heavy = true,
+        baseUrl = hostRealserverBaseUrl,
+    ),
     arguments = listOf(":platform-oversqlite-test:composeApp:jsNodeTest"),
 )
 
 registerOversqliteExecTask(
     name = "oversqliteRealserverWasmBrowser",
-    description = "Runs the Wasm browser oversqlite realserver suite.",
+    description = "Runs the Wasm browser default SQLite worker oversqlite realserver suite.",
     alwaysRun = true,
-    env =
-        mapOf(
-            "OVERSQLITE_REALSERVER_TESTS" to "true",
-            "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL" to hostRealserverBaseUrl,
-        ),
+    env = oversqliteWebEnv(
+        platform = false,
+        realServer = true,
+        heavy = false,
+        baseUrl = hostRealserverBaseUrl,
+    ),
     arguments = listOf(":platform-oversqlite-test:composeApp:wasmJsBrowserTest"),
 )
 
 registerOversqliteExecTask(
     name = "oversqliteRealserverWasmBrowserHeavy",
-    description = "Runs the Wasm browser oversqlite realserver suite in heavy mode.",
+    description = "Runs the Wasm browser default SQLite worker oversqlite realserver suite in heavy mode.",
     alwaysRun = true,
-    env =
-        mapOf(
-            "OVERSQLITE_REALSERVER_TESTS" to "true",
-            "OVERSQLITE_REALSERVER_HEAVY" to "true",
-            "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL" to hostRealserverBaseUrl,
-        ),
+    env = oversqliteWebEnv(
+        platform = false,
+        realServer = true,
+        heavy = true,
+        baseUrl = hostRealserverBaseUrl,
+    ),
     arguments = listOf(":platform-oversqlite-test:composeApp:wasmJsBrowserTest"),
 )

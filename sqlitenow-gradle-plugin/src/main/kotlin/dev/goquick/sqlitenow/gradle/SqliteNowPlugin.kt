@@ -25,6 +25,7 @@ import org.gradle.api.artifacts.Configuration
 import org.gradle.api.artifacts.component.ComponentIdentifier
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.component.ProjectComponentIdentifier
+import org.gradle.api.GradleException
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.plugins.ExtensionAware
@@ -32,6 +33,7 @@ import org.gradle.api.tasks.Exec
 import org.gradle.language.jvm.tasks.ProcessResources
 import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.zip.ZipFile
 
 class SqliteNowPlugin : Plugin<Project> {
     override fun apply(project: Project) {
@@ -47,7 +49,7 @@ class SqliteNowPlugin : Plugin<Project> {
             val mppExt = project.extensions
                 .getByType(KotlinMultiplatformExtension::class.java)
 
-            configureWasmResourceBundling(project)
+            configureWebResourceBundling(project)
 
             // For each db entry in commonMain, register task and wire srcDir
             ext.databases.all { db ->
@@ -334,65 +336,166 @@ private fun hasOversqliteRuntimeDependency(project: Project): Boolean {
     }
 }
 
-private fun configureWasmResourceBundling(project: Project) {
+private const val SQLITE_WORKER_RESOURCE_NAMESPACE = "sqlitenow-worker-v1"
+
+private data class WebResourceTarget(
+    val processResourcesTaskName: String,
+    val preferredClasspathName: String,
+    val fallbackClasspathName: String,
+    val resourcePatterns: List<String>,
+)
+
+private fun configureWebResourceBundling(project: Project) {
+    val targets = listOf(
+        WebResourceTarget(
+            processResourcesTaskName = "jsProcessResources",
+            preferredClasspathName = "jsMainCompileClasspath",
+            fallbackClasspathName = "jsCompileClasspath",
+            resourcePatterns = listOf("$SQLITE_WORKER_RESOURCE_NAMESPACE/**"),
+        ),
+        WebResourceTarget(
+            processResourcesTaskName = "wasmJsProcessResources",
+            preferredClasspathName = "wasmJsMainCompileClasspath",
+            fallbackClasspathName = "wasmJsCompileClasspath",
+            resourcePatterns = listOf("$SQLITE_WORKER_RESOURCE_NAMESPACE/**"),
+        ),
+    )
+
+    targets.forEach { target ->
+        configureWebTargetResourceBundling(project, target)
+    }
+}
+
+private fun configureWebTargetResourceBundling(
+    project: Project,
+    target: WebResourceTarget,
+) {
     val configured = AtomicBoolean(false)
-    val preferredName = "wasmJsMainCompileClasspath"
-    val fallbackName = "wasmJsCompileClasspath"
-    project.configurations.matching { it.name == preferredName || it.name == fallbackName }.all { wasmClasspath ->
+    project.configurations.matching {
+        it.name == target.preferredClasspathName || it.name == target.fallbackClasspathName
+    }.all { classpath ->
         if (configured.get()) return@all
-        if (wasmClasspath.name == fallbackName &&
-            project.configurations.findByName(preferredName) != null
+        if (
+            classpath.name == target.fallbackClasspathName &&
+            project.configurations.findByName(target.preferredClasspathName) != null
         ) {
             return@all
         }
         configured.set(true)
-        project.tasks.withType(ProcessResources::class.java).configureEach { task ->
-            if (task.name != "wasmJsProcessResources") return@configureEach
-            task.dependsOn(wasmClasspath)
-            task.from({ resolveSqliteNowWasmKlibs(project, wasmClasspath).map { project.zipTree(it) } }) { spec ->
-                spec.include(
-                    "sqlitenow-sqljs.js",
-                    "sqlitenow-indexeddb.js",
-                    "sql-wasm.wasm"
-                )
+        project.afterEvaluate {
+            val coreProjectDependencies = inheritedProjectDependencies(classpath)
+                .mapNotNull { dependency ->
+                    project.rootProject.findProject(dependency.path)
+                }
+                .filter { it.name == "library-core" }
+            project.tasks.withType(ProcessResources::class.java).configureEach { task ->
+                if (task.name != target.processResourcesTaskName) return@configureEach
+                task.dependsOn(classpath)
+                coreProjectDependencies.forEach { dependencyProject ->
+                    val dependencyResources =
+                        dependencyProject.tasks.findByName(target.processResourcesTaskName)
+                            as? ProcessResources ?: return@forEach
+                    task.dependsOn(dependencyResources)
+                    task.from({ dependencyResources.destinationDir }) { spec ->
+                        spec.include(target.resourcePatterns)
+                    }
+                }
+                task.doFirst {
+                    project.delete(
+                        task.destinationDir.resolve(SQLITE_WORKER_RESOURCE_NAMESPACE),
+                        task.destinationDir.resolve("sqlitenow-sqlite-worker-client.mjs"),
+                        task.destinationDir.resolve("sqlitenow-sqlite-worker.mjs"),
+                        task.destinationDir.resolve("sqlitenow-sqlite-worker"),
+                        task.destinationDir.resolve("sqlitenow-sqljs.js"),
+                        task.destinationDir.resolve("sqlitenow-indexeddb.js"),
+                        task.destinationDir.resolve("sql-wasm.wasm"),
+                    )
+                }
+                task.from({
+                    resolveSqliteNowResourceKlibs(project, classpath).map { project.zipTree(it) }
+                }) { spec ->
+                    spec.include(target.resourcePatterns)
+                }
             }
         }
     }
 }
 
-private fun resolveSqliteNowWasmKlibs(project: Project, classpath: Configuration): Set<java.io.File> {
+private fun inheritedProjectDependencies(classpath: Configuration): Set<ProjectDependency> {
+    val visited = mutableSetOf<Configuration>()
+    val result = linkedSetOf<ProjectDependency>()
+
+    fun visit(configuration: Configuration) {
+        if (!visited.add(configuration)) return
+        result += configuration.dependencies.withType(ProjectDependency::class.java)
+        configuration.extendsFrom.forEach(::visit)
+    }
+
+    visit(classpath)
+    return result
+}
+
+private fun resolveSqliteNowResourceKlibs(
+    project: Project,
+    classpath: Configuration,
+): Set<java.io.File> {
     val artifacts = classpath.incoming.artifactView { }.artifacts
-    val klibs = artifacts.artifacts.mapNotNull { artifact ->
+    val klibArtifacts = artifacts.artifacts.filter { artifact ->
+        artifact.file.extension == "klib"
+    }
+    val identifiedKlibs = klibArtifacts.mapNotNull { artifact ->
         val file = artifact.file
-        if (file.extension != "klib") {
-            return@mapNotNull null
-        }
-        if (isSqliteNowComponent(project, artifact.id.componentIdentifier)) {
+        if (isSqliteNowCoreComponent(project, artifact.id.componentIdentifier)) {
             return@mapNotNull file
         }
         null
     }.toSet()
 
-    if (klibs.isNotEmpty()) {
-        return klibs
+    if (identifiedKlibs.isNotEmpty()) {
+        return requireUnambiguousWorkerResourceKlib(identifiedKlibs, "SQLiteNow Core component")
     }
 
-    return artifacts.artifacts.mapNotNull { artifact ->
+    val manifestKlibs = klibArtifacts.map { it.file }.filter { file ->
+        ZipFile(file).use { archive ->
+            archive.getEntry("$SQLITE_WORKER_RESOURCE_NAMESPACE/asset-manifest.json") != null
+        }
+    }.toSet()
+    if (manifestKlibs.isNotEmpty()) {
+        return requireUnambiguousWorkerResourceKlib(manifestKlibs, "authored worker manifest")
+    }
+
+    val namedKlibs = klibArtifacts.mapNotNull { artifact ->
         val file = artifact.file
-        if (file.extension == "klib" && file.name.contains("sqlitenow", ignoreCase = true)) {
+        if (file.name.contains("sqlitenow", ignoreCase = true)) {
             file
         } else {
             null
         }
     }.toSet()
+    return requireUnambiguousWorkerResourceKlib(namedKlibs, "legacy artifact name")
 }
 
-private fun isSqliteNowComponent(project: Project, id: ComponentIdentifier): Boolean {
+private fun requireUnambiguousWorkerResourceKlib(
+    candidates: Set<java.io.File>,
+    identification: String,
+): Set<java.io.File> {
+    if (candidates.size > 1) {
+        throw GradleException(
+            "Ambiguous SQLiteNow Core worker resources: $identification matched " +
+                candidates.map { it.absolutePath }.sorted().joinToString(),
+        )
+    }
+    return candidates
+}
+
+private fun isSqliteNowCoreComponent(project: Project, id: ComponentIdentifier): Boolean {
     return when (id) {
-        is ModuleComponentIdentifier -> id.group == "dev.goquick.sqlitenow"
+        is ModuleComponentIdentifier ->
+            id.group == "dev.goquick.sqlitenow" && id.module == "core"
         is ProjectComponentIdentifier -> {
             val targetProject = project.rootProject.findProject(id.projectPath) ?: return false
-            targetProject.group.toString() == "dev.goquick.sqlitenow"
+            targetProject.group.toString() == "dev.goquick.sqlitenow" &&
+                targetProject.name == "library-core"
         }
         else -> false
     }

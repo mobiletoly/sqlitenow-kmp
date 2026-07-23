@@ -15,8 +15,9 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
+import androidx.sqlite.SQLiteStatement
+import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
-import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
 import dev.goquick.sqlitenow.core.sqlite.use
 
 internal class OversqliteSyncStateStore(
@@ -103,7 +104,7 @@ internal class OversqliteSyncStateStore(
         keyJson: String,
         statementCache: StatementCache?,
         missing: () -> T,
-        found: (SqliteStatement) -> T,
+        found: (SQLiteStatement) -> T,
     ): T {
         return db.withPreparedStatement(
             sql = sql,
@@ -269,12 +270,12 @@ internal class OversqliteSyncStateStore(
 }
 
 internal class SnapshotRowStatePlan(
-    private val statement: SqliteStatement,
+    private val statement: SQLiteStatement,
     private val reusableStatementCleanup: ReusableStatementCleanup = DefaultReusableStatementCleanup,
 ) {
     private var used = false
 
-    fun update(
+    suspend fun update(
         schemaName: String,
         tableName: String,
         keyJson: String,

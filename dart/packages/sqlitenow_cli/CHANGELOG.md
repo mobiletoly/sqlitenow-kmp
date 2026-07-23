@@ -1,3 +1,7 @@
+# 0.16.0
+
+- Refresh the embedded SQLiteNow compiler and release metadata for SQLiteNow 0.16.0.
+
 # 0.15.0
 
 - Refresh the embedded SQLiteNow compiler and release metadata for SQLiteNow 0.15.0.

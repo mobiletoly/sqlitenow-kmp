@@ -16,11 +16,11 @@ Use the same version for all SQLiteNow packages:
 
 ```yaml
 dependencies:
-  sqlitenow_runtime: ^0.10.0
-  sqlitenow_oversqlite: ^0.10.0
+  sqlitenow_runtime: ^0.16.0
+  sqlitenow_oversqlite: ^0.16.0
 
 dev_dependencies:
-  sqlitenow_cli: ^0.10.0
+  sqlitenow_cli: ^0.16.0
 ```
 
 ## Generate a sync-enabled database

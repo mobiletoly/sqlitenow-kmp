@@ -4,6 +4,7 @@ import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.oversqlite.AttachOutcome
 import dev.goquick.sqlitenow.oversqlite.AuthorityStatus
 import dev.goquick.sqlitenow.oversqlite.OversqliteClient
+import dev.goquick.sqlitenow.oversqlite.Phase6OwnedStorage
 import dev.goquick.sqlitenow.oversqlite.PushOutcome
 import dev.goquick.sqlitenow.oversqlite.RemoteSyncOutcome
 import dev.goquick.sqlitenow.oversqlite.platform.generated.RealServerGeneratedDatabase
@@ -22,6 +23,38 @@ import kotlin.test.assertTrue
 
 internal class RealServerGeneratedRichNumericTest : RealServerHarnessSupport() {
     @Test
+    fun generatedDatabaseFixturesAreIndependent() = runTest {
+        val storage = Phase6OwnedStorage()
+        val firstDb = newRealServerGeneratedDb(storage.newDatabaseName())
+        val secondDb = newRealServerGeneratedDb(storage.newDatabaseName())
+        try {
+            firstDb.open()
+            secondDb.open()
+            firstDb.connection().execSQL(
+                "CREATE TABLE IF NOT EXISTS regular_fixture_isolation_probe(value INTEGER NOT NULL)",
+            )
+            secondDb.connection().execSQL(
+                "CREATE TABLE IF NOT EXISTS regular_fixture_isolation_probe(value INTEGER NOT NULL)",
+            )
+            firstDb.connection().execSQL(
+                "INSERT INTO regular_fixture_isolation_probe(value) VALUES(1)",
+            )
+
+            assertEquals(
+                0L,
+                scalarLong(
+                    secondDb.connection(),
+                    "SELECT COUNT(*) FROM regular_fixture_isolation_probe",
+                ),
+            )
+        } finally {
+            firstDb.close()
+            secondDb.close()
+            storage.cleanup()
+        }
+    }
+
+    @Test
     fun generatedRichNumericProductionPath_runsAcrossHeavyRealServerTargets() = runTest {
         val config = requireRealServerConfig() ?: return@runTest
         if (!realServerHeavyModeEnabled(config)) {
@@ -31,9 +64,10 @@ internal class RealServerGeneratedRichNumericTest : RealServerHarnessSupport() {
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("generated-rich-numeric-user")
-        val seedDb = newRealServerGeneratedDb()
-        val pullDb = newRealServerGeneratedDb()
-        val rebuildDb = newRealServerGeneratedDb()
+        val storage = Phase6OwnedStorage()
+        val seedDb = newRealServerGeneratedDb(storage.newDatabaseName())
+        val pullDb = newRealServerGeneratedDb(storage.newDatabaseName())
+        val rebuildDb = newRealServerGeneratedDb(storage.newDatabaseName())
         var seedHttp: HttpClient? = null
         var pullHttp: HttpClient? = null
         var rebuildHttp: HttpClient? = null
@@ -119,6 +153,7 @@ internal class RealServerGeneratedRichNumericTest : RealServerHarnessSupport() {
             seedDb.close()
             pullDb.close()
             rebuildDb.close()
+            storage.cleanup()
         }
     }
 
@@ -182,9 +217,9 @@ internal class RealServerGeneratedRichNumericTest : RealServerHarnessSupport() {
 
 }
 
-internal fun newRealServerGeneratedDb(): RealServerGeneratedDatabase =
+internal fun newRealServerGeneratedDb(dbName: String): RealServerGeneratedDatabase =
     RealServerGeneratedDatabase(
-        dbName = ":memory:",
+        dbName = dbName,
         migration = VersionBasedDatabaseMigrations(),
         debug = true,
     )

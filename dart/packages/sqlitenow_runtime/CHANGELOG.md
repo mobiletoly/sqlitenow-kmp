@@ -1,3 +1,7 @@
+# 0.16.0
+
+- Align generated database runtime contracts with the SQLiteNow 0.16.0 and SQLite 2.7 release.
+
 # 0.15.0
 
 - Align generated database runtime contracts with SQLiteNow 0.15.0.

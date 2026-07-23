@@ -19,9 +19,9 @@ internal class RealServerGeneratedRichSchemaJvmTest : RealServerHarnessSupport()
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("generated-rich-user")
-        val seedDb = newRealServerGeneratedDb()
-        val pullDb = newRealServerGeneratedDb()
-        val hydrateDb = newRealServerGeneratedDb()
+        val seedDb = newRealServerGeneratedDb(dbName = ":memory:")
+        val pullDb = newRealServerGeneratedDb(dbName = ":memory:")
+        val hydrateDb = newRealServerGeneratedDb(dbName = ":memory:")
         var seedHttp: HttpClient? = null
         var pullHttp: HttpClient? = null
         var hydrateHttp: HttpClient? = null

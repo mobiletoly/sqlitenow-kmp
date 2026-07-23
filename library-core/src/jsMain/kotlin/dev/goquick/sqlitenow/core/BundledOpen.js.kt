@@ -15,11 +15,8 @@
  */
 package dev.goquick.sqlitenow.core
 
-import dev.goquick.sqlitenow.core.sqlite.SqlJsDatabase
-import dev.goquick.sqlitenow.core.sqlite.SqliteConnection
-import dev.goquick.sqlitenow.core.sqlite.loadSqlJsModule
-import dev.goquick.sqlitenow.core.sqlite.toUint8Array
-import kotlin.js.console
+import androidx.sqlite.SQLiteConnection
+import dev.goquick.sqlitenow.core.worker.openSqliteWorkerConnection
 
 @Suppress("UNUSED_PARAMETER")
 internal actual suspend fun openBundledSqliteConnection(
@@ -27,22 +24,9 @@ internal actual suspend fun openBundledSqliteConnection(
     debug: Boolean,
     initialBytes: ByteArray?,
     config: SqliteConnectionConfig,
-): SqliteConnection {
-    val module = loadSqlJsModule()
-
-    val dataArg = initialBytes?.toUint8Array()
-    if (dataArg != null) {
-        console.log("[SqlJs] Opening $dbName from persisted snapshot (${initialBytes.size} bytes)")
-    } else {
-        console.log("[SqlJs] Opening $dbName with empty in-memory database")
+): SQLiteConnection {
+    check(initialBytes == null) {
+        "Bundled web worker opens must receive migration sources through worker discovery."
     }
-
-    @Suppress("UNCHECKED_CAST_TO_EXTERNAL_INTERFACE")
-    val database = if (dataArg != null) {
-        js("new module.Database(dataArg)") as SqlJsDatabase
-    } else {
-        js("new module.Database()") as SqlJsDatabase
-    }
-
-    return SqliteConnection(database)
+    return openSqliteWorkerConnection(dbName = dbName, config = config)
 }

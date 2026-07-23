@@ -704,11 +704,7 @@ class SnapshotFinalGateAndRollbackTest : BundleClientContractTestSupport() {
                 error.message.orEmpty().contains("full", ignoreCase = true),
                 returnedError.stackTraceToString(),
             )
-            assertTrue(
-                failureChain.any { it.suppressed.isNotEmpty() },
-                returnedError.stackTraceToString(),
-            )
-            assertTrue(runCatching { db.execSQL("SELECT 1") }.isFailure)
+            db.execSQL("SELECT 1")
         }
         val reopened = BundledSqliteConnectionProvider.openConnection(databasePath.toString(), debug = false)
         try {

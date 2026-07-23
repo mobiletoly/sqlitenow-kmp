@@ -15,9 +15,10 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
+import androidx.sqlite.SQLiteStatement
+import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.TransactionMode
-import dev.goquick.sqlitenow.core.sqlite.SqliteStatement
 import dev.goquick.sqlitenow.core.sqlite.use
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -33,7 +34,7 @@ internal class OversqliteStageStore(
     private val syncStateStore: OversqliteSyncStateStore,
     private val json: Json,
 ) {
-    internal var snapshotStatementCloseForTest: ((SqliteStatement) -> Unit)? = null
+    internal var snapshotStatementCloseForTest: ((SQLiteStatement) -> Unit)? = null
     internal var reusableStatementCleanupForTest: ReusableStatementCleanup? = null
 
     suspend fun preparePush(
