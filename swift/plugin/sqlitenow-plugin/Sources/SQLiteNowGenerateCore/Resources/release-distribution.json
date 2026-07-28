@@ -1,0 +1,33 @@
+{
+    "manifestVersion": 1,
+    "sqliteNowVersion": "0.16.0",
+    "compilerBinaryTargetName": "SQLiteNowCompiler",
+    "compilerArtifactUrl": "https://github.com/mobiletoly/sqlitenow-kmp/releases/download/v0.16.0/SQLiteNowCompiler-0.16.0.artifactbundle.zip",
+    "compilerArtifactChecksum": "dbe9b2188c2d254fbedef580f0a06b2c66a20105199de71127e6a54c46f303b9",
+    "runtimeArtifacts": {
+        "core": {
+            "kind": "remoteZip",
+            "url": "https://github.com/mobiletoly/sqlitenow-kmp/releases/download/v0.16.0/SQLiteNowCoreRuntime-0.16.0.xcframework.zip",
+            "checksum": "619a3c642b47c2b15c3836d22f45c1024f60b32e72f588405247f9aa38bb70b2",
+            "sqliteNowVersion": "0.16.0",
+            "runtimeModuleName": "SQLiteNowCoreRuntime"
+        },
+        "sync": {
+            "kind": "remoteZip",
+            "url": "https://github.com/mobiletoly/sqlitenow-kmp/releases/download/v0.16.0/SQLiteNowSyncRuntime-0.16.0.xcframework.zip",
+            "checksum": "9cf5f34a5f65c65d9d3781f6d80afc9171c9a482aec5aa093451458386b1b734",
+            "sqliteNowVersion": "0.16.0",
+            "runtimeModuleName": "SQLiteNowSyncRuntime"
+        }
+    },
+    "sqliteNowPackage": {
+        "kind": "remoteExact",
+        "packageIdentity": "sqlitenow-kmp",
+        "url": "https://github.com/mobiletoly/sqlitenow-kmp.git",
+        "version": "0.16.0",
+        "coreRuntimeProduct": "SQLiteNowCoreRuntime",
+        "syncRuntimeProduct": "SQLiteNowSyncRuntime",
+        "coreSupportProduct": "SQLiteNowCoreSupport",
+        "syncSupportProduct": "SQLiteNowSyncSupport"
+    }
+}
