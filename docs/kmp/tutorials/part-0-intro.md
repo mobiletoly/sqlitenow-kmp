@@ -57,7 +57,7 @@ compact **Mood Tracker** application that still showcases why SQLiteNow stands o
 - define schema assets once and generate multiplatform Kotlin code,
 - rely on typed parameters for inserts, selects, and reactive query flows,
 - run the same migrations and storage strategies on every target,
-- keep validation tight with Android instrumentation tests.
+- keep validation tight with shared JVM tests that also run on the Android device target.
 
 Even if you are used to Room or other ORMs, you will experience how staying close to SQL
 gives you more control with less ceremony.
@@ -69,16 +69,16 @@ The tutorial unfolds in three articles (plus this introduction) so you can follo
 1. **Bootstrapping** – hook in the Gradle plugin, define schema and queries, and call the
    generated API from shared code,
 2. **Tags, Filters, and Richer Types** – extend the schema with tags, show how SQLiteNow handles
-   relationships, and lean on column-level annotations to surface Kotlin types such as `Uuid` and
-   `Int` without manual casts,
-3. **Reactive Mood Dashboard** – promote the generated `selectRecent` query to a shared
+   relationships, and use column-level annotations to surface Kotlin types such as `Instant`,
+   `Uuid`, and `Int` without manual casts,
+3. **Reactive Mood Dashboard** – promote the generated `selectRecentWithTags` query to a shared
    `StateFlow`, compute a "this week" mood summary that recomputes whenever data changes, build a
    Compose screen with a quick-add form, the weekly summary card, and a reactive list, ensure the
-   Android build stores the database under app-private storage, and round the weekly average to a
+   Android app stores the database under app-private storage, and round the weekly average to a
    single decimal.
 
 Each part lives in its own Markdown file so you can read, copy snippets, and line it up with
-the source under version control. We will also add instrumentation tests alongside the
+the source under version control. We will also add Android device tests alongside the
 implementation to keep everything verifiable.
 
 ## Who Should Follow Along

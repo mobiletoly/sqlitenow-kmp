@@ -15,7 +15,8 @@ column-level annotations to surface Kotlin types such as `Uuid` and `Int` withou
 
 ## Recap: What We Have
 - `mood_entry` table with a couple of queries (`add`, `selectRecent`).
-- Kotlin syntheses wired through `MoodEntryRepository`.
+- `entry_time` mapped to `kotlin.time.Instant` through RFC 3339 adapters.
+- Generated Kotlin wired through `MoodEntryRepository`.
 
 ## Step 1 – Extend the Schema for Tags
 Create two new schema files and update the existing one under
@@ -75,9 +76,8 @@ A few important notes:
 - Capturing full timestamps (`entry_time`) keeps our eventual UI simple: the shared code can call
   `Clock.System.now()` and persist an unambiguous instant without extra columns.
 - The field-level annotations (`propertyType=…`) instruct SQLiteNow to surface strongly typed
-  Kotlin values. Once you declare `entry_time` as
-  `kotlin.time.Instant` in the schema, the generator applies that type to every query
-  touching the column—no extra annotations or `adapter=default` flags required.
+  Kotlin values. We retain the `Instant` annotation from Part 1 and add `Uuid` and `Int` mappings.
+  The generator applies each property type to every query that touches the annotated column.
 
 
 ## Step 2 – Insert and Query Tags
@@ -178,34 +178,31 @@ Two highlights to notice:
 
 
 ## Step 4 – Wire Kotlin Repositories
-`kotlin.time.Instant` comes from the Kotlin standard library, while the `LocalDate` types from
-Part 1 continue to come from `kotlinx-datetime`.
-The schema annotations we added earlier change the generated Kotlin signatures in two
-important ways:
-- `MoodTrackerDatabase` now exposes adapter groups such as `MoodEntryAdapters` and
-  `MoodEntryTagAdapters`. Each property inside those groups corresponds to a column-level
-  annotation that asked for a custom type, so we must provide lambdas that convert between `Uuid`
-  or `Instant` and the underlying `TEXT` representation.
-- Parameter classes like `MoodEntryQuery.Add.Params` now expect `Instant`
-  (alongside `Uuid` and `Int`), which means our repositories can drop string parsing or
-  integer-widening helpers.
+`kotlin.time.Instant` comes from the Kotlin standard library. Part 3 will use the `LocalDate` and
+`TimeZone` types from kotlinx-datetime for calendar calculations.
+The new schema annotations change the generated Kotlin signatures in two ways:
+- `MoodEntryAdapters`, introduced for `Instant` in Part 1, now also requires UUID adapters.
+  The join table adds `MoodEntryTagAdapters` for its UUID columns. Each adapter converts between
+  the declared Kotlin type and SQLite's `TEXT` representation.
+- Parameter classes like `MoodEntryQuery.Add.Params` keep the `Instant` field from Part 1 and now
+  expose `Uuid` and `Int` for the other annotated columns. The repositories no longer need string
+  parsing or integer-widening helpers.
 
-Update the factory so it wires those adapters once when constructing the database. Notice how the
+Extend the factory so it wires those adapters once when constructing the database. Notice how the
 field names turn into adapter property names (`entryTimeToSqlValue`, `sqlValueToEntryTime`, etc.):
 
 ```kotlin
 // MoodDatabaseFactory.kt (excerpt)
 suspend fun create(): MoodTrackerDatabase {
-    val uuidToSql: (Uuid) -> String = { it.toString() }
-    val sqlToUuid: (String) -> Uuid = { Uuid.parse(it) }
-    val instantToSql: (Instant) -> String = { it.toRfc3339String() }
-    val sqlToInstant: (String) -> Instant = { Instant.fromRfc3339String(it) }
-
-    val appName = "MoodTracker"
-    val resolvedName = if (dbName.startsWith(":")) dbName else resolveDatabasePath(
-        dbName = dbName,
-        appName = appName
-    )
+    val uuidToSql: (Uuid) -> String = { value -> value.toString() }
+    val sqlToUuid: (String) -> Uuid = { value -> Uuid.parse(value) }
+    val instantToSql: (Instant) -> String = { value -> value.toRfc3339String() }
+    val sqlToInstant: (String) -> Instant = { value -> Instant.fromRfc3339String(value) }
+    val resolvedName = if (dbName.startsWith(":")) {
+        dbName
+    } else {
+        resolveDatabasePath(dbName = dbName, appName = "MoodTracker")
+    }
     val database = MoodTrackerDatabase(
         dbName = resolvedName,
         migration = VersionBasedDatabaseMigrations(),
@@ -322,14 +319,17 @@ Run the usual command after updating SQL and Kotlin files:
 
 ```bash
 ./gradlew :composeApp:generateMoodTrackerDatabase
+./gradlew :composeApp:jvmTest
+./gradlew :composeApp:compileAndroidDeviceTest
 ```
 
-We also added instrumentation checks in the android instrumentation source set
+We also added shared checks in `composeApp/src/commonTest`
 (`MoodEntryRepositoryTest.kt` and `MoodTagRepositoryTest.kt`) to cover entry creation, tag
-assignment, lookups, and `Instant` round-tripping end-to-end.
+assignment, lookups, and `Instant` round-tripping. JVM runs them on the host, and the Android
+device-test target reuses the same cases.
 
-Everything should compile without additional casts. UUIDs, `Instant`, and `Int` properties now
-map natively while `notNull=true` protects you from nullable surprises.
+These tasks verify generation, execute the shared tests on JVM, and compile the same tests for an
+Android device. UUIDs, `Instant`, and `Int` cross the generated API without casts.
 
 ## What We Learned
 - Schema files can host multiple DDL statements; query files stay one statement per file.

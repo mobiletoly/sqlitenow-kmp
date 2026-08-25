@@ -55,13 +55,13 @@ class MoodTrackerViewModel(
             initialValue = WeeklySummary.Empty,
         )
 
-    private val _isSaving = MutableStateFlow(false)
-    val isSaving: StateFlow<Boolean> = _isSaving.asStateFlow()
+    val isSaving: StateFlow<Boolean>
+        field: MutableStateFlow<Boolean> = MutableStateFlow(false)
 
     fun addEntry(moodScore: Int, note: String) {
-        if (_isSaving.value) return
+        if (isSaving.value) return
         scope.launch {
-            _isSaving.value = true
+            isSaving.value = true
             try {
                 entryRepository.add(
                     MoodEntryRepository.NewMoodEntry(
@@ -71,7 +71,7 @@ class MoodTrackerViewModel(
                     )
                 )
             } finally {
-                _isSaving.value = false
+                isSaving.value = false
             }
         }
     }
@@ -79,12 +79,11 @@ class MoodTrackerViewModel(
     private fun computeWeeklySummary(entries: List<MoodEntryWithTags>): WeeklySummary {
         if (entries.isEmpty()) return WeeklySummary.Empty
 
-        val today = Clock.System.now()
-            .toLocalDateTime(TimeZone.currentSystemDefault())
-            .date
+        val timeZone = TimeZone.currentSystemDefault()
+        val today = Clock.System.now().toLocalDateTime(timeZone).date
         val weekStart = today.startOfWeek()
         val weekEntries = entries.filter {
-            it.entryTime.toLocalDateTime(TimeZone.currentSystemDefault()).date >= weekStart
+            it.entryTime.toLocalDateTime(timeZone).date >= weekStart
         }
         if (weekEntries.isEmpty()) {
             return WeeklySummary.Empty.copy(startDate = weekStart, endDate = today)
@@ -122,11 +121,15 @@ private fun LocalDate.startOfWeek(): LocalDate {
 }
 ```
 
+- The database and generated models keep `entryTime` as `kotlin.time.Instant`. The
+  `toLocalDateTime(timeZone)` calls convert an instant only while assigning it to a local calendar
+  week. They do not change the persisted type or write a zone-free `LocalDateTime` to SQLite.
 - `stateIn` turns the cold SQLiteNow flow into a hot `StateFlow`, caching the latest rows so every
   collector sees the same list immediately. Because `selectRecentWithTags.sql` uses a dynamic-field
   collection, each element already includes its `tags: List<MoodTagRow>`.
-- We stamp new entries with `Clock.System.now()`
-  and guard the insert with `_isSaving` to avoid double taps.
+- We stamp new entries with `Clock.System.now()` and guard the insert with `isSaving` to avoid
+  double taps. Kotlin 2.4's explicit backing field lets the ViewModel mutate a `MutableStateFlow`
+  while callers receive the read-only `StateFlow<Boolean>` interface.
 - The summary helpers live alongside the ViewModel and reuse the generated row model to compute the
   average and streak window.
 
@@ -460,8 +463,9 @@ already covers every platform we no longer need a project-specific expect/actual
 pair.
 
 Only Android requires a small bootstrap call so the helper can read an
-application context. Other platforms work out of the box—no extra code needed on
-desktop, iOS, JS, or wasm.
+application context. Keep `MainActivity` in `composeApp/src/androidMain`; the separate
+`androidApp` module packages that shared Android target as an application. Desktop, iOS, JS, and
+wasm need no extra code.
 
 ```kotlin
 // MainActivity.kt
@@ -482,11 +486,11 @@ class MainActivity : ComponentActivity() {
 ```kotlin
 // MoodDatabaseFactory.kt
 
-val appName = "MoodTracker"
-val resolvedName = if (dbName.startsWith(":")) dbName else resolveDatabasePath(
-    dbName = dbName,
-    appName = appName
-)
+val resolvedName = if (dbName.startsWith(":")) {
+    dbName
+} else {
+    resolveDatabasePath(dbName = dbName, appName = "MoodTracker")
+}
 val database = MoodTrackerDatabase(
     dbName = resolvedName,
     migration = VersionBasedDatabaseMigrations(),
@@ -501,13 +505,15 @@ already handles every target.
 
 ## Step 4 – Regenerate and Test
 
-Run the usual verification commands. The first two ensure generated sources are up to date; the
-connected test confirms Android instrumentation still passes.
+Regenerate the database, run the shared tests on JVM, compile them for the Android device target,
+and build the APK. Run the connected test when an emulator or device is available.
 
 ```bash
 ./gradlew :composeApp:generateMoodTrackerDatabase
-./gradlew :composeApp:compileDebugAndroidTestKotlin
-./gradlew :composeApp:connectedDebugAndroidTest
+./gradlew :composeApp:jvmTest
+./gradlew :composeApp:compileAndroidDeviceTest
+./gradlew :androidApp:assembleDebug
+./gradlew :composeApp:connectedAndroidDeviceTest
 ```
 
 ## Where We Stand

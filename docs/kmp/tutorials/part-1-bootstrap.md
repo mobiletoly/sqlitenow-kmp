@@ -21,23 +21,37 @@ Multiplatform "MoodTracker" project. We will:
 ## Step 1 – Enable the SQLiteNow Gradle Plugin
 
 Start with a fresh Kotlin Multiplatform project using the "Shared Compose UI" template in Android
-Studio, selecting Android, iOS, and Desktop targets. SQLiteNow also supports JVM server, JS, and
-Wasm/browser builds (and can coexist with those later), but we'll keep the tutorial focused on the
-mobile/desktop trio to stay approachable.
+Studio, selecting Android, iOS, and Desktop targets. Current Android Gradle Plugin projects keep
+the shared KMP library and the Android application in separate modules. The companion uses
+`composeApp` for shared code and `androidApp` for APK packaging. SQLiteNow also supports JVM
+server, JS, and Wasm/browser builds, but this tutorial stays with the mobile and desktop targets.
 
 SQLiteNow operates through a Gradle plugin that scans SQL assets and emits Kotlin under
 `build/generated/sqlitenow/…`. Add the plugin ID to `composeApp/build.gradle.kts` next to your
-existing Compose/KMP plugins (to keep article brief, we are not going to use toml version catalog).
-Replace `X.Y.Z` with the latest SQLiteNow release version:
+existing Compose/KMP plugins. The companion keeps plugin versions in `gradle/libs.versions.toml`,
+while the direct declaration below works if you do not use a version catalog.
+Use the same baseline as the migrated companion:
+
+| Component | Version |
+| --- | --- |
+| Kotlin | 2.4.10 |
+| Android Gradle Plugin | 9.3.2 |
+| Compose Multiplatform plugin | 1.12.0 |
+| SQLiteNow | 0.16.0 |
+| AndroidX SQLite | 2.7.0 |
+| kotlinx-datetime | 0.8.0 |
+
+The shared Android module compiles against Android SDK 37. The application module keeps
+`targetSdk = 35` and packages the shared module. Add SQLiteNow 0.16.0 to the plugin block:
 
 ```kotlin
 plugins {
     // … existing plugin declarations …
-    id("dev.goquick.sqlitenow") version "X.Y.Z"
+    id("dev.goquick.sqlitenow") version "0.16.0"
 }
 ```
-While you are configuring the module, enable the opt-in flags we will rely on once richer types
-arrive in Part 2 (there is no harm in turning them on now):
+Enable the opt-in flags used by the companion:
+
 ```kotlin
 kotlin {
     compilerOptions {
@@ -47,7 +61,8 @@ kotlin {
     // …
 }
 ```
-These keep the Kotlin compiler happy when we start working with `kotlin.uuid.Uuid` and friends.
+The `Uuid` opt-in supports the typed identifiers introduced in Part 2. The `Instant` opt-in keeps
+this project compatible with the Kotlin 2.4 compiler settings used by the companion.
 
 Gradle will expose a `generateMoodTrackerDatabase` task once this line is in place.
 
@@ -57,26 +72,32 @@ Gradle will expose a `generateMoodTrackerDatabase` task once this line is in pla
 The generated code needs the SQLiteNow runtime (for `SqliteNowDatabase`, migrations,
 reactive helpers) plus the bundled SQLite driver used on supported native/JVM targets.
 Keep the runtime in `commonMain`, and add `sqlite-bundled` only in platform source sets
-that publish it (for example `androidMain`; do not put it in `commonMain` when using `wasmJs`).
+that publish it. This tutorial needs the bundled driver in `androidMain`, `iosMain`, and `jvmMain`.
 
 ```kotlin
 kotlin {
     // …
     sourceSets {
         commonMain.dependencies {
-            implementation("dev.goquick.sqlitenow:core:X.Y.Z")
+            implementation("dev.goquick.sqlitenow:core:0.16.0")
             implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.8.0")
         }
         androidMain.dependencies {
-            implementation("androidx.sqlite:sqlite-bundled:2.6.2")
+            implementation("androidx.sqlite:sqlite-bundled:2.7.0")
+        }
+        iosMain.dependencies {
+            implementation("androidx.sqlite:sqlite-bundled:2.7.0")
+        }
+        jvmMain.dependencies {
+            implementation("androidx.sqlite:sqlite-bundled:2.7.0")
         }
     }
 }
 ```
 
-This keeps the shared source set pure Kotlin while letting Android reuse the bundled driver. The
-date-time library will come into play in the next article; adding it now avoids another round of
-Gradle edits later.
+This keeps the shared source set pure Kotlin while each supported platform uses the bundled driver.
+`kotlin.time.Instant` comes from the Kotlin standard library. Part 3 uses kotlinx-datetime 0.8.0
+to convert those instants into local calendar dates for the weekly summary.
 Finish the build script changes by pointing SQLiteNow at your upcoming SQL folder. Each
 `create("…")` block defines a database and the package the generator will use for its
 Kotlin output:
@@ -85,7 +106,7 @@ Kotlin output:
 sqliteNow {
     databases {
         create("MoodTrackerDatabase") {
-            packageName.set("dev.goquick.sample.moodtracker.db")
+            packageName = "dev.goquick.sample.moodtracker.db"
             debug = false // set true when you need verbose logging while debugging SQL
         }
     }
@@ -147,7 +168,10 @@ Schema definition:
 ```sql
 CREATE TABLE mood_entry (
     id TEXT PRIMARY KEY NOT NULL,
-    entry_time TEXT NOT NULL,
+
+    -- @@{ field=entry_time, propertyType=kotlin.time.Instant }
+    entry_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+
     mood_score INTEGER NOT NULL,
     note TEXT
 );
@@ -213,10 +237,10 @@ the SQL remains valid for every tool. A few essentials:
   `MoodEntryRow`. You can also rename queries (`name=…`), tweak property naming
   (`propertyNameGenerator=camelCase`), or map results into existing entities
   (`mapTo=dev.goquick.SomeType`).
-- **Column-level annotations** appear next to a column definition or select item:
-  `-- @@{ field=entry_time, propertyName=loggedAt }` would rename the generated property,
-  while `adapter=custom` or `propertyType=kotlin.time.Instant` instruct SQLiteNow to
-  use adapters for complex types.
+- **Column-level annotations** appear next to a column definition or select item. The
+  `entry_time` annotation in this schema makes generated results and parameters use
+  `kotlin.time.Instant`; SQLiteNow asks the database factory for the corresponding text adapters.
+  You can also set `propertyName=loggedAt` to rename the generated property.
 - **Reusable defaults** live entirely in SQL comments, so they work with any editor, diff
   tool, or migration review process—you don't need IDE plugins.
 
@@ -237,7 +261,7 @@ With the SQL files in place when you run the generator:
 Gradle spins up an embedded SQLite engine, validates every statement, and writes Kotlin under:
 
 ```
-composeApp/build/generated/sqlitenow/code/dev/goquick/sample/moodtracker/db/
+composeApp/build/generated/sqlitenow/code/MoodTrackerDatabase/dev/goquick/sample/moodtracker/db/
 ```
 
 And you will be able to see:
@@ -271,18 +295,38 @@ class MoodDatabaseFactory(
     private val debug: Boolean = false,
 ) {
     suspend fun create(): MoodTrackerDatabase {
-        val appName = "MoodTracker"
-        val resolvedName = resolveDatabasePath(dbName = dbName, appName = appName)
+        val instantToSql: (Instant) -> String = { value -> value.toRfc3339String() }
+        val sqlToInstant: (String) -> Instant = { value -> Instant.fromRfc3339String(value) }
+        val resolvedName = if (dbName.startsWith(":")) {
+            dbName
+        } else {
+            resolveDatabasePath(dbName = dbName, appName = "MoodTracker")
+        }
         val database = MoodTrackerDatabase(
             dbName = resolvedName,
             migration = VersionBasedDatabaseMigrations(),
             debug = debug,
+            moodEntryAdapters = MoodTrackerDatabase.MoodEntryAdapters(
+                entryTimeToSqlValue = instantToSql,
+                sqlValueToEntryTime = sqlToInstant,
+            ),
         )
         database.open()
         return database
     }
 }
 ```
+
+Import `kotlin.time.Instant` plus SQLiteNow's `toRfc3339String` and `fromRfc3339String` helpers.
+The adapters store an absolute timestamp as RFC 3339 text such as `2025-02-17T21:30:00Z` and parse
+that text back into the same `Instant`. The schema and shared model never use a zone-free
+`LocalDateTime` for persisted events.
+
+Readers upgrading an older tutorial checkout should replace
+`propertyType=kotlinx.datetime.LocalDateTime`, `toSqliteTimestamp`, and
+`fromSqliteTimestamp` across the schema, database factory, repository models, and tests. The
+current companion uses `kotlin.time.Instant`, `toRfc3339String`, and `fromRfc3339String` for that
+entire path.
 
 `resolveDatabasePath` comes from the SQLiteNow runtime (`dev.goquick.sqlitenow.common.resolveDatabasePath`)
 and maps friendly filenames to the correct location on each target. On JVM/desktop you must supply
@@ -297,7 +341,7 @@ class MoodEntryRepository(private val database: MoodTrackerDatabase) {
 
     data class NewMoodEntry(
         val id: String,
-        val entryTime: String,
+        val entryTime: Instant,
         val moodScore: Long,
         val note: String?,
     )
@@ -322,8 +366,8 @@ class MoodEntryRepository(private val database: MoodTrackerDatabase) {
 ```
 
 At this stage you can open the database from any KMP target, insert a row, and fetch it back
-with type-safe Kotlin. In [Part 2]({{ site.baseurl }}/kmp/tutorials/part-2-tags-and-filters/) we will layer annotations and adapters on top so these APIs can
-work with `Instant`, UUID wrappers, and richer domain models without changing the SQL files.
+with type-safe Kotlin. In [Part 2]({{ site.baseurl }}/kmp/tutorials/part-2-tags-and-filters/) we will
+add UUID and integer mappings while extending the schema with tags.
 
 ## Where We Stand
 
@@ -332,6 +376,7 @@ You now have a working SQLiteNow pipeline:
 - SQL assets live in the repo and double as schema documentation.
 - `generateMoodTrackerDatabase` validates them and emits Kotlin on every build.
 - Shared code opens `MoodTrackerDatabase` and uses generated routers directly.
+- Mood entry timestamps cross the generated API as `Instant` and remain RFC 3339 text in SQLite.
 - There is zero runtime reflection and no manual DTO mapping—the generated `MoodEntryRow`
   is perfectly serviceable as your domain entity.
 
