@@ -260,7 +260,7 @@ final class OversqliteDownloadRuntime {
             );
           }, mode: TransactionMode.immediate);
         }
-        return _applyStagedSnapshot(
+        return await _applyStagedSnapshot(
           validated: validated,
           sourceId: sourceId,
           userId: userId,
