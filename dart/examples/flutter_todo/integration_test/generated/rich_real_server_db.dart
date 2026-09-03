@@ -65,12 +65,27 @@ final class UsersSelectAllResult {
 final class RichRealServerDb {
   RichRealServerDb.inMemory({
     RichRealServerDbAdapters adapters = const RichRealServerDbAdapters(),
-  }) : this._(SqliteNowDatabase.inMemory(migrations: _migrations), adapters);
+    SqliteNowMigrationStepCallback? onMigrationStep,
+  }) : this._(
+         SqliteNowDatabase.inMemory(
+           migrations: _migrations,
+           onMigrationStep: onMigrationStep,
+         ),
+         adapters,
+       );
 
   RichRealServerDb({
     required String path,
     RichRealServerDbAdapters adapters = const RichRealServerDbAdapters(),
-  }) : this._(SqliteNowDatabase(path: path, migrations: _migrations), adapters);
+    SqliteNowMigrationStepCallback? onMigrationStep,
+  }) : this._(
+         SqliteNowDatabase(
+           path: path,
+           migrations: _migrations,
+           onMigrationStep: onMigrationStep,
+         ),
+         adapters,
+       );
 
   RichRealServerDb._(this._database, this.adapters) {
     files = FilesQueries(this);

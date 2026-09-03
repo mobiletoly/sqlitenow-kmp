@@ -37,17 +37,17 @@ Use the same baseline as the migrated companion:
 | Kotlin | 2.4.10 |
 | Android Gradle Plugin | 9.3.2 |
 | Compose Multiplatform plugin | 1.12.0 |
-| SQLiteNow | 0.16.0 |
+| SQLiteNow | 0.17.0 |
 | AndroidX SQLite | 2.7.0 |
 | kotlinx-datetime | 0.8.0 |
 
 The shared Android module compiles against Android SDK 37. The application module keeps
-`targetSdk = 35` and packages the shared module. Add SQLiteNow 0.16.0 to the plugin block:
+`targetSdk = 35` and packages the shared module. Add SQLiteNow 0.17.0 to the plugin block:
 
 ```kotlin
 plugins {
     // … existing plugin declarations …
-    id("dev.goquick.sqlitenow") version "0.16.0"
+    id("dev.goquick.sqlitenow") version "0.17.0"
 }
 ```
 Enable the opt-in flags used by the companion:
@@ -79,7 +79,7 @@ kotlin {
     // …
     sourceSets {
         commonMain.dependencies {
-            implementation("dev.goquick.sqlitenow:core:0.16.0")
+            implementation("dev.goquick.sqlitenow:core:0.17.0")
             implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.8.0")
         }
         androidMain.dependencies {

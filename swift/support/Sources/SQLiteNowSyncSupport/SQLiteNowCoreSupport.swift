@@ -1,5 +1,163 @@
-@_exported import SQLiteNowSyncRuntime
+@preconcurrency @_exported import SQLiteNowSyncRuntime
 import Foundation
+
+public typealias SQLiteNowMigrationStepCallback =
+    @Sendable (SQLiteNowMigrationScope) async throws -> Void
+
+public struct SQLiteNowMigrationScope: Sendable {
+    private let runtimeScope: SQLiteNowCoreRuntimeMigrationScope
+    public let originalVersion: Int
+    public let fromVersion: Int
+    public let toVersion: Int
+    public let targetVersion: Int
+    public let connection: SQLiteNowMigrationConnection
+
+    fileprivate init(runtimeScope: SQLiteNowCoreRuntimeMigrationScope) {
+        self.runtimeScope = runtimeScope
+        self.originalVersion = Int(runtimeScope.originalVersion)
+        self.fromVersion = Int(runtimeScope.fromVersion)
+        self.toVersion = Int(runtimeScope.toVersion)
+        self.targetVersion = Int(runtimeScope.targetVersion)
+        self.connection = SQLiteNowMigrationConnection(runtimeScope: runtimeScope)
+    }
+}
+
+public struct SQLiteNowMigrationConnection: Sendable {
+    private let runtimeScope: SQLiteNowCoreRuntimeMigrationScope
+
+    fileprivate init(runtimeScope: SQLiteNowCoreRuntimeMigrationScope) {
+        self.runtimeScope = runtimeScope
+    }
+
+    public func execute(
+        _ sql: String,
+        bindValues: [SQLiteNowCoreRuntimeBindValue] = []
+    ) async throws {
+        _ = try await runtimeScope.execute(sql: sql, bindValues: bindValues)
+    }
+
+    public func query(
+        _ sql: String,
+        bindValues: [SQLiteNowCoreRuntimeBindValue] = [],
+        columnTypes: [String]
+    ) async throws -> SQLiteNowCoreRuntimeRowSet {
+        try await runtimeScope.query(sql: sql, bindValues: bindValues, columnTypes: columnTypes)
+    }
+}
+
+@_documentation(visibility: internal)
+public final class SQLiteNowMigrationCallbackAdapter: SQLiteNowCoreRuntimeMigrationCallback, @unchecked Sendable {
+    private let callback: SQLiteNowMigrationStepCallback
+
+    public init(callback: @escaping SQLiteNowMigrationStepCallback) {
+        self.callback = callback
+    }
+
+    public func onMigrationStep(
+        scope: SQLiteNowCoreRuntimeMigrationScope,
+        completion: SQLiteNowCoreRuntimeMigrationCompletion
+    ) -> SQLiteNowCoreRuntimeMigrationTask {
+        let task = Task {
+            do {
+                try await callback(SQLiteNowMigrationScope(runtimeScope: scope))
+                completion.success()
+            } catch is CancellationError {
+                completion.cancel()
+            } catch {
+                completion.failure(message: String(describing: error))
+            }
+        }
+        return SQLiteNowMigrationTaskAdapter(task: task)
+    }
+}
+
+@_documentation(visibility: internal)
+public final class SQLiteNowMigrationTaskAdapter: SQLiteNowCoreRuntimeMigrationTask, @unchecked Sendable {
+    private let task: Task<Void, Never>
+
+    public init(task: Task<Void, Never>) {
+        self.task = task
+    }
+
+    public func cancel() {
+        task.cancel()
+    }
+}
+
+@_documentation(visibility: internal)
+public func sqliteNowOpen(_ runtime: SQLiteNowCoreRuntimeDatabase) async throws {
+    let state = SQLiteNowRuntimeOperationState()
+    try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation { continuation in
+            let completion = SQLiteNowRuntimeOperationCompletion(continuation: continuation)
+            state.install(runtime.openCancellable(completion: completion))
+        }
+    } onCancel: {
+        state.cancel()
+    }
+}
+
+private final class SQLiteNowRuntimeOperationState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var handle: SQLiteNowCoreRuntimeCancelHandle?
+    private var cancelled = false
+
+    func install(_ handle: SQLiteNowCoreRuntimeCancelHandle) {
+        lock.lock()
+        if cancelled {
+            lock.unlock()
+            handle.cancel()
+            return
+        }
+        self.handle = handle
+        lock.unlock()
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        let handle = self.handle
+        lock.unlock()
+        handle?.cancel()
+    }
+}
+
+private final class SQLiteNowRuntimeOperationCompletion: SQLiteNowCoreRuntimeOperationCompletion, @unchecked Sendable {
+    private let lock = NSLock()
+    private var completed = false
+    private let continuation: CheckedContinuation<Void, Error>
+
+    init(continuation: CheckedContinuation<Void, Error>) {
+        self.continuation = continuation
+    }
+
+    func onSuccess() {
+        finish()
+    }
+
+    func onFailure(payload: SQLiteNowCoreRuntimeErrorPayload) {
+        if payload.category == "cancelled" {
+            finish(error: CancellationError())
+        } else {
+            finish(error: SQLiteNowError.from(payload))
+        }
+    }
+
+    private func finish(error: Error? = nil) {
+        lock.lock()
+        guard !completed else {
+            lock.unlock()
+            return
+        }
+        completed = true
+        lock.unlock()
+        if let error {
+            continuation.resume(throwing: error)
+        } else {
+            continuation.resume()
+        }
+    }
+}
 
 public enum SQLiteNowError: Error, CustomStringConvertible, Equatable {
     case sqlite(message: String)
@@ -65,7 +223,11 @@ public func mapRuntimeErrors<T>(_ operation: () async throws -> T) async throws 
     } catch let error as CancellationError {
         throw error
     } catch {
-        throw SQLiteNowError.from(error)
+        let mapped = SQLiteNowError.from(error)
+        if case .cancelled = mapped {
+            throw CancellationError()
+        }
+        throw mapped
     }
 }
 

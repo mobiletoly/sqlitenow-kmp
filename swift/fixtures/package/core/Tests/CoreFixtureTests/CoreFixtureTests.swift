@@ -64,6 +64,90 @@ final class CoreFixtureTests: XCTestCase {
         }
     }
 
+    func testGeneratedMigrationCallbackRunsAfterSqlAndMapsCancellation() async throws {
+        let successURL = temporaryDatabaseURL()
+        try await Self.createVersionOneDatabaseForFixture(at: successURL)
+        let callbackEvidence = StringRecorder()
+        let upgraded = CoreFixtureDatabase(
+            path: successURL,
+            adapters: Self.passthroughAdapters(),
+            onMigrationStep: { scope in
+                let columns = try await scope.connection.query(
+                    "PRAGMA table_info(task)",
+                    columnTypes: ["int64", "text", "text", "int64", "text", "int64"]
+                )
+                callbackEvidence.record("\(scope.originalVersion):\(scope.fromVersion)->\(scope.toVersion):\(columns.count)")
+            }
+        )
+        try await upgraded.open()
+        XCTAssertEqual(callbackEvidence.values, ["1:1->2:6"])
+        try await upgraded.close()
+
+        let cancellationURL = temporaryDatabaseURL()
+        try await Self.createVersionOneDatabaseForFixture(at: cancellationURL)
+        let cancelled = CoreFixtureDatabase(
+            path: cancellationURL,
+            adapters: Self.passthroughAdapters(),
+            onMigrationStep: { _ in throw CancellationError() }
+        )
+        do {
+            try await cancelled.open()
+            XCTFail("Expected callback cancellation")
+        } catch is CancellationError {
+        } catch {
+            XCTFail("Expected CancellationError, got \(error)")
+        }
+    }
+
+    func testCancellingOpenCancelsMigrationCallbackAndRollsBack() async throws {
+        let url = temporaryDatabaseURL()
+        try await Self.createVersionOneDatabaseForFixture(at: url)
+        let callbackStarted = AsyncSignal()
+        let database = CoreFixtureDatabase(
+            path: url,
+            adapters: Self.passthroughAdapters(),
+            onMigrationStep: { _ in
+                await callbackStarted.signal()
+                try await Task.sleep(for: .seconds(1))
+            }
+        )
+        let opening = Task {
+            try await database.open()
+        }
+        await callbackStarted.wait()
+
+        let openingFinished = expectation(description: "cancelled open finishes promptly")
+        Task {
+            _ = await opening.result
+            openingFinished.fulfill()
+        }
+        opening.cancel()
+        let cancellationResult = await XCTWaiter.fulfillment(of: [openingFinished], timeout: 0.25)
+        if cancellationResult != .completed {
+            _ = await opening.result
+        }
+        XCTAssertEqual(cancellationResult, .completed)
+
+        let verifier = SQLiteNowCoreRuntimeDatabase(
+            path: url.path,
+            migrationPlan: SQLiteNowCoreRuntimeMigrationPlan(
+                latestVersion: 1,
+                schemaSql: [],
+                initSql: [],
+                migrationSteps: []
+            ),
+            debug: false
+        )
+        try await verifier.open()
+        let version = try await verifier.query(
+            sql: "PRAGMA user_version",
+            bindValues: [],
+            columnTypes: ["int64"]
+        )
+        XCTAssertEqual(version.rowAt(index: 0).cellAt(index: 0).int64Value, 1)
+        try await verifier.close()
+    }
+
     func testTransactionRollsBackOnDuplicateFailure() async throws {
         try await withOpenDatabase { db in
             do {
@@ -347,5 +431,46 @@ private final class AdapterRecorder: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         fromSqlValuesStorage.append(value)
+    }
+}
+
+private final class StringRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [String] = []
+
+    var values: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    func record(_ value: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        storage.append(value)
+    }
+}
+
+private actor AsyncSignal {
+    private var signalled = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func signal() {
+        guard !signalled else { return }
+        signalled = true
+        let pending = waiters
+        waiters.removeAll()
+        pending.forEach { $0.resume() }
+    }
+
+    func wait() async {
+        if signalled { return }
+        await withCheckedContinuation { continuation in
+            if signalled {
+                continuation.resume()
+            } else {
+                waiters.append(continuation)
+            }
+        }
     }
 }

@@ -928,12 +928,88 @@ tasks.register("sampleSyncSwiftSupportGate") {
     )
 }
 
+tasks.register<Exec>("swiftStaticCoreSupportSwift6Typecheck") {
+    group = "verification"
+    description = "Typechecks the static Core Swift support product in Swift 6 mode."
+    dependsOn(":swift:runtime:core:linkDebugFrameworkMacosArm64")
+
+    val supportSource = layout.projectDirectory.file(
+        "swift/support/Sources/SQLiteNowCoreSupport/SQLiteNowCoreSupport.swift"
+    )
+    val frameworkDir = layout.projectDirectory.dir(
+        "swift/runtime/core/build/bin/macosArm64/debugFramework"
+    )
+    inputs.file(supportSource)
+    inputs.dir(frameworkDir)
+    outputs.upToDateWhen { false }
+
+    workingDir = rootDir
+    executable = findExecutableOnPath("xcrun")?.absolutePath ?: "xcrun"
+    args(
+        "swiftc",
+        "-swift-version",
+        "6",
+        "-typecheck",
+        "-F",
+        frameworkDir.asFile.absolutePath,
+        supportSource.asFile.absolutePath,
+    )
+}
+
+tasks.register<Exec>("swiftStaticSyncSupportSwift6Typecheck") {
+    group = "verification"
+    description = "Typechecks the static Sync Swift support product in Swift 6 mode."
+    dependsOn(
+        ":swift:runtime:core:linkDebugFrameworkMacosArm64",
+        ":swift:runtime:sync:linkDebugFrameworkMacosArm64",
+    )
+
+    val supportSources = files(
+        "swift/support/Sources/SQLiteNowSyncSupport/SQLiteNowCoreSupport.swift",
+        "swift/support/Sources/SQLiteNowSyncSupport/SQLiteNowSyncSupport.swift",
+    )
+    val coreFrameworkDir = layout.projectDirectory.dir(
+        "swift/runtime/core/build/bin/macosArm64/debugFramework"
+    )
+    val syncFrameworkDir = layout.projectDirectory.dir(
+        "swift/runtime/sync/build/bin/macosArm64/debugFramework"
+    )
+    inputs.files(supportSources)
+    inputs.dir(coreFrameworkDir)
+    inputs.dir(syncFrameworkDir)
+    outputs.upToDateWhen { false }
+
+    workingDir = rootDir
+    executable = findExecutableOnPath("xcrun")?.absolutePath ?: "xcrun"
+    args(
+        "swiftc",
+        "-swift-version",
+        "6",
+        "-typecheck",
+        "-F",
+        syncFrameworkDir.asFile.absolutePath,
+        "-F",
+        coreFrameworkDir.asFile.absolutePath,
+    )
+    args(supportSources.files.map { it.absolutePath }.sorted())
+}
+
+tasks.register("swiftStaticSupportSwift6Typecheck") {
+    group = "verification"
+    description = "Typechecks both static Swift support products in Swift 6 mode."
+    dependsOn(
+        "swiftStaticCoreSupportSwift6Typecheck",
+        "swiftStaticSyncSupportSwift6Typecheck",
+    )
+}
+
 tasks.register("swiftHybridSupportGate") {
     group = "verification"
     description = "Validates the supported local Swift package workflows for core and sync."
     dependsOn(
         "sampleSwiftSupportGate",
         "sampleSyncSwiftSupportGate",
+        "swiftStaticSupportSwift6Typecheck",
         ":swift:runtime:core:swiftTest",
         ":swift:runtime:sync:swiftTest",
         ":swift:fixtures:package:core:swiftTest",

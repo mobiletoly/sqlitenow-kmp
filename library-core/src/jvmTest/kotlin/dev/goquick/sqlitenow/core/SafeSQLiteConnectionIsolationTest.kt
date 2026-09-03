@@ -10,6 +10,7 @@ import dev.goquick.sqlitenow.core.sqlite.SqliteException
 import dev.goquick.sqlitenow.core.sqlite.trackSQLiteStatement
 import dev.goquick.sqlitenow.core.sqlite.use
 import java.nio.file.Files
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import kotlin.coroutines.ContinuationInterceptor
@@ -25,6 +26,7 @@ import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
@@ -40,6 +42,7 @@ import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.yield
 
 class SafeSQLiteConnectionIsolationTest {
     @Test
@@ -936,6 +939,48 @@ class SafeSQLiteConnectionIsolationTest {
     }
 
     @Test
+    fun migrationOwnerOperationFinalizesBeforeReturningToCallerDispatcher() = runBlocking {
+        withTimeout(10_000) {
+            withTestDatabase { database ->
+                database.open()
+                val connection = database.connection()
+                val callerDispatcher = QueuedDispatcher()
+                val expectedFailure = IllegalStateException("migration operation failed")
+
+                connection.withExclusiveAccess {
+                    val access = connection.captureMigrationOwnerAccess()
+                    val releaseOperation = CompletableDeferred<Unit>()
+                    val operationFinishing = CompletableDeferred<Unit>()
+
+                    supervisorScope {
+                        val operation = async(callerDispatcher, start = CoroutineStart.UNDISPATCHED) {
+                            connection.withMigrationOwnerAccess(access) {
+                                releaseOperation.await()
+                                operationFinishing.complete(Unit)
+                                throw expectedFailure
+                            }
+                        }
+
+                        releaseOperation.complete(Unit)
+                        operationFinishing.await()
+                        yield()
+
+                        access.expire()
+                        access.expireAndDrain(
+                            cancelOperations = false,
+                            propagateOperationFailure = true,
+                        )
+
+                        callerDispatcher.runAll()
+                        val observedFailure = assertFailsWith<IllegalStateException> { operation.await() }
+                        assertEquals(expectedFailure.message, observedFailure.message)
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
     fun nestedExclusiveAccess_preservesCancellationPromptness() = runBlocking {
         withTimeout(10_000) {
             withTestDatabase { database ->
@@ -1179,6 +1224,22 @@ class SafeSQLiteConnectionIsolationTest {
                 throw RejectedExecutionException("ordinary fallback dispatch rejected")
             }
             block.run()
+        }
+    }
+
+    private class QueuedDispatcher : CoroutineDispatcher() {
+        private val queued = ConcurrentLinkedQueue<Runnable>()
+
+        override fun isDispatchNeeded(context: CoroutineContext): Boolean = true
+
+        override fun dispatch(context: CoroutineContext, block: Runnable) {
+            queued.add(block)
+        }
+
+        fun runAll() {
+            while (true) {
+                queued.poll()?.run() ?: return
+            }
         }
     }
 

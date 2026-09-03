@@ -22,6 +22,8 @@ import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.core.DatabaseMigrations
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.SqliteNowDatabase
+import dev.goquick.sqlitenow.core.SqliteNowMigrationScope
+import dev.goquick.sqlitenow.core.SqliteNowMigrationStepRunner
 import dev.goquick.sqlitenow.core.TransactionMode
 import dev.goquick.sqlitenow.core.sqlite.SqliteException
 import dev.goquick.sqlitenow.core.sqlite.use
@@ -30,12 +32,16 @@ import kotlinx.cinterop.convert
 import kotlinx.cinterop.usePinned
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import platform.Foundation.NSData
+import platform.Foundation.NSLock
 import platform.Foundation.create
 import platform.posix.memcpy
 import kotlin.coroutines.cancellation.CancellationException
@@ -175,6 +181,97 @@ class SQLiteNowCoreRuntimeMigrationPlan(
     val migrationSteps: List<SQLiteNowCoreRuntimeMigrationStep>,
 )
 
+interface SQLiteNowCoreRuntimeMigrationCallback {
+    fun onMigrationStep(
+        scope: SQLiteNowCoreRuntimeMigrationScope,
+        completion: SQLiteNowCoreRuntimeMigrationCompletion,
+    ): SQLiteNowCoreRuntimeMigrationTask
+}
+
+interface SQLiteNowCoreRuntimeMigrationTask {
+    fun cancel()
+}
+
+class SQLiteNowCoreRuntimeMigrationCompletion internal constructor(
+    private val continuation: CancellableContinuation<Unit>,
+) {
+    private val completionLock = NSLock()
+    private var completed = false
+
+    fun success() {
+        complete(Result.success(Unit))
+    }
+
+    fun failure(message: String) {
+        complete(Result.failure(
+            SQLiteNowCoreMigrationCallbackException(message)
+        ))
+    }
+
+    fun cancel() {
+        complete(Result.failure(
+            SQLiteNowCoreRuntimeException(
+                SQLiteNowCoreRuntimeErrorPayload(
+                    category = "cancelled",
+                    code = "CancellationError",
+                    message = "Swift migration callback was cancelled",
+                )
+            )
+        ))
+    }
+
+    private fun complete(result: Result<Unit>) {
+        completionLock.lock()
+        if (completed) {
+            completionLock.unlock()
+            return
+        }
+        completed = true
+        completionLock.unlock()
+        continuation.resumeWith(result)
+    }
+}
+
+class SQLiteNowCoreRuntimeMigrationScope internal constructor(
+    private val scope: SqliteNowMigrationScope,
+) {
+    val originalVersion: Long
+        get() = scope.originalVersion.toLong()
+    val fromVersion: Long
+        get() = scope.fromVersion.toLong()
+    val toVersion: Long
+        get() = scope.toVersion.toLong()
+    val targetVersion: Long
+        get() = scope.targetVersion.toLong()
+
+    @Throws(SQLiteNowCoreRuntimeException::class, CancellationException::class)
+    suspend fun execute(
+        sql: String,
+        bindValues: List<SQLiteNowCoreRuntimeBindValue>,
+    ) = mapRuntimeErrors {
+        scope.connection.usePrepared(sql) { statement ->
+            bindValues.bindAll(statement)
+            statement.step()
+        }
+    }
+
+    @Throws(SQLiteNowCoreRuntimeException::class, CancellationException::class)
+    suspend fun query(
+        sql: String,
+        bindValues: List<SQLiteNowCoreRuntimeBindValue>,
+        columnTypes: List<String>,
+    ): SQLiteNowCoreRuntimeRowSet = mapRuntimeErrors {
+        scope.connection.usePrepared(sql) { statement ->
+            bindValues.bindAll(statement)
+            val rows = mutableListOf<SQLiteNowCoreRuntimeRow>()
+            while (statement.step()) {
+                rows += readRow(statement, columnTypes)
+            }
+            SQLiteNowCoreRuntimeRowSet(rows)
+        }
+    }
+}
+
 class SQLiteNowCoreRuntimeMutation(
     val sql: String,
     val bindValues: List<SQLiteNowCoreRuntimeBindValue>,
@@ -202,6 +299,11 @@ interface SQLiteNowCoreRuntimeTableObserver {
     fun onError(payload: SQLiteNowCoreRuntimeErrorPayload)
 }
 
+interface SQLiteNowCoreRuntimeOperationCompletion {
+    fun onSuccess()
+    fun onFailure(payload: SQLiteNowCoreRuntimeErrorPayload)
+}
+
 class SQLiteNowCoreRuntimeCancelHandle internal constructor(
     private val cancelBlock: () -> Unit,
 ) {
@@ -224,17 +326,41 @@ class SQLiteNowCoreRuntimeDatabase(
     path: String,
     migrationPlan: SQLiteNowCoreRuntimeMigrationPlan,
     debug: Boolean,
+    onMigrationStep: SQLiteNowCoreRuntimeMigrationCallback?,
 ) {
     private val database = RuntimeSqliteNowDatabase(
         dbName = path,
         migrationPlan = migrationPlan,
         debug = debug,
+        onMigrationStep = onMigrationStep,
     )
     private var observerScope = newObserverScope()
+
+    constructor(
+        path: String,
+        migrationPlan: SQLiteNowCoreRuntimeMigrationPlan,
+        debug: Boolean,
+    ) : this(path, migrationPlan, debug, null)
 
     @Throws(SQLiteNowCoreRuntimeException::class, CancellationException::class)
     suspend fun open() = mapRuntimeErrors {
         database.open()
+    }
+
+    fun openCancellable(
+        completion: SQLiteNowCoreRuntimeOperationCompletion,
+    ): SQLiteNowCoreRuntimeCancelHandle {
+        val job = CoroutineScope(SupervisorJob() + Dispatchers.Default).async {
+            open()
+        }
+        job.invokeOnCompletion { failure ->
+            when (failure) {
+                null -> completion.onSuccess()
+                is SQLiteNowCoreRuntimeException -> completion.onFailure(failure.payload)
+                else -> completion.onFailure(errorPayload(failure))
+            }
+        }
+        return SQLiteNowCoreRuntimeCancelHandle(job::cancel)
     }
 
     @Throws(SQLiteNowCoreRuntimeException::class, CancellationException::class)
@@ -349,9 +475,10 @@ private class RuntimeSqliteNowDatabase(
     dbName: String,
     migrationPlan: SQLiteNowCoreRuntimeMigrationPlan,
     debug: Boolean,
+    onMigrationStep: SQLiteNowCoreRuntimeMigrationCallback?,
 ) : SqliteNowDatabase(
     dbName = dbName,
-    migration = RuntimeMigrationPlan(migrationPlan),
+    migration = RuntimeMigrationPlan(migrationPlan, onMigrationStep),
     debug = debug,
 ) {
     suspend fun tableChangeFlow(tableNames: Set<String>) = createTableChangeFlow(tableNames)
@@ -359,6 +486,7 @@ private class RuntimeSqliteNowDatabase(
 
 private class RuntimeMigrationPlan(
     private val plan: SQLiteNowCoreRuntimeMigrationPlan,
+    private val onMigrationStep: SQLiteNowCoreRuntimeMigrationCallback?,
 ) : DatabaseMigrations {
     override suspend fun applyMigration(conn: SafeSQLiteConnection, currentVersion: Int): Int {
         try {
@@ -370,15 +498,35 @@ private class RuntimeMigrationPlan(
                     return@withExclusiveAccess latestVersion
                 }
 
-                plan.migrationSteps
-                    .sortedBy { it.version }
-                    .filter { currentVersion < it.version }
-                    .forEach { step ->
-                        step.sql.forEach { conn.execSQL(it) }
+                val stepsByVersion = plan.migrationSteps.associateBy { it.version.toInt() }
+                if (currentVersion < latestVersion) {
+                    for (toVersion in (currentVersion + 1)..latestVersion) {
+                        stepsByVersion[toVersion]?.sql?.forEach { conn.execSQL(it) }
+                        if (onMigrationStep != null) {
+                            SqliteNowMigrationStepRunner.run(
+                                rawConnection = conn,
+                                originalVersion = currentVersion,
+                                fromVersion = toVersion - 1,
+                                toVersion = toVersion,
+                                targetVersion = latestVersion,
+                            ) { scope ->
+                                val runtimeScope = SQLiteNowCoreRuntimeMigrationScope(scope)
+                                suspendCancellableCoroutine { continuation ->
+                                    val migrationTask = onMigrationStep.onMigrationStep(
+                                        runtimeScope,
+                                        SQLiteNowCoreRuntimeMigrationCompletion(continuation),
+                                    )
+                                    continuation.invokeOnCancellation { migrationTask.cancel() }
+                                }
+                            }
+                        }
                     }
+                }
 
                 maxOf(currentVersion, latestVersion)
             }
+        } catch (error: SQLiteNowCoreRuntimeException) {
+            throw error
         } catch (error: CancellationException) {
             throw error
         } catch (error: Throwable) {
@@ -391,6 +539,10 @@ private class SQLiteNowCoreMigrationException(
     message: String,
     cause: Throwable,
 ) : RuntimeException(message, cause)
+
+private class SQLiteNowCoreMigrationCallbackException(
+    message: String,
+) : RuntimeException(message)
 
 private fun List<SQLiteNowCoreRuntimeBindValue>.bindAll(statement: SQLiteStatement) {
     forEachIndexed { index, value ->

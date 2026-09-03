@@ -21,6 +21,8 @@ import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.ParameterSpec
+import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
 import dev.goquick.sqlitenow.gradle.sqlinspect.SQLBatchInspector
 import dev.goquick.sqlitenow.gradle.sqlinspect.SchemaInspector
@@ -67,10 +69,6 @@ internal class MigratorCodeGenerator(
         }
 
         // Handle initial setup when currentVersion is -1
-        codeBlockBuilder.add("    if (currentVersion != ${migrationInspector.latestVersion}) {\n")
-        codeBlockBuilder.add("        conn.execSQL(\"PRAGMA user_version = ${migrationInspector.latestVersion};\")\n")
-        codeBlockBuilder.add("    }\n")
-        codeBlockBuilder.add("\n")
         codeBlockBuilder.add("    if (currentVersion == -1) {\n")
         codeBlockBuilder.add("        executeAllSql(conn)\n")
         // Only add executeInitSql call if there are init statements
@@ -85,16 +83,27 @@ internal class MigratorCodeGenerator(
         codeBlockBuilder.add("    }\n")
         codeBlockBuilder.add("\n")
 
-        // Generate incremental migration calls for each version
+        codeBlockBuilder.add("    val originalVersion = currentVersion\n")
+        codeBlockBuilder.add("    if (currentVersion < ${migrationInspector.latestVersion}) {\n")
+        codeBlockBuilder.add("        for (toVersion in (currentVersion + 1)..${migrationInspector.latestVersion}) {\n")
+        codeBlockBuilder.add("            when (toVersion) {\n")
         migrationInspector.sqlStatements.keys.sorted().forEach { version ->
-            codeBlockBuilder.add("    if (currentVersion < $version) {\n")
-            codeBlockBuilder.add("        migrateToVersion$version(conn)\n")
-            codeBlockBuilder.add("    }\n")
-            codeBlockBuilder.add("\n")
+            codeBlockBuilder.add("                $version -> migrateToVersion$version(conn)\n")
         }
+        codeBlockBuilder.add("            }\n")
+        codeBlockBuilder.add("            SqliteNowMigrationStepRunner.run(\n")
+        codeBlockBuilder.add("                rawConnection = conn,\n")
+        codeBlockBuilder.add("                originalVersion = originalVersion,\n")
+        codeBlockBuilder.add("                fromVersion = toVersion - 1,\n")
+        codeBlockBuilder.add("                toVersion = toVersion,\n")
+        codeBlockBuilder.add("                targetVersion = ${migrationInspector.latestVersion},\n")
+        codeBlockBuilder.add("                callback = onMigrationStep,\n")
+        codeBlockBuilder.add("            )\n")
+        codeBlockBuilder.add("        }\n")
+        codeBlockBuilder.add("    }\n\n")
 
-        // Return the latest version
-        codeBlockBuilder.add("    ${migrationInspector.latestVersion}\n")
+        // Preserve a newer database version rather than downgrading it to this schema target.
+        codeBlockBuilder.add("    maxOf(currentVersion, ${migrationInspector.latestVersion})\n")
         codeBlockBuilder.add("}\n")
 
         return functionBuilder
@@ -181,12 +190,23 @@ internal class MigratorCodeGenerator(
         }
 
         // Create a class to hold the migration functions
+        val callbackType = ClassName("dev.goquick.sqlitenow.core", "SqliteNowMigrationStepCallback")
         val classBuilder = TypeSpec.Companion.classBuilder(className)
             // Make the class public so it can be accessed from other modules
             .addSuperinterface(ClassName("dev.goquick.sqlitenow.core", "DatabaseMigrations"))
-            // Add an empty constructor
-            .addFunction(
-                FunSpec.Companion.constructorBuilder().build()
+            .primaryConstructor(
+                FunSpec.Companion.constructorBuilder()
+                    .addParameter(
+                        ParameterSpec.Companion.builder("onMigrationStep", callbackType)
+                            .defaultValue("{}")
+                            .build()
+                    )
+                    .build()
+            )
+            .addProperty(
+                PropertySpec.Companion.builder("onMigrationStep", callbackType, KModifier.PRIVATE)
+                    .initializer("onMigrationStep")
+                    .build()
             )
 
         // Add the applyMigration function that implements the DatabaseMigrations interface
@@ -219,6 +239,8 @@ internal class MigratorCodeGenerator(
             )
             .addImport("dev.goquick.sqlitenow.core", "SafeSQLiteConnection")
             .addImport("dev.goquick.sqlitenow.core", "DatabaseMigrations")
+            .addImport("dev.goquick.sqlitenow.core", "SqliteNowMigrationStepRunner")
+            .addImport("dev.goquick.sqlitenow.core", "SqliteNowMigrationStepCallback")
 
         val fileSpec = fileSpecBuilder.build()
 

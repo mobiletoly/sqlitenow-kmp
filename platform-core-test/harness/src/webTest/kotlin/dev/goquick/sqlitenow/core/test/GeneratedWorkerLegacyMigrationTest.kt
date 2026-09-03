@@ -64,7 +64,7 @@ class GeneratedWorkerLegacyMigrationTest {
             retried.open()
             try {
                 val connection = retried.connection()
-                assertEquals(3, connection.readUserVersion())
+                assertEquals(5, connection.readUserVersion())
                 assertEquals("Ada", connection.scalarText("SELECT name FROM migration_probe"))
                 assertEquals(
                     "migrated",
@@ -102,6 +102,10 @@ class GeneratedWorkerLegacyMigrationTest {
             )
             connection.execSQL(
                 "INSERT INTO migration_probe(id, name) VALUES (1, 'Ada')",
+            )
+            connection.execSQL(
+                "CREATE TABLE migration_person(" +
+                    "id INTEGER PRIMARY KEY NOT NULL, full_name TEXT NOT NULL)",
             )
             connection.execSQL("PRAGMA user_version = 1")
             persistence.persist(dbName, fixture.exportBytes())

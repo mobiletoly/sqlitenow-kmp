@@ -237,12 +237,27 @@ final class PersonAddressSelectAllParams {
 final class NowSampleSyncDatabase {
   NowSampleSyncDatabase.inMemory({
     required NowSampleSyncDatabaseAdapters adapters,
-  }) : this._(SqliteNowDatabase.inMemory(migrations: _migrations), adapters);
+    SqliteNowMigrationStepCallback? onMigrationStep,
+  }) : this._(
+         SqliteNowDatabase.inMemory(
+           migrations: _migrations,
+           onMigrationStep: onMigrationStep,
+         ),
+         adapters,
+       );
 
   NowSampleSyncDatabase({
     required String path,
     required NowSampleSyncDatabaseAdapters adapters,
-  }) : this._(SqliteNowDatabase(path: path, migrations: _migrations), adapters);
+    SqliteNowMigrationStepCallback? onMigrationStep,
+  }) : this._(
+         SqliteNowDatabase(
+           path: path,
+           migrations: _migrations,
+           onMigrationStep: onMigrationStep,
+         ),
+         adapters,
+       );
 
   NowSampleSyncDatabase._(this._database, this.adapters) {
     comment = CommentQueries(this);

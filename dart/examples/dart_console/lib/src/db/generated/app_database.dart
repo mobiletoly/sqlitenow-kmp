@@ -38,12 +38,27 @@ final class TaskInsertOneParams {
 final class AppDatabase {
   AppDatabase.inMemory({
     AppDatabaseAdapters adapters = const AppDatabaseAdapters(),
-  }) : this._(SqliteNowDatabase.inMemory(migrations: _migrations), adapters);
+    SqliteNowMigrationStepCallback? onMigrationStep,
+  }) : this._(
+         SqliteNowDatabase.inMemory(
+           migrations: _migrations,
+           onMigrationStep: onMigrationStep,
+         ),
+         adapters,
+       );
 
   AppDatabase({
     required String path,
     AppDatabaseAdapters adapters = const AppDatabaseAdapters(),
-  }) : this._(SqliteNowDatabase(path: path, migrations: _migrations), adapters);
+    SqliteNowMigrationStepCallback? onMigrationStep,
+  }) : this._(
+         SqliteNowDatabase(
+           path: path,
+           migrations: _migrations,
+           onMigrationStep: onMigrationStep,
+         ),
+         adapters,
+       );
 
   AppDatabase._(this._database, this.adapters) {
     task = TaskQueries(this);

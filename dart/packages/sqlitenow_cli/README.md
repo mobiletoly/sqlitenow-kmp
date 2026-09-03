@@ -21,10 +21,10 @@ dependency. Use the same version for both packages:
 
 ```yaml
 dependencies:
-  sqlitenow_runtime: ^0.16.0
+  sqlitenow_runtime: ^0.17.0
 
 dev_dependencies:
-  sqlitenow_cli: ^0.16.0
+  sqlitenow_cli: ^0.17.0
 ```
 
 ## Create your SQL files

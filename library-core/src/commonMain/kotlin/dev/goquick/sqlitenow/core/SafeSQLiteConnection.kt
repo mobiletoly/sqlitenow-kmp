@@ -38,6 +38,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
@@ -185,6 +186,25 @@ class SafeSQLiteConnection internal constructor(
      */
     suspend fun <T> withExclusiveAccess(block: suspend () -> T): T {
         return withDispatcherContext(block)
+    }
+
+    internal suspend fun captureMigrationOwnerAccess(): MigrationOwnerAccess {
+        val owner = coroutineContext[ConnectionOwnerContext]
+        require(owner?.connection === this) {
+            "Migration scope must be created while the connection is exclusively owned"
+        }
+        return MigrationOwnerAccess(owner.token)
+    }
+
+    internal suspend fun <T> withMigrationOwnerAccess(
+        access: MigrationOwnerAccess,
+        block: suspend () -> T,
+    ): T {
+        return withContext(dispatcher + ConnectionOwnerContext(this, access.ownerToken)) {
+            access.withOperation {
+                block()
+            }
+        }
     }
 
     suspend fun execSQL(sql: String) {
@@ -868,6 +888,93 @@ private class ConnectionOwnerContext(
     val token: Any,
 ) : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<ConnectionOwnerContext>
+}
+
+internal class MigrationOwnerAccess internal constructor(
+    internal val ownerToken: Any,
+) {
+    private val stateMutex = Mutex()
+    @kotlin.concurrent.Volatile
+    private var acceptingOperations = true
+    private val operations = mutableMapOf<Any, Job?>()
+    private var drained = CompletableDeferred(Unit)
+    private var firstDrainedOperationFailure: Throwable? = null
+
+    internal suspend fun <T> withOperation(block: suspend () -> T): T {
+        val marker = Any()
+        val operationJob = currentCoroutineContext()[Job]
+        stateMutex.withLock {
+            check(acceptingOperations) { "Migration-step connection is no longer active" }
+            if (operations.isEmpty()) drained = CompletableDeferred()
+            operations[marker] = operationJob
+        }
+        var operationFailure: Throwable? = null
+        try {
+            return block()
+        } catch (failure: Throwable) {
+            operationFailure = failure
+            throw failure
+        } finally {
+            withContext(NonCancellable) {
+                stateMutex.withLock {
+                    if (
+                        !acceptingOperations &&
+                        firstDrainedOperationFailure == null &&
+                        operationFailure != null
+                    ) {
+                        firstDrainedOperationFailure = operationFailure
+                    }
+                    operations.remove(marker)
+                    if (operations.isEmpty()) drained.complete(Unit)
+                }
+            }
+        }
+    }
+
+    internal fun expire() {
+        acceptingOperations = false
+    }
+
+    internal suspend fun expireAndDrain(
+        cancelOperations: Boolean,
+        propagateOperationFailure: Boolean,
+    ) {
+        val currentJob = currentCoroutineContext()[Job]
+        val (drainSignal, operationJobs) = withContext(NonCancellable) {
+            stateMutex.withLock {
+                check(!acceptingOperations) { "Migration-step connection is still active" }
+                drained to operations.values.filterNotNull().filterNot { it === currentJob }
+            }
+        }
+        if (cancelOperations) {
+            withContext(NonCancellable) {
+                operationJobs.forEach { job ->
+                    job.cancel(CancellationException("Migration-step callback did not complete"))
+                }
+                drainSignal.await()
+            }
+            return
+        }
+
+        try {
+            drainSignal.await()
+        } catch (cancellation: CancellationException) {
+            withContext(NonCancellable) {
+                operationJobs.forEach { job ->
+                    job.cancel(CancellationException("Migration-step owner was cancelled"))
+                }
+                drainSignal.await()
+            }
+            throw cancellation
+        }
+
+        if (propagateOperationFailure) {
+            val operationFailure = withContext(NonCancellable) {
+                stateMutex.withLock { firstDrainedOperationFailure }
+            }
+            operationFailure?.let { throw it }
+        }
+    }
 }
 
 internal expect fun exportConnectionBytes(connection: SQLiteConnection): ByteArray?

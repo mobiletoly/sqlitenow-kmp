@@ -1,3 +1,7 @@
+# 0.17.0
+
+- Align generated Oversqlite database facades with SQLiteNow 0.17.0 migration callbacks.
+
 # 0.16.0
 
 - Add KMP-parity numeric and Boolean transport coverage for the

@@ -11,21 +11,26 @@ final class SqliteNowDatabase {
   SqliteNowDatabase({
     required String path,
     Iterable<SqliteNowMigrationStep> migrations = const [],
+    SqliteNowMigrationStepCallback? onMigrationStep,
     SqliteNowDriver driver = const Sqlite3Driver(),
   }) : _openOptions = SqliteNowOpenOptions.file(path),
        _driver = driver,
-       _migrationPlan = SqliteNowMigrationPlan(migrations);
+       _migrationPlan = SqliteNowMigrationPlan(migrations),
+       _onMigrationStep = onMigrationStep;
 
   SqliteNowDatabase.inMemory({
     Iterable<SqliteNowMigrationStep> migrations = const [],
+    SqliteNowMigrationStepCallback? onMigrationStep,
     SqliteNowDriver driver = const Sqlite3Driver(),
   }) : _openOptions = const SqliteNowOpenOptions.inMemory(),
        _driver = driver,
-       _migrationPlan = SqliteNowMigrationPlan(migrations);
+       _migrationPlan = SqliteNowMigrationPlan(migrations),
+       _onMigrationStep = onMigrationStep;
 
   final SqliteNowOpenOptions _openOptions;
   final SqliteNowDriver _driver;
   final SqliteNowMigrationPlan _migrationPlan;
+  final SqliteNowMigrationStepCallback? _onMigrationStep;
   final TableInvalidationTracker _invalidationTracker =
       TableInvalidationTracker();
 
@@ -70,7 +75,11 @@ final class SqliteNowDatabase {
         await _ensureBootstrapUserVersion(opened);
         await opened.transaction(() async {
           final currentVersion = await opened.readUserVersion();
-          final newVersion = await _migrationPlan.apply(opened, currentVersion);
+          final newVersion = await _migrationPlan.apply(
+            opened,
+            currentVersion,
+            onMigrationStep: _onMigrationStep,
+          );
           if (newVersion != currentVersion) {
             await opened.setUserVersion(newVersion);
           }

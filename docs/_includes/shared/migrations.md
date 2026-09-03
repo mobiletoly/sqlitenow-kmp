@@ -57,14 +57,34 @@ Existing database:
 
 - the SQLite file already has user tables
 - SQLiteNow reads `PRAGMA user_version`
-- SQLiteNow runs migration files with a version greater than the current
-  version
-- after successful migration, SQLiteNow stores the latest applied version in
-  `PRAGMA user_version`
+- for each integer version above the current version, SQLiteNow runs that
+  version's migration SQL if a matching file exists
+- after that version's SQL, SQLiteNow calls `onMigrationStep` for the crossed
+  boundary, whether or not a matching SQL file exists
+- after all boundaries succeed, SQLiteNow writes the generated target version
+  to `PRAGMA user_version` once and commits
+
+For example, suppose an existing database has `PRAGMA user_version = 1` and
+the generated target is version 2. If the project contains both `0001.sql` and
+`0002.sql`, SQLiteNow:
+
+1. skips `0001.sql` because the database is already at version 1
+2. runs `0002.sql`
+3. calls `onMigrationStep` with `fromVersion = 1` and `toVersion = 2`
+4. writes `PRAGMA user_version = 2`
+5. commits the transaction
+
+The presence of `0002.sql` does not suppress the callback. The callback runs
+after the automatic SQL migration for that boundary.
 
 This means a new install does not replay old incremental migrations one by one.
 It creates the current schema directly. Incremental migration files exist for
 users upgrading from an older app version.
+
+If the stored `PRAGMA user_version` is equal to the generated target,
+SQLiteNow runs no migration SQL or callback. If the stored version is newer
+than the generated target, SQLiteNow also runs no migration work and preserves
+the newer value. SQLiteNow does not downgrade the database.
 
 ## Migration File Names
 
@@ -111,6 +131,110 @@ Invalid examples:
 - `add_due_date.sql`
 
 Each version can appear once. Duplicate versions fail generation.
+
+A migration file may contain comments and no SQL statements. Use such a file
+as the target marker when the latest version only needs application code:
+
+```sql
+-- migration/0005_programmatic_only.sql
+-- Version 5 is handled by onMigrationStep.
+```
+
+SQLiteNow still crosses versions with no matching file. An upgrade from version
+2 to version 5 runs SQL for version 3, calls the callback for `2 -> 3`, calls it
+for `3 -> 4`, runs version 5 SQL if the file contains any, and calls it for
+`4 -> 5`. SQLiteNow writes `PRAGMA user_version = 5` only after every boundary
+succeeds.
+
+## Programmatic Migration Steps
+
+Use `onMigrationStep` for row transformations that depend on application code.
+Keep table, column, and index changes in numbered SQL files.
+
+{% if include.platform == "kmp" %}
+```kotlin
+val migrations = VersionBasedDatabaseMigrations(
+    onMigrationStep = { scope ->
+        when (scope.toVersion) {
+            2 -> migrateFullNames(scope)
+        }
+    },
+)
+```
+
+The callback type is `suspend (SqliteNowMigrationScope) -> Unit`. The scoped
+connection supplies `execSQL` and `usePrepared`.
+{% elsif include.platform == "swift" %}
+```swift
+let database = AppDatabase(
+    path: databaseURL,
+    onMigrationStep: { scope in
+        if scope.toVersion == 2 {
+            try await migrateFullNames(scope)
+        }
+    }
+)
+```
+
+The callback type is `@Sendable (SQLiteNowMigrationScope) async throws ->
+Void`. The scoped connection supplies low-level `execute` and `query` methods.
+{% elsif include.platform == "dart" %}
+```dart
+final database = AppDatabase(
+  path: databasePath,
+  onMigrationStep: (scope) async {
+    if (scope.toVersion == 2) {
+      await migrateFullNames(scope);
+    }
+  },
+);
+```
+
+The callback returns `FutureOr<void>`. The scoped connection supplies
+`execute`, `select`, and `usePrepared`.
+{% endif %}
+
+Each callback receives a scope with these values:
+
+- `originalVersion`: the stored version when this upgrade started; it stays
+  unchanged across a multi-version upgrade
+- `fromVersion`: the version before the current boundary
+- `toVersion`: the boundary just reached; matching SQL, if present, has run
+- `targetVersion`: the newest version in the generated migration plan
+- `connection`: restricted access to the same transaction-owned SQLite
+  connection that ran the migration SQL
+
+Application code uses `scope.connection`. The underlying raw connection is an
+internal implementation detail. The scoped connection does not offer database
+close or transaction methods. It rejects transaction-control SQL and
+`PRAGMA user_version`; SQLiteNow owns both for the duration of the migration.
+
+The callback does not run outside the migration transaction and does not start
+a separate transaction. SQL from the migration file, SQL executed through
+`scope.connection`, and the final `PRAGMA user_version` write all commit or
+roll back together.
+
+Await each scoped operation in the callback. When the callback returns,
+SQLiteNow rejects new scoped operations and waits for operations the connection
+already accepted before it advances to the next version. If database
+initialization or opening is cancelled during that wait, SQLiteNow cancels
+those operations, waits for their cleanup, and rolls back.
+
+If callback SQL fails and the callback propagates the error, SQLiteNow aborts
+the migration and rolls back the schema changes, callback data, and version
+write. A callback may catch an operation error and perform compensating SQL;
+SQLiteNow treats an error the callback catches as handled and may commit if the
+rest of the migration succeeds.
+
+For example, version 1 may store a person's name in `full_name`. Version 2 SQL
+adds `first_name` and `last_name`. The `1 -> 2` callback reads `full_name`,
+splits it, and writes the two new columns. Version 3 SQL can then remove
+`full_name`. SQL for each version runs before its callback, so the version 2
+columns exist before application code writes them.
+
+Keep each shipped callback branch in application source while users may still
+upgrade across that version. SQLiteNow calls the branch in order but does not
+inspect callback code for missing cases.
 
 ## Starting Schema
 
@@ -182,7 +306,9 @@ These two files serve different users:
   {%- endif %}
   does not run the main `CREATE TABLE task (...)` schema statement again, and
   instead applies migration files with a higher version. In this example it runs
-  `0002_add_task_due_date.sql`, then stores `PRAGMA user_version = 2`.
+  `0002_add_task_due_date.sql`, calls `onMigrationStep` for `1 -> 2` if the
+  callback was supplied, then stores `PRAGMA user_version = 2` after both
+  steps succeed.
 
 If the app later adds `0003_add_task_archived.sql`, a user upgrading from
 version 1 runs `0002_add_task_due_date.sql` and then
@@ -234,7 +360,7 @@ a transaction.
 SQLiteNow applies migration work during `open()` inside a transaction.
 {% endif %}
 
-If a migration statement throws:
+If migration SQL or a callback fails or is cancelled:
 
 - the transaction rolls back
 - `PRAGMA user_version` is not advanced
@@ -250,6 +376,12 @@ If a migration statement throws:
 {% endif %}
 
 Fix the migration SQL and reopen a new generated database instance.
+
+The callback and its accepted scoped operations run inside the same transaction
+as the migration SQL. Awaited work keeps that transaction open. SQLite can roll
+back database changes, but it cannot roll back HTTP requests, filesystem writes,
+or other external effects. Keep network calls and unrelated external work
+outside the callback.
 
 ## Practical Workflow
 

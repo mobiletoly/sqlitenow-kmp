@@ -21,10 +21,240 @@ internal class SwiftProductSupportEmitter(
     fun emit(writer: SwiftWriter) {
         with(writer) {
             emitErrorTypes()
+            emitMigrationTypes()
             emitSelectQueryContainer()
             emitExecuteReturningQueryContainer()
             emitRuntimeHelpers()
         }
+    }
+
+    private fun SwiftWriter.emitMigrationTypes() {
+        line("public typealias SQLiteNowMigrationStepCallback =")
+        indent {
+            line("@Sendable (SQLiteNowMigrationScope) async throws -> Void")
+        }
+        line()
+        line("public struct SQLiteNowMigrationScope: Sendable {")
+        indent {
+            line("private let runtimeScope: SQLiteNowCoreRuntimeMigrationScope")
+            line("public let originalVersion: Int")
+            line("public let fromVersion: Int")
+            line("public let toVersion: Int")
+            line("public let targetVersion: Int")
+            line("public let connection: SQLiteNowMigrationConnection")
+            line()
+            line("fileprivate init(runtimeScope: SQLiteNowCoreRuntimeMigrationScope) {")
+            indent {
+                line("self.runtimeScope = runtimeScope")
+                line("self.originalVersion = Int(runtimeScope.originalVersion)")
+                line("self.fromVersion = Int(runtimeScope.fromVersion)")
+                line("self.toVersion = Int(runtimeScope.toVersion)")
+                line("self.targetVersion = Int(runtimeScope.targetVersion)")
+                line("self.connection = SQLiteNowMigrationConnection(runtimeScope: runtimeScope)")
+            }
+            line("}")
+        }
+        line("}")
+        line()
+        line("public struct SQLiteNowMigrationConnection: Sendable {")
+        indent {
+            line("private let runtimeScope: SQLiteNowCoreRuntimeMigrationScope")
+            line()
+            line("fileprivate init(runtimeScope: SQLiteNowCoreRuntimeMigrationScope) {")
+            indent {
+                line("self.runtimeScope = runtimeScope")
+            }
+            line("}")
+            line()
+            line("public func execute(_ sql: String, bindValues: [SQLiteNowCoreRuntimeBindValue] = []) async throws {")
+            indent {
+                line("_ = try await runtimeScope.execute(sql: sql, bindValues: bindValues)")
+            }
+            line("}")
+            line()
+            line("public func query(")
+            indent {
+                line("_ sql: String,")
+                line("bindValues: [SQLiteNowCoreRuntimeBindValue] = [],")
+                line("columnTypes: [String]")
+            }
+            line(") async throws -> SQLiteNowCoreRuntimeRowSet {")
+            indent {
+                line("try await runtimeScope.query(sql: sql, bindValues: bindValues, columnTypes: columnTypes)")
+            }
+            line("}")
+        }
+        line("}")
+        line()
+        line("internal final class SQLiteNowMigrationCallbackAdapter: SQLiteNowCoreRuntimeMigrationCallback, @unchecked Sendable {")
+        indent {
+            line("private let callback: SQLiteNowMigrationStepCallback")
+            line()
+            line("internal init(callback: @escaping SQLiteNowMigrationStepCallback) {")
+            indent {
+                line("self.callback = callback")
+            }
+            line("}")
+            line()
+            line("internal func onMigrationStep(")
+            indent {
+                line("scope: SQLiteNowCoreRuntimeMigrationScope,")
+                line("completion: SQLiteNowCoreRuntimeMigrationCompletion")
+            }
+            line(") -> SQLiteNowCoreRuntimeMigrationTask {")
+            indent {
+                line("let task = Task {")
+                indent {
+                    line("do {")
+                    indent {
+                        line("try await callback(SQLiteNowMigrationScope(runtimeScope: scope))")
+                        line("completion.success()")
+                    }
+                    line("} catch is CancellationError {")
+                    indent {
+                        line("completion.cancel()")
+                    }
+                    line("} catch {")
+                    indent {
+                        line("completion.failure(message: String(describing: error))")
+                    }
+                    line("}")
+                }
+                line("}")
+                line("return SQLiteNowMigrationTaskAdapter(task: task)")
+            }
+            line("}")
+        }
+        line("}")
+        line()
+        line("internal final class SQLiteNowMigrationTaskAdapter: SQLiteNowCoreRuntimeMigrationTask, @unchecked Sendable {")
+        indent {
+            line("private let task: Task<Void, Never>")
+            line()
+            line("internal init(task: Task<Void, Never>) {")
+            indent {
+                line("self.task = task")
+            }
+            line("}")
+            line()
+            line("internal func cancel() {")
+            indent {
+                line("task.cancel()")
+            }
+            line("}")
+        }
+        line("}")
+        line()
+        line("internal func sqliteNowOpen(_ runtime: SQLiteNowCoreRuntimeDatabase) async throws {")
+        indent {
+            line("let state = SQLiteNowRuntimeOperationState()")
+            line("try await withTaskCancellationHandler {")
+            indent {
+                line("try await withCheckedThrowingContinuation { continuation in")
+                indent {
+                    line("let completion = SQLiteNowRuntimeOperationCompletion(continuation: continuation)")
+                    line("state.install(runtime.openCancellable(completion: completion))")
+                }
+                line("}")
+            }
+            line("} onCancel: {")
+            indent {
+                line("state.cancel()")
+            }
+            line("}")
+        }
+        line("}")
+        line()
+        line("private final class SQLiteNowRuntimeOperationState: @unchecked Sendable {")
+        indent {
+            line("private let lock = NSLock()")
+            line("private var handle: SQLiteNowCoreRuntimeCancelHandle?")
+            line("private var cancelled = false")
+            line()
+            line("func install(_ handle: SQLiteNowCoreRuntimeCancelHandle) {")
+            indent {
+                line("lock.lock()")
+                line("if cancelled {")
+                indent {
+                    line("lock.unlock()")
+                    line("handle.cancel()")
+                    line("return")
+                }
+                line("}")
+                line("self.handle = handle")
+                line("lock.unlock()")
+            }
+            line("}")
+            line()
+            line("func cancel() {")
+            indent {
+                line("lock.lock()")
+                line("cancelled = true")
+                line("let handle = self.handle")
+                line("lock.unlock()")
+                line("handle?.cancel()")
+            }
+            line("}")
+        }
+        line("}")
+        line()
+        line("private final class SQLiteNowRuntimeOperationCompletion: SQLiteNowCoreRuntimeOperationCompletion, @unchecked Sendable {")
+        indent {
+            line("private let lock = NSLock()")
+            line("private var completed = false")
+            line("private let continuation: CheckedContinuation<Void, Error>")
+            line()
+            line("init(continuation: CheckedContinuation<Void, Error>) {")
+            indent {
+                line("self.continuation = continuation")
+            }
+            line("}")
+            line()
+            line("func onSuccess() {")
+            indent {
+                line("finish()")
+            }
+            line("}")
+            line()
+            line("func onFailure(payload: SQLiteNowCoreRuntimeErrorPayload) {")
+            indent {
+                line("if payload.category == \"cancelled\" {")
+                indent {
+                    line("finish(error: CancellationError())")
+                }
+                line("} else {")
+                indent {
+                    line("finish(error: SQLiteNowError.from(payload))")
+                }
+                line("}")
+            }
+            line("}")
+            line()
+            line("private func finish(error: Error? = nil) {")
+            indent {
+                line("lock.lock()")
+                line("guard !completed else {")
+                indent {
+                    line("lock.unlock()")
+                    line("return")
+                }
+                line("}")
+                line("completed = true")
+                line("lock.unlock()")
+                line("if let error {")
+                indent {
+                    line("continuation.resume(throwing: error)")
+                }
+                line("} else {")
+                indent {
+                    line("continuation.resume()")
+                }
+                line("}")
+            }
+            line("}")
+        }
+        line("}")
+        line()
     }
 
     private fun SwiftWriter.emitErrorTypes() {
@@ -134,7 +364,13 @@ internal class SwiftProductSupportEmitter(
             }
             line("} catch {")
             indent {
-                line("throw SQLiteNowError.from(error)")
+                line("let mapped = SQLiteNowError.from(error)")
+                line("if case .cancelled = mapped {")
+                indent {
+                    line("throw CancellationError()")
+                }
+                line("}")
+                line("throw mapped")
             }
             line("}")
         }

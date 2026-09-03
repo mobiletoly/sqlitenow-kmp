@@ -186,10 +186,11 @@ internal class DartCodeGenerator(
                 line("$databaseName.inMemory({")
                 indent {
                     line(adapterRegistry.constructorParameter(databaseName))
+                    line("SqliteNowMigrationStepCallback? onMigrationStep,")
                 }
                 line("}) : this._(")
             indent {
-                line("SqliteNowDatabase.inMemory(migrations: _migrations),")
+                line("SqliteNowDatabase.inMemory(migrations: _migrations, onMigrationStep: onMigrationStep),")
                 line("adapters,")
             }
             line(");")
@@ -198,10 +199,11 @@ internal class DartCodeGenerator(
             indent {
                 line("required String path,")
                 line(adapterRegistry.constructorParameter(databaseName))
+                line("SqliteNowMigrationStepCallback? onMigrationStep,")
             }
             line("}) : this._(")
             indent {
-                line("SqliteNowDatabase(path: path, migrations: _migrations),")
+                line("SqliteNowDatabase(path: path, migrations: _migrations, onMigrationStep: onMigrationStep),")
                 line("adapters,")
             }
             line(");")

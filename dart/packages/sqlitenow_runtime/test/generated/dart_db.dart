@@ -342,11 +342,29 @@ final class ProfileInsertOneParams {
 }
 
 final class DartDb {
-  DartDb.inMemory({required DartDbAdapters adapters})
-    : this._(SqliteNowDatabase.inMemory(migrations: _migrations), adapters);
+  DartDb.inMemory({
+    required DartDbAdapters adapters,
+    SqliteNowMigrationStepCallback? onMigrationStep,
+  }) : this._(
+         SqliteNowDatabase.inMemory(
+           migrations: _migrations,
+           onMigrationStep: onMigrationStep,
+         ),
+         adapters,
+       );
 
-  DartDb({required String path, required DartDbAdapters adapters})
-    : this._(SqliteNowDatabase(path: path, migrations: _migrations), adapters);
+  DartDb({
+    required String path,
+    required DartDbAdapters adapters,
+    SqliteNowMigrationStepCallback? onMigrationStep,
+  }) : this._(
+         SqliteNowDatabase(
+           path: path,
+           migrations: _migrations,
+           onMigrationStep: onMigrationStep,
+         ),
+         adapters,
+       );
 
   DartDb._(this._database, this.adapters) {
     attachment = AttachmentQueries(this);

@@ -46,11 +46,29 @@ final class TaskInsertOneParams {
 }
 
 final class TodoDatabase {
-  TodoDatabase.inMemory({required TodoDatabaseAdapters adapters})
-    : this._(SqliteNowDatabase.inMemory(migrations: _migrations), adapters);
+  TodoDatabase.inMemory({
+    required TodoDatabaseAdapters adapters,
+    SqliteNowMigrationStepCallback? onMigrationStep,
+  }) : this._(
+         SqliteNowDatabase.inMemory(
+           migrations: _migrations,
+           onMigrationStep: onMigrationStep,
+         ),
+         adapters,
+       );
 
-  TodoDatabase({required String path, required TodoDatabaseAdapters adapters})
-    : this._(SqliteNowDatabase(path: path, migrations: _migrations), adapters);
+  TodoDatabase({
+    required String path,
+    required TodoDatabaseAdapters adapters,
+    SqliteNowMigrationStepCallback? onMigrationStep,
+  }) : this._(
+         SqliteNowDatabase(
+           path: path,
+           migrations: _migrations,
+           onMigrationStep: onMigrationStep,
+         ),
+         adapters,
+       );
 
   TodoDatabase._(this._database, this.adapters) {
     task = TaskQueries(this);

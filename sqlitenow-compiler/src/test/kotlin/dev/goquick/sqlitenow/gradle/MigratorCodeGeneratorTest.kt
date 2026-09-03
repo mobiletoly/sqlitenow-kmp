@@ -13,6 +13,7 @@ import org.junit.jupiter.api.TestFactory
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.nio.file.Path
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class MigratorCodeGeneratorTest {
@@ -175,6 +176,29 @@ class MigratorCodeGeneratorTest {
         compileGeneratedMigrator(generated.file)
     }
 
+    @Test
+    fun generatedMigrationExposesSequentialProgrammaticStepCallback() {
+        val generated = generatedMigrationCode(
+            schemaFiles = mapOf("schema.sql" to "CREATE TABLE users (id INTEGER PRIMARY KEY);"),
+            migrationFiles = mapOf(
+                "0001.sql" to "CREATE TABLE legacy_users (id INTEGER PRIMARY KEY);",
+                "0003.sql" to "ALTER TABLE users ADD COLUMN name TEXT;",
+                "0005.sql" to "ALTER TABLE users ADD COLUMN email TEXT;",
+            ),
+        ).content
+
+        assertTrue(generated.contains("onMigrationStep: SqliteNowMigrationStepCallback = {}"))
+        assertTrue(generated.contains("if (currentVersion < 5)"))
+        assertTrue(generated.contains("for (toVersion in (currentVersion + 1)..5)"))
+        assertTrue(generated.contains("fromVersion = toVersion - 1"))
+        assertTrue(generated.contains("originalVersion = currentVersion"))
+        assertTrue(generated.contains("targetVersion = 5"))
+        assertTrue(generated.contains("callback = onMigrationStep"))
+        assertTrue(generated.indexOf("migrateToVersion3(conn)") < generated.indexOf("callback = onMigrationStep"))
+        assertTrue(generated.contains("maxOf(currentVersion, 5)"))
+        assertFalse(generated.contains("PRAGMA user_version"))
+    }
+
     private fun generatedMigrationCode(
         schemaFiles: Map<String, String>,
         batchFiles: Map<String, String> = emptyMap(),
@@ -214,7 +238,7 @@ class MigratorCodeGeneratorTest {
             assertGeneratedContentContains(
                 fileContent,
                 "migrateToVersion$version" to "Should contain migration function for version $version",
-                "if (currentVersion < $version)" to "Should contain check for version $version",
+                "$version -> migrateToVersion$version(conn)" to "Should route version $version",
                 "migrateToVersion$version(conn)" to "Should call migration function for version $version",
             )
         }
@@ -293,6 +317,32 @@ class MigratorCodeGeneratorTest {
                     suspend fun execSQL(sql: String) = Unit
 
                     suspend fun <T> withExclusiveAccess(block: suspend () -> T): T = block()
+                }
+            """.trimIndent()
+        )
+        File(coreDir, "SqliteNowMigration.kt").writeText(
+            """
+                package dev.goquick.sqlitenow.core
+
+                typealias SqliteNowMigrationStepCallback = suspend (SqliteNowMigrationScope) -> Unit
+
+                class SqliteNowMigrationScope(
+                    val originalVersion: Int,
+                    val fromVersion: Int,
+                    val toVersion: Int,
+                    val targetVersion: Int,
+                ) {
+                }
+
+                object SqliteNowMigrationStepRunner {
+                    suspend fun run(
+                        rawConnection: SafeSQLiteConnection,
+                        originalVersion: Int,
+                        fromVersion: Int,
+                        toVersion: Int,
+                        targetVersion: Int,
+                        callback: SqliteNowMigrationStepCallback,
+                    ) = callback(SqliteNowMigrationScope(originalVersion, fromVersion, toVersion, targetVersion))
                 }
             """.trimIndent()
         )

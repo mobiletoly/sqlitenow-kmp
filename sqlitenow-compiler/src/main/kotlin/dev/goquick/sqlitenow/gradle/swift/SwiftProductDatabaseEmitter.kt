@@ -72,6 +72,7 @@ internal class SwiftProductDatabaseEmitter(
         line("public final class $databaseName: @unchecked Sendable {")
         indent {
             line("private let runtime: SQLiteNowCoreRuntimeDatabase")
+            line("private let migrationCallbackAdapter: SQLiteNowMigrationCallbackAdapter")
             if (syncEnabled) {
                 line("private let syncClientLease = SQLiteNowSyncClientLease()")
             }
@@ -80,16 +81,26 @@ internal class SwiftProductDatabaseEmitter(
                 line("public let ${namespace.swiftNamespacePropertyName().swiftIdentifier()}: ${namespace.swiftNamespaceTypeName("Queries")}")
             }
             line()
-            line("public init(path: URL, adapters: ${databaseName}Adapters$adapterDefault, debug: Bool = false) {")
+            line("public init(")
             indent {
+                line("path: URL,")
+                line("adapters: ${databaseName}Adapters$adapterDefault,")
+                line("onMigrationStep: @escaping SQLiteNowMigrationStepCallback = { _ in },")
+                line("debug: Bool = false")
+            }
+            line(") {")
+            indent {
+                line("let migrationCallbackAdapter = SQLiteNowMigrationCallbackAdapter(callback: onMigrationStep)")
                 line("let runtime = SQLiteNowCoreRuntimeDatabase(")
                 indent {
                     line("path: path.path,")
                     line("migrationPlan: Self.migrationPlan(),")
-                    line("debug: debug")
+                    line("debug: debug,")
+                    line("onMigrationStep: migrationCallbackAdapter")
                 }
                 line(")")
                 line("self.runtime = runtime")
+                line("self.migrationCallbackAdapter = migrationCallbackAdapter")
                 line("self.adapters = adapters")
                 model.namespaces.forEach { namespace ->
                     line("self.${namespace.swiftNamespacePropertyName().swiftIdentifier()} = ${namespace.swiftNamespaceTypeName("Queries")}(runtime: runtime, adapters: adapters)")
@@ -101,7 +112,7 @@ internal class SwiftProductDatabaseEmitter(
             indent {
                 line("_ = try await mapRuntimeErrors {")
                 indent {
-                    line("try await runtime.open()")
+                    line("try await sqliteNowOpen(runtime)")
                 }
                 line("}")
             }

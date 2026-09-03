@@ -16,12 +16,27 @@ final class DocsSelectAllResult {
 final class SyncDartDb {
   SyncDartDb.inMemory({
     SyncDartDbAdapters adapters = const SyncDartDbAdapters(),
-  }) : this._(SqliteNowDatabase.inMemory(migrations: _migrations), adapters);
+    SqliteNowMigrationStepCallback? onMigrationStep,
+  }) : this._(
+         SqliteNowDatabase.inMemory(
+           migrations: _migrations,
+           onMigrationStep: onMigrationStep,
+         ),
+         adapters,
+       );
 
   SyncDartDb({
     required String path,
     SyncDartDbAdapters adapters = const SyncDartDbAdapters(),
-  }) : this._(SqliteNowDatabase(path: path, migrations: _migrations), adapters);
+    SqliteNowMigrationStepCallback? onMigrationStep,
+  }) : this._(
+         SqliteNowDatabase(
+           path: path,
+           migrations: _migrations,
+           onMigrationStep: onMigrationStep,
+         ),
+         adapters,
+       );
 
   SyncDartDb._(this._database, this.adapters) {
     docs = DocsQueries(this);
