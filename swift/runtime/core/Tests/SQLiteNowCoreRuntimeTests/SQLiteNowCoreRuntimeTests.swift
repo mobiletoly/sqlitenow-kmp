@@ -83,6 +83,26 @@ final class SQLiteNowCoreRuntimeTests: XCTestCase {
         try await db.close()
     }
 
+    func testClosingDatabaseTerminatesTableObservation() async throws {
+        let db = SQLiteNowCoreRuntimeDatabase(
+            path: temporaryDatabaseURL().path,
+            migrationPlan: Self.migrationPlan(),
+            debug: false
+        )
+        try await db.open()
+
+        let closed = expectation(description: "table observation ends on database close")
+        let observer = RecordingTableObserver(onError: { _ in
+            closed.fulfill()
+        })
+        _ = db.observeTables(tableNames: ["runtime_item"], observer: observer)
+
+        try await db.close()
+        await fulfillment(of: [closed], timeout: 5)
+        XCTAssertEqual(observer.errorCount, 1)
+        XCTAssertEqual(observer.firstErrorCategory, "misuse")
+    }
+
     func testTableObservationIsActiveWhenObserveReturns() async throws {
         let db = SQLiteNowCoreRuntimeDatabase(
             path: temporaryDatabaseURL().path,
@@ -489,17 +509,28 @@ private final class LockedStrings: @unchecked Sendable {
 private final class RecordingTableObserver: SQLiteNowCoreRuntimeTableObserver, @unchecked Sendable {
     private let lock = NSLock()
     private let onChangedBlock: @Sendable () -> Void
+    private let onErrorBlock: @Sendable (SQLiteNowCoreRuntimeErrorPayload) -> Void
     private var changedCount = 0
     private var errors: [SQLiteNowCoreRuntimeErrorPayload] = []
 
-    init(onChanged: @escaping @Sendable () -> Void = {}) {
+    init(
+        onChanged: @escaping @Sendable () -> Void = {},
+        onError: @escaping @Sendable (SQLiteNowCoreRuntimeErrorPayload) -> Void = { _ in }
+    ) {
         self.onChangedBlock = onChanged
+        self.onErrorBlock = onError
     }
 
     var errorCount: Int {
         lock.lock()
         defer { lock.unlock() }
         return errors.count
+    }
+
+    var firstErrorCategory: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return errors.first?.category
     }
 
     func onChanged() {
@@ -513,5 +544,6 @@ private final class RecordingTableObserver: SQLiteNowCoreRuntimeTableObserver, @
         lock.lock()
         errors.append(payload)
         lock.unlock()
+        onErrorBlock(payload)
     }
 }

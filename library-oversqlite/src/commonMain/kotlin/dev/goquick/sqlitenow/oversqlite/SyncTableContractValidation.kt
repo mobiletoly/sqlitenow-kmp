@@ -22,11 +22,11 @@ private data class SyncTableContractKey(
     val qualifiedTable: String = "$schema.$table"
 }
 
-internal fun CapabilitiesResponse.requireMatchingSyncTableContract(
+internal fun AdmittedOversqliteContract.requireMatchingSyncTableContract(
     validated: ValidatedConfig,
-): CapabilitiesResponse {
+): AdmittedOversqliteContract {
     val server = linkedMapOf<SyncTableContractKey, List<String>>()
-    registeredTableSpecs.forEach { spec ->
+    generation.tables.forEach { spec ->
         if (
             spec.schema.isBlank() ||
             spec.table.isBlank() ||
@@ -34,16 +34,16 @@ internal fun CapabilitiesResponse.requireMatchingSyncTableContract(
             spec.syncKeyColumns.any(String::isBlank) ||
             spec.syncKeyColumns.distinct().size != spec.syncKeyColumns.size
         ) {
-            throw RemoteResponseSemanticException("capabilities request")
+            throw RemoteResponseSemanticException("generation discovery")
         }
         val key = SyncTableContractKey(spec.schema, spec.table)
         if (server.put(key, spec.syncKeyColumns.toList()) != null) {
-            throw RemoteResponseSemanticException("capabilities request")
+            throw RemoteResponseSemanticException("generation discovery")
         }
     }
 
     val client = validated.tables.associate { table ->
-        SyncTableContractKey(validated.schema, table.tableName.lowercase()) to
+        SyncTableContractKey(validated.schemaForTable(table.tableName), table.tableName) to
             listOf(table.syncKeyColumnName.lowercase())
     }
     val serverKeys = server.keys

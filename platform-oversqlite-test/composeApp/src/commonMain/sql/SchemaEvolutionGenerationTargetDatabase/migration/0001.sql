@@ -1,0 +1,15 @@
+CREATE TABLE people (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE notes (
+    id TEXT PRIMARY KEY NOT NULL,
+    body TEXT NOT NULL
+);
+
+CREATE TABLE drafts (
+    id TEXT PRIMARY KEY NOT NULL,
+    label TEXT NOT NULL,
+    payload BLOB NOT NULL
+);

@@ -10,7 +10,9 @@
           "status": 503,
           "body": {
             "error": "bundle_change_watch_disabled",
-            "message": "bundle change watch is disabled"
+            "message": "bundle change watch is disabled",
+            "retryable": true,
+            "remediation": "retry"
           }
         },
         "remoteBundles": [
@@ -216,7 +218,7 @@
       "name": "unsupported-server-falls-back-to-polling",
       "description": "A server that omits bundle_change_watch capability is polled without opening /sync/watch.",
       "serverScript": {
-        "kind": "unsupported_capability",
+        "kind": "watch_disabled",
         "bundleChangeWatchSupported": false,
         "startBundles": [
           {

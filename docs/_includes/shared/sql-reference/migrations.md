@@ -21,10 +21,7 @@ the next version. Cancellation during that drain cancels the accepted
 operations and rolls back. Errors caught by the callback remain handled, so the
 callback may run compensating SQL and commit.
 
-{% if include.platform == "dart" %}
-For the full Dart migration guide, see
-[Flutter/Dart Migrations]({{ site.baseurl }}/flutter/migrations/).
-{% elsif include.platform == "kmp" %}
+{% if include.platform == "kmp" %}
 For the full KMP migration guide, see
 [KMP Migrations]({{ site.baseurl }}/kmp/migrations/).
 {% elsif include.platform == "swift" %}

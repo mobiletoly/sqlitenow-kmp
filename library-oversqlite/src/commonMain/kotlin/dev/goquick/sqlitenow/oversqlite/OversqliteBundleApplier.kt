@@ -20,6 +20,7 @@ import kotlinx.serialization.json.JsonObject
 internal class OversqliteBundleApplier(
     private val localStore: OversqliteLocalStore,
     private val syncStateStore: OversqliteSyncStateStore,
+    val survivors: OversqliteApplySurvivors,
 ) {
     suspend fun applyAuthoritativeRow(
         state: RuntimeState,
@@ -27,6 +28,8 @@ internal class OversqliteBundleApplier(
         localPk: String,
         keyJson: String,
         statementCache: StatementCache? = null,
+        origin: String = "explicit_conflict",
+        bundleSeq: Long? = null,
     ) {
         when (row.op) {
             "INSERT", "UPDATE" -> {
@@ -38,12 +41,14 @@ internal class OversqliteBundleApplier(
             else -> error("unsupported bundle row op ${row.op}")
         }
 
-        syncStateStore.updateStructuredRowState(
-            schemaName = state.validated.schema,
+        syncStateStore.installAuthoritativeBaseline(
+            schemaName = state.validated.schemaForTable(row.table),
             tableName = row.table,
             keyJson = keyJson,
             rowVersion = row.rowVersion,
-            deleted = row.op == "DELETE",
+            kind = if(row.op=="DELETE") "deleted" else "live",
+            payload = (row.payload as? JsonObject)?.let { localStore.captureAuthoritativePayload(row.table,it,statementCache) },
+            origin = origin, bundleSeq = bundleSeq,
             statementCache = statementCache,
         )
     }

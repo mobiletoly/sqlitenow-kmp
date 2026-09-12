@@ -1,10 +1,16 @@
 package dev.goquick.sqlitenow.oversqlite.platform
 
+import androidx.sqlite.SQLiteStatement
+import androidx.sqlite.async.prepare
 import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.oversqlite.*
 import dev.goquick.sqlitenow.oversqlite.platformsupport.canonicalizeJsonElement
 import dev.goquick.sqlitenow.oversqlite.platformsupport.sha256Hex
+import dev.goquick.sqlitenow.core.DatabaseMigrations
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import dev.goquick.sqlitenow.core.SqliteConnectionProvider
+import dev.goquick.sqlitenow.core.SqliteNowDatabase
+import dev.goquick.sqlitenow.core.TransactionMode
 import dev.goquick.sqlitenow.core.sqlite.use
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -24,13 +30,134 @@ import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.readRemaining
 import io.ktor.utils.io.core.readText
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.*
 import kotlinx.coroutines.CancellationException
+
+internal class PlatformTestDatabase internal constructor(
+    private val dbName: String,
+    private val connectionProvider: SqliteConnectionProvider,
+    private val schemaStatements: MutableList<String>,
+    private val connectionConfig: dev.goquick.sqlitenow.core.SqliteConnectionConfig?,
+    private val targetVersion: Int = 1,
+) {
+    internal val databaseName: String get() = dbName
+    internal var migrationFailureForTest: (() -> Unit)? = null
+
+    private val preOpenDataStatements = mutableListOf<String>()
+    private var database = createDatabase()
+    private var opening: OversqliteOpening<SqliteNowDatabase>? = null
+
+    private fun createDatabase(): SqliteNowDatabase = SqliteNowDatabase(
+        dbName = dbName,
+        migration = PlatformTestMigrations(
+            targetVersion = targetVersion,
+            schemaStatements = schemaStatements,
+            preOpenDataStatements = preOpenDataStatements,
+            beforeReturn = { migrationFailureForTest?.invoke() },
+        ),
+        debug = false,
+        connectionProvider = connectionProvider,
+        syncManaged = true,
+    ).also { database ->
+        connectionConfig?.let { database.connectionConfig = it }
+    }
+
+    fun connection(): SafeSQLiteConnection = database.connection()
+
+    suspend fun prepare(sql: String): SQLiteStatement = database.connection().prepare(sql)
+
+    suspend fun reopenForInspection(): SafeSQLiteConnection =
+        connectionProvider.openConnection(
+            dbName = dbName,
+            debug = false,
+            config = connectionConfig ?: dev.goquick.sqlitenow.core.SqliteConnectionConfig(),
+        )
+
+    suspend fun execSQL(sql: String) {
+        if (database.isOpen()) {
+            database.connection().execSQL(sql)
+        } else if (isSchemaStatement(sql)) {
+            schemaStatements += sql
+        } else {
+            preOpenDataStatements += sql
+        }
+    }
+
+    suspend fun <T> withExclusiveAccess(block: suspend (SafeSQLiteConnection) -> T): T {
+        val connection = database.connection()
+        return connection.withExclusiveAccess { block(connection) }
+    }
+
+    suspend fun <T> transaction(mode: TransactionMode, block: suspend () -> T): T =
+        database.connection().transaction(mode, block)
+
+    suspend fun openClient(
+        config: OversqliteConfig,
+        http: HttpClient,
+        resolver: Resolver,
+        upgradePlan: OversqliteUpgradePlan? = null,
+        onRefusalBeforeClose: (suspend (Throwable) -> Unit)? = null,
+    ): DefaultOversqliteClient {
+        opening?.close()
+        opening = null
+        if (database.isOpen()) database.close()
+        database = createDatabase()
+        val nextOpening = database.openForSync(
+            config = config,
+            httpClient = http,
+            resolver = resolver,
+            upgradePlan = upgradePlan,
+        )
+        opening = nextOpening
+        return try {
+            nextOpening.advance()
+            preOpenDataStatements.clear()
+            checkNotNull(nextOpening.readyOrNull()) {
+                "platform test coordinated opening did not publish ready"
+            }.client as DefaultOversqliteClient
+        } catch (failure: Throwable) {
+            // A same-lifetime test oracle must run after public advance refuses,
+            // before close revokes access and transient provider state is lost.
+            runCatching { onRefusalBeforeClose?.invoke(failure) }.onFailure(failure::addSuppressed)
+            runCatching { nextOpening.close() }.onFailure(failure::addSuppressed)
+            opening = null
+            throw failure
+        }
+    }
+
+    suspend fun close() {
+        opening?.close()
+        opening = null
+        if (database.isOpen()) database.close()
+    }
+
+    private fun isSchemaStatement(sql: String): Boolean =
+        sql.trimStart().takeWhile { !it.isWhitespace() }.uppercase() in setOf("ALTER", "CREATE", "DROP", "PRAGMA")
+}
+
+private class PlatformTestMigrations(
+    override val targetVersion: Int,
+    private val schemaStatements: MutableList<String>,
+    private val preOpenDataStatements: MutableList<String>,
+    private val beforeReturn: () -> Unit,
+) : DatabaseMigrations {
+    override suspend fun applyMigration(conn: SafeSQLiteConnection, currentVersion: Int): Int {
+        if (currentVersion > 0) return currentVersion
+        check(currentVersion == -1 || currentVersion == 0) {
+            "platform test database must start at the fresh migration boundary or an imported legacy version"
+        }
+        for (statement in schemaStatements) {
+            conn.execSQL(statement)
+        }
+        if (currentVersion == -1) {
+            for (statement in preOpenDataStatements) {
+                conn.execSQL(statement)
+            }
+        }
+        beforeReturn()
+        return targetVersion
+    }
+}
 
 internal open class PlatformCrossTargetTestSupport {
     private companion object {
@@ -38,18 +165,43 @@ internal open class PlatformCrossTargetTestSupport {
     }
 
     protected val json = Json { ignoreUnknownKeys = true }
-    protected val phase6OwnedStorage = Phase6OwnedStorage()
+    protected val workerOwnedStorage = OwnedWorkerStorage()
 
-    protected suspend fun newDb(): SafeSQLiteConnection {
-        val dbName = phase6OwnedStorage.newDatabaseName()
-        return oversqliteTestConnectionProvider().openConnection(
+    private val fileBackedDbPaths = linkedSetOf<String>()
+
+    protected suspend fun newDb(): PlatformTestDatabase = newCoordinatedDb()
+
+    protected suspend fun newCoordinatedDb(
+        connectionProvider: SqliteConnectionProvider = oversqliteTestConnectionProvider(),
+    ): PlatformTestDatabase {
+        val browserRuntime = webRuntimeKind() in setOf("js-browser", "wasm-browser", "js-node")
+        val dbName = if (browserRuntime) {
+            workerOwnedStorage.newDatabaseName()
+        } else {
+            createTempSqliteNowTestDbPath("sqlitenow-platform-parity").also { fileBackedDbPaths += it }
+        }
+        val schemaStatements = mutableListOf<String>()
+        return PlatformTestDatabase(
             dbName = dbName,
-            debug = true,
+            connectionProvider = connectionProvider,
+            schemaStatements = schemaStatements,
+            connectionConfig = null,
         )
     }
 
-    protected suspend fun cleanupPhase6OwnedStorage() {
-        phase6OwnedStorage.cleanup()
+    protected suspend fun newCoordinatedFileBackedDb(path: String): PlatformTestDatabase {
+        return PlatformTestDatabase(
+            dbName = path,
+            connectionProvider = oversqliteTestConnectionProvider(),
+            schemaStatements = mutableListOf(),
+            connectionConfig = createSqliteNowTestConnectionConfig(path),
+        )
+    }
+
+    protected suspend fun cleanupOwnedWorkerStorage() {
+        workerOwnedStorage.cleanup()
+        fileBackedDbPaths.forEach { deleteTempSqliteNowTestDbArtifacts(it) }
+        fileBackedDbPaths.clear()
     }
 
     protected suspend fun newFileBackedDb(path: String): SafeSQLiteConnection {
@@ -60,13 +212,13 @@ internal open class PlatformCrossTargetTestSupport {
         )
     }
 
-    protected fun newClient(
-        db: SafeSQLiteConnection,
+    protected suspend fun newClient(
+        db: PlatformTestDatabase,
         http: HttpClient,
-        uploadLimit: Int = 200,
-        downloadLimit: Int = 1000,
-        snapshotChunkRows: Int = 1000,
-        snapshotChunkBytes: Long = 4L * 1024L * 1024L,
+        maxPushRows: Int = 200,
+        maxPullBundles: Int = 1000,
+        maxSnapshotChunkRows: Int = 1000,
+        maxSnapshotChunkDecodedBytes: Long = 4L * 1024L * 1024L,
         snapshotApplyBatchRows: Int = 256,
         snapshotApplyBatchBytes: Long = 4L * 1024L * 1024L,
         resolver: Resolver = ServerWinsResolver,
@@ -75,15 +227,16 @@ internal open class PlatformCrossTargetTestSupport {
             SyncTable("posts", syncKeyColumnName = "id"),
         ),
     ): DefaultOversqliteClient {
-        return DefaultOversqliteClient(
-            db = db,
+        return db.openClient(
             config = OversqliteConfig(
-                schema = "main",
+                generationId = 1L, databaseId = "platform-sync", serviceId = "platform-mock",
                 syncTables = syncTables,
-                uploadLimit = uploadLimit,
-                downloadLimit = downloadLimit,
-                snapshotChunkRows = snapshotChunkRows,
-                snapshotChunkBytes = snapshotChunkBytes,
+                transferTargets = OversqliteTransferTargets(
+                    maxPushRows = maxPushRows,
+                    maxPullBundles = maxPullBundles,
+                    maxSnapshotChunkRows = maxSnapshotChunkRows,
+                    maxSnapshotChunkDecodedBytes = maxSnapshotChunkDecodedBytes,
+                ),
                 snapshotApplyBatchRows = snapshotApplyBatchRows,
                 snapshotApplyBatchBytes = snapshotApplyBatchBytes,
             ),
@@ -92,8 +245,42 @@ internal open class PlatformCrossTargetTestSupport {
         )
     }
 
+    protected suspend fun createUsersAndPostsTables(db: PlatformTestDatabase) {
+        db.execSQL("CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)")
+        db.execSQL(
+            """
+            CREATE TABLE posts (
+              id TEXT PRIMARY KEY NOT NULL,
+              user_id TEXT NOT NULL REFERENCES users(id),
+              title TEXT NOT NULL
+            )
+            """.trimIndent(),
+        )
+    }
+
     protected suspend fun createUsersAndPostsTables(db: SafeSQLiteConnection) {
         db.execSQL("CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)")
+        db.execSQL(
+            """
+            CREATE TABLE posts (
+              id TEXT PRIMARY KEY NOT NULL,
+              user_id TEXT NOT NULL REFERENCES users(id),
+              title TEXT NOT NULL
+            )
+            """.trimIndent(),
+        )
+    }
+
+    protected suspend fun createUsersWithUpdatedAtAndPostsTables(db: PlatformTestDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE users (
+              id TEXT PRIMARY KEY NOT NULL,
+              name TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+            """.trimIndent(),
+        )
         db.execSQL(
             """
             CREATE TABLE posts (
@@ -126,11 +313,29 @@ internal open class PlatformCrossTargetTestSupport {
         )
     }
 
+    protected suspend fun scalarLong(db: PlatformTestDatabase, sql: String): Long {
+        return db.withExclusiveAccess { connection ->
+            connection.prepare(sql).use { st ->
+                check(st.step())
+                st.getLong(0)
+            }
+        }
+    }
+
     protected suspend fun scalarLong(db: SafeSQLiteConnection, sql: String): Long {
         return db.withExclusiveAccess {
             db.prepare(sql).use { st ->
                 check(st.step())
                 st.getLong(0)
+            }
+        }
+    }
+
+    protected suspend fun scalarText(db: PlatformTestDatabase, sql: String): String {
+        return db.withExclusiveAccess { connection ->
+            connection.prepare(sql).use { st ->
+                check(st.step())
+                st.getText(0)
             }
         }
     }
@@ -144,6 +349,15 @@ internal open class PlatformCrossTargetTestSupport {
         }
     }
 
+    protected suspend fun scalarDouble(db: PlatformTestDatabase, sql: String): Double {
+        return db.withExclusiveAccess { connection ->
+            connection.prepare(sql).use { statement ->
+                check(statement.step()) { "query returned no rows: $sql" }
+                statement.getDouble(0)
+            }
+        }
+    }
+
     protected suspend fun scalarDouble(db: SafeSQLiteConnection, sql: String): Double {
         return db.withExclusiveAccess {
             db.prepare(sql).use { statement ->
@@ -153,12 +367,24 @@ internal open class PlatformCrossTargetTestSupport {
         }
     }
 
+    protected suspend fun insertUser(db: PlatformTestDatabase, id: String, name: String) {
+        db.execSQL("INSERT INTO users(id, name) VALUES('$id', '$name')")
+    }
+
     protected suspend fun insertUser(db: SafeSQLiteConnection, id: String, name: String) {
         db.execSQL("INSERT INTO users(id, name) VALUES('$id', '$name')")
     }
 
+    protected suspend fun insertPost(db: PlatformTestDatabase, id: String, userId: String, title: String) {
+        db.execSQL("INSERT INTO posts(id, user_id, title) VALUES('$id', '$userId', '$title')")
+    }
+
     protected suspend fun insertPost(db: SafeSQLiteConnection, id: String, userId: String, title: String) {
         db.execSQL("INSERT INTO posts(id, user_id, title) VALUES('$id', '$userId', '$title')")
+    }
+
+    protected suspend fun updateUserName(db: PlatformTestDatabase, id: String, name: String) {
+        db.execSQL("UPDATE users SET name = '$name' WHERE id = '$id'")
     }
 
     protected suspend fun updateUserName(db: SafeSQLiteConnection, id: String, name: String) {
@@ -166,42 +392,46 @@ internal open class PlatformCrossTargetTestSupport {
     }
 
     protected class MockSyncServer(
-        private val registeredTableSpecs: List<RegisteredTableSpec> =
+        private val registeredTableSpecs: List<TestRegisteredTableSpec> =
             testRegisteredTableSpecs("users", "posts"),
-        private val bundleLimits: BundleCapabilitiesLimits = testBundleCapabilitiesLimits(),
+        private val wireLimits: TestWireLimits = testWireLimits(),
+        private val usersUpdatedAt: Boolean = false,
+        private val generationResponses: Map<Long, JsonObject>? = null,
     ) {
-        private val json = Json { ignoreUnknownKeys = true }
+        private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
         private val liveRows = linkedMapOf<String, LiveRow>()
         private val bundles = mutableListOf<StoredBundle>()
         private val committedBySourceBundle = linkedMapOf<String, StoredBundle>()
-        private val pushSessions = linkedMapOf<String, PushSession>()
         private val snapshotSessions = linkedMapOf<String, SnapshotSessionState>()
         private var scopeInitialized = false
         private var initializingSourceId: String? = null
         private var initializationId: String? = null
 
         var retainedBundleFloor: Long = 0
-        var uploadedChunkCount: Int = 0
+        var pushRequestCount: Int = 0
         var maxRequestBodyBytes: Int = 0
         var maxResponseBodyBytes: Int = 0
         var snapshotChunkRequestCount: Int = 0
-        var committedBundleRowsRequestCount: Int = 0
         var pullRequestCount: Int = 0
         var cancelNextRequestPathPrefix: String? = null
         val requestCounts = linkedMapOf<String, Int>()
         val requestBodies = mutableListOf<Pair<String, String>>()
+        val requestSourceIds = mutableListOf<Pair<String, String>>()
         var authoritativePayloadTransform:
             ((PushRequestRow) -> kotlinx.serialization.json.JsonElement?)? = null
         var conflictOverride: ((PushRequestRow, Long, kotlinx.serialization.json.JsonElement?) -> PushConflictDetails?)? = null
-        var rejectPushCreate: Boolean = false
-        var sourceRetiredOnPushCreate: SourceRetiredResponse? = null
-        var sourceRetiredOnPushCommit: SourceRetiredResponse? = null
+        var rejectPush: Boolean = false
+        var beforePushCommit: (suspend () -> Unit)? = null
+        var beforePushResponse: (suspend () -> Unit)? = null
+        // Behavior-defining test fixtures may return a normalized effect union
+        // whose wire order differs from the final SQL application order.
+        var normalizePushEffects: ((List<BundleRow>) -> List<BundleRow>)? = null
+        var sourceRetiredOnPush: SourceRetiredResponse? = null
         var sourceRetiredOnSnapshotCreate: SourceRetiredResponse? = null
         var sourceReplacementInvalidOnSnapshotCreate: ErrorResponse? = null
         val requestedSnapshotSourceReplacements = mutableListOf<SnapshotSourceReplacement>()
 
         private var nextBundleSeq = 1L
-        private var nextPushId = 1L
         private var nextSnapshotId = 1L
         private var nextInitializationId = 1L
 
@@ -218,58 +448,55 @@ internal open class PlatformCrossTargetTestSupport {
             }
         }
 
+        fun addRemoteBundleForTest(rows: List<BundleRow>): Long {
+            val sequence = nextBundleSeq++
+            installCommittedRows(rows)
+            bundles += StoredBundle(
+                bundleSeq = sequence,
+                sourceId = "remote-source",
+                sourceBundleId = sequence,
+                rows = rows,
+                bundleHash = computeCommittedBundleHash(rows),
+                canonicalRequestHash = "",
+            )
+            scopeInitialized = true
+            return sequence
+        }
+
+        private fun installCommittedRows(rows: List<BundleRow>) {
+            for (row in rows) {
+                val key = liveKey(row.table, row.key)
+                if (row.op == "DELETE") liveRows.remove(key)
+                else liveRows[key] = LiveRow(row.table, row.key, row.rowVersion,
+                    row.payload ?: error("payload required for ${row.op}"))
+            }
+        }
+
         private suspend fun MockRequestHandleScope.handle(
             request: HttpRequestData,
         ): io.ktor.client.request.HttpResponseData {
             val path = request.url.encodedPath
             requestCounts[path] = requestCounts.getOrElse(path) { 0 } + 1
+            requestSourceIds += path to request.headers[sourceIdHeaderName].orEmpty()
             val cancelledPrefix = cancelNextRequestPathPrefix
             if (cancelledPrefix != null && path.startsWith(cancelledPrefix)) {
                 cancelNextRequestPathPrefix = null
-                throw CancellationException("Phase 6 cancelled $path")
+                throw CancellationException("worker migration cancelled $path")
             }
             return when {
-            request.method.value == "GET" && request.url.encodedPath == "/sync/capabilities" ->
-                jsonResponse(
-                    json.encodeToString(
-                        CapabilitiesResponse.serializer(),
-                        CapabilitiesResponse(
-                            protocolVersion = "v1",
-                            schemaVersion = 1,
-                            registeredTableSpecs = registeredTableSpecs,
-                            features = mapOf("connect_lifecycle" to true),
-                            bundleLimits = bundleLimits,
-                        ),
-                    ),
-                )
+            request.method.value == "GET" && request.url.encodedPath.startsWith("/sync/generations/") -> {
+                val generationId = request.url.encodedPath.substringAfterLast('/').toLongOrNull()
+                    ?: return errorResponse("invalid_request", "invalid generation id")
+                val generation = generationResponse(generationId)
+                    ?: return errorResponse("schema_generation_not_found", "generation $generationId is unavailable", HttpStatusCode.NotFound)
+                jsonResponse(testDiscoveryResponse(generation, wireLimits).toString())
+            }
 
             request.method.value == "POST" && request.url.encodedPath == "/sync/connect" ->
                 handleConnect(request)
 
-            request.method.value == "POST" && request.url.encodedPath == "/sync/push-sessions" ->
-                handleCreatePushSession(request)
-
-            request.method.value == "POST" &&
-                request.url.encodedPath.startsWith("/sync/push-sessions/") &&
-                request.url.encodedPath.endsWith("/chunks") ->
-                handlePushChunk(request)
-
-            request.method.value == "POST" &&
-                request.url.encodedPath.startsWith("/sync/push-sessions/") &&
-                request.url.encodedPath.endsWith("/commit") ->
-                handlePushCommit(request)
-
-            request.method.value == "GET" &&
-                request.url.encodedPath.startsWith("/sync/committed-bundles/") &&
-                request.url.encodedPath.endsWith("/rows") ->
-                handleCommittedBundleRows(request)
-
-            request.method.value == "DELETE" &&
-                request.url.encodedPath.startsWith("/sync/push-sessions/") -> {
-                val pushId = request.url.encodedPath.removePrefix("/sync/push-sessions/")
-                pushSessions.remove(pushId)
-                jsonResponse("""{}""")
-            }
+            request.method.value == "POST" && request.url.encodedPath == "/sync/push" ->
+                handlePush(request)
 
             request.method.value == "POST" && request.url.encodedPath == "/sync/snapshot-sessions" ->
                 handleCreateSnapshotSession(request)
@@ -295,6 +522,8 @@ internal open class PlatformCrossTargetTestSupport {
         }
         }
 
+        private val connectJson = Json { encodeDefaults = false }
+
         private suspend fun MockRequestHandleScope.handleConnect(request: HttpRequestData) =
             try {
                 val connect = json.decodeFromString(ConnectRequest.serializer(), request.recordedBody())
@@ -303,7 +532,7 @@ internal open class PlatformCrossTargetTestSupport {
                     scopeInitialized || bundles.isNotEmpty() -> {
                         scopeInitialized = true
                         jsonResponse(
-                            json.encodeToString(
+                            connectJson.encodeToString(
                                 ConnectResponse.serializer(),
                                 ConnectResponse(resolution = "remote_authoritative"),
                             ),
@@ -314,7 +543,7 @@ internal open class PlatformCrossTargetTestSupport {
                         if (initializingSourceId == sourceId) {
                             if (connect.hasLocalPendingRows) {
                                 jsonResponse(
-                                    json.encodeToString(
+                                    connectJson.encodeToString(
                                         ConnectResponse.serializer(),
                                         ConnectResponse(
                                             resolution = "initialize_local",
@@ -328,7 +557,7 @@ internal open class PlatformCrossTargetTestSupport {
                                 initializingSourceId = null
                                 initializationId = null
                                 jsonResponse(
-                                    json.encodeToString(
+                                    connectJson.encodeToString(
                                         ConnectResponse.serializer(),
                                         ConnectResponse(resolution = "initialize_empty"),
                                     ),
@@ -336,7 +565,7 @@ internal open class PlatformCrossTargetTestSupport {
                             }
                         } else {
                             jsonResponse(
-                                json.encodeToString(
+                                connectJson.encodeToString(
                                     ConnectResponse.serializer(),
                                     ConnectResponse(
                                         resolution = "retry_later",
@@ -353,7 +582,7 @@ internal open class PlatformCrossTargetTestSupport {
                         initializingSourceId = sourceId
                         initializationId = nextId
                         jsonResponse(
-                            json.encodeToString(
+                            connectJson.encodeToString(
                                 ConnectResponse.serializer(),
                                 ConnectResponse(
                                     resolution = "initialize_local",
@@ -367,7 +596,7 @@ internal open class PlatformCrossTargetTestSupport {
                     else -> {
                         scopeInitialized = true
                         jsonResponse(
-                            json.encodeToString(
+                            connectJson.encodeToString(
                                 ConnectResponse.serializer(),
                                 ConnectResponse(resolution = "initialize_empty"),
                             ),
@@ -378,134 +607,52 @@ internal open class PlatformCrossTargetTestSupport {
                 errorResponse("invalid_request", t.message ?: "connect failed")
             }
 
-        private suspend fun MockRequestHandleScope.handleCreatePushSession(
+        private fun generationResponse(generationId: Long): JsonObject? =
+            generationResponses?.get(generationId)
+                ?: if (generationId == 1L) testGenerationResponse(registeredTableSpecs, usersUpdatedAt) else null
+
+        private suspend fun MockRequestHandleScope.handlePush(
             request: HttpRequestData,
         ): io.ktor.client.request.HttpResponseData {
-            if (rejectPushCreate) {
+            if (rejectPush) {
                 return errorResponse(
-                    error = "phase6_push_create_rejected",
-                    message = "Phase 6 test rejected push-session creation.",
+                    error = "worker_push_rejected",
+                    message = "worker migration test rejected direct push.",
                     status = HttpStatusCode.BadRequest,
                 )
             }
             return try {
+                pushRequestCount++
                 val body = request.recordedBody()
-                val create = json.decodeFromString(PushSessionCreateRequest.serializer(), body)
+                val push = json.parseToJsonElement(body).jsonObject
                 val sourceId = request.headers[sourceIdHeaderName].orEmpty()
+                val sourceBundleId = push.getValue("source_bundle_id").jsonPrimitive.long
+                val canonicalRequestHash = push.getValue("canonical_request_hash").jsonPrimitive.content
+                val requestInitializationId = push["initialization_id"]?.jsonPrimitive?.content
+                val generationId = request.headers["Oversync-Schema-Generation-ID"]?.toLongOrNull() ?: 1L
+                val generation = generationResponse(generationId)
+                    ?: return errorResponse("schema_generation_not_found", "generation is unavailable", HttpStatusCode.NotFound)
+                val rows = decodeCompactPushRows(generation, push.getValue("rows"))
+                if (computePushRequestHash(rows, generation) != canonicalRequestHash) {
+                    return errorResponse("push_invalid", "canonical request hash mismatch")
+                }
+                sourceRetiredOnPush?.let { retired -> return sourceRetiredResponse(retired) }
+                val replayKey = "$sourceId\u0000$sourceBundleId"
+                committedBySourceBundle[replayKey]?.let { existing ->
+                    if (existing.canonicalRequestHash != canonicalRequestHash) {
+                        return errorResponse("push_replay_mismatch", "replay hash mismatch", HttpStatusCode.Conflict)
+                    }
+                    return completePushResponse(existing, generation)
+                }
+                beforePushCommit?.invoke()
                 val expectedInitializationId = initializationId
-                if (expectedInitializationId != null) {
-                    if (create.initializationId == null) {
-                        return errorResponse("initialization_stale", "initialization_id is required", HttpStatusCode.Conflict)
-                    }
-                    if (create.initializationId != expectedInitializationId) {
-                        return errorResponse("initialization_stale", "initialization_id does not match active lease", HttpStatusCode.Conflict)
-                    }
-                } else if (create.initializationId != null) {
+                if (expectedInitializationId != null && requestInitializationId != expectedInitializationId) {
+                    return errorResponse("initialization_stale", "initialization_id is required", HttpStatusCode.Conflict)
+                }
+                if (expectedInitializationId == null && requestInitializationId != null) {
                     return errorResponse("initialization_stale", "scope is no longer initializing", HttpStatusCode.Conflict)
                 }
-                sourceRetiredOnPushCreate?.let { retired ->
-                    return sourceRetiredResponse(retired)
-                }
-                val existing = committedBySourceBundle["$sourceId\u0000${create.sourceBundleId}"]
-                if (existing != null) {
-                    jsonResponse(
-                        json.encodeToString(
-                            PushSessionCreateResponse.serializer(),
-                            PushSessionCreateResponse(
-                                status = "already_committed",
-                                bundleSeq = existing.bundleSeq,
-                                sourceId = existing.sourceId,
-                                sourceBundleId = existing.sourceBundleId,
-                                rowCount = existing.rows.size.toLong(),
-                                bundleHash = existing.bundleHash,
-								canonicalRequestHash = existing.canonicalRequestHash,
-                            ),
-                        ),
-                    )
-                } else {
-                    val pushId = "00000000-0000-4000-8002-${(nextPushId++).toString().padStart(12, '0')}"
-                    pushSessions[pushId] = PushSession(
-                        pushId = pushId,
-                        sourceId = sourceId,
-                        sourceBundleId = create.sourceBundleId,
-                        plannedRowCount = create.plannedRowCount,
-						canonicalRequestHash = create.canonicalRequestHash,
-                    )
-                    jsonResponse(
-                        json.encodeToString(
-                            PushSessionCreateResponse.serializer(),
-                            PushSessionCreateResponse(
-                                pushId = pushId,
-                                status = "staging",
-                                plannedRowCount = create.plannedRowCount,
-                                nextExpectedRowOrdinal = 0,
-								canonicalRequestHash = create.canonicalRequestHash,
-                            ),
-                        ),
-                    )
-                }
-            } catch (t: Throwable) {
-                errorResponse("invalid_request", t.message ?: "push create failed")
-            }
-        }
-
-        private suspend fun MockRequestHandleScope.handlePushChunk(request: HttpRequestData) : io.ktor.client.request.HttpResponseData {
-            return try {
-                val pushId = request.url.encodedPath
-                    .removePrefix("/sync/push-sessions/")
-                    .substringBefore("/chunks")
-                val session = pushSessions[pushId]
-                    ?: return errorResponse("push_session_not_found", "unknown push session", HttpStatusCode.NotFound)
-                val chunk = json.decodeFromString(PushSessionChunkRequest.serializer(), request.recordedBody())
-                if (chunk.startRowOrdinal != session.rows.size.toLong()) {
-                    return errorResponse("push_chunk_out_of_order", "expected ordinal ${session.rows.size}", HttpStatusCode.Conflict)
-                }
-                session.rows += chunk.rows
-                uploadedChunkCount++
-                jsonResponse(
-                    json.encodeToString(
-                        PushSessionChunkResponse.serializer(),
-                        PushSessionChunkResponse(pushId = pushId, nextExpectedRowOrdinal = session.rows.size.toLong()),
-                    ),
-                )
-            } catch (t: Throwable) {
-                errorResponse("invalid_request", t.message ?: "push chunk failed")
-            }
-        }
-
-        private suspend fun MockRequestHandleScope.handlePushCommit(request: HttpRequestData) : io.ktor.client.request.HttpResponseData {
-            return try {
-                val pushId = request.url.encodedPath
-                    .removePrefix("/sync/push-sessions/")
-                    .substringBefore("/commit")
-                val session = pushSessions[pushId]
-                    ?: return errorResponse("push_session_not_found", "unknown push session", HttpStatusCode.NotFound)
-
-                val existing = committedBySourceBundle["${session.sourceId}\u0000${session.sourceBundleId}"]
-                if (existing != null) {
-                    return jsonResponse(
-                        json.encodeToString(
-                            PushSessionCommitResponse.serializer(),
-                            PushSessionCommitResponse(
-                                bundleSeq = existing.bundleSeq,
-                                sourceId = existing.sourceId,
-                                sourceBundleId = existing.sourceBundleId,
-                                rowCount = existing.rows.size.toLong(),
-                                bundleHash = existing.bundleHash,
-								canonicalRequestHash = existing.canonicalRequestHash,
-                            ),
-                        ),
-                    )
-                }
-                sourceRetiredOnPushCommit?.let { retired ->
-                    return sourceRetiredResponse(retired)
-                }
-
-                if (session.rows.size.toLong() != session.plannedRowCount) {
-                    return errorResponse("push_session_incomplete", "expected ${session.plannedRowCount} rows", HttpStatusCode.Conflict)
-                }
-
-                for (row in session.rows) {
+                for (row in rows) {
                     val key = liveKey(row.table, row.key)
                     val liveRow = liveRows[key]
                     val currentVersion = liveRow?.rowVersion ?: 0L
@@ -543,7 +690,7 @@ internal open class PlatformCrossTargetTestSupport {
                 }
 
                 val bundleSeq = nextBundleSeq++
-                val committedRows = session.rows.map { row ->
+                val proposedRows = rows.map { row ->
                     BundleRow(
                         schema = row.schema,
                         table = row.table,
@@ -553,86 +700,40 @@ internal open class PlatformCrossTargetTestSupport {
                         payload = authoritativePayloadTransform?.invoke(row) ?: row.payload,
                     )
                 }
-                committedRows.forEach { row ->
-                    val key = liveKey(row.table, row.key)
-                    if (row.op == "DELETE") {
-                        liveRows.remove(key)
-                    } else {
-                        liveRows[key] = LiveRow(
-                            table = row.table,
-                            key = row.key,
-                            rowVersion = row.rowVersion,
-                            payload = row.payload ?: error("payload required for ${row.op}"),
-                        )
-                    }
-                }
+                val committedRows = normalizePushEffects?.invoke(proposedRows) ?: proposedRows
+                installCommittedRows(committedRows)
                 val stored = StoredBundle(
                     bundleSeq = bundleSeq,
-                    sourceId = session.sourceId,
-                    sourceBundleId = session.sourceBundleId,
+                    sourceId = sourceId,
+                    sourceBundleId = sourceBundleId,
                     rows = committedRows,
                     bundleHash = computeCommittedBundleHash(committedRows),
-					canonicalRequestHash = session.canonicalRequestHash,
+                    canonicalRequestHash = canonicalRequestHash,
                 )
                 bundles += stored
-                committedBySourceBundle["${stored.sourceId}\u0000${stored.sourceBundleId}"] = stored
-                if (initializingSourceId == session.sourceId) {
+                committedBySourceBundle[replayKey] = stored
+                if (initializingSourceId == sourceId) {
                     scopeInitialized = true
                     initializingSourceId = null
                     initializationId = null
                 }
-                jsonResponse(
-                    json.encodeToString(
-                        PushSessionCommitResponse.serializer(),
-                        PushSessionCommitResponse(
-                            bundleSeq = stored.bundleSeq,
-                            sourceId = stored.sourceId,
-                            sourceBundleId = stored.sourceBundleId,
-                            rowCount = stored.rows.size.toLong(),
-                            bundleHash = stored.bundleHash,
-							canonicalRequestHash = stored.canonicalRequestHash,
-                        ),
-                    ),
-                )
+                completePushResponse(stored, generation)
             } catch (t: Throwable) {
-                errorResponse("invalid_request", t.message ?: "push commit failed")
+                if (t is CancellationException) throw t
+                errorResponse("invalid_request", t.message ?: "push failed")
             }
         }
 
-        private suspend fun MockRequestHandleScope.handleCommittedBundleRows(request: HttpRequestData) : io.ktor.client.request.HttpResponseData {
-            return try {
-                committedBundleRowsRequestCount++
-                val bundleSeq = request.url.encodedPath
-                    .removePrefix("/sync/committed-bundles/")
-                    .substringBefore("/rows")
-                    .toLong()
-                val bundle = bundles.firstOrNull { it.bundleSeq == bundleSeq }
-                    ?: return errorResponse("bundle_not_found", "unknown bundle", HttpStatusCode.NotFound)
-                val afterRowOrdinal = request.url.parameters["after_row_ordinal"]?.toLongOrNull()
-                val maxRows = request.url.parameters["max_rows"]?.toIntOrNull() ?: 1000
-                val startIndex = if (afterRowOrdinal == null) 0 else (afterRowOrdinal + 1).toInt()
-                val rows = bundle.rows.drop(startIndex).take(maxRows)
-                val logicalAfter = afterRowOrdinal ?: -1L
-                val nextRowOrdinal = if (rows.isEmpty()) logicalAfter else logicalAfter + rows.size
-                jsonResponse(
-                    json.encodeToString(
-                        CommittedBundleRowsResponse.serializer(),
-                        CommittedBundleRowsResponse(
-                            bundleSeq = bundle.bundleSeq,
-                            sourceId = bundle.sourceId,
-                            sourceBundleId = bundle.sourceBundleId,
-                            rowCount = bundle.rows.size.toLong(),
-                            bundleHash = bundle.bundleHash,
-							canonicalRequestHash = bundle.canonicalRequestHash,
-                            rows = rows,
-                            nextRowOrdinal = nextRowOrdinal,
-                            hasMore = startIndex + rows.size < bundle.rows.size,
-                        ),
-                    ),
-                )
-            } catch (t: Throwable) {
-                errorResponse("invalid_request", t.message ?: "bundle fetch failed")
-            }
+        private suspend fun MockRequestHandleScope.completePushResponse(
+            bundle: StoredBundle,
+            generation: JsonObject,
+        ): io.ktor.client.request.HttpResponseData {
+            beforePushResponse?.invoke()
+            return jsonResponse(buildJsonObject {
+            put("bundle_seq", bundle.bundleSeq)
+            put("bundle_hash", bundle.bundleHash)
+            put("rows", encodeCompactRows(generation, bundle.rows))
+            }.toString())
         }
 
         private suspend fun MockRequestHandleScope.handleCreateSnapshotSession(
@@ -653,14 +754,19 @@ internal open class PlatformCrossTargetTestSupport {
             sourceRetiredOnSnapshotCreate?.let { retired ->
                 return sourceRetiredResponse(retired)
             }
-            val snapshotRows = currentSnapshotRows()
+            val generationId = request.headers["Oversync-Schema-Generation-ID"]?.toLongOrNull() ?: 1L
+            val snapshotRows = currentSnapshotRows(generationId)
             val snapshotId = "snapshot-${nextSnapshotId++}"
             val stableBundleSeq = bundles.lastOrNull()?.bundleSeq ?: if (scopeInitialized) 0L else 0L
             snapshotSessions[snapshotId] = SnapshotSessionState(
                 snapshotId = snapshotId,
                 snapshotBundleSeq = stableBundleSeq,
+                sourceId = createRequest?.sourceReplacement?.newSourceId
+                    ?: request.headers[sourceIdHeaderName].orEmpty(),
                 rows = snapshotRows,
             )
+            val generation = generationResponse(generationId)
+                ?: return errorResponse("schema_generation_not_found", "generation is unavailable", HttpStatusCode.NotFound)
             jsonResponse(
                 json.encodeToString(
                     SnapshotSession.serializer(),
@@ -668,7 +774,7 @@ internal open class PlatformCrossTargetTestSupport {
                         snapshotId = snapshotId,
                         snapshotBundleSeq = stableBundleSeq,
                         rowCount = snapshotRows.size.toLong(),
-                        byteCount = snapshotRowsWireBytes(snapshotRows),
+                        logicalByteCount = snapshotLogicalByteCount(generation, snapshotRows),
                         expiresAt = "2099-01-01T00:00:00Z",
                     ),
                 ),
@@ -683,32 +789,29 @@ internal open class PlatformCrossTargetTestSupport {
                 val snapshotId = request.url.encodedPath.removePrefix("/sync/snapshot-sessions/")
                 val session = snapshotSessions[snapshotId]
                     ?: return errorResponse("snapshot_not_found", "unknown snapshot", HttpStatusCode.NotFound)
+                require(session.sourceId == request.headers[sourceIdHeaderName]) {
+                    "snapshot chunks require effective source"
+                }
                 val afterRowOrdinal = request.url.parameters["after_row_ordinal"]?.toLongOrNull() ?: 0L
                 val maxRows = request.url.parameters["max_rows"]?.toIntOrNull() ?: 1000
                 val startIndex = afterRowOrdinal.toInt()
                 val rows = session.rows.drop(startIndex).take(maxRows)
-                jsonResponse(
-                    json.encodeToString(
-                        SnapshotChunkResponse.serializer(),
-                        SnapshotChunkResponse(
-                            snapshotId = snapshotId,
-                            snapshotBundleSeq = session.snapshotBundleSeq,
-                            rows = rows,
-                            nextRowOrdinal = afterRowOrdinal + rows.size,
-                            hasMore = startIndex + rows.size < session.rows.size,
-                            byteCount = snapshotRowsWireBytes(rows),
-                        ),
-                    ),
-                )
+                val generationId = request.headers["Oversync-Schema-Generation-ID"]?.toLongOrNull() ?: 1L
+                val generation = generationResponse(generationId)
+                    ?: return errorResponse("schema_generation_not_found", "generation is unavailable", HttpStatusCode.NotFound)
+                val bundleRows = rows.map { row ->
+                    BundleRow(row.schema, row.table, row.key, "INSERT", row.rowVersion, row.payload)
+                }
+                jsonResponse(buildJsonObject {
+                    put("rows", encodeCompactRows(generation, bundleRows, afterRowOrdinal + 1L))
+                    put("next_row_ordinal", afterRowOrdinal + rows.size)
+                    put("has_more", startIndex + rows.size < session.rows.size)
+                    put("logical_byte_count", snapshotLogicalByteCount(generation, rows))
+                }.toString())
             } catch (t: Throwable) {
                 errorResponse("invalid_request", t.message ?: "snapshot fetch failed")
             }
         }
-
-        private fun snapshotRowsWireBytes(rows: List<SnapshotRow>): Long =
-            rows.fold(0L) { total, row ->
-                total + json.encodeToString(SnapshotRow.serializer(), row).encodeToByteArray().size.toLong()
-            }
 
         private suspend fun MockRequestHandleScope.handlePull(request: HttpRequestData) : io.ktor.client.request.HttpResponseData {
             return try {
@@ -717,6 +820,13 @@ internal open class PlatformCrossTargetTestSupport {
                 val maxBundles = request.url.parameters["max_bundles"]?.toIntOrNull() ?: 1000
                 val targetBundleSeq = request.url.parameters["target_bundle_seq"]?.toLongOrNull() ?: 0L
                 val stableBundleSeq = bundles.lastOrNull()?.bundleSeq ?: 0L
+                if (afterBundleSeq > stableBundleSeq) {
+                    return errorResponse(
+                        "checkpoint_ahead",
+                        "after_bundle_seq $afterBundleSeq is ahead of stable bundle $stableBundleSeq",
+                        HttpStatusCode.Conflict,
+                    )
+                }
                 if (stableBundleSeq > afterBundleSeq && afterBundleSeq < retainedBundleFloor) {
                     return errorResponse(
                         "history_pruned",
@@ -731,45 +841,187 @@ internal open class PlatformCrossTargetTestSupport {
                 val selected = bundles
                     .filter { it.bundleSeq > afterBundleSeq && it.bundleSeq <= target }
                     .take(maxBundles)
-                    .map { bundle ->
-                        Bundle(
-                            bundleSeq = bundle.bundleSeq,
-                            sourceId = bundle.sourceId,
-                            sourceBundleId = bundle.sourceBundleId,
-                            rows = bundle.rows,
-                        )
-                    }
+                    .toList()
                 val lastReturned = selected.lastOrNull()?.bundleSeq ?: afterBundleSeq
-                jsonResponse(
-                    json.encodeToString(
-                        PullResponse.serializer(),
-                        PullResponse(
-                            stableBundleSeq = target,
-                            bundles = selected,
-                            hasMore = lastReturned < target,
-                        ),
-                    ),
-                )
+                val generationId = request.headers["Oversync-Schema-Generation-ID"]?.toLongOrNull() ?: 1L
+                val generation = generationResponse(generationId)
+                    ?: return errorResponse("schema_generation_not_found", "generation is unavailable", HttpStatusCode.NotFound)
+                jsonResponse(buildJsonObject {
+                    put("stable_bundle_seq", target)
+                    put("bundles", JsonArray(selected.map { bundle -> buildJsonObject {
+                        put("bundle_seq", bundle.bundleSeq)
+                        put("source_id", bundle.sourceId)
+                        put("source_bundle_id", bundle.sourceBundleId)
+                        put("bundle_hash", bundle.bundleHash)
+                        put("rows", encodeCompactRows(generation, bundle.rows))
+                    }}))
+                    put("has_more", lastReturned < target)
+                }.toString())
             } catch (t: Throwable) {
                 errorResponse("invalid_request", t.message ?: "pull failed")
             }
         }
 
-        private fun currentSnapshotRows(): List<SnapshotRow> {
+        private fun currentSnapshotRows(generationId: Long): List<SnapshotRow> {
             return liveRows.values
                 .sortedWith(compareBy<LiveRow> { it.table }.thenBy { canonicalKey(it.key) })
                 .map { row ->
+                    val payload = if (
+                        generationResponses != null && generationId > 1L && row.table == "people"
+                    ) {
+                        JsonObject(row.payload.jsonObject + mapOf("details" to JsonNull, "project_id" to JsonNull))
+                    } else {
+                        row.payload
+                    }
                     SnapshotRow(
                         schema = "main",
                         table = row.table,
                         key = row.key,
                         rowVersion = row.rowVersion,
-                        payload = row.payload,
+                        payload = payload,
                     )
                 }
         }
 
-        private fun computeCommittedBundleHash(rows: List<BundleRow>): String {
+        private fun computeCommittedBundleHash(rows: List<BundleRow>): String = sha256Hex(committedBundleBytes(rows))
+
+        private fun decodeCompactPushRows(
+            discovery: JsonObject,
+            encoded: JsonElement,
+        ): List<PushRequestRow> {
+            val generation = discovery.getValue("schema_generation").jsonObject
+            val tables = generation.getValue("tables").jsonArray
+            var nextOrdinal = 0L
+            val result = mutableListOf<PushRequestRow>()
+            encoded.jsonArray.forEach { groupElement ->
+                val group = groupElement.jsonArray
+                require(group.size == 3)
+                val tableIndex = group[0].jsonPrimitive.int
+                require(group[1].jsonPrimitive.long == nextOrdinal)
+                val table = tables[tableIndex].jsonObject
+                val schema = table.getValue("schema").jsonPrimitive.content
+                val tableName = table.getValue("table").jsonPrimitive.content
+                val keyColumns = table.getValue("sync_key_columns").jsonArray.map { it.jsonPrimitive.content }
+                group[2].jsonArray.forEach { tupleElement ->
+                    val tuple = tupleElement.jsonArray
+                    val op = when (tuple[0].jsonPrimitive.content) {
+                        "i" -> "INSERT"
+                        "u" -> "UPDATE"
+                        "d" -> "DELETE"
+                        else -> error("invalid compact operation")
+                    }
+                    val keyValues = tuple[1].jsonArray
+                    require(keyValues.size == keyColumns.size)
+                    val key = keyColumns.mapIndexed { index, column ->
+                        column to keyValues[index].jsonPrimitive.content
+                    }.toMap()
+                    result += PushRequestRow(
+                        schema = schema,
+                        table = tableName,
+                        key = key,
+                        op = op,
+                        baseRowVersion = tuple[2].jsonPrimitive.long,
+                        payload = tuple.getOrNull(3),
+                    )
+                    nextOrdinal++
+                }
+            }
+            return result
+        }
+
+        private fun encodeCompactRows(
+            discovery: JsonObject,
+            rows: List<BundleRow>,
+            firstOrdinal: Long = 0L,
+        ): JsonArray {
+            val generation = discovery.getValue("schema_generation").jsonObject
+            val tables = generation.getValue("tables").jsonArray
+            if (rows.isEmpty()) return JsonArray(emptyList())
+            val groups = mutableListOf<JsonElement>()
+            var activeTableIndex = -1
+            var activeFirstOrdinal = firstOrdinal
+            var activeTuples = mutableListOf<JsonElement>()
+            rows.forEachIndexed { index, row ->
+                val tableIndex = tables.indexOfFirst { element ->
+                    val table = element.jsonObject
+                    table.getValue("schema").jsonPrimitive.content == row.schema &&
+                        table.getValue("table").jsonPrimitive.content == row.table
+                }
+                require(tableIndex >= 0)
+                if (activeTableIndex != tableIndex) {
+                    if (activeTableIndex >= 0) {
+                        groups.add(JsonArray(listOf(
+                            JsonPrimitive(activeTableIndex),
+                            JsonPrimitive(activeFirstOrdinal),
+                            JsonArray(activeTuples),
+                        )))
+                    }
+                    activeTableIndex = tableIndex
+                    activeFirstOrdinal = firstOrdinal + index
+                    activeTuples = mutableListOf()
+                }
+                val keyColumns = tables[tableIndex].jsonObject
+                    .getValue("sync_key_columns").jsonArray.map { it.jsonPrimitive.content }
+                activeTuples.add(buildJsonArray {
+                    add(when (row.op) { "INSERT" -> "i"; "UPDATE" -> "u"; "DELETE" -> "d"; else -> error("invalid op") })
+                    add(JsonArray(keyColumns.map { JsonPrimitive(row.key.getValue(it)) }))
+                    add(row.rowVersion)
+                    if (row.op != "DELETE") add(row.payload ?: error("payload required"))
+                })
+            }
+            groups.add(JsonArray(listOf(
+                JsonPrimitive(activeTableIndex),
+                JsonPrimitive(activeFirstOrdinal),
+                JsonArray(activeTuples),
+            )))
+            return JsonArray(groups)
+        }
+
+        private fun computePushRequestHash(rows: List<PushRequestRow>, discovery: JsonObject): String {
+            val generation = discovery.getValue("schema_generation").jsonObject
+            return sha256Hex(canonicalizeJsonElement(buildJsonObject {
+                put("generation_fingerprint", generation.getValue("fingerprint"))
+                put("generation_id", generation.getValue("id"))
+                put("rows", JsonArray(rows.mapIndexed { index, row -> buildJsonObject {
+                    put("row_ordinal", index.toString())
+                    put("schema", row.schema)
+                    put("table", row.table)
+                    put("key", buildJsonObject {
+                        row.key.entries.sortedBy { it.key }.forEach { (name, value) -> put(name, value) }
+                    })
+                    put("op", row.op)
+                    put("base_row_version", row.baseRowVersion.toString())
+                    put("payload", row.payload ?: JsonNull)
+                }}))
+                put("type", "oversync.generation-pinned-push-request.v1")
+            }).encodeToByteArray())
+        }
+
+        private fun snapshotLogicalByteCount(
+            discovery: JsonObject,
+            rows: List<SnapshotRow>,
+        ): Long {
+            val generation = discovery.getValue("schema_generation").jsonObject
+            val tables = generation.getValue("tables").jsonArray
+            return rows.sumOf { row ->
+                val tableIndex = tables.indexOfFirst { element ->
+                    val table = element.jsonObject
+                    table.getValue("schema").jsonPrimitive.content == row.schema &&
+                        table.getValue("table").jsonPrimitive.content == row.table
+                }
+                val keyColumns = tables[tableIndex].jsonObject
+                    .getValue("sync_key_columns").jsonArray.map { it.jsonPrimitive.content }
+                canonicalizeJsonElement(JsonArray(listOf(
+                    JsonPrimitive("i"),
+                    JsonPrimitive(tableIndex),
+                    JsonArray(keyColumns.map { JsonPrimitive(row.key.getValue(it)) }),
+                    JsonPrimitive(row.rowVersion),
+                    row.payload,
+                ))).encodeToByteArray().size.toLong()
+            }
+        }
+
+        private fun committedBundleBytes(rows: List<BundleRow>): ByteArray {
             val logicalRows = rows.mapIndexed { index, row ->
                 buildJsonObject {
 					put("row_ordinal", JsonPrimitive(index.toString()))
@@ -785,7 +1037,7 @@ internal open class PlatformCrossTargetTestSupport {
                     put("payload", row.payload ?: JsonNull)
                 }
             }
-            return sha256Hex(canonicalizeJsonElement(JsonArray(logicalRows)).encodeToByteArray())
+            return canonicalizeJsonElement(JsonArray(logicalRows)).encodeToByteArray()
         }
 
         private fun liveKey(table: String, key: SyncKey): String = "$table\u0000${canonicalKey(key)}"
@@ -866,27 +1118,19 @@ internal open class PlatformCrossTargetTestSupport {
             val payload: kotlinx.serialization.json.JsonElement,
         )
 
-        private data class PushSession(
-            val pushId: String,
-            val sourceId: String,
-            val sourceBundleId: Long,
-            val plannedRowCount: Long,
-			val canonicalRequestHash: String,
-            val rows: MutableList<PushRequestRow> = mutableListOf(),
-        )
-
         private data class StoredBundle(
             val bundleSeq: Long,
             val sourceId: String,
             val sourceBundleId: Long,
             val rows: List<BundleRow>,
             val bundleHash: String,
-			val canonicalRequestHash: String,
+            val canonicalRequestHash: String,
         )
 
         private data class SnapshotSessionState(
             val snapshotId: String,
             val snapshotBundleSeq: Long,
+            val sourceId: String,
             val rows: List<SnapshotRow>,
         )
     }

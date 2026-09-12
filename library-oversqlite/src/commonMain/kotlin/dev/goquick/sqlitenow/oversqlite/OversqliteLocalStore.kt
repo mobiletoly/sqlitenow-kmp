@@ -20,16 +20,114 @@ import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 
 internal class OversqliteLocalStore(
     private val db: SafeSQLiteConnection,
     private val json: Json,
     private val validatedConfig: () -> ValidatedConfig,
 ) {
+    suspend fun validateHistoricalBase(table: String, version: Long, base: HistoricalBase) {
+        when(base.kind) {
+            "present" -> {
+                if(version<=0 || base.payload==null) throw ResolutionBaseUnavailableException()
+                try { processPayloadForUpload(table,base.payload) }
+                catch (_: IllegalArgumentException) { throw ResolutionBaseUnavailableException() }
+                catch (_: IllegalStateException) { throw ResolutionBaseUnavailableException() }
+            }
+            "deleted" -> if(version<=0 || base.payload!=null) throw ResolutionBaseUnavailableException()
+            "absent" -> if(version!=0L || base.payload!=null) throw ResolutionBaseUnavailableException()
+            else -> throw ResolutionBaseUnavailableException()
+        }
+        val provenance = try {
+            requireUniqueSnapshotJsonObjectMembers(base.provenance)
+            json.parseToJsonElement(base.provenance) as? JsonObject
+        } catch (_: IllegalArgumentException) { null }
+        if (provenance == null || !validHistoricalObservation(provenance, base.kind, version)) {
+            throw ResolutionBaseUnavailableException()
+        }
+        // B keeps its historical source and sequence; only its identity context
+        // must match the existing owners on this connection/transaction.
+        val current = db.withPreparedStatement("SELECT " + baselineProvenanceSql("'never_published'", "0", "NULL")) { st ->
+            check(st.step())
+            json.parseToJsonElement(st.getText(0)) as JsonObject
+        }
+        for (field in listOf("database_id", "service_id", "account_scope", "generation_id", "generation_fingerprint", "admission", "local_version", "physical_shape")) {
+            if (provenance[field] != current[field]) throw ResolutionBaseUnavailableException()
+        }
+    }
+
+    private fun validHistoricalObservation(p: JsonObject, kind: String, version: Long): Boolean {
+        for (field in listOf("database_id", "service_id", "generation_fingerprint", "admission", "physical_shape", "origin_source_id", "origin")) {
+            if ((p[field] as? JsonPrimitive)?.isString != true) return false
+        }
+        for (field in listOf("database_id", "service_id", "physical_shape")) {
+            if (p.getValue(field).jsonPrimitive.content.isEmpty()) return false
+        }
+        for (field in listOf("generation_id", "local_version", "authoritative_version")) {
+            val value = provenanceInteger(p[field]) ?: return false
+            if (value < 0 || (field == "generation_id" && value == 0L)) return false
+        }
+        if (p["authoritative_version"] != JsonPrimitive(version)) return false
+        val sequence = p["bundle_sequence"] ?: return false
+        if (sequence != JsonNull && (provenanceInteger(sequence)?.let { it >= 0 } != true)) return false
+        val origin = p.getValue("origin").jsonPrimitive.content
+        val source = p.getValue("origin_source_id").jsonPrimitive.content
+        return when (origin) {
+            "never_published" -> kind == "absent" && sequence == JsonNull
+            "explicit_conflict" -> sequence == JsonNull && source.isNotEmpty()
+            "snapshot" -> sequence != JsonNull && source.isNotEmpty()
+            "pull", "settlement" -> source.isNotEmpty() && kind != "absent"
+            else -> false
+        }
+    }
+
+    private fun provenanceInteger(value: JsonElement?): Long? =
+        (value as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull
+
+    suspend fun validateStoredServerProjection(schema: String, table: String, key: String) {
+        val exists = db.withPreparedStatement("SELECT 1 FROM _sync_row_state WHERE schema_name=? AND table_name=? AND key_json=?") { st ->
+            st.bindText(1,schema); st.bindText(2,table); st.bindText(3,key)
+            st.step()
+        }
+        if (exists) validateBaselineProjection(schema,table,key,"server",null)
+    }
+
+    // Check only the bounded projection owned by this affected key, never business rows.
+    suspend fun validateBaselineProjection(schema: String,table: String,key: String,view: String,desired: String?) {
+        val info=configuredTableInfo(table)
+        var payload=desired
+        var revision=if (view == "desired") db.scalarLong("SELECT dirty_revision FROM _sync_conflict_state WHERE singleton_key=1") else 0L
+        if(view=="server") db.withPreparedStatement("SELECT server_kind,server_payload,relationships_known,server_revision FROM _sync_row_state WHERE schema_name=? AND table_name=? AND key_json=?") { st ->
+            st.bindText(1,schema);st.bindText(2,table);st.bindText(3,key)
+            check(st.step()) { "authoritative baseline missing" }
+            check(st.getLong(2)==1L && st.getText(0)!="unknown") { "authoritative relationship evidence unavailable" }
+            payload=if(st.isNull(1)) null else st.getText(1);revision=st.getLong(3)
+        }
+        val expected=linkedMapOf<String,List<String>>()
+        payload?.let { text ->
+            processPayloadForUpload(table,text)
+            val fields=json.parseToJsonElement(text) as JsonObject
+            for(fk in info.foreignKeys) {
+                val captured=fields.getValue(fk.fromCol.lowercase()) as JsonObject
+                if(captured.getValue("storage").jsonPrimitive.content!="null") {
+                    val parentKey=buildJsonObject { put(fk.toCol.lowercase(),captured.getValue("value")) }.toString()
+                    expected[fk.fromCol.lowercase()]=listOf(validatedConfig().schemaForTable(fk.refTable),fk.refTable.lowercase(),parentKey)
+                }
+            }
+        }
+        val actual=db.queryList("SELECT fk_column,parent_schema,parent_table,parent_key,owner_revision FROM _sync_relationships WHERE view=? AND child_schema=? AND child_table=? AND child_key=? LIMIT ${info.foreignKeys.size+1}",bind={st ->st.bindText(1,view);st.bindText(2,schema);st.bindText(3,table);st.bindText(4,key)}) { st ->
+            check(st.getLong(4)>0 && (if (view=="server") st.getLong(4)==revision else st.getLong(4)<=revision)) { "relationship owner revision mismatch" }
+            st.getText(0) to listOf(st.getText(1),st.getText(2),st.getText(3))
+        }.toMap()
+        check(actual==expected) { "relationship projection differs from $view owner" }
+    }
+
     suspend fun decodeDirtyKeyForPush(
         state: RuntimeState,
         tableName: String,
@@ -72,11 +170,7 @@ internal class OversqliteLocalStore(
             val keyColumn = state.validated.keyByTable[tableName]?.singleOrNull()
                 ?: error("table is not configured for sync")
             val wireValue = exactWireKeyValue(key, keyColumn, "wire row key")
-            val localPk = if (isPrimaryKeyBlob(tableName)) {
-                bytesToHexLower(decodeWireUuidBytes(wireValue))
-            } else {
-                wireValue
-            }
+            val localPk = decodeWireKeyToLocalValue(tableName, keyColumn, wireValue)
             buildKeyJson(tableName, localPk) to localPk
         } catch (error: IllegalArgumentException) {
             if (error is SnapshotSemanticException) throw error
@@ -136,25 +230,34 @@ internal class OversqliteLocalStore(
         return normalized
     }
 
+    // Convert validated wire values directly; business triggers cannot alter this evidence.
+    suspend fun captureAuthoritativePayload(tableName: String, payload: JsonObject, statementCache: StatementCache? = null): String {
+        val config = validatedConfig()
+        val info = configuredTableInfo(config, tableName)
+        val normalized = normalizePayloadColumns(payload,info,tableName)
+        require(normalized.keys==info.columns.map { it.name.lowercase() }.toSet()) { "authoritative payload column set mismatch" }
+        return db.withPreparedStatement(config.replaySql.table(tableName.trim().lowercase()).authoritativeSelect,statementCache) { st ->
+            info.columns.forEachIndexed { index,column -> OversqliteValueCodec.bindPayloadValue(st,index+1,column,normalized.getValue(column.name.lowercase()),PayloadSource.AUTHORITATIVE_WIRE) }
+            check(st.step()); st.getText(0)
+        }
+    }
+
     suspend fun serializeExistingRow(
         tableName: String,
         localPk: String,
         statementCache: StatementCache? = null,
     ): String? {
-        val tableInfo = configuredTableInfo(tableName)
+        val config = validatedConfig()
+        val tableInfo = configuredTableInfo(config, tableName)
         if (tableInfo.columns.isEmpty()) return null
-        val pkColumn = validatedConfig().pkByTable[tableName]
+        val pkColumn = config.pkByTable[tableName]
             ?: error("table $tableName is not configured for sync")
-        val payloadExpr = buildJsonObjectExprHexAware(tableInfo, "live_row")
         return db.withPreparedStatement(
-            sql = """
-                SELECT $payloadExpr
-                FROM ${quoteIdent(tableName)} live_row
-                WHERE live_row.${quoteIdent(pkColumn)} = ?
-            """.trimIndent(),
+            sql = config.replaySql.table(tableName).liveSelect,
             statementCache = statementCache,
         ) { st ->
-            bindPrimaryKey(st, 1, tableName, localPk)
+            if (tableInfo.primaryKeyIsBlob) st.bindBlob(1, decodeLocalUuidBytes(localPk))
+            else st.bindText(1, localPk)
             if (!st.step()) return@withPreparedStatement null
             st.getText(0)
         }
@@ -164,14 +267,17 @@ internal class OversqliteLocalStore(
         tableName: String,
         payloadText: String,
     ): JsonElement {
-        val payload = json.parseToJsonElement(payloadText) as? JsonObject
+        val currentPayload = payloadText
+        requireUniqueSnapshotJsonObjectMembers(currentPayload)
+        val payload = json.parseToJsonElement(currentPayload) as? JsonObject
             ?: error("dirty payload for $tableName must be a JSON object")
         val tableInfo = configuredTableInfo(tableName)
+        require(payload.keys == tableInfo.columns.map { it.name }.toSet()) { "dirty payload column set mismatch for $tableName" }
 
         return buildJsonObject {
             for (column in tableInfo.columns) {
-                val key = column.name.lowercase()
-                val value = payload[key] ?: payload[column.name]
+                val key = column.name
+                val value = payload[key]
                     ?: error("dirty payload for $tableName is missing column ${column.name}")
                 put(key, OversqliteValueCodec.encodeWirePayloadValue(column, value))
             }
@@ -184,34 +290,15 @@ internal class OversqliteLocalStore(
         payloadSource: PayloadSource,
         statementCache: StatementCache? = null,
     ) {
-        val tableInfo = configuredTableInfo(tableName)
-        val pkColumn = validatedConfig().pkByTable[tableName]
+        val config = validatedConfig()
+        val tableInfo = configuredTableInfo(config, tableName)
+        val pkColumn = config.pkByTable[tableName]
             ?: error("table $tableName is not configured for sync")
         val normalized = normalizePayloadColumns(payload, tableInfo, tableName)
-
-        val columns = mutableListOf<String>()
-        val values = mutableListOf<JsonElement>()
-        val updates = mutableListOf<String>()
-        for (column in tableInfo.columns) {
-            val key = column.name.lowercase()
-            val value = normalized[key] ?: error("payload for $tableName is missing column ${column.name}")
-            columns += quoteIdent(column.name)
-            values += value
-            if (!column.name.equals(pkColumn, ignoreCase = true)) {
-                updates += "${quoteIdent(column.name)} = excluded.${quoteIdent(column.name)}"
-            }
+        val values = tableInfo.columns.map { column ->
+            normalized[column.name.lowercase()] ?: error("payload for $tableName is missing column ${column.name}")
         }
-
-        val sql = buildString {
-            append("INSERT INTO ${quoteIdent(tableName)} (${columns.joinToString(", ")}) VALUES (")
-            append(columns.indices.joinToString(", ") { "?" })
-            append(")")
-            if (updates.isEmpty()) {
-                append(" ON CONFLICT(${quoteIdent(pkColumn)}) DO NOTHING")
-            } else {
-                append(" ON CONFLICT(${quoteIdent(pkColumn)}) DO UPDATE SET ${updates.joinToString(", ")}")
-            }
-        }
+        val sql = config.replaySql.table(tableName).upsert
 
         db.withPreparedStatement(sql = sql, statementCache = statementCache) { st ->
             tableInfo.columns.forEachIndexed { index, column ->
@@ -231,7 +318,7 @@ internal class OversqliteLocalStore(
                 ?: error("table ${table.tableName} is not configured for sync")
             val pkColumn = config.pkByTable[table.tableName]
                 ?: error("table ${table.tableName} is not configured for sync")
-            val sql = buildUpsertSql(table.tableName, tableInfo, pkColumn)
+            val sql = config.replaySql.table(table.tableName).upsert
             preparedByTable[table.tableName] = SnapshotUpsertPlan.PreparedTable(
                 tableInfo = tableInfo,
                 statement = statementCache.get(sql),
@@ -265,15 +352,38 @@ internal class OversqliteLocalStore(
         return configuredTableInfo(tableName).primaryKeyIsBlob
     }
 
-    private fun configuredTableInfo(tableName: String): TableInfo =
-        validatedConfig().tableInfoByName[tableName.trim().lowercase()]
+    private fun configuredTableInfo(tableName: String): TableInfo = configuredTableInfo(validatedConfig(), tableName)
+
+    private fun configuredTableInfo(config: ValidatedConfig, tableName: String): TableInfo =
+        config.tableInfoByName[tableName.trim().lowercase()]
             ?: error("table $tableName is not configured for sync")
 
     private suspend fun normalizePkForServer(tableName: String, pkValue: String): String {
         return if (isPrimaryKeyBlob(tableName)) {
             normalizeLocalUuidAsCanonicalWire(pkValue)
         } else {
+            val key = checkNotNull(configuredTableInfo(tableName).primaryKey)
+            if (key.wireType == "uuid") decodeWireUuidBytes(pkValue)
             pkValue
+        }
+    }
+
+    private suspend fun decodeWireKeyToLocalValue(
+        tableName: String,
+        keyColumn: String,
+        wireValue: String,
+    ): String {
+        val column = configuredTableInfo(tableName).column(keyColumn)
+        return when (val typed = OversqliteValueCodec.decodePayloadValue(
+            column = column,
+            value = JsonPrimitive(wireValue),
+            payloadSource = PayloadSource.AUTHORITATIVE_WIRE,
+        )) {
+            TypedValue.Null -> error("sync key must not be null")
+            is TypedValue.Text -> typed.value
+            is TypedValue.Integer -> typed.canonicalText
+            is TypedValue.Real -> typed.canonicalText
+            is TypedValue.Blob -> bytesToHexLower(typed.bytes)
         }
     }
 
@@ -335,53 +445,15 @@ internal class SnapshotUpsertPlan(
     }
 }
 
-private fun buildUpsertSql(
-    tableName: String,
-    tableInfo: TableInfo,
-    pkColumn: String,
-): String {
-    val columns = tableInfo.columns.map { quoteIdent(it.name) }
-    val updates = tableInfo.columns
-        .filterNot { it.name.equals(pkColumn, ignoreCase = true) }
-        .map { "${quoteIdent(it.name)} = excluded.${quoteIdent(it.name)}" }
-    return buildString {
-        append("INSERT INTO ${quoteIdent(tableName)} (${columns.joinToString(", ")}) VALUES (")
-        append(columns.indices.joinToString(", ") { "?" })
-        append(")")
-        if (updates.isEmpty()) {
-            append(" ON CONFLICT(${quoteIdent(pkColumn)}) DO NOTHING")
-        } else {
-            append(" ON CONFLICT(${quoteIdent(pkColumn)}) DO UPDATE SET ${updates.joinToString(", ")}")
-        }
-    }
-}
-
 private fun normalizePayloadColumns(
     payload: JsonObject,
     tableInfo: TableInfo,
     tableName: String,
 ): JsonObject {
-    if (
-        payload.size == tableInfo.columns.size &&
-        payload.keys.all(tableInfo.columnsByNameLower::containsKey)
-    ) {
-        return payload
+    require(payload.size == tableInfo.columns.size && payload.keys.all(tableInfo.columnsByNameLower::containsKey)) {
+        "payload for $tableName must contain every table column with its exact name"
     }
-
-    val normalized = linkedMapOf<String, JsonElement>()
-    for ((key, value) in payload) {
-        val normalizedKey = key.lowercase()
-        require(normalizedKey in tableInfo.columnsByNameLower) {
-            "payload for $tableName contains unknown column $key"
-        }
-        require(normalized.put(normalizedKey, value) == null) {
-            "payload for $tableName contains duplicate column $key"
-        }
-    }
-    require(normalized.size == tableInfo.columns.size && tableInfo.columnNamesLower.all(normalized::containsKey)) {
-        "payload for $tableName must contain every table column"
-    }
-    return JsonObject(normalized)
+    return payload
 }
 
 private fun exactWireKeyValue(
@@ -391,7 +463,7 @@ private fun exactWireKeyValue(
 ): String {
     require(key.size == 1) { "$context must contain exactly $keyColumn" }
     val entry = key.entries.single()
-    require(entry.key.equals(keyColumn, ignoreCase = true)) {
+    require(entry.key == keyColumn) {
         "$context is missing $keyColumn"
     }
     return entry.value

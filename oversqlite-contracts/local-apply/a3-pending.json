@@ -1,0 +1,749 @@
+{
+  "formatVersion": 1,
+  "classification": "local-contract-runtime-pending",
+  "family": "a3-pending",
+  "cases": [
+    {
+      "id": "detail-relationship_unknown",
+      "kind": "pending",
+      "input": {
+        "detail": "relationship_unknown",
+        "unit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "refs": [
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          }
+        ],
+        "progress": {
+          "dirtyRows": 9007199254740993,
+          "outboundRows": 1,
+          "committedBundles": 2
+        }
+      },
+      "expected": {
+        "detail": "relationship_unknown",
+        "unit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "refs": [
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          }
+        ],
+        "hasMore": false,
+        "progress": {
+          "dirtyRows": 9007199254740993,
+          "outboundRows": 1,
+          "committedBundles": 2
+        }
+      }
+    },
+    {
+      "id": "detail-dependency_unavailable",
+      "kind": "pending",
+      "input": {
+        "detail": "dependency_unavailable",
+        "unit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "refs": [
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          }
+        ],
+        "progress": {
+          "dirtyRows": 9007199254740993,
+          "outboundRows": 1,
+          "committedBundles": 2
+        }
+      },
+      "expected": {
+        "detail": "dependency_unavailable",
+        "unit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "refs": [
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          }
+        ],
+        "hasMore": false,
+        "progress": {
+          "dirtyRows": 9007199254740993,
+          "outboundRows": 1,
+          "committedBundles": 2
+        }
+      }
+    },
+    {
+      "id": "detail-historical_repair_required",
+      "kind": "pending",
+      "input": {
+        "detail": "historical_repair_required",
+        "unit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "refs": [
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          }
+        ],
+        "progress": {
+          "dirtyRows": 9007199254740993,
+          "outboundRows": 1,
+          "committedBundles": 2
+        }
+      },
+      "expected": {
+        "detail": "historical_repair_required",
+        "unit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "refs": [
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          }
+        ],
+        "hasMore": false,
+        "progress": {
+          "dirtyRows": 9007199254740993,
+          "outboundRows": 1,
+          "committedBundles": 2
+        }
+      }
+    },
+    {
+      "id": "sample-count",
+      "kind": "pending",
+      "input": {
+        "detail": "relationship_unknown",
+        "unit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "refs": [
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          }
+        ],
+        "progress": {
+          "dirtyRows": 1,
+          "outboundRows": 0,
+          "committedBundles": 0
+        }
+      },
+      "expected": {
+        "detail": "relationship_unknown",
+        "unit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "refs": [
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          },
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "P"
+            }
+          }
+        ],
+        "hasMore": true,
+        "progress": {
+          "dirtyRows": 1,
+          "outboundRows": 0,
+          "committedBundles": 0
+        }
+      }
+    },
+    {
+      "id": "sample-bytes",
+      "kind": "pending",
+      "input": {
+        "detail": "relationship_unknown",
+        "unit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "refs": [
+          {
+            "schema": "main",
+            "table": "parent",
+            "key": {
+              "storage": "text",
+              "value": "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP"
+            }
+          }
+        ],
+        "progress": {
+          "dirtyRows": 1,
+          "outboundRows": 0,
+          "committedBundles": 0
+        }
+      },
+      "expected": {
+        "detail": "relationship_unknown",
+        "unit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "refs": [],
+        "hasMore": true,
+        "progress": {
+          "dirtyRows": 1,
+          "outboundRows": 0,
+          "committedBundles": 0
+        }
+      }
+    },
+    {
+      "id": "precedence-cancel",
+      "kind": "precedence",
+      "input": {
+        "flags": [
+          "cancelled",
+          "malformed",
+          "unknown"
+        ],
+        "state": {
+          "A": "original",
+          "B": "historical",
+          "L": "desired",
+          "clean": "survivor",
+          "dirty": "unchanged",
+          "outbox": "frozen",
+          "sourceNext": 7,
+          "checkpoint": 12,
+          "confirmedPrefix": 2
+        }
+      },
+      "expected": {
+        "result": "cancelled",
+        "state": {
+          "A": "original",
+          "B": "historical",
+          "L": "desired",
+          "clean": "survivor",
+          "dirty": "unchanged",
+          "outbox": "frozen",
+          "sourceNext": 7,
+          "checkpoint": 12,
+          "confirmedPrefix": 2
+        },
+        "automaticActions": []
+      }
+    },
+    {
+      "id": "precedence-wire",
+      "kind": "precedence",
+      "input": {
+        "flags": [
+          "malformed",
+          "unknown"
+        ],
+        "state": {
+          "A": "original",
+          "B": "historical",
+          "L": "desired",
+          "clean": "survivor",
+          "dirty": "unchanged",
+          "outbox": "frozen",
+          "sourceNext": 7,
+          "checkpoint": 12,
+          "confirmedPrefix": 2
+        }
+      },
+      "expected": {
+        "result": "integrity",
+        "state": {
+          "A": "original",
+          "B": "historical",
+          "L": "desired",
+          "clean": "survivor",
+          "dirty": "unchanged",
+          "outbox": "frozen",
+          "sourceNext": 7,
+          "checkpoint": 12,
+          "confirmedPrefix": 2
+        },
+        "automaticActions": []
+      }
+    },
+    {
+      "id": "precedence-missing-base",
+      "kind": "precedence",
+      "input": {
+        "flags": [
+          "missing_base",
+          "unknown"
+        ],
+        "state": {
+          "A": "original",
+          "B": "historical",
+          "L": "desired",
+          "clean": "survivor",
+          "dirty": "unchanged",
+          "outbox": "frozen",
+          "sourceNext": 7,
+          "checkpoint": 12,
+          "confirmedPrefix": 2
+        }
+      },
+      "expected": {
+        "result": "resolution_base_unavailable",
+        "state": {
+          "A": "original",
+          "B": "historical",
+          "L": "desired",
+          "clean": "survivor",
+          "dirty": "unchanged",
+          "outbox": "frozen",
+          "sourceNext": 7,
+          "checkpoint": 12,
+          "confirmedPrefix": 2
+        },
+        "automaticActions": []
+      }
+    },
+    {
+      "id": "precedence-capacity",
+      "kind": "precedence",
+      "input": {
+        "flags": [
+          "capacity",
+          "unknown"
+        ],
+        "state": {
+          "A": "original",
+          "B": "historical",
+          "L": "desired",
+          "clean": "survivor",
+          "dirty": "unchanged",
+          "outbox": "frozen",
+          "sourceNext": 7,
+          "checkpoint": 12,
+          "confirmedPrefix": 2
+        }
+      },
+      "expected": {
+        "result": "sync_workspace_limit",
+        "state": {
+          "A": "original",
+          "B": "historical",
+          "L": "desired",
+          "clean": "survivor",
+          "dirty": "unchanged",
+          "outbox": "frozen",
+          "sourceNext": 7,
+          "checkpoint": 12,
+          "confirmedPrefix": 2
+        },
+        "automaticActions": []
+      }
+    },
+    {
+      "id": "precedence-work",
+      "kind": "precedence",
+      "input": {
+        "flags": [
+          "work",
+          "unknown"
+        ],
+        "state": {
+          "A": "original",
+          "B": "historical",
+          "L": "desired",
+          "clean": "survivor",
+          "dirty": "unchanged",
+          "outbox": "frozen",
+          "sourceNext": 7,
+          "checkpoint": 12,
+          "confirmedPrefix": 2
+        }
+      },
+      "expected": {
+        "result": "sync_work_limit",
+        "state": {
+          "A": "original",
+          "B": "historical",
+          "L": "desired",
+          "clean": "survivor",
+          "dirty": "unchanged",
+          "outbox": "frozen",
+          "sourceNext": 7,
+          "checkpoint": 12,
+          "confirmedPrefix": 2
+        },
+        "automaticActions": []
+      }
+    },
+    {
+      "id": "precedence-mandatory",
+      "kind": "precedence",
+      "input": {
+        "flags": [
+          "mandatory_missing"
+        ],
+        "state": {
+          "A": "original",
+          "B": "historical",
+          "L": "desired",
+          "clean": "survivor",
+          "dirty": "unchanged",
+          "outbox": "frozen",
+          "sourceNext": 7,
+          "checkpoint": 12,
+          "confirmedPrefix": 2
+        }
+      },
+      "expected": {
+        "result": "integrity",
+        "state": {
+          "A": "original",
+          "B": "historical",
+          "L": "desired",
+          "clean": "survivor",
+          "dirty": "unchanged",
+          "outbox": "frozen",
+          "sourceNext": 7,
+          "checkpoint": 12,
+          "confirmedPrefix": 2
+        },
+        "automaticActions": []
+      }
+    },
+    {
+      "id": "precedence-unknown",
+      "kind": "precedence",
+      "input": {
+        "flags": [
+          "unknown"
+        ],
+        "state": {
+          "A": "original",
+          "B": "historical",
+          "L": "desired",
+          "clean": "survivor",
+          "dirty": "unchanged",
+          "outbox": "frozen",
+          "sourceNext": 7,
+          "checkpoint": 12,
+          "confirmedPrefix": 2
+        }
+      },
+      "expected": {
+        "result": "relationship_unknown",
+        "state": {
+          "A": "original",
+          "B": "historical",
+          "L": "desired",
+          "clean": "survivor",
+          "dirty": "unchanged",
+          "outbox": "frozen",
+          "sourceNext": 7,
+          "checkpoint": 12,
+          "confirmedPrefix": 2
+        },
+        "automaticActions": []
+      }
+    },
+    {
+      "id": "precedence-replay-first",
+      "kind": "precedence",
+      "input": {
+        "flags": [
+          "frozen_outbox",
+          "unknown"
+        ],
+        "state": {
+          "A": "original",
+          "B": "historical",
+          "L": "desired",
+          "clean": "survivor",
+          "dirty": "unchanged",
+          "outbox": "frozen",
+          "sourceNext": 7,
+          "checkpoint": 12,
+          "confirmedPrefix": 2
+        }
+      },
+      "expected": {
+        "result": "replay",
+        "state": {
+          "A": "original",
+          "B": "historical",
+          "L": "desired",
+          "clean": "survivor",
+          "dirty": "unchanged",
+          "outbox": "frozen",
+          "sourceNext": 7,
+          "checkpoint": 12,
+          "confirmedPrefix": 2
+        },
+        "automaticActions": []
+      }
+    }
+  ],
+  "runtimeExecuted": false
+}

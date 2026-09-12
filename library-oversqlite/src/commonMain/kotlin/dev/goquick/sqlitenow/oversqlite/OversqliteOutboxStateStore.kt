@@ -18,10 +18,11 @@ package dev.goquick.sqlitenow.oversqlite
 import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.sqlite.use
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 internal const val outboxStateNone = "none"
 internal const val outboxStatePrepared = "prepared"
-internal const val outboxStateCommittedRemote = "committed_remote"
 
 internal data class OversqliteOutboxBundleState(
     val state: String = outboxStateNone,
@@ -30,8 +31,6 @@ internal data class OversqliteOutboxBundleState(
     val initializationId: String = "",
     val canonicalRequestHash: String = "",
     val rowCount: Long = 0,
-    val remoteBundleHash: String = "",
-    val remoteBundleSeq: Long = 0,
 )
 
 internal data class OversqliteOutboxRow(
@@ -45,6 +44,7 @@ internal data class OversqliteOutboxRow(
     val baseRowVersion: Long,
     val localPayload: String?,
     val wirePayload: String?,
+    val base: HistoricalBase,
 )
 
 internal data class PreparedOutboxReplayRow(
@@ -66,9 +66,7 @@ internal class OversqliteOutboxStateStore(
                        source_bundle_id,
                        initialization_id,
                        canonical_request_hash,
-                       row_count,
-                       remote_bundle_hash,
-                       remote_bundle_seq
+                       row_count
                 FROM _sync_outbox_bundle
                 WHERE singleton_key = 1
             """.trimIndent(),
@@ -87,8 +85,6 @@ internal class OversqliteOutboxStateStore(
                 initializationId = requireValidOptionalOversqliteSessionToken(st.getText(3)),
                 canonicalRequestHash = st.getText(4),
                 rowCount = st.getLong(5),
-                remoteBundleHash = st.getText(6),
-                remoteBundleSeq = st.getLong(7),
             )
         }
     }
@@ -111,9 +107,7 @@ internal class OversqliteOutboxStateStore(
                     source_bundle_id = ?,
                     initialization_id = ?,
                     canonical_request_hash = ?,
-                    row_count = ?,
-                    remote_bundle_hash = ?,
-                    remote_bundle_seq = ?
+                    row_count = ?
                 WHERE singleton_key = 1
             """.trimIndent(),
             statementCache = statementCache,
@@ -124,8 +118,6 @@ internal class OversqliteOutboxStateStore(
             st.bindText(4, state.initializationId)
             st.bindText(5, state.canonicalRequestHash)
             st.bindLong(6, state.rowCount)
-            st.bindText(7, state.remoteBundleHash)
-            st.bindLong(8, state.remoteBundleSeq)
             st.step()
         }
     }
@@ -143,7 +135,7 @@ internal class OversqliteOutboxStateStore(
                        op,
                        base_row_version,
                        local_payload,
-                       wire_payload
+                       wire_payload,base_kind,base_payload,base_provenance
                 FROM _sync_outbox_rows
                 ORDER BY source_bundle_id, row_ordinal
                 """.trimIndent(),
@@ -162,6 +154,7 @@ internal class OversqliteOutboxStateStore(
                                 baseRowVersion = st.getLong(7),
                                 localPayload = if (st.isNull(8)) null else st.getText(8),
                                 wirePayload = if (st.isNull(9)) null else st.getText(9),
+                                base=HistoricalBase(st.getText(10),if(st.isNull(11)) null else st.getText(11),st.getText(12)),
                             ),
                         )
                     }
@@ -227,8 +220,17 @@ internal class OversqliteOutboxStateStore(
         }
     }
 
-    suspend fun clearBundleAndRows(statementCache: StatementCache? = null) {
-        clearRows(statementCache)
+    suspend fun clearBundleAndRows(statementCache: StatementCache? = null, pagedSettlement: Boolean = false) {
+        if (pagedSettlement) {
+            // Settlement prepaid this cleanup in its atomic work bound. Pages
+            // keep cancellation observable; its enclosing writer owns rollback.
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                db.withPreparedStatement("DELETE FROM _sync_outbox_rows WHERE rowid IN (SELECT rowid FROM _sync_outbox_rows ORDER BY rowid LIMIT 128)", statementCache = statementCache) { it.step() }
+                val remaining = db.withPreparedStatement("SELECT EXISTS(SELECT 1 FROM _sync_outbox_rows LIMIT 1)", statementCache = statementCache) { check(it.step()); it.getLong(0) != 0L }
+                if (!remaining) break
+            }
+        } else clearRows(statementCache)
         persistBundleState(
             state = OversqliteOutboxBundleState(),
             statementCache = statementCache,
@@ -275,9 +277,9 @@ internal class OversqliteOutboxStateStore(
                 sql = """
                     INSERT INTO _sync_outbox_rows(
                       source_bundle_id, row_ordinal, schema_name, table_name, key_json,
-                      wire_key_json, op, base_row_version, local_payload, wire_payload
+                      wire_key_json, op, base_row_version, local_payload, wire_payload,base_kind,base_payload,base_provenance
                     )
-                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """.trimIndent(),
                 statementCache = statementCache,
             ) { st ->
@@ -291,6 +293,9 @@ internal class OversqliteOutboxStateStore(
                 st.bindLong(8, row.baseRowVersion)
                 if (row.localPayload == null) st.bindNull(9) else st.bindText(9, row.localPayload)
                 if (row.wirePayload == null) st.bindNull(10) else st.bindText(10, row.wirePayload)
+                st.bindText(11,row.base.kind)
+                if(row.base.payload==null) st.bindNull(12) else st.bindText(12,row.base.payload)
+                st.bindText(13,row.base.provenance)
                 st.step()
             }
         }

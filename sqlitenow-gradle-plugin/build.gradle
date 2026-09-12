@@ -1,8 +1,8 @@
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 plugins {
-    id("org.jetbrains.kotlin.jvm") version "2.4.0"
-    id("com.vanniktech.maven.publish") version "0.36.0"
+    id("org.jetbrains.kotlin.jvm") version "2.4.20"
+    id("com.vanniktech.maven.publish") version "0.37.0"
     id("java-gradle-plugin")
 }
 
@@ -41,16 +41,16 @@ dependencies {
     implementation(gradleApi())
     implementation(localGroovy())
     implementation("dev.goquick.sqlitenow:sqlitenow-compiler:${version}")
-    compileOnly("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.0")
+    compileOnly(libs.kotlin.gradle.plugin)
 
     // -- Testing dependencies --
-    testImplementation("org.junit.jupiter:junit-jupiter-api:6.0.3")
-    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:6.0.3")
-    testImplementation("org.jetbrains.kotlin:kotlin-test:2.4.0")
+    testImplementation(libs.junit.jupiter.api)
+    testRuntimeOnly(libs.junit.jupiter.engine)
+    testImplementation(libs.kotlin.test)
     testImplementation(gradleTestKit())
-    testImplementation("org.mockito:mockito-core:5.23.0")
-    testImplementation("org.mockito:mockito-junit-jupiter:5.23.0")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+    testImplementation(libs.mockito.core)
+    testImplementation(libs.mockito.junit.jupiter)
+    testImplementation(libs.kotlinx.coroutines.test)
 }
 
 testing {

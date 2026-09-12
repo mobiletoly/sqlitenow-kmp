@@ -17,12 +17,61 @@ package dev.goquick.sqlitenow.oversqlite
 
 const val OVERSQLITE_PROTOCOL_VERSION: String = "v1"
 
+/** Push stopped after durably preserving a conflict and its frozen local intent. */
+class ConflictNeedsResolutionException(
+    val pending: PendingConflict,
+) : RuntimeException("oversqlite conflict needs explicit resolution"), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.CONFLICT
+}
+
+/** The selected conflict no longer describes the current durable local intent. */
+class StaleConflictResolutionException : RuntimeException(
+    "selected oversqlite conflict is stale; inspect pendingConflict() again",
+), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.CONFLICT
+}
+
 /** Thrown before local or remote sync work when the server protocol is incompatible. */
 class ProtocolVersionMismatchException(
     val expected: String = OVERSQLITE_PROTOCOL_VERSION,
     val actual: String,
 ) : RuntimeException(
     "oversqlite protocol version mismatch",
+), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.PROTOCOL
+}
+
+/** The server changed the immutable descriptor selected by this database. */
+class GenerationContractMismatchException : RuntimeException(
+    "server generation differs from the admitted contract; sync is stopped",
+), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.PROTOCOL
+}
+
+/**
+ * A validated generation-contract error returned by the server.
+ *
+ * These fields are the stable, machine-readable contract. [message] is intended for diagnostics;
+ * callers should branch on [code], [httpStatus], [operation], [remediation], [retryable], and [generationId].
+ */
+class OversqliteRemoteContractException internal constructor(
+    val code: String,
+    val httpStatus: Int,
+    val operation: String,
+    val remediation: String?,
+    val retryable: Boolean,
+    val generationId: Long?,
+    message: String,
+) : RuntimeException(message), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory =
+        if (retryable) OversqliteErrorCategory.NETWORK else OversqliteErrorCategory.PROTOCOL
+}
+
+/** Thrown before a request when effective caller/default headers conflict with SDK-owned identity. */
+internal class OversqliteRequestIdentityHeaderException(
+    val headerName: String,
+) : IllegalArgumentException(
+    "effective $headerName header conflicts with the Oversqlite request identity",
 ), OversqliteCategorizedException {
     override val category: OversqliteErrorCategory = OversqliteErrorCategory.PROTOCOL
 }
@@ -56,15 +105,15 @@ class SyncTableContractMismatchException(
     override val category: OversqliteErrorCategory = OversqliteErrorCategory.PROTOCOL
 }
 
-internal fun CapabilitiesResponse.requireSupportedProtocol(): CapabilitiesResponse {
+internal fun AdmittedOversqliteContract.requireSupportedProtocol(): AdmittedOversqliteContract {
     if (protocolVersion != OVERSQLITE_PROTOCOL_VERSION) {
         throw ProtocolVersionMismatchException(actual = "")
     }
     return this
 }
 
-/** Thrown when advertised snapshot limits cannot support the configured bounded transfer. */
-class SnapshotCapabilitiesException(
+/** Thrown when admitted snapshot limits cannot support the configured bounded transfer. */
+class SnapshotTransferLimitException(
     message: String,
 ) : RuntimeException(message), OversqliteCategorizedException {
     override val category: OversqliteErrorCategory = OversqliteErrorCategory.PROTOCOL
@@ -130,8 +179,7 @@ class SnapshotChunkTooSmallException(
     val configuredBytes: Long,
     val requiredBytes: Long,
 ) : RuntimeException(
-    "snapshot chunk byte budget $configuredBytes is too small for the next row requiring $requiredBytes bytes; " +
-        "increase snapshotChunkBytes",
+    "snapshot chunk decoded-body target $configuredBytes is too small for the next row requiring $requiredBytes bytes",
 ), OversqliteCategorizedException {
     override val category: OversqliteErrorCategory = OversqliteErrorCategory.PROTOCOL
 }
@@ -202,7 +250,12 @@ private fun safeQualifiedTableDiagnosticIdentifier(value: String): String {
 }
 
 internal fun Throwable.isTerminalSyncCompatibilityFailure(): Boolean =
-    this is ProtocolVersionMismatchException || this is SyncTableContractMismatchException
+    this is ProtocolVersionMismatchException ||
+        this is SyncTableContractMismatchException ||
+        this is GenerationContractMismatchException ||
+        this is RemoteResponseDecodeException ||
+        this is RemoteResponseSemanticException ||
+        (this is OversqliteRemoteContractException && !retryable)
 
 /** Thrown before destructive work when one staged row exceeds the configured live-page byte budget. */
 class SnapshotApplyRowTooLargeException(
@@ -215,7 +268,7 @@ class SnapshotApplyRowTooLargeException(
     override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
 }
 
-/** Thrown when the server does not advertise the required connect-lifecycle capability. */
+/** Thrown when the admitted discovery contract does not support the required connect lifecycle. */
 class ConnectLifecycleUnsupportedException(
     val reason: String? = null,
 ) : RuntimeException(
@@ -295,8 +348,8 @@ enum class CheckpointRecoveryBlockedReason {
 
 class CheckpointRecoveryBlockedException(
     val reason: CheckpointRecoveryBlockedReason,
-    val dirtyCount: Int,
-    val outboundCount: Int,
+    val dirtyCount: Long,
+    val outboundCount: Long,
     val replayState: String,
     cause: Throwable? = null,
 ) : RuntimeException(
@@ -339,7 +392,7 @@ class SyncOperationInProgressException : RuntimeException(
 
 /** Thrown when rebuild/recovery is attempted while staged outbound push replay is still pending. */
 class PendingPushReplayException(
-    val outboundCount: Int,
+    val outboundCount: Long,
 ) : RuntimeException(
     "cannot rebuild while $outboundCount staged push rows are pending authoritative replay"
 ), OversqliteCategorizedException {
@@ -358,7 +411,7 @@ class InvalidConflictResolutionException(
 /** Thrown after automatic push-conflict retries are exhausted. */
 class PushConflictRetryExhaustedException(
     val retryCount: Int,
-    val remainingDirtyCount: Int,
+    val remainingDirtyCount: Long,
 ) : RuntimeException(
     "push conflict auto-retry exhausted after $retryCount retries; " +
         "$remainingDirtyCount dirty rows remain replayable"
@@ -375,11 +428,6 @@ class SignOutBlockedException(
     override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
 }
 
-internal fun saturatingLegacyCount(value: Long): Int {
-    require(value >= 0L)
-    return if (value >= Int.MAX_VALUE.toLong()) Int.MAX_VALUE else value.toInt()
-}
-
 /** Thrown when a previously granted initialization lease is stale or expired. */
 class InitializationLeaseInvalidException(
     val reasonCode: String,
@@ -394,6 +442,70 @@ class SourceSequenceMismatchException(
     message: String,
 ) : RuntimeException(message), OversqliteCategorizedException {
     override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
+
+/** A pending logical row cannot be represented under the admitted per-row hard limit. */
+class PushRowExceedsAdmittedLimitException(
+    val actualBytes: Long,
+    val admittedLimit: Long,
+) : RuntimeException(
+    "push_row_exceeds_admitted_limit: row requires $actualBytes decoded bytes; admitted limit is $admittedLimit",
+), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.PROTOCOL
+}
+
+@kotlinx.serialization.Serializable
+data class PushDependencyRecordRef(val schema: String,val table: String,val key: SyncKey)
+
+data class SyncProgress(val dirtyRows: Long=0,val outboundRows: Long=0,val committedBundles: Long=0)
+
+data class PushDependencyDiagnosticPage(val diagnosticId: String,val identities: List<PushDependencyRecordRef>,val nextCursor: String?=null)
+
+class PushDependencyGroupExceedsAdmittedLimitException(
+    val dimension: String,val limit: Long,val actual: Long,
+    val componentRows: Long,val componentDecodedBytes: Long,val diagnosticId: String,
+    val sample: List<PushDependencyRecordRef>,val hasMore: Boolean,
+) : RuntimeException("push_dependency_group_exceeds_admitted_limit: dimension=$dimension limit=$limit actual=$actual"), OversqliteCategorizedException {
+    val reason = "push_dependency_group_exceeds_admitted_limit"
+    var progress = SyncProgress(); internal set
+    override val category = OversqliteErrorCategory.PROTOCOL
+}
+
+class FKReconciliationRequiredException(val detail: String,val unit: String,val sample: List<PushDependencyRecordRef>,val hasMore: Boolean) :
+    RuntimeException("fk_reconciliation_required: $detail"), OversqliteCategorizedException {
+    val reason = "fk_reconciliation_required"
+    var progress = SyncProgress(); internal set
+    override val category = OversqliteErrorCategory.STATE
+}
+
+class StalePushDependencyDiagnosticException(val diagnosticId: String) :
+    RuntimeException("stale_push_dependency_diagnostic: $diagnosticId"), OversqliteCategorizedException {
+    val reason = "stale_push_dependency_diagnostic"
+    override val category = OversqliteErrorCategory.STATE
+}
+
+/** Why one interactive invocation left recoverable local work pending. */
+enum class SyncIncompleteReason { PUSH_ATTEMPT_LIMIT, NO_PROGRESS }
+
+/** A bounded interactive sync stopped before another push or unsafe pull. */
+class SyncIncompleteException(
+    val reason: SyncIncompleteReason,
+    val dirtyCount: Long,
+    val outboundCount: Long,
+    val confirmedBundleCount: Int,
+    val pushAttempts: Int,
+) : RuntimeException(
+    "sync incomplete ($reason): dirty=$dirtyCount outbound=$outboundCount " +
+        "confirmed=$confirmedBundleCount attempts=$pushAttempts",
+), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+}
+
+/** The server discovery contract cannot represent a required bounded v1 message. */
+class InvalidAdmittedContractException(
+    message: String,
+) : RuntimeException("invalid_admitted_contract: $message"), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.PROTOCOL
 }
 
 /** Returns `true` when [error] represents normal local sync-operation contention. */
@@ -425,4 +537,11 @@ fun isLifecyclePreconditionError(error: Throwable?): Boolean {
         current = current.cause
     }
     return false
+}
+
+/** The retained full historical base required by this transition is unavailable. */
+class ResolutionBaseUnavailableException(val unit: String="",val sample: List<PushDependencyRecordRef> = emptyList(),val hasMore: Boolean=false) : RuntimeException("resolution_base_unavailable"), OversqliteCategorizedException {
+    override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
+    val reason = "resolution_base_unavailable"
+    var progress = SyncProgress(); internal set
 }

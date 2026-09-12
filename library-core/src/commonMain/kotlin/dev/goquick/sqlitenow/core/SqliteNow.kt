@@ -43,25 +43,52 @@ import kotlin.concurrent.Volatile
  * Browser targets use SQLiteNow's packaged direct-OPFS worker by default, JS Node uses a
  * transient in-memory worker, and non-web targets retain the bundled SQLite driver.
  */
+@OptIn(SqliteNowInternalApi::class)
 open class SqliteNowDatabase private constructor(
     private val dbName: String,
     private val migration: DatabaseMigrations,
     private val debug: Boolean,
     private val connectionProvider: SqliteConnectionProvider,
     private val adjustLogger: Boolean,
+    private val syncManaged: Boolean,
 ) {
     @Volatile
     private var _conn: SafeSQLiteConnection? = null
     private val conn: SafeSQLiteConnection
-        get() = _conn ?: error("Database connection not initialized or already closed. Call open() first.")
+        get() = _conn?.takeUnless { it.isPublicAccessRevoked }
+            ?: error("Database connection not initialized or already closed. Call open() first.")
 
     private val openCloseMutex = Mutex()
+
+    @Volatile
+    private var unpublishedSession: SqliteNowUnpublishedSession? = null
+
+    @Volatile
+    private var unpublishedToken: SqliteNowUnpublishedSessionToken? = null
+
+    @Volatile
+    private var unpublishedConnection: SafeSQLiteConnection? = null
+
+    @Volatile
+    private var unpublishedProviderSession: SqliteNowCoordinatedProviderSession? = null
+
+    @Volatile
+    private var lifecycleLease: SqliteNowLifecycleLease? = null
+
+    @Volatile
+    private var pendingPublishedCloseHandler: (suspend () -> Unit)? = null
+
+    @Volatile
+    private var publishedCloseHandler: (suspend () -> Unit)? = null
+
+    @Volatile
+    private var publishedCloseToken: SqliteNowUnpublishedSessionToken? = null
 
     var connectionConfig: SqliteConnectionConfig = SqliteConnectionConfig(
         persistence = sqliteDefaultPersistence(dbName),
     )
         set(value) {
-            if (_conn != null || openCloseMutex.isLocked) {
+            if (_conn != null || unpublishedSession != null || openCloseMutex.isLocked) {
                 throw IllegalStateException("Cannot update connectionConfig after open() has started")
             }
             field = value
@@ -94,6 +121,21 @@ open class SqliteNowDatabase private constructor(
         debug = false,
         connectionProvider = connectionProvider,
         adjustLogger = false,
+        syncManaged = false,
+    )
+
+    constructor(
+        dbName: String,
+        migration: DatabaseMigrations,
+        connectionProvider: SqliteConnectionProvider = BundledSqliteConnectionProvider,
+        syncManaged: Boolean,
+    ) : this(
+        dbName = dbName,
+        migration = migration,
+        debug = false,
+        connectionProvider = connectionProvider,
+        adjustLogger = false,
+        syncManaged = syncManaged,
     )
 
     /**
@@ -111,6 +153,22 @@ open class SqliteNowDatabase private constructor(
         debug = debug,
         connectionProvider = connectionProvider,
         adjustLogger = true,
+        syncManaged = false,
+    )
+
+    constructor(
+        dbName: String,
+        migration: DatabaseMigrations,
+        debug: Boolean,
+        connectionProvider: SqliteConnectionProvider = BundledSqliteConnectionProvider,
+        syncManaged: Boolean,
+    ) : this(
+        dbName = dbName,
+        migration = migration,
+        debug = debug,
+        connectionProvider = connectionProvider,
+        adjustLogger = true,
+        syncManaged = syncManaged,
     )
 
     init {
@@ -139,12 +197,24 @@ open class SqliteNowDatabase private constructor(
      */
     suspend fun open(preInit: suspend (conn: SafeSQLiteConnection) -> Unit = {}) {
         openCloseMutex.withLock {
+            if (unpublishedSession != null) {
+                throw IllegalStateException("Database is reserved by a coordinated opening session")
+            }
             if (_conn != null) {
                 throw IllegalStateException("Database connection already initialized")
+            }
+            if (lifecycleLease != null) {
+                throw IllegalStateException("Database cleanup is still pending")
+            }
+            if (syncManaged) {
+                throw SqliteNowSyncOpenRequiredException(
+                    "This sync-managed database requires openForSync(); ordinary open() is disabled",
+                )
             }
 
             val c = connectionProvider.openConnection(dbName, debug, connectionConfig)
             try {
+                requireOrdinaryOpenAllowed(c)
                 preInit(c)
                 ensureBootstrapUserVersion(c)
 
@@ -165,6 +235,29 @@ open class SqliteNowDatabase private constructor(
                 c.close()
                 throw t
             }
+        }
+    }
+
+    /**
+     * Reserves this database object for coordinated opening without opening or publishing SQLite.
+     *
+     * This is a cross-module runtime integration surface. Applications should use the generated
+     * Oversqlite opening facade rather than driving the unpublished session directly.
+     */
+    @SqliteNowInternalApi
+    suspend fun reserveUnpublishedSession(): SqliteNowUnpublishedSession = openCloseMutex.withLock {
+        check(_conn == null) { "Database connection already initialized" }
+        check(unpublishedSession == null) { "Database is already reserved by a coordinated opening session" }
+        check(lifecycleLease == null) { "Database cleanup is still pending" }
+
+        val token = SqliteNowUnpublishedSessionToken()
+        SqliteNowUnpublishedSession(
+            database = this,
+            token = token,
+            migrationTargetVersion = migration.targetVersion,
+        ).also { session ->
+            unpublishedToken = token
+            unpublishedSession = session
         }
     }
 
@@ -220,26 +313,41 @@ open class SqliteNowDatabase private constructor(
      * Enables table change notifications.
      */
     fun enableTableChangeNotifications() {
+        conn // Reject new observer admission after owner revocation.
         this.enableTableChangeNotifications = true
     }
 
     /**
      * Closes the database connection.
      */
-    suspend fun close() = openCloseMutex.withLock {
-        _conn?.let { c ->
-            _conn = null
-            c.setTableInvalidationListener(null)
-            c.close()
-            tableChangeScope?.cancel()
-            tableChangeScope = null
+    suspend fun close() {
+        requireSqliteNowCoordinatedCloseAllowed()
+        beginApplicationClose()
+        val (reservedSession, coordinatedClose) = openCloseMutex.withLock {
+            unpublishedSession to (publishedCloseHandler ?: pendingPublishedCloseHandler)
         }
+        if (coordinatedClose != null) {
+            coordinatedClose()
+            return
+        }
+        if (reservedSession != null) {
+            reservedSession.close()
+            return
+        }
+
+        openCloseMutex.withLock {
+            closeConnectionAndLease()
+        }
+    }
+
+    private suspend fun beginApplicationClose() {
+        (_conn ?: unpublishedConnection)?.beginApplicationClose()
     }
 
     /**
      * Check if database is open.
      */
-    fun isOpen(): Boolean = _conn != null
+    fun isOpen(): Boolean = _conn?.isPublicAccessRevoked == false
 
     /**
      * Requests that an external persistence layer store the current database snapshot.
@@ -272,6 +380,18 @@ open class SqliteNowDatabase private constructor(
         connection.execSQL("PRAGMA user_version = -1;")
     }
 
+    private suspend fun requireOrdinaryOpenAllowed(connection: SafeSQLiteConnection) {
+        if (syncManaged || connection.hasCoordinatedOpeningIdentity()) {
+            throw SqliteNowSyncOpenRequiredException(
+                if (syncManaged) {
+                    "This sync-managed database requires openForSync(); ordinary open() is disabled"
+                } else {
+                    "This database contains SQLiteNow sync identity and requires openForSync()"
+                },
+            )
+        }
+    }
+
 
     /**
      * Notifies listeners that the specified tables have been modified.
@@ -294,15 +414,13 @@ open class SqliteNowDatabase private constructor(
      * @param affectedTables Set of table names to listen for changes
      * @return Flow that emits Unit when any of the tables change
      */
-    protected suspend fun createTableChangeFlow(affectedTables: Set<String>): Flow<Unit> {
-        if (affectedTables.isEmpty()) {
-            return flow { } // Empty flow for queries with no affected tables
-        }
-
+    protected suspend fun createTableChangeFlow(affectedTables: Set<String>): Flow<Unit> = flow {
+        conn // A captured lazy flow must recheck readiness when collection begins.
+        if (affectedTables.isEmpty()) return@flow
         val normalizedTables = affectedTables.mapTo(linkedSetOf()) { it.lowercase() }
-        return tableChanges
+        tableChanges
             .filter { changedTables -> changedTables.any(normalizedTables::contains) }
-            .transform { emit(Unit) }
+            .collect { emit(Unit) }
     }
 
     /**
@@ -329,9 +447,245 @@ open class SqliteNowDatabase private constructor(
 
     private fun createNotificationScope(): CoroutineScope =
         CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    internal suspend fun acquireUnpublishedConnection(token: SqliteNowUnpublishedSessionToken) {
+        openCloseMutex.withLock {
+            requireUnpublishedToken(token)
+            check(unpublishedConnection == null) { "Unpublished connection already acquired" }
+            check(unpublishedProviderSession == null) { "Unpublished provider session already acquired" }
+            check(lifecycleLease == null) { "Lifecycle lease already acquired" }
+            val lease = acquireSqliteNowLifecycleLease(dbName)
+            try {
+                val providerSession = connectionProvider.openCoordinatedSession(
+                    dbName = dbName,
+                    debug = debug,
+                    config = connectionConfig,
+                )
+                unpublishedProviderSession = providerSession
+                unpublishedConnection = providerSession.inspectionConnection
+                lifecycleLease = lease
+            } catch (t: Throwable) {
+                try {
+                    lease.close()
+                } catch (closeFailure: Throwable) {
+                    t.addSuppressed(closeFailure)
+                }
+                throw t
+            }
+        }
+    }
+
+    internal fun unpublishedPreparationRequired(token: SqliteNowUnpublishedSessionToken): Boolean {
+        requireUnpublishedToken(token)
+        return unpublishedProviderSession?.preparationRequired
+            ?: error("Unpublished provider session has not been acquired")
+    }
+
+    internal fun unpublishedInspectionAvailable(token: SqliteNowUnpublishedSessionToken): Boolean {
+        requireUnpublishedToken(token)
+        return unpublishedConnection != null
+    }
+
+    internal suspend fun prepareUnpublishedConnection(token: SqliteNowUnpublishedSessionToken) {
+        openCloseMutex.withLock {
+            requireUnpublishedToken(token)
+            val providerSession = unpublishedProviderSession
+                ?: error("Unpublished provider session has not been acquired")
+            unpublishedConnection = providerSession.prepareConnection()
+        }
+    }
+
+    internal suspend fun <T> withUnpublishedConnection(
+        token: SqliteNowUnpublishedSessionToken,
+        block: suspend (SafeSQLiteConnection) -> T,
+    ): T {
+        requireUnpublishedToken(token)
+        val connection = unpublishedConnection
+            ?: error("Unpublished connection has not been acquired")
+        return block(connection)
+    }
+
+    internal suspend fun migrateUnpublishedConnection(
+        token: SqliteNowUnpublishedSessionToken,
+        fresh: Boolean,
+        migrationSqlPolicy: SqliteNowCoordinatedMigrationSqlPolicy?,
+        preInit: suspend (SafeSQLiteConnection) -> Unit,
+        transactionSetup: suspend (SafeSQLiteConnection) -> Unit,
+        validateBeforeCommit: suspend (SafeSQLiteConnection) -> Unit,
+    ) {
+        requireUnpublishedToken(token)
+        val connection = unpublishedConnection
+            ?: error("Unpublished connection has not been acquired")
+
+        preInit(connection)
+        connection.transaction {
+            transactionSetup(connection)
+            val storedVersion = connection.readUserVersion()
+            val migrationVersion = if (
+                fresh || (storedVersion == 0 &&
+                !connection.hasUserTables() &&
+                !connection.restoredFromSnapshot)
+            ) {
+                -1
+            } else {
+                storedVersion
+            }
+            val newVersion = if (migrationVersion == migration.targetVersion) storedVersion else {
+                connection.withMigrationSqlValidation(migrationSqlPolicy) {
+                    migration.applyMigration(connection, migrationVersion)
+                }
+            }
+            if (newVersion != storedVersion) {
+                connection.execSQL("PRAGMA user_version = $newVersion;")
+            }
+            validateBeforeCommit(connection)
+        }
+    }
+
+    internal suspend fun publishUnpublishedConnection(token: SqliteNowUnpublishedSessionToken) {
+        openCloseMutex.withLock {
+            requireUnpublishedToken(token)
+            check(_conn == null) { "Database connection already initialized" }
+            val connection = unpublishedConnection
+                ?: error("Unpublished connection has not been acquired")
+            val closeHandler = pendingPublishedCloseHandler
+                ?: suspend { closePublishedConnection(token) }
+
+            unpublishedProviderSession?.publish(connection)
+            connection.setTableInvalidationListener(::notifyTablesChanged)
+            tableChangeScope = createNotificationScope()
+            _conn = connection
+            publishedCloseHandler = closeHandler
+            publishedCloseToken = token
+            pendingPublishedCloseHandler = null
+            unpublishedProviderSession = null
+            unpublishedConnection = null
+            unpublishedToken = null
+            unpublishedSession = null
+        }
+    }
+
+    internal suspend fun bindPublishedCloseHandler(
+        token: SqliteNowUnpublishedSessionToken,
+        closeHandler: suspend () -> Unit,
+    ) {
+        openCloseMutex.withLock {
+            requireUnpublishedToken(token)
+            check(pendingPublishedCloseHandler == null) {
+                "Coordinated publication close handler is already installed"
+            }
+            pendingPublishedCloseHandler = closeHandler
+        }
+    }
+
+    internal suspend fun closePublishedConnection(token: SqliteNowUnpublishedSessionToken) {
+        revokeConnectionAccess()
+        openCloseMutex.withLock {
+            check(publishedCloseToken === token && publishedCloseHandler != null) {
+                "Coordinated published connection is no longer owned by this session"
+            }
+            closeConnectionAndLease()
+        }
+    }
+
+    internal suspend fun closeUnpublishedConnection(token: SqliteNowUnpublishedSessionToken) {
+        revokeConnectionAccess()
+        openCloseMutex.withLock {
+            requireUnpublishedToken(token)
+            val connection = unpublishedConnection
+            val providerSession = unpublishedProviderSession
+            val lease = lifecycleLease
+            var failure: Throwable? = null
+            try {
+                if (providerSession != null) providerSession.close() else connection?.close()
+            } catch (t: Throwable) {
+                failure = t
+            }
+            if (failure == null) {
+                try {
+                    lease?.close()
+                } catch (t: Throwable) {
+                    failure = t
+                }
+            }
+            if (failure != null) throw failure
+
+            unpublishedConnection = null
+            unpublishedProviderSession = null
+            unpublishedToken = null
+            unpublishedSession = null
+            pendingPublishedCloseHandler = null
+            lifecycleLease = null
+        }
+    }
+
+    private suspend fun closeConnectionAndLease() {
+        val connection = _conn
+        val lease = lifecycleLease
+        var failure: Throwable? = null
+        if (connection != null) {
+            connection.setTableInvalidationListener(null)
+            try {
+                connection.close()
+            } catch (t: Throwable) {
+                failure = t
+            }
+            if (failure == null) {
+                _conn = null
+            }
+        }
+        if (failure == null) {
+            try {
+                lease?.close()
+            } catch (t: Throwable) {
+                failure = t
+            }
+            if (failure == null) {
+                lifecycleLease = null
+            }
+        }
+        if (failure == null && connection == null && lease == null) {
+            tableChangeScope?.cancel()
+            tableChangeScope = null
+            publishedCloseHandler = null
+            publishedCloseToken = null
+        } else if (failure == null && _conn == null && lifecycleLease == null) {
+            tableChangeScope?.cancel()
+            tableChangeScope = null
+            publishedCloseHandler = null
+            publishedCloseToken = null
+        }
+        failure?.let { throw it }
+    }
+
+    @OptIn(SqliteNowInternalApi::class)
+    internal fun revokeConnectionAccess() {
+        _conn?.revokePublicAccess()
+        unpublishedConnection?.revokePublicAccess()
+    }
+
+    internal fun revokeSessionAccess(token: SqliteNowUnpublishedSessionToken) {
+        if (unpublishedToken === token || publishedCloseToken === token) revokeConnectionAccess()
+    }
+
+    private fun requireUnpublishedToken(token: SqliteNowUnpublishedSessionToken) {
+        check(unpublishedToken === token && unpublishedSession != null) {
+            "Coordinated opening session is no longer active"
+        }
+    }
+}
+
+private fun combineCloseFailures(primary: Throwable?, later: Throwable): Throwable {
+    if (primary == null) return later
+    primary.addSuppressed(later)
+    return primary
 }
 
 interface DatabaseMigrations {
+    /** Immutable generated schema target, or null for a legacy handwritten migration runner. */
+    val targetVersion: Int?
+        get() = null
+
     /**
      * Applies the necessary migrations to the database.
      *
@@ -359,6 +713,17 @@ private suspend fun SafeSQLiteConnection.hasUserTables(): Boolean {
             "AND name NOT LIKE 'sqlite_%' " +
             "AND name != 'android_metadata' " +
             "LIMIT 1",
+    )
+    statement.use {
+        return it.step()
+    }
+}
+
+private suspend fun SafeSQLiteConnection.hasCoordinatedOpeningIdentity(): Boolean {
+    val statement = prepare(
+        "SELECT 1 FROM sqlite_schema " +
+            "WHERE lower(name) IN (" +
+            "'_sync_opening_state','_sync_contract_identity','_sync_admitted_contracts') LIMIT 1",
     )
     statement.use {
         return it.step()

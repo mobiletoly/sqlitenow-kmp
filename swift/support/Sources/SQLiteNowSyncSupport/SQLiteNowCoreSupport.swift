@@ -167,7 +167,31 @@ public enum SQLiteNowError: Error, CustomStringConvertible, Equatable {
     case observation(message: String)
     case adapter(message: String)
     case sync(message: String)
+    case syncIncomplete(
+        reason: SQLiteNowSyncIncompleteReason,
+        dirtyCount: Int64,
+        outboundCount: Int64,
+        confirmedBundleCount: Int32,
+        pushAttempts: Int32
+    )
+    case pushDependencyGroupExceedsAdmittedLimit(SQLiteNowPushDependencyGroupLimit)
+    case fkReconciliationRequired(SQLiteNowFKReconciliationRequired)
+    case resolutionBaseUnavailable(SQLiteNowResolutionBaseUnavailable)
+    case syncWorkLimit(SQLiteNowSyncWorkLimit)
+    case syncWorkspaceLimit(SQLiteNowSyncWorkspaceLimit)
+    case stalePushDependencyDiagnostic(SQLiteNowStalePushDependencyDiagnostic)
+    case conflictNeedsResolution(message: String)
+    case staleConflictResolution(message: String)
     case `protocol`(message: String)
+    case remote(
+        code: String,
+        httpStatus: Int,
+        operation: String,
+        remediation: String?,
+        retryable: Bool,
+        generationId: Int64?,
+        message: String
+    )
     case unknown(message: String)
 
     public var description: String {
@@ -179,7 +203,18 @@ public enum SQLiteNowError: Error, CustomStringConvertible, Equatable {
         case let .observation(message): return message
         case let .adapter(message): return message
         case let .sync(message): return message
+        case let .syncIncomplete(reason, dirty, outbound, confirmed, attempts):
+            return "Sync incomplete (\(reason)): dirty=\(dirty) outbound=\(outbound) confirmed=\(confirmed) attempts=\(attempts)"
+        case let .pushDependencyGroupExceedsAdmittedLimit(result): return result.reason
+        case let .fkReconciliationRequired(result): return result.reason
+        case let .resolutionBaseUnavailable(result): return result.reason
+        case let .syncWorkLimit(result): return result.reason
+        case let .syncWorkspaceLimit(result): return result.reason
+        case let .stalePushDependencyDiagnostic(result): return result.reason
+        case let .conflictNeedsResolution(message): return message
+        case let .staleConflictResolution(message): return message
         case let .protocol(message): return message
+        case let .remote(_, _, _, _, _, _, message): return message
         case let .unknown(message): return message
         }
     }

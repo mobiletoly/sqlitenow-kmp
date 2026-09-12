@@ -36,21 +36,27 @@ private struct ContentView: View {
             }
 
             let syncDb = SwiftOnlySyncDatabase(path: temporaryDatabaseURL(prefix: "sync"))
-            try await syncDb.open()
+            let opening = try await syncDb.openForSync(
+                baseURL: URL(string: "http://127.0.0.1:1")!,
+                auth: .bearer(token: "fixture-token"),
+                config: .init(
+                    generationId: 1,
+                    databaseId: "swift-sync-fixture",
+                    serviceId: "nethttp-server-example"
+                )
+            )
+            let openingStatus = try await opening.advance()
+            guard openingStatus.outcome == .ready,
+                  let sync = opening.readyOrNil()?.client else {
+                throw SQLiteNowSyncSupport.SQLiteNowError.sync(
+                    message: "Coordinated opening did not publish a ready database"
+                )
+            }
             let (docs, sourceInfo) = try await withAsyncCleanup({
-                try await syncDb.close()
+                try await opening.close()
             }) {
                 try await syncDb.docs.insertOrReplace(DocsInsertOrReplaceParams(docId: "doc-1", title: "First"))
                 let docs = try await syncDb.docs.selectAll().list()
-
-                let sync = try syncDb.makeSyncClient(
-                    baseURL: URL(string: "http://127.0.0.1:1")!,
-                    auth: .bearer(token: "fixture-token")
-                )
-                try await sync.open()
-                defer {
-                    sync.close()
-                }
 
                 let sourceInfo = try await sync.sourceInfo()
                 return (docs, sourceInfo)

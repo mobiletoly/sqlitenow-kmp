@@ -30,15 +30,15 @@ class RealServerRichSchemaStressTest {
                 db = dbA,
                 config = config,
                 http = httpA,
-                uploadLimit = 20,
-                downloadLimit = 2,
+                maxPushRows = 20,
+                maxPullBundles = 2,
             )
             val clientB = newRealServerClient(
                 db = dbB,
                 config = config,
                 http = httpB,
-                uploadLimit = 20,
-                downloadLimit = 2,
+                maxPushRows = 20,
+                maxPullBundles = 2,
             )
 
             clientA.openAndAttach(userId).getOrThrow()
@@ -118,7 +118,7 @@ class RealServerRichSchemaStressTest {
         }
     }
 
-    private suspend fun assertRichSchemaCounts(db: dev.goquick.sqlitenow.core.SafeSQLiteConnection, expectedBundles: Int) {
+    private suspend fun assertRichSchemaCounts(db: RealServerDatabase, expectedBundles: Int) {
         val bundles = expectedBundles.toLong()
         assertEquals(2L * bundles, scalarLong(db, "SELECT COUNT(*) FROM users"))
         assertEquals(2L * bundles, scalarLong(db, "SELECT COUNT(*) FROM posts"))

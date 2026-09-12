@@ -169,8 +169,8 @@ sqliteNow {
             packageName = "dev.goquick.sqlitenow.core.test.migration.db"
             debug = true
         }
-        create("Phase6WorkerValueDatabase") {
-            packageName = "dev.goquick.sqlitenow.core.test.phase6.db"
+        create("WorkerValueDatabase") {
+            packageName = "dev.goquick.sqlitenow.core.test.worker.db"
             debug = true
         }
     }

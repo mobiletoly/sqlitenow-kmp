@@ -208,6 +208,11 @@ internal class MigratorCodeGenerator(
                     .initializer("onMigrationStep")
                     .build()
             )
+            .addProperty(
+                PropertySpec.Companion.builder("targetVersion", Int::class, KModifier.OVERRIDE)
+                    .initializer("%L", migrationInspector.latestVersion)
+                    .build()
+            )
 
         // Add the applyMigration function that implements the DatabaseMigrations interface
         val applyMigrationFunction = generateApplyMigrationFunction()

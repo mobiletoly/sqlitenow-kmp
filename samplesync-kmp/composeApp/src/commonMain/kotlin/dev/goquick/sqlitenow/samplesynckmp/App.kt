@@ -67,6 +67,7 @@ import dev.goquick.sqlitenow.oversqlite.OversqliteClient
 import dev.goquick.sqlitenow.oversqlite.RebuildRequiredException
 import dev.goquick.sqlitenow.oversqlite.Resolver
 import dev.goquick.sqlitenow.oversqlite.SyncReport
+import dev.goquick.sqlitenow.oversqlite.SyncIncompleteException
 import dev.goquick.sqlitenow.oversqlite.SyncThenDetachResult
 import dev.goquick.sqlitenow.oversqlite.runAutomaticDownloads
 import dev.goquick.sqlitenow.samplesynckmp.db.AddressType
@@ -85,9 +86,11 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -305,18 +308,25 @@ private data class SampleSyncSession(
 )
 
 private class SampleAuthTokenState(
-    initialToken: SampleAuthToken,
     private val baseUrl: String,
-    private val user: String,
-    private val sourceId: String,
-    private val password: String,
 ) {
-    private var currentToken = initialToken
+    private var currentToken: SampleAuthToken? = null
+    private var user: String? = null
+    private var sourceId: String? = null
+    private var password: String? = null
 
-    fun bearerTokens(): BearerTokens = BearerTokens(currentToken.token, null)
+    fun bind(token: SampleAuthToken, user: String, sourceId: String, password: String) {
+        currentToken = token
+        this.user = user
+        this.sourceId = sourceId
+        this.password = password
+    }
+
+    fun bearerTokens(): BearerTokens? = currentToken?.let { BearerTokens(it.token, null) }
 
     fun refreshDelayMillis(): Long {
-        val millisUntilExpiry = currentToken.expiresAtEpochMillis - Clock.System.now().toEpochMilliseconds()
+        val token = currentToken ?: return authTokenRefreshRetryMillis
+        val millisUntilExpiry = token.expiresAtEpochMillis - Clock.System.now().toEpochMilliseconds()
         if (millisUntilExpiry <= authTokenRefreshMinimumDelayMillis) {
             return 0L
         }
@@ -324,12 +334,15 @@ private class SampleAuthTokenState(
         return (millisUntilExpiry - leadMillis).coerceAtLeast(authTokenRefreshMinimumDelayMillis)
     }
 
-    suspend fun refresh(): BearerTokens {
+    suspend fun refresh(): BearerTokens? {
+        val boundUser = user ?: return null
+        val boundSourceId = sourceId ?: return null
+        val boundPassword = password ?: return null
         val nextToken = refreshJwt(
             baseUrl = baseUrl,
-            user = user,
-            sourceId = sourceId,
-            password = password,
+            user = boundUser,
+            sourceId = boundSourceId,
+            password = boundPassword,
         )
         update(nextToken)
         return bearerTokens()
@@ -385,6 +398,11 @@ private fun buildSyncReportMessage(report: SyncReport): String = buildString {
     }
 }
 
+private fun buildIncompleteSyncMessage(error: SyncIncompleteException): String =
+    "Sync paused after ${error.pushAttempts} push attempt(s) (${error.reason}). " +
+        "${error.dirtyCount} dirty row(s) and ${error.outboundCount} outbound row(s) remain safely pending. " +
+        "${error.confirmedBundleCount} bundle(s) were confirmed. Sync again to continue."
+
 private fun buildDetachReportMessage(result: SyncThenDetachResult): String = buildString {
     if (result.isSuccess()) {
         append("Signed out successfully after ")
@@ -408,58 +426,23 @@ private fun clearSavedAuth() {
 private fun loadSyncMode(): SampleSyncMode =
     SampleSyncMode.fromStorageValue(AuthPrefs.get(AuthKeys.SyncMode))
 
-private fun loadOrCreateSourceId(): String {
-    val existing = AuthPrefs.get(AuthKeys.SourceId)
-    if (!existing.isNullOrEmpty()) {
-        return existing
-    }
-    val created = generateSourceId()
-    AuthPrefs.set(AuthKeys.SourceId, created)
-    return created
-}
-
 private suspend fun setupSyncClient(
     baseUrl: String,
     user: String,
     sourceId: String,
     password: String,
     token: SampleAuthToken,
+    sessionClient: OversqliteClient,
+    sessionHttpClient: HttpClient,
+    authTokenState: SampleAuthTokenState,
     resourceScope: CoroutineScope,
+    onIncomplete: (SyncIncompleteException) -> Unit,
     onSuccess: (SampleSyncSession) -> Unit,
     onError: (Exception) -> Unit
 ) {
-    var httpClient: HttpClient? = null
-    var client: OversqliteClient? = null
-    val authTokenState = SampleAuthTokenState(
-        initialToken = token,
-        baseUrl = baseUrl,
-        user = user,
-        sourceId = sourceId,
-        password = password,
-    )
     try {
         ensureSampleSyncServer(baseUrl)
-
-        // Build long-lived session resources from their own scope so later sync requests do not
-        // inherit the completed sign-in coroutine job.
-        withContext(resourceScope.coroutineContext) {
-            httpClient = createAuthenticatedHttpClient(
-                baseUrl = baseUrl,
-                authTokenState = authTokenState,
-            )
-
-            client = db.newOversqliteClient(
-                schema = "business",
-                httpClient = httpClient,
-                resolver = updatedAtWinsResolver,
-                verboseLogs = true,
-            )
-        }
-
-        val sessionHttpClient = checkNotNull(httpClient)
-        val sessionClient = checkNotNull(client)
-
-        sessionClient.open().getOrThrow()
+        authTokenState.bind(token, user, sourceId, password)
         val attach = try {
             attachUntilConnected(sessionClient, user)
         } catch (e: ConnectBindingConflictException) {
@@ -478,17 +461,21 @@ private suspend fun setupSyncClient(
         appLog.i { "Attach complete for user=$user outcome=${attach.outcome}" }
         logLocalSyncState("after attach")
 
-        val initialSync = sessionClient.sync().getOrElse { error ->
-            if (error !is RebuildRequiredException) {
-                throw error
-            }
+        val initialResult = sessionClient.sync().let { result ->
+            if (result.exceptionOrNull() !is RebuildRequiredException) return@let result
             appLog.i { "Initial sync requires rebuild; rebuilding local snapshot" }
             sessionClient.rebuild().getOrThrow()
-            sessionClient.sync().getOrThrow()
+            sessionClient.sync()
         }
-        appLog.i {
-            "Initial sync complete for user=$user " +
-                "push=${initialSync.pushOutcome} pull=${initialSync.remoteOutcome}"
+        val incomplete = initialResult.exceptionOrNull() as? SyncIncompleteException
+        if (incomplete != null) {
+            onIncomplete(incomplete)
+        } else {
+            val initialSync = initialResult.getOrThrow()
+            appLog.i {
+                "Initial sync complete for user=$user " +
+                    "push=${initialSync.pushOutcome} pull=${initialSync.remoteOutcome}"
+            }
         }
         logLocalSyncState("after initial sync")
 
@@ -500,8 +487,6 @@ private suspend fun setupSyncClient(
             )
         )
     } catch (e: Exception) {
-        client?.close()
-        httpClient?.close()
         onError(e)
     }
 }
@@ -547,25 +532,49 @@ fun App() {
     } else {
         "http://127.0.0.1:8080"
     }
-
-    DisposableEffect(syncSession) {
-        val session = syncSession
-        onDispose {
-            session?.client?.close()
-            session?.httpClient?.close()
-        }
+    val coordinatedAuthState = remember(baseUrl) { SampleAuthTokenState(baseUrl) }
+    val coordinatedHttpClient = remember(baseUrl) {
+        createAuthenticatedHttpClient(baseUrl, coordinatedAuthState)
     }
+    var coordinatedClient by remember { mutableStateOf<OversqliteClient?>(null) }
 
     DisposableEffect(Unit) {
         onDispose {
+            sessionResourceScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                withContext(NonCancellable) {
+                    try {
+                        db.close()
+                    } finally {
+                        coordinatedHttpClient.close()
+                    }
+                }
+            }
             sessionResourceScope.cancel()
         }
     }
 
     LaunchedEffect(Unit) {
 
-        // TODO .open() is here just for demo purposes. In your app you should open it in some other place
-        db.open()
+        val openingConfig = db.buildOversqliteConfig(
+            generationId = 1L,
+            databaseId = "sample-sync",
+            serviceId = sampleSyncServerAppName,
+            verboseLogs = true,
+        )
+        val opening = db.openForSync(
+            config = openingConfig,
+            httpClient = coordinatedHttpClient,
+            resolver = updatedAtWinsResolver,
+        )
+        opening.advance()
+        coordinatedClient = db.newOversqliteClient(
+            generationId = 1L,
+            databaseId = "sample-sync",
+            serviceId = sampleSyncServerAppName,
+            httpClient = coordinatedHttpClient,
+            resolver = updatedAtWinsResolver,
+            verboseLogs = true,
+        )
         db.connection().execSQL("PRAGMA foreign_keys = ON;")
         isDatabaseOpen = true
 
@@ -595,7 +604,9 @@ fun App() {
         if (!isDatabaseOpen) {
             return@LaunchedEffect
         }
-        val persistedSourceId = loadOrCreateSourceId()
+        val persistedSourceId = checkNotNull(coordinatedClient)
+            .sourceInfo().getOrThrow().currentSourceId
+        AuthPrefs.set(AuthKeys.SourceId, persistedSourceId)
         sourceId = persistedSourceId
 
         val savedUser = AuthPrefs.get(AuthKeys.Username)
@@ -615,7 +626,14 @@ fun App() {
                     sourceId = persistedSourceId,
                     password = "demo",
                     token = token,
+                    sessionClient = checkNotNull(coordinatedClient),
+                    sessionHttpClient = coordinatedHttpClient,
+                    authTokenState = coordinatedAuthState,
                     resourceScope = sessionResourceScope,
+                    onIncomplete = { incomplete ->
+                        reportMessage = buildIncompleteSyncMessage(incomplete)
+                        errorMessage = null
+                    },
                     onSuccess = { session ->
                         syncSession = session
                         lifecycleReady = true
@@ -655,11 +673,17 @@ fun App() {
                     client.sync()
                         .onFailure {
                             appLog.e(it) { "sync failed" }
-                            errorMessage = "Sync failed: ${it.message ?: "unknown"}"
+                            if (it is SyncIncompleteException) {
+                                reportMessage = buildIncompleteSyncMessage(it)
+                                errorMessage = null
+                            } else {
+                                errorMessage = "Sync failed: ${it.message ?: "unknown"}"
+                            }
                             return@collect
                         }
                     logLocalSyncState("after sync")
                     appLog.i { "Sync cycle complete" }
+                    errorMessage = null
                 } catch (e: Exception) {
                     appLog.e(e) { "Sync cycle failed" }
                     errorMessage = e.message ?: "Sync cycle failed"
@@ -788,8 +812,13 @@ fun App() {
                             errorMessage = null
                         } catch (e: Exception) {
                             appLog.e(e) { "Manual sync failed" }
-                            errorMessage = "Sync failed: ${e.message}"
-                            reportMessage = null
+                            if (e is SyncIncompleteException) {
+                                reportMessage = buildIncompleteSyncMessage(e)
+                                errorMessage = null
+                            } else {
+                                errorMessage = "Sync failed: ${e.message}"
+                                reportMessage = null
+                            }
                         }
                     }
                 }
@@ -896,7 +925,8 @@ fun App() {
                     coroutineScope.launch {
                         try {
                             val displayUser = username.ifBlank { "user-sample" }
-                            val installSourceId = loadOrCreateSourceId()
+                            val installSourceId = checkNotNull(coordinatedClient)
+                                .sourceInfo().getOrThrow().currentSourceId
                             sourceId = installSourceId
                             appLog.i { "Signing in user='${displayUser}' source=$installSourceId" }
                             val token = fetchJwt(
@@ -916,7 +946,14 @@ fun App() {
                                 sourceId = installSourceId,
                                 password = password,
                                 token = token,
+                                sessionClient = checkNotNull(coordinatedClient),
+                                sessionHttpClient = coordinatedHttpClient,
+                                authTokenState = coordinatedAuthState,
                                 resourceScope = sessionResourceScope,
+                                onIncomplete = { incomplete ->
+                                    reportMessage = buildIncompleteSyncMessage(incomplete)
+                                    errorMessage = null
+                                },
                                 onSuccess = { session ->
                                     syncSession = session
                                     lifecycleReady = true
@@ -1169,16 +1206,6 @@ private fun createAuthenticatedHttpClient(
             url(baseUrl)
         }
     }
-}
-
-private fun generateSourceId(): String {
-    val alphabet = "abcdef0123456789"
-    val sb = StringBuilder()
-    repeat(8) {
-        val idx = Random.nextInt(alphabet.length)
-        sb.append(alphabet[idx])
-    }
-    return "source-" + sb.toString()
 }
 
 // Helper function to add a random person

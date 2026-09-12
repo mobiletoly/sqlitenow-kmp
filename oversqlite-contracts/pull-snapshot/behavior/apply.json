@@ -774,7 +774,6 @@
           "expectedException": "any_error",
           "expectedErrorContains": "snapshot final row total 1 does not match session row_count 2",
           "expectedKmpErrorContains": "invalid_chunk",
-          "expectedDartErrorContains": "staged snapshot row count 1 does not match expected row_count 2",
           "expectedState": {
             "lastBundleSeqSeen": 0,
             "snapshotStageCount": 1,

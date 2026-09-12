@@ -17,6 +17,7 @@ package dev.goquick.sqlitenow.oversqlite
 
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 
 internal const val bundleChangeWatchMaxLineBytes = 1 shl 20
 internal const val bundleChangeWatchMaxEventBytes = 1 shl 20
@@ -82,6 +83,10 @@ internal class BundleChangeWatchSseParser(
             return emptyList()
         }
         require(eventData.isNotEmpty()) { "bundle change event is missing data" }
+        requireUniqueSnapshotJsonObjectMembers(eventData)
+        require(json.parseToJsonElement(eventData).jsonObject.keys == setOf("bundle_seq")) {
+            "bundle change event fields are invalid"
+        }
         val event = try {
             json.decodeFromString(BundleChangeEvent.serializer(), eventData)
         } catch (error: SerializationException) {
@@ -92,7 +97,6 @@ internal class BundleChangeWatchSseParser(
         require(event.bundleSeq > 0) {
             "bundle change event bundle_seq ${event.bundleSeq} must be positive"
         }
-        requireValidOptionalOversqliteSourceId(event.sourceId)
         return listOf(event)
     }
 }

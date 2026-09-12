@@ -20,56 +20,57 @@ import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.sqlite.getColumnNames
 import dev.goquick.sqlitenow.core.sqlite.use
 
-enum class ColumnKind {
+internal enum class ColumnKind {
     TEXT,
     INTEGER,
 	REAL,
 	BLOB,
-    UUID_BLOB,
+	NUMERIC,
 }
 
-internal fun ColumnKind.isBlobKind(): Boolean = this == ColumnKind.BLOB || this == ColumnKind.UUID_BLOB
+internal fun ColumnKind.isBlobKind(): Boolean = this == ColumnKind.BLOB
 
-private fun classifyColumnKind(
-    declaredType: String,
-    isPrimaryKey: Boolean,
-    isBlobReference: Boolean,
-): ColumnKind {
-    val type = declaredType.lowercase()
-	return when {
-		type.contains("blob") && (isPrimaryKey || isBlobReference) -> ColumnKind.UUID_BLOB
-        type.contains("blob") -> ColumnKind.BLOB
-        type.contains("real") || type.contains("float") || type.contains("double") -> ColumnKind.REAL
-        type.contains("int") -> ColumnKind.INTEGER
-        else -> ColumnKind.TEXT
+private fun classifyColumnKind(declaredType: String): ColumnKind {
+	return when (sqliteAffinity(declaredType)) {
+		"TEXT" -> ColumnKind.TEXT
+		"INTEGER" -> ColumnKind.INTEGER
+		"REAL" -> ColumnKind.REAL
+		"BLOB" -> ColumnKind.BLOB
+		"NUMERIC" -> ColumnKind.NUMERIC
+		else -> error("unsupported SQLite affinity")
     }
 }
 
-data class ColumnInfo(
+internal data class ColumnInfo(
     val name: String,
     val declaredType: String,
     val isPrimaryKey: Boolean,
     val notNull: Boolean,
     val defaultValue: String?,
-    val kind: ColumnKind = classifyColumnKind(
-        declaredType = declaredType,
-        isPrimaryKey = isPrimaryKey,
-        isBlobReference = false,
-    ),
+    val kind: ColumnKind = classifyColumnKind(declaredType),
+    val hidden: Int = 0,
+    val primaryKeyOrdinal: Int = if (isPrimaryKey) 1 else 0,
+    val wireType: String? = null,
 )
 
-data class ForeignKeyInfo(
+internal data class ForeignKeyInfo(
     val seq: Int,
     val refTable: String,
     val fromCol: String,
     val toCol: String,
+    val onUpdate: String = "NO ACTION",
+    val onDelete: String = "NO ACTION",
+    val match: String = "NONE",
 )
 
-data class TableInfo(
+internal data class TableInfo(
     val table: String,
     val columns: List<ColumnInfo>,
     val foreignKeys: List<ForeignKeyInfo> = emptyList(),
     val foreignKeyColumnsLower: Set<String> = emptySet(),
+    val tableKind: String = "table",
+    val withoutRowId: Boolean = false,
+    val strict: Boolean = false,
 ) {
     val columnNamesLower: List<String> = columns.map { it.name.lowercase() }
     val columnsByNameLower: Map<String, ColumnInfo> = columns.associateBy { it.name.lowercase() }
@@ -85,7 +86,7 @@ data class TableInfo(
     }
 }
 
-class TableInfoCache {
+internal class TableInfoCache {
     private val cache = mutableMapOf<String, TableInfo>()
 
     suspend fun get(db: SafeSQLiteConnection, table: String): TableInfo {
@@ -94,7 +95,7 @@ class TableInfoCache {
 
         val (cols, foreignKeys, foreignKeyColumns) = db.withExclusiveAccess {
             val cols = mutableListOf<ColumnInfo>()
-            db.prepare("PRAGMA table_info(${quoteIdent(key)})").use { st ->
+            db.prepare("PRAGMA table_xinfo(${quoteIdent(key)})").use { st ->
                 // Resolve column indexes by name to avoid magic numbers
                 val idxByName: Map<String, Int> = run {
                     val names = st.getColumnNames().map { it.lowercase() }
@@ -105,6 +106,7 @@ class TableInfoCache {
                 val iNotNull = idxByName["notnull"] ?: 3
                 val iDflt = idxByName["dflt_value"] ?: 4
                 val iPk = idxByName["pk"] ?: 5
+                val iHidden = idxByName["hidden"] ?: 6
 
                 while (st.step()) {
                     val name = st.getText(iName)
@@ -118,6 +120,8 @@ class TableInfoCache {
                         isPrimaryKey = isPk,
                         notNull = notNull,
                         defaultValue = defaultVal,
+                        hidden = st.getLong(iHidden).toInt(),
+                        primaryKeyOrdinal = st.getLong(iPk).toInt(),
                     )
                 }
             }
@@ -136,9 +140,12 @@ class TableInfoCache {
                     val fromCol = st.getText(iFrom)
                     foreignKeys += ForeignKeyInfo(
                         seq = st.getLong(iSeq).toInt(),
-                        refTable = st.getText(iTable).trim().lowercase(),
+                        refTable = st.getText(iTable),
                         fromCol = fromCol,
-                        toCol = st.getText(iTo),
+                        toCol = if (st.isNull(iTo)) "" else st.getText(iTo),
+                        onUpdate = st.getText(idxByName.getValue("on_update")),
+                        onDelete = st.getText(idxByName.getValue("on_delete")),
+                        match = st.getText(idxByName.getValue("match")),
                     )
                     foreignKeyColumns += fromCol.lowercase()
                 }
@@ -146,40 +153,31 @@ class TableInfoCache {
             Triple(cols, foreignKeys, foreignKeyColumns)
         }
 
-        val normalizedColumns = cols.map { column ->
-            column.copy(
-                kind = classifyColumnKind(
-                    declaredType = column.declaredType,
-                    isPrimaryKey = column.isPrimaryKey,
-                    isBlobReference = foreignKeyColumns.contains(column.name.lowercase()),
-                ),
-            )
+        val ti = db.withExclusiveAccess {
+            db.prepare("SELECT name, type, wr, strict FROM pragma_table_list WHERE schema='main' AND name=? COLLATE NOCASE").use { st ->
+                st.bindText(1, table)
+                require(st.step()) { "managed table $table does not exist" }
+                TableInfo(
+                    table = st.getText(0),
+                    tableKind = st.getText(1),
+                    withoutRowId = st.getLong(2) == 1L,
+                    strict = st.getLong(3) == 1L,
+                    columns = cols,
+                    foreignKeys = foreignKeys,
+                    foreignKeyColumnsLower = foreignKeyColumns,
+                )
+            }
         }
-
-        val ti = TableInfo(
-            table = key,
-            columns = normalizedColumns,
-            foreignKeys = foreignKeys,
-            foreignKeyColumnsLower = foreignKeyColumns,
-        )
         cache[key] = ti
         return ti
     }
 
+    fun install(tables: Map<String, TableInfo>) {
+        cache.clear()
+        cache.putAll(tables)
+    }
+
     fun clear() {
         cache.clear()
-    }
-}
-
-object TableInfoProvider {
-    // Legacy helper retained for tests and ad hoc callers; the runtime uses a client-scoped TableInfoCache.
-    private val cacheByDb = mutableMapOf<SafeSQLiteConnection, TableInfoCache>()
-
-    suspend fun get(db: SafeSQLiteConnection, table: String): TableInfo {
-        return cacheByDb.getOrPut(db) { TableInfoCache() }.get(db, table)
-    }
-
-    fun clear(db: SafeSQLiteConnection) {
-        cacheByDb.remove(db)
     }
 }

@@ -2,7 +2,7 @@
 
 Curated patterns for common SQLiteNow scenarios.
 
-{% assign base = "/flutter/recipes" %}
+{% assign base = "/kmp/recipes" %}
 {% if include.platform == "kmp" %}
 {% assign base = "/kmp/recipes" %}
 {% elsif include.platform == "swift" %}

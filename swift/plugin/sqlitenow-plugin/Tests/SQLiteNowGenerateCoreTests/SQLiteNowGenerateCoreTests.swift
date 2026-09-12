@@ -942,7 +942,7 @@ final class SQLiteNowGenerateCoreTests: XCTestCase {
                   "swiftTargetName": "ConflictDatabaseSQLiteNow",
                   "runtime": "core",
                   "runtimeXcframeworkDirectory": "\(runtimeDir)",
-                  "backend": "dart"
+                  "unsupportedOption": "removed"
                 }
               ]
             }
@@ -951,7 +951,7 @@ final class SQLiteNowGenerateCoreTests: XCTestCase {
 
         XCTAssertThrowsError(try SQLiteNowConfigLoader.load(configPath: configPath)) { error in
             XCTAssertTrue(error.localizedDescription.contains("Unsupported field(s)"))
-            XCTAssertTrue(error.localizedDescription.contains("backend"))
+            XCTAssertTrue(error.localizedDescription.contains("unsupportedOption"))
         }
     }
 
@@ -1475,6 +1475,253 @@ final class SQLiteNowGenerateCoreTests: XCTestCase {
         ) { error in
             XCTAssertTrue(error.localizedDescription.contains("Missing SQLiteNow config"))
         }
+    }
+
+    func testGeneratorReportsCompilerVersionFailure() throws {
+        let sqlDir = try createSQLDirectory(databaseName: "VersionFailureDatabase")
+        let runtimeDir = try createRuntimeDirectory()
+        let compilerExecutable = try createCompilerExecutable(named: "sqlitenow-compiler")
+        _ = try writeConfig(
+            """
+            {
+              "schemaVersion": 1,
+              "databases": [
+                {
+                  "databaseName": "VersionFailureDatabase",
+                  "sqlDirectory": "\(sqlDir)",
+                  "swiftPackageName": "VersionFailureDatabaseSQLiteNow",
+                  "swiftTargetName": "VersionFailureDatabaseSQLiteNow",
+                  "runtime": "core",
+                  "runtimeXcframeworkDirectory": "\(runtimeDir)"
+                }
+              ]
+            }
+            """
+        )
+        let processRunner = RecordingProcessRunner(results: [
+            ProcessResult(exitCode: 7, stdout: "version stdout", stderr: "version stderr"),
+        ])
+        let generator = SQLiteNowGenerator(
+            processRunner: processRunner,
+            environment: [:],
+            bundledCompilerJar: nil
+        )
+        let options = try CommandLineOptions.parse(
+            arguments: [
+                "--package-root", tempRoot.path,
+                "--compiler-executable", compilerExecutable.path,
+            ],
+            currentDirectory: tempRoot
+        )
+
+        XCTAssertThrowsError(try generator.generate(options: options)) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "Unable to run SQLiteNow compiler. Ensure Java 17+ is available. stderr: version stderr"
+            )
+        }
+        XCTAssertEqual(processRunner.invocations.count, 1)
+    }
+
+    func testGeneratorRejectsEmptyCompilerVersion() throws {
+        let sqlDir = try createSQLDirectory(databaseName: "EmptyVersionDatabase")
+        let runtimeDir = try createRuntimeDirectory()
+        let compilerExecutable = try createCompilerExecutable(named: "sqlitenow-compiler")
+        _ = try writeConfig(
+            """
+            {
+              "schemaVersion": 1,
+              "databases": [
+                {
+                  "databaseName": "EmptyVersionDatabase",
+                  "sqlDirectory": "\(sqlDir)",
+                  "swiftPackageName": "EmptyVersionDatabaseSQLiteNow",
+                  "swiftTargetName": "EmptyVersionDatabaseSQLiteNow",
+                  "runtime": "core",
+                  "runtimeXcframeworkDirectory": "\(runtimeDir)"
+                }
+              ]
+            }
+            """
+        )
+        let processRunner = RecordingProcessRunner(results: [
+            ProcessResult(exitCode: 0, stdout: " \n", stderr: ""),
+        ])
+        let generator = SQLiteNowGenerator(
+            processRunner: processRunner,
+            environment: [:],
+            bundledCompilerJar: nil
+        )
+        let options = try CommandLineOptions.parse(
+            arguments: [
+                "--package-root", tempRoot.path,
+                "--compiler-executable", compilerExecutable.path,
+            ],
+            currentDirectory: tempRoot
+        )
+
+        XCTAssertThrowsError(try generator.generate(options: options)) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "SQLiteNow compiler --version returned an empty version."
+            )
+        }
+        XCTAssertEqual(processRunner.invocations.count, 1)
+    }
+
+    func testGeneratorPreservesStructuredCompilerFailure() throws {
+        let sqlDir = try createSQLDirectory(databaseName: "FailureDatabase")
+        let runtimeDir = try createRuntimeDirectory()
+        let compilerExecutable = try createCompilerExecutable(named: "sqlitenow-compiler")
+        _ = try writeConfig(
+            """
+            {
+              "schemaVersion": 1,
+              "databases": [
+                {
+                  "databaseName": "FailureDatabase",
+                  "sqlDirectory": "\(sqlDir)",
+                  "swiftPackageName": "FailureDatabaseSQLiteNow",
+                  "swiftTargetName": "FailureDatabaseSQLiteNow",
+                  "runtime": "core",
+                  "runtimeXcframeworkDirectory": "\(runtimeDir)"
+                }
+              ]
+            }
+            """
+        )
+        let processRunner = RecordingProcessRunner(results: [
+            ProcessResult(exitCode: 0, stdout: "1.2.3\n", stderr: ""),
+            ProcessResult(
+                exitCode: 1,
+                stdout: #"{"success":false,"failure":{"message":"structured compiler failure"}}"#,
+                stderr: "ignored stderr"
+            ),
+        ])
+        let generator = SQLiteNowGenerator(
+            processRunner: processRunner,
+            environment: [:],
+            bundledCompilerJar: nil
+        )
+        let options = try CommandLineOptions.parse(
+            arguments: [
+                "--package-root", tempRoot.path,
+                "--compiler-executable", compilerExecutable.path,
+            ],
+            currentDirectory: tempRoot
+        )
+
+        XCTAssertThrowsError(try generator.generate(options: options)) { error in
+            XCTAssertEqual(error.localizedDescription, "structured compiler failure")
+        }
+    }
+
+    func testGeneratorRejectsInvalidSuccessfulCompilerResponse() throws {
+        let sqlDir = try createSQLDirectory(databaseName: "InvalidResponseDatabase")
+        let runtimeDir = try createRuntimeDirectory()
+        let compilerExecutable = try createCompilerExecutable(named: "sqlitenow-compiler")
+        _ = try writeConfig(
+            """
+            {
+              "schemaVersion": 1,
+              "databases": [
+                {
+                  "databaseName": "InvalidResponseDatabase",
+                  "sqlDirectory": "\(sqlDir)",
+                  "swiftPackageName": "InvalidResponseDatabaseSQLiteNow",
+                  "swiftTargetName": "InvalidResponseDatabaseSQLiteNow",
+                  "runtime": "core",
+                  "runtimeXcframeworkDirectory": "\(runtimeDir)"
+                }
+              ]
+            }
+            """
+        )
+        let processRunner = RecordingProcessRunner(results: [
+            ProcessResult(exitCode: 0, stdout: "1.2.3\n", stderr: ""),
+            ProcessResult(exitCode: 0, stdout: "not json", stderr: "compiler stderr"),
+        ])
+        let generator = SQLiteNowGenerator(
+            processRunner: processRunner,
+            environment: [:],
+            bundledCompilerJar: nil
+        )
+        let options = try CommandLineOptions.parse(
+            arguments: [
+                "--package-root", tempRoot.path,
+                "--compiler-executable", compilerExecutable.path,
+            ],
+            currentDirectory: tempRoot
+        )
+
+        XCTAssertThrowsError(try generator.generate(options: options)) { error in
+            let message = error.localizedDescription
+            XCTAssertTrue(message.contains("SQLiteNow compiler produced invalid JSON output"))
+            XCTAssertTrue(message.contains("stdout: not json"))
+            XCTAssertTrue(message.contains("stderr: compiler stderr"))
+        }
+    }
+
+    func testGeneratorStopsAfterFirstDatabaseFailureAndPreservesOrder() throws {
+        let firstSqlDir = try createSQLDirectory(databaseName: "FirstDatabase")
+        let secondSqlDir = try createSQLDirectory(databaseName: "SecondDatabase")
+        let runtimeDir = try createRuntimeDirectory()
+        let compilerExecutable = try createCompilerExecutable(named: "sqlitenow-compiler")
+        _ = try writeConfig(
+            """
+            {
+              "schemaVersion": 1,
+              "databases": [
+                {
+                  "databaseName": "FirstDatabase",
+                  "sqlDirectory": "\(firstSqlDir)",
+                  "swiftPackageName": "FirstDatabaseSQLiteNow",
+                  "swiftTargetName": "FirstDatabaseSQLiteNow",
+                  "runtime": "core",
+                  "runtimeXcframeworkDirectory": "\(runtimeDir)"
+                },
+                {
+                  "databaseName": "SecondDatabase",
+                  "sqlDirectory": "\(secondSqlDir)",
+                  "swiftPackageName": "SecondDatabaseSQLiteNow",
+                  "swiftTargetName": "SecondDatabaseSQLiteNow",
+                  "runtime": "core",
+                  "runtimeXcframeworkDirectory": "\(runtimeDir)"
+                }
+              ]
+            }
+            """
+        )
+        let processRunner = RecordingProcessRunner(results: [
+            ProcessResult(exitCode: 0, stdout: "1.2.3\n", stderr: ""),
+            ProcessResult(
+                exitCode: 1,
+                stdout: #"{"success":false,"failure":{"message":"first database failed"}}"#,
+                stderr: ""
+            ),
+        ])
+        let generator = SQLiteNowGenerator(
+            processRunner: processRunner,
+            environment: [:],
+            bundledCompilerJar: nil
+        )
+        let options = try CommandLineOptions.parse(
+            arguments: [
+                "--package-root", tempRoot.path,
+                "--compiler-executable", compilerExecutable.path,
+            ],
+            currentDirectory: tempRoot
+        )
+
+        XCTAssertThrowsError(try generator.generate(options: options)) { error in
+            XCTAssertEqual(error.localizedDescription, "first database failed")
+        }
+        XCTAssertEqual(processRunner.invocations.count, 2)
+        XCTAssertTrue(
+            processRunner.invocations[1].arguments.last?.hasSuffix(
+                ".build/sqlitenow/requests/FirstDatabase.json"
+            ) == true
+        )
     }
 
     func testRendersDependencyInstructions() {

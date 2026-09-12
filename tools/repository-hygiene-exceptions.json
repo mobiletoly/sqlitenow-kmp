@@ -1,0 +1,8 @@
+[
+  {
+    "path": "tools/qualification/tests/test_planner.py",
+    "token": "specs/local-authority.md",
+    "count": 1,
+    "reason": "Controlled fixture proving that an unselected disposable specification cannot affect default planning."
+  }
+]

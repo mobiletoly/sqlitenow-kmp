@@ -1,0 +1,4 @@
+CREATE TABLE drafts (
+    id TEXT PRIMARY KEY NOT NULL,
+    body BLOB NOT NULL
+);

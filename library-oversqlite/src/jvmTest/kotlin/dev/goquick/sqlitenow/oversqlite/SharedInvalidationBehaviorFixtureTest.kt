@@ -335,10 +335,10 @@ internal class SharedInvalidationBehaviorFixtureTest : CrossTargetSyncTestSuppor
         http: io.ktor.client.HttpClient,
         resolver: Resolver = ServerWinsResolver,
     ): DefaultOversqliteClient {
-        return DefaultOversqliteClient(
+        return DefaultOversqliteClient.forTesting(
             db = database.connection(),
             config = OversqliteConfig(
-                schema = "main",
+                generationId = 1, databaseId = "fixture", serviceId = "main",
                 syncTables = listOf(
                     SyncTable("users", syncKeyColumnName = "id"),
                     SyncTable("posts", syncKeyColumnName = "id"),

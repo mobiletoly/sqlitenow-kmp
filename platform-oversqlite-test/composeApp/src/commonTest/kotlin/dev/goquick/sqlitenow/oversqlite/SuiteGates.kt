@@ -23,11 +23,15 @@ internal fun realServerHeavyModeEnabled(): Boolean =
 
 internal expect fun webRuntimeKind(): String
 
-internal expect suspend fun cleanupPhase6DirectWorkerDatabase(dbName: String)
+internal expect suspend fun cleanupWorkerDirectWorkerDatabase(dbName: String)
 
-internal expect suspend fun cleanupPhase6LegacyOpfsDatabase(dbName: String)
+internal expect suspend fun cleanupWorkerLegacyOpfsDatabase(dbName: String)
 
-internal expect suspend fun cleanupPhase6LegacyIndexedDbDatabase(dbName: String)
+internal expect suspend fun cleanupWorkerLegacyIndexedDbDatabase(dbName: String)
+
+internal expect suspend fun sameOriginIframeCanAcquireLifecycleLock(dbName: String): Boolean
+
+internal expect suspend fun directWorkerStorageCensus(dbName: String): String
 
 internal fun oversqliteTestConnectionProvider(): SqliteConnectionProvider =
     BundledSqliteConnectionProvider
@@ -35,12 +39,12 @@ internal fun oversqliteTestConnectionProvider(): SqliteConnectionProvider =
 internal fun oversqliteTestDatabaseName(): String =
     if (webRuntimeKind() in setOf("js-node", "js-browser", "wasm-browser")) {
         val random = Random.nextLong().toString().removePrefix("-")
-        "sqlitenow-phase7-oversqlite-$random"
+        "sqlitenow-default_persistence-oversqlite-$random"
     } else {
         ":memory:"
     }
 
-internal class Phase6OwnedStorage {
+internal class OwnedWorkerStorage {
     private val directWorkerDatabases = linkedSetOf<String>()
     private val legacyOpfsDatabases = linkedSetOf<String>()
     private val legacyIndexedDbDatabases = linkedSetOf<String>()
@@ -63,9 +67,9 @@ internal class Phase6OwnedStorage {
     }
 
     suspend fun cleanup() {
-        directWorkerDatabases.forEach { cleanupPhase6DirectWorkerDatabase(it) }
-        legacyOpfsDatabases.forEach { cleanupPhase6LegacyOpfsDatabase(it) }
-        legacyIndexedDbDatabases.forEach { cleanupPhase6LegacyIndexedDbDatabase(it) }
+        directWorkerDatabases.forEach { cleanupWorkerDirectWorkerDatabase(it) }
+        legacyOpfsDatabases.forEach { cleanupWorkerLegacyOpfsDatabase(it) }
+        legacyIndexedDbDatabases.forEach { cleanupWorkerLegacyIndexedDbDatabase(it) }
         directWorkerDatabases.clear()
         legacyOpfsDatabases.clear()
         legacyIndexedDbDatabases.clear()

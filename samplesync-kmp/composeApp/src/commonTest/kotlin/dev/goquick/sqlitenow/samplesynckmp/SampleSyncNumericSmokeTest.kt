@@ -24,7 +24,7 @@ import kotlin.test.assertTrue
 
 internal object SampleSyncNumericSmokeSupport {
     suspend fun run(baseUrl: String, platform: String) {
-        val user = "phase4a-$platform-${kotlin.random.Random.nextInt(1_000_000)}"
+        val user = "numeric_smoke-$platform-${kotlin.random.Random.nextInt(1_000_000)}"
         val expectedSsn = 9_007_199_254_740_993L
         val expectedScore = 6.57111473696007
 
@@ -35,22 +35,31 @@ internal object SampleSyncNumericSmokeSupport {
         var seedClient: OversqliteClient? = null
         var restoreClient: OversqliteClient? = null
         try {
-            seedDb.open()
-            restoreDb.open()
-            val seedSource = bootstrapSource(seedDb, baseUrl)
-            val restoreSource = bootstrapSource(restoreDb, baseUrl)
-            seedHttp = authenticatedHttp(baseUrl, user, seedSource)
-            restoreHttp = authenticatedHttp(baseUrl, user, restoreSource)
-            seedClient = seedDb.newOversqliteClient(schema = "business", httpClient = seedHttp)
-            restoreClient = restoreDb.newOversqliteClient(schema = "business", httpClient = restoreHttp)
+            val seedAuth = MutableTestAuth()
+            val restoreAuth = MutableTestAuth()
+            seedHttp = testHttp(baseUrl, seedAuth)
+            restoreHttp = testHttp(baseUrl, restoreAuth)
+            val seedOpening = seedDb.openForSync(
+                config = seedDb.buildOversqliteConfig(1L, "sample-sync", sampleSyncServerAppName),
+                httpClient = seedHttp,
+            )
+            val restoreOpening = restoreDb.openForSync(
+                config = restoreDb.buildOversqliteConfig(1L, "sample-sync", sampleSyncServerAppName),
+                httpClient = restoreHttp,
+            )
+            seedOpening.advance()
+            restoreOpening.advance()
+            seedClient = seedDb.newOversqliteClient(generationId = 1L, databaseId = "sample-sync", serviceId = sampleSyncServerAppName, httpClient = seedHttp)
+            restoreClient = restoreDb.newOversqliteClient(generationId = 1L, databaseId = "sample-sync", serviceId = sampleSyncServerAppName, httpClient = restoreHttp)
+            authenticate(seedHttp, seedAuth, user, seedClient.sourceInfo().getOrThrow().currentSourceId)
+            authenticate(restoreHttp, restoreAuth, user, restoreClient.sourceInfo().getOrThrow().currentSourceId)
 
-            seedClient.open().getOrThrow()
             assertEquals(AttachOutcome.STARTED_EMPTY, (seedClient.attach(user).getOrThrow() as AttachResult.Connected).outcome)
             seedDb.person.add(
                 PersonQuery.Add.Params(
-                    firstName = "Phase4A",
+                    firstName = "NumericSmoke",
                     lastName = platform,
-                    email = "phase4a-$platform-${kotlin.random.Random.nextInt(1_000_000)}@example.com",
+                    email = "numeric_smoke-$platform-${kotlin.random.Random.nextInt(1_000_000)}@example.com",
                     phone = "555-0404",
                     birthDate = null,
                     ssn = expectedSsn,
@@ -61,12 +70,11 @@ internal object SampleSyncNumericSmokeSupport {
             )
             assertEquals(PushOutcome.COMMITTED, seedClient.pushPending().getOrThrow().outcome)
 
-            restoreClient.open().getOrThrow()
             val attach = (restoreClient.attach(user).getOrThrow() as AttachResult.Connected).outcome
             assertTrue(attach == AttachOutcome.USED_REMOTE_STATE || attach == AttachOutcome.STARTED_EMPTY)
             restoreClient.rebuild().getOrThrow()
             val rows = restoreDb.person.selectAll(PersonQuery.SelectAll.Params(limit = 10, offset = 0)).asList()
-            val person = rows.single { it.myFirstName == "Phase4A" && it.myLastName == platform }
+            val person = rows.single { it.myFirstName == "NumericSmoke" && it.myLastName == platform }
             assertEquals(expectedSsn, person.ssn)
             assertEquals(expectedScore, person.score)
             assertTrue(person.isActive)
@@ -80,40 +88,26 @@ internal object SampleSyncNumericSmokeSupport {
         }
     }
 
-    private suspend fun bootstrapSource(database: NowSampleSyncDatabase, baseUrl: String): String {
-        val http = HttpClient { defaultRequest { url(baseUrl) } }
-        val client = database.newOversqliteClient(schema = "business", httpClient = http)
-        return try {
-            client.open().getOrThrow()
-            client.sourceInfo().getOrThrow().currentSourceId
-        } finally {
-            client.close()
-            http.close()
-        }
-    }
+    private class MutableTestAuth(var token: String? = null, var sourceId: String? = null)
 
-    private suspend fun authenticatedHttp(baseUrl: String, user: String, sourceId: String): HttpClient {
+    private fun testHttp(baseUrl: String, auth: MutableTestAuth): HttpClient {
         val jsonFormat = Json { ignoreUnknownKeys = true }
-        val signin = HttpClient {
-            install(ContentNegotiation) { json(jsonFormat) }
-            defaultRequest { url(baseUrl) }
-        }
-        val token = try {
-            signin.post("/dummy-signin") {
-                contentType(ContentType.Application.Json)
-                setBody(SigninRequest(user, "phase4a"))
-            }.body<SigninResponse>().token
-        } finally {
-            signin.close()
-        }
         return HttpClient {
             install(ContentNegotiation) { json(jsonFormat) }
             defaultRequest {
                 url(baseUrl)
-                header(HttpHeaders.Authorization, "Bearer $token")
-                header("Oversync-Source-ID", sourceId)
+                auth.token?.let { header(HttpHeaders.Authorization, "Bearer $it") }
+                auth.sourceId?.let { header("Oversync-Source-ID", it) }
             }
         }
+    }
+
+    private suspend fun authenticate(http: HttpClient, auth: MutableTestAuth, user: String, sourceId: String) {
+        auth.sourceId = sourceId
+        auth.token = http.post("/dummy-signin") {
+            contentType(ContentType.Application.Json)
+            setBody(SigninRequest(user, "numeric_smoke"))
+        }.body<SigninResponse>().token
     }
 
     @Serializable private data class SigninRequest(val user: String, val password: String)

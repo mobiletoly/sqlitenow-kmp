@@ -45,6 +45,11 @@ databases:
 
 [Migration guide]({{ site.baseurl }}/swift/migrations/)
 
+Use the generator migration guide to replace the retired overlay and
+app-specific Kotlin bridge with a generated Swift product:
+
+[Generator migration]({{ site.baseurl }}/swift/generator-migration/)
+
 Use the sync guide when your database participates in Oversqlite sync:
 
 [Swift sync]({{ site.baseurl }}/swift/sync/)

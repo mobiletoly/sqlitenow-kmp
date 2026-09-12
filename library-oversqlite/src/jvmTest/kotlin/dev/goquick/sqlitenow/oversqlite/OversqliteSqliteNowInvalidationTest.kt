@@ -66,6 +66,52 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
     }
 
     @Test
+    fun failedLaterPullKeepsFirstBundleAndItsReactiveInvalidation() = runBlocking {
+        val server = MockSyncServer()
+        val leaderDb = newDb()
+        val leaderHttp = server.newHttpClient()
+        withReactiveDatabase { followerDb ->
+            val followerHttp = server.newHttpClient()
+            val leader = newClient(leaderDb, leaderHttp)
+            followerDb.open()
+            val follower = newDatabaseClient(followerDb, followerHttp, maxPullBundles = 1)
+            try {
+                createUsersAndPostsTables(leaderDb)
+                leader.openAndConnect("user-1").getOrThrow()
+                follower.openAndConnect("user-1").getOrThrow()
+                leader.rebuild().getOrThrow()
+                follower.rebuild().getOrThrow()
+                insertUser(leaderDb, "u1", "Ada")
+                leader.pushPending().getOrThrow()
+                insertUser(leaderDb, "u2", "Bob")
+                leader.pushPending().getOrThrow()
+                server.beforePullResponse = {
+                    server.beforePullResponse = { error("injected later pull failure") }
+                }
+
+                val (emissions, collector) = collectFlow(followerDb.userNamesFlow())
+                try {
+                    assertEquals(emptyList(), receiveNext(emissions))
+                    assertTrue(follower.sync().isFailure)
+                    assertEquals(listOf("Ada"), receiveNext(emissions))
+                    assertEquals(1L, follower.syncStatus().getOrThrow().lastBundleSeqSeen)
+                    server.beforePullResponse = null
+                    follower.sync().getOrThrow()
+                    assertEquals(listOf("Ada", "Bob"), receiveNext(emissions))
+                } finally {
+                    collector.cancelAndJoin()
+                }
+            } finally {
+                follower.close()
+                leader.close()
+                followerHttp.close()
+                leaderHttp.close()
+                leaderDb.close()
+            }
+        }
+    }
+
+    @Test
     fun connect_remoteAuthoritative_reEmitsReactiveQueries() = runBlocking {
         val server = MockSyncServer()
         val leaderDb = newDb()
@@ -176,70 +222,78 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
 
     @Test
     fun pushPending_conflictResolutionRewrite_reEmitsReactiveQueries() = runBlocking {
-        val server = MockSyncServer()
-        val leaderDb = newDb()
-        val leaderHttp = server.newHttpClient()
-        withReactiveDatabase { database ->
-            val followerHttp = server.newHttpClient()
-            val leader = newClient(leaderDb, leaderHttp)
-            database.open()
-            val follower = newDatabaseClient(database, followerHttp)
-            try {
-                createUsersAndPostsTables(leaderDb)
-
-                leader.openAndConnect("user-1").getOrThrow()
-                follower.openAndConnect("user-1").getOrThrow()
-                leader.rebuild().getOrThrow()
-                follower.rebuild().getOrThrow()
-
-                insertUser(leaderDb, "u1", "Original")
-                leader.pushPending().getOrThrow()
-                follower.pullToStable().getOrThrow()
-
-                val (emissions, collector) = collectFlow(database.userNamesFlow())
+        val scenarios = mapOf("successful resolution" to false, "failed sibling upload" to true)
+        for ((scenario, failSiblingUpload) in scenarios) {
+            val server = MockSyncServer()
+            val leaderDb = newDb()
+            val leaderHttp = server.newHttpClient()
+            withReactiveDatabase { database ->
+                val followerHttp = server.newHttpClient()
+                val leader = newClient(leaderDb, leaderHttp)
+                database.open()
+                val follower = newDatabaseClient(database, followerHttp)
                 try {
-                    assertEquals(listOf("Original"), receiveNext(emissions))
+                    createUsersAndPostsTables(leaderDb)
 
-                    database.connection().execSQL("UPDATE users SET name = 'Local Edit' WHERE id = 'u1'")
-                    server.conflictOverride = { row, _, _ ->
-                        if (row.table == "users" && row.key["id"] == "u1") {
-                            PushConflictDetails(
-                                schema = row.schema,
-                                table = row.table,
-                                key = row.key,
-                                op = row.op,
-                                baseRowVersion = row.baseRowVersion,
-                                serverRowVersion = 99,
-                                serverRowDeleted = false,
-                                serverRow = buildJsonObject {
-                                    put("id", JsonPrimitive("u1"))
-                                    put("name", JsonPrimitive("Server Wins"))
-                                },
-                            )
-                        } else {
-                            null
+                    leader.openAndConnect("user-1").getOrThrow()
+                    follower.openAndConnect("user-1").getOrThrow()
+                    leader.rebuild().getOrThrow()
+                    follower.rebuild().getOrThrow()
+
+                    insertUser(leaderDb, "u1", "Original")
+                    leader.pushPending().getOrThrow()
+                    follower.pullToStable().getOrThrow()
+
+                    val (emissions, collector) = collectFlow(database.userNamesFlow())
+                    try {
+                        assertEquals(listOf("Original"), receiveNext(emissions))
+
+                        database.connection().execSQL("UPDATE users SET name = 'Local Edit' WHERE id = 'u1'")
+                        if (failSiblingUpload) {
+                            database.connection().execSQL("INSERT INTO posts(id, user_id, title) VALUES('p1', 'u1', 'Pending')")
                         }
+                        server.conflictOverride = { row, _, _ ->
+                            if (row.table == "users" && row.key["id"] == "u1") {
+                                PushConflictDetails(
+                                    schema = row.schema,
+                                    table = row.table,
+                                    key = row.key,
+                                    op = row.op,
+                                    baseRowVersion = row.baseRowVersion,
+                                    serverRowVersion = 99,
+                                    serverRowDeleted = false,
+                                    serverRow = buildJsonObject {
+                                        put("id", JsonPrimitive("u1"))
+                                        put("name", JsonPrimitive("Server Wins"))
+                                    },
+                                )
+                            } else {
+                                if (failSiblingUpload && row.table == "posts") error("sibling upload failed")
+                                null
+                            }
+                        }
+
+                        val pushed = follower.pushPending()
+                        if (failSiblingUpload) assertTrue(pushed.isFailure, scenario) else pushed.getOrThrow()
+
+                        assertEquals(listOf("Server Wins"), receiveNext(emissions))
+                    } finally {
+                        server.conflictOverride = null
+                        collector.cancelAndJoin()
                     }
-
-                    follower.pushPending().getOrThrow()
-
-                    assertEquals(listOf("Server Wins"), receiveNext(emissions))
                 } finally {
-                    server.conflictOverride = null
-                    collector.cancelAndJoin()
+                    follower.close()
+                    leader.close()
+                    followerHttp.close()
+                    leaderHttp.close()
+                    leaderDb.close()
                 }
-            } finally {
-                follower.close()
-                leader.close()
-                followerHttp.close()
-                leaderHttp.close()
-                leaderDb.close()
             }
         }
     }
 
     @Test
-    fun sync_invalidatesUsingUnionOfPushAndPullChanges() = runBlocking {
+    fun sync_invalidatesAfterEachDurablePushAndPullChange() = runBlocking {
         val server = MockSyncServer()
         val leaderDb = newDb()
         val leaderHttp = server.newHttpClient()
@@ -272,7 +326,13 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
                         users = listOf("Local User", "Remote User"),
                         posts = listOf("Local Post"),
                     )
-                    assertEquals(expected, receiveNext(emissions))
+                    withTimeout(2_000) {
+                        while (true) {
+                            val observed = emissions.receive()
+                            assertEquals(listOf("Local Post"), observed.posts)
+                            if (observed == expected) break
+                        }
+                    }
                     withTimeoutOrNull(300) { emissions.receive() }?.let { duplicate ->
                         assertEquals(expected, duplicate)
                     }
@@ -445,15 +505,17 @@ internal class OversqliteSqliteNowInvalidationTest : CrossTargetSyncTestSupport(
         database: ReactiveSyncDatabase,
         http: io.ktor.client.HttpClient,
         resolver: Resolver = ServerWinsResolver,
+        maxPullBundles: Int = 1000,
     ): DefaultOversqliteClient {
-        return DefaultOversqliteClient(
+        return DefaultOversqliteClient.forTesting(
             db = database.connection(),
             config = OversqliteConfig(
-                schema = "main",
+                generationId = 1, databaseId = "fixture", serviceId = "main",
                 syncTables = listOf(
                     SyncTable("users", syncKeyColumnName = "id"),
                     SyncTable("posts", syncKeyColumnName = "id"),
                 ),
+                transferTargets = OversqliteTransferTargets(maxPullBundles = maxPullBundles),
             ),
             http = http,
             resolver = resolver,

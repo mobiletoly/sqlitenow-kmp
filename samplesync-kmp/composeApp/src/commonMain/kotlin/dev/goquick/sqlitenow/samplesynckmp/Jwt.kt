@@ -32,7 +32,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlin.time.Clock
 
-private const val expectedSampleSyncServerAppName = "samplesync-server"
+internal const val sampleSyncServerAppName = "samplesync-server"
 
 @Serializable
 private data class SigninRequest(val user: String, val password: String, val device: String)
@@ -65,8 +65,8 @@ suspend fun ensureSampleSyncServer(baseUrl: String) {
             "SampleSync server check failed: HTTP ${response.status}"
         }
         val status: ServerStatusResponse = response.body()
-        check(status.appName == expectedSampleSyncServerAppName) {
-            "Expected SampleSync server '$expectedSampleSyncServerAppName' at $baseUrl, " +
+        check(status.appName == sampleSyncServerAppName) {
+            "Expected SampleSync server '$sampleSyncServerAppName' at $baseUrl, " +
                 "but got '${status.appName}'. Start examples/samplesync_server."
         }
     } finally {

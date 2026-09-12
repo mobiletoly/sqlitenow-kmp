@@ -45,3 +45,8 @@ AGENTS.md
 
 /plans
 /specs/
+
+# Qualification validation residue
+/tools/qualification/**/__pycache__/
+
+/.artifacts

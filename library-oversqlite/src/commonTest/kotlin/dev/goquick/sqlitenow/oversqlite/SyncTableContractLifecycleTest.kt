@@ -23,11 +23,11 @@ internal class SyncTableContractLifecycleTest : CrossTargetSyncTestSupport() {
         try {
             client.open().getOrThrow()
 
-            val mismatch = assertIs<SyncTableContractMismatchException>(
+            val mismatch = assertIs<IllegalArgumentException>(
                 client.attach("user-1").exceptionOrNull(),
             )
 
-            assertEquals(listOf("business.monitoring_focus"), mismatch.serverOnlyTables)
+            assertEquals("selected generation must match the complete managed local table set", mismatch.message)
             assertEquals(0, server.connectRequestCount)
             assertEquals(
                 attachmentBindingAnonymous,
@@ -45,7 +45,7 @@ internal class SyncTableContractLifecycleTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun mismatchRejectsEveryRemoteOperationBeforeRemoteOrDurableSyncWork() = runOwnedWebDatabaseTest {
+    fun ordinaryOperationsUseImmutableAdmittedContractWithoutRediscovery() = runOwnedWebDatabaseTest {
         val server = MockSyncServer()
         val db = newDb()
         val http = server.newHttpClient()
@@ -54,35 +54,17 @@ internal class SyncTableContractLifecycleTest : CrossTargetSyncTestSupport() {
         try {
             client.openAndConnect("user-1").getOrThrow()
             insertUser(db, "user-1", "Ada")
-            server.registeredTableSpecs = testRegisteredTableSpecs(
-                "users",
-                "posts",
-                "monitoring_focus",
-            )
+            server.protocolVersion = "v2"
 
-            val initialPushCreates = server.pushSessionCreateRequestCount
-            val initialPulls = server.pullRequestCount
-            val initialSnapshots = server.snapshotSessionCreateRequestCount
-            val initialCapabilities = server.capabilitySourceIds.size
-            val initialDirtyRows = scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows")
-            val initialOutboxRows = scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows")
+            val initialDiscoveries = server.discoverySourceIds.size
 
-            listOf(
-                client.pushPending(),
-                client.pullToStable(),
-                client.sync(),
-                client.rebuild(),
-            ).forEach { result ->
-                val mismatch = assertIs<SyncTableContractMismatchException>(result.exceptionOrNull())
-                assertEquals(listOf("main.monitoring_focus"), mismatch.serverOnlyTables)
-            }
+            client.pushPending().getOrThrow()
+            client.pullToStable().getOrThrow()
 
-            assertEquals(initialCapabilities + 4, server.capabilitySourceIds.size)
-            assertEquals(initialPushCreates, server.pushSessionCreateRequestCount)
-            assertEquals(initialPulls, server.pullRequestCount)
-            assertEquals(initialSnapshots, server.snapshotSessionCreateRequestCount)
-            assertEquals(initialDirtyRows, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(initialOutboxRows, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
+            assertEquals(initialDiscoveries, server.discoverySourceIds.size)
+            assertEquals(1, server.pushRequestCount)
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows"))
+            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows"))
             assertEquals(
                 attachmentBindingAttached,
                 scalarText(db, "SELECT binding_state FROM _sync_attachment_state WHERE singleton_key = 1"),

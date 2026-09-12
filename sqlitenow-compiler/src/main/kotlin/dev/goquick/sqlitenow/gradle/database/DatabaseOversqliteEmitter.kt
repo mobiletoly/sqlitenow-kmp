@@ -17,6 +17,7 @@ package dev.goquick.sqlitenow.gradle.database
 
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FunSpec
+import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
@@ -40,9 +41,45 @@ internal class DatabaseOversqliteEmitter(
         if (!oversqlite) return
 
         classBuilder.addType(buildSyncTablesCompanion(syncTables))
+        addOpeningState(classBuilder)
         classBuilder.addFunction(buildOversqliteConfigFunction())
         classBuilder.addFunction(buildOversqliteAutomaticDownloadConfigFunction())
+        classBuilder.addFunction(buildOpenForSyncFunction())
         classBuilder.addFunction(buildNewOversqliteClientFunction())
+    }
+
+    private fun addOpeningState(classBuilder: TypeSpec.Builder) {
+        val databaseType = ClassName("", databaseClassName)
+        val openingType = ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteOpening")
+            .parameterizedBy(databaseType)
+        listOf(
+            PropertySpec.builder("_oversqliteOpening", openingType.copy(nullable = true))
+                .addModifiers(KModifier.PRIVATE)
+                .mutable(true)
+                .initializer("null")
+                .build(),
+            PropertySpec.builder(
+                "_oversqliteOpeningConfig",
+                ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteConfig").copy(nullable = true),
+            ).addModifiers(KModifier.PRIVATE)
+                .mutable(true)
+                .initializer("null")
+                .build(),
+            PropertySpec.builder(
+                "_oversqliteOpeningHttpClient",
+                ClassName("io.ktor.client", "HttpClient").copy(nullable = true),
+            ).addModifiers(KModifier.PRIVATE)
+                .mutable(true)
+                .initializer("null")
+                .build(),
+            PropertySpec.builder(
+                "_oversqliteOpeningResolver",
+                ClassName("dev.goquick.sqlitenow.oversqlite", "Resolver").copy(nullable = true),
+            ).addModifiers(KModifier.PRIVATE)
+                .mutable(true)
+                .initializer("null")
+                .build(),
+        ).forEach(classBuilder::addProperty)
     }
 
     private fun buildSyncTablesCompanion(syncTables: List<ResolvedOversqliteSyncTable>): TypeSpec {
@@ -73,22 +110,10 @@ internal class DatabaseOversqliteEmitter(
     private fun buildOversqliteConfigFunction(): FunSpec {
         return FunSpec.builder("buildOversqliteConfig")
             .addKdoc("Builds oversqlite config using enableSync tables.")
-            .addParameter("schema", String::class)
-            .addParameter(
-                ParameterSpec.builder("uploadLimit", Int::class).defaultValue("200").build()
-            )
-            .addParameter(
-                ParameterSpec.builder("downloadLimit", Int::class).defaultValue("1000")
-                    .build()
-            )
-            .addParameter(
-                ParameterSpec.builder("snapshotChunkRows", Int::class).defaultValue("1000").build()
-            )
-            .addParameter(
-                ParameterSpec.builder("snapshotChunkBytes", Long::class)
-                    .defaultValue("4L * 1024L * 1024L")
-                    .build()
-            )
+            .addParameter("generationId", Long::class)
+            .addParameter("databaseId", String::class)
+            .addParameter("serviceId", String::class)
+            .addParameter(transferTargetsParameter())
             .addParameter(
                 ParameterSpec.builder("snapshotApplyBatchRows", Int::class).defaultValue("256").build()
             )
@@ -103,10 +128,9 @@ internal class DatabaseOversqliteEmitter(
             )
             .addParameter(transientRetryPolicyParameter())
             .addParameter(snapshotCapacityRetryPolicyParameter())
-            .addParameter(syncTablesParameter())
             .returns(ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteConfig"))
             .addStatement(
-                "return %T(schema = schema, syncTables = syncTables, uploadLimit = uploadLimit, downloadLimit = downloadLimit, snapshotChunkRows = snapshotChunkRows, snapshotChunkBytes = snapshotChunkBytes, snapshotApplyBatchRows = snapshotApplyBatchRows, snapshotApplyBatchBytes = snapshotApplyBatchBytes, verboseLogs = verboseLogs, transientRetryPolicy = transientRetryPolicy, snapshotCapacityRetryPolicy = snapshotCapacityRetryPolicy)",
+                "return %T(generationId = generationId, databaseId = databaseId, serviceId = serviceId, syncTables = Companion.syncTables, transferTargets = transferTargets, snapshotApplyBatchRows = snapshotApplyBatchRows, snapshotApplyBatchBytes = snapshotApplyBatchBytes, verboseLogs = verboseLogs, transientRetryPolicy = transientRetryPolicy, snapshotCapacityRetryPolicy = snapshotCapacityRetryPolicy)",
                 ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteConfig")
             )
             .build()
@@ -147,10 +171,56 @@ internal class DatabaseOversqliteEmitter(
             .build()
     }
 
+    private fun buildOpenForSyncFunction(): FunSpec {
+        val openingType = ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteOpening")
+            .parameterizedBy(ClassName("", databaseClassName))
+        val resolverType = ClassName("dev.goquick.sqlitenow.oversqlite", "Resolver")
+        val upgradePlanType = ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteUpgradePlan")
+        return FunSpec.builder("openForSync")
+            .addModifiers(KModifier.SUSPEND)
+            .addKdoc("Reserves this generated database and inspects it before any target DDL is executed.")
+            .addParameter("config", ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteConfig"))
+            .addParameter("httpClient", ClassName("io.ktor.client", "HttpClient"))
+            .addParameter(
+                ParameterSpec.builder("resolver", resolverType)
+                    .defaultValue("%T", ClassName("dev.goquick.sqlitenow.oversqlite", "DeferConflictResolver"))
+                    .build(),
+            )
+            .addParameter(
+                ParameterSpec.builder("upgradePlan", upgradePlanType.copy(nullable = true))
+                    .defaultValue("null")
+                    .build(),
+            )
+            .returns(openingType)
+            .addStatement(
+                "check(_oversqliteOpening == null) { %S }",
+                "openForSync has already reserved this generated database instance",
+            )
+            .addStatement(
+                "val frozenConfig = config.copy(syncTables = config.syncTables.map { it.copy(syncKeyColumns = it.syncKeyColumns.toList()) }, transientRetryPolicy = config.transientRetryPolicy.copy(), snapshotCapacityRetryPolicy = config.snapshotCapacityRetryPolicy.copy())",
+            )
+            .addStatement(
+                "check(frozenConfig.syncTables == Companion.syncTables) { %S }",
+                "openForSync config syncTables and keys must exactly match generated metadata",
+            )
+            .addStatement(
+                "val opening = %T(database = this, config = frozenConfig, httpClient = httpClient, resolver = resolver, upgradePlan = upgradePlan)",
+                ClassName("dev.goquick.sqlitenow.oversqlite", "openSqliteNowDatabaseForSync"),
+            )
+            .addStatement("_oversqliteOpeningConfig = frozenConfig")
+            .addStatement("_oversqliteOpeningHttpClient = httpClient")
+            .addStatement("_oversqliteOpeningResolver = resolver")
+            .addStatement("_oversqliteOpening = opening")
+            .addStatement("return opening")
+            .build()
+    }
+
     private fun buildNewOversqliteClientFunction(): FunSpec {
         return FunSpec.builder("newOversqliteClient")
-            .addKdoc("Creates a DefaultOversqliteClient bound to this DB using a pre-configured HttpClient with authentication and base URL.")
-            .addParameter("schema", String::class)
+            .addKdoc("Returns the client published by openForSync for this exact configuration and binding.")
+            .addParameter("generationId", Long::class)
+            .addParameter("databaseId", String::class)
+            .addParameter("serviceId", String::class)
             .addParameter("httpClient", ClassName("io.ktor.client", "HttpClient"))
             .addParameter(
                 ParameterSpec.builder(
@@ -158,24 +228,10 @@ internal class DatabaseOversqliteEmitter(
                     ClassName("dev.goquick.sqlitenow.oversqlite", "Resolver")
                 ).defaultValue(
                     "%T",
-                    ClassName("dev.goquick.sqlitenow.oversqlite", "ServerWinsResolver")
+                    ClassName("dev.goquick.sqlitenow.oversqlite", "DeferConflictResolver")
                 ).build()
             )
-            .addParameter(
-                ParameterSpec.builder("uploadLimit", Int::class).defaultValue("200").build()
-            )
-            .addParameter(
-                ParameterSpec.builder("downloadLimit", Int::class).defaultValue("1000")
-                    .build()
-            )
-            .addParameter(
-                ParameterSpec.builder("snapshotChunkRows", Int::class).defaultValue("1000").build()
-            )
-            .addParameter(
-                ParameterSpec.builder("snapshotChunkBytes", Long::class)
-                    .defaultValue("4L * 1024L * 1024L")
-                    .build()
-            )
+            .addParameter(transferTargetsParameter())
             .addParameter(
                 ParameterSpec.builder("snapshotApplyBatchRows", Int::class).defaultValue("256").build()
             )
@@ -190,29 +246,31 @@ internal class DatabaseOversqliteEmitter(
             )
             .addParameter(transientRetryPolicyParameter())
             .addParameter(snapshotCapacityRetryPolicyParameter())
-            .addParameter(syncTablesParameter())
             .returns(ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteClient"))
             .addStatement(
-                "val cfg = buildOversqliteConfig(schema = schema, uploadLimit = uploadLimit, downloadLimit = downloadLimit, snapshotChunkRows = snapshotChunkRows, snapshotChunkBytes = snapshotChunkBytes, snapshotApplyBatchRows = snapshotApplyBatchRows, snapshotApplyBatchBytes = snapshotApplyBatchBytes, verboseLogs = verboseLogs, transientRetryPolicy = transientRetryPolicy, snapshotCapacityRetryPolicy = snapshotCapacityRetryPolicy, syncTables = syncTables)"
+                "val cfg = buildOversqliteConfig(generationId = generationId, databaseId = databaseId, serviceId = serviceId, transferTargets = transferTargets, snapshotApplyBatchRows = snapshotApplyBatchRows, snapshotApplyBatchBytes = snapshotApplyBatchBytes, verboseLogs = verboseLogs, transientRetryPolicy = transientRetryPolicy, snapshotCapacityRetryPolicy = snapshotCapacityRetryPolicy)"
             )
             .addStatement(
-                "return %T(db = this.connection(), config = cfg, http = httpClient, resolver = resolver)",
-                ClassName("dev.goquick.sqlitenow.oversqlite", "DefaultOversqliteClient"),
+                "check(_oversqliteOpeningConfig == cfg && _oversqliteOpeningHttpClient === httpClient && _oversqliteOpeningResolver === resolver) { %S }",
+                "newOversqliteClient must use the exact config, HttpClient, and Resolver supplied to openForSync",
+            )
+            .addStatement(
+                "return checkNotNull(_oversqliteOpening?.readyOrNull()) { %S }.client",
+                "openForSync().advance() must reach ready before requesting the generated client",
             )
             .build()
-    }
-
-    private fun syncTablesParameter(): ParameterSpec {
-        val syncTableType = ClassName("dev.goquick.sqlitenow.oversqlite", "SyncTable")
-        return ParameterSpec.builder(
-            "syncTables",
-            ClassName("kotlin.collections", "List").parameterizedBy(syncTableType),
-        ).defaultValue("Companion.syncTables").build()
     }
 
     private fun transientRetryPolicyParameter(): ParameterSpec {
         val type = ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteTransientRetryPolicy")
         return ParameterSpec.builder("transientRetryPolicy", type)
+            .defaultValue("%T()", type)
+            .build()
+    }
+
+    private fun transferTargetsParameter(): ParameterSpec {
+        val type = ClassName("dev.goquick.sqlitenow.oversqlite", "OversqliteTransferTargets")
+        return ParameterSpec.builder("transferTargets", type)
             .defaultValue("%T()", type)
             .build()
     }

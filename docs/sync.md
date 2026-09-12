@@ -13,7 +13,6 @@ responsibilities are shared.
 ## Framework Client Guides
 
 - [KMP Sync]({{ site.baseurl }}/kmp/sync/)
-- [Flutter/Dart Sync]({{ site.baseurl }}/flutter/sync/)
 - [Swift Sync]({{ site.baseurl }}/swift/sync/)
 
 ## Shared Concepts

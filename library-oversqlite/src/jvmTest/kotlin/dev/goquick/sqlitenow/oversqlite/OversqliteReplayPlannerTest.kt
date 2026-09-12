@@ -26,37 +26,54 @@ class OversqliteReplayPlannerTest {
     )
 
     private val planner = OversqliteReplayPlanner(Json { ignoreUnknownKeys = true })
+
+    @Test
+    fun deletedUploadPreservesOnlyCapturedNewerTombstone() {
+        for (captured in listOf(false, true)) {
+            val plan = planner.plan(
+                tableInfo = usersTableInfo,
+                uploaded = uploadedChange(op = "DELETE", payload = null),
+                pending = DirtyUploadState(exists = captured, op = "DELETE", payload = null),
+                livePayload = null,
+            )
+            if (captured) {
+                assertEquals(ReplayRowAction.PreserveLocal("DELETE", null), plan.action)
+            } else {
+                assertEquals(ReplayRowAction.AcceptAuthoritative, plan.action)
+            }
+        }
+    }
     private val usersTableInfo = TableInfo(
         table = "users",
         columns = listOf(
-            ColumnInfo(name = "id", declaredType = "TEXT", isPrimaryKey = true, notNull = true, defaultValue = null),
-            ColumnInfo(name = "name", declaredType = "TEXT", isPrimaryKey = false, notNull = true, defaultValue = null),
+            ColumnInfo(name = "id", wireType = "text", declaredType = "TEXT", isPrimaryKey = true, notNull = true, defaultValue = null),
+            ColumnInfo(name = "name", wireType = "text", declaredType = "TEXT", isPrimaryKey = false, notNull = true, defaultValue = null),
         ),
     )
     private val scoredUsersTableInfo = TableInfo(
         table = "users",
         columns = listOf(
-            ColumnInfo(name = "id", declaredType = "TEXT", isPrimaryKey = true, notNull = true, defaultValue = null),
-            ColumnInfo(name = "score", declaredType = "DOUBLE PRECISION", isPrimaryKey = false, notNull = false, defaultValue = null),
+            ColumnInfo(name = "id", wireType = "text", declaredType = "TEXT", isPrimaryKey = true, notNull = true, defaultValue = null),
+            ColumnInfo(name = "score", wireType = "float64", declaredType = "DOUBLE PRECISION", isPrimaryKey = false, notNull = false, defaultValue = null),
         ),
     )
 
     @Test
-    fun plan_treatsEquivalentPayloadsAsMatching() {
+    fun plan_preservesLaterWritesEvenWhenPayloadsMatch() {
         val scenarios = listOf(
             EquivalentPayloadScenario(
                 name = "json object key order differs",
                 tableInfo = usersTableInfo,
-                uploadedPayload = """{"id":"1","name":"Ada"}""",
-                pendingPayload = """{"name":"Ada","id":"1"}""",
-                livePayload = """{"name":"Ada","id":"1"}""",
+                uploadedPayload = """{"id":{"storage":"text","value":"1"},"name":{"storage":"text","value":"Ada"}}""",
+                pendingPayload = """{"name":{"storage":"text","value":"Ada"},"id":{"storage":"text","value":"1"}}""",
+                livePayload = """{"name":{"storage":"text","value":"Ada"},"id":{"storage":"text","value":"1"}}""",
             ),
             EquivalentPayloadScenario(
                 name = "real payloads match after canonical number normalization",
                 tableInfo = scoredUsersTableInfo,
-                uploadedPayload = """{"id":"1","score":1.0}""",
-                pendingPayload = """{"id":"1","score":1.00e+0}""",
-                livePayload = """{"id":"1","score":1.000}""",
+                uploadedPayload = """{"id":{"storage":"text","value":"1"},"score":{"storage":"real","value":"1.0"}}""",
+                pendingPayload = """{"id":{"storage":"text","value":"1"},"score":{"storage":"real","value":"1.00e+0"}}""",
+                livePayload = """{"id":{"storage":"text","value":"1"},"score":{"storage":"real","value":"1.000"}}""",
             ),
         )
 
@@ -73,7 +90,7 @@ class OversqliteReplayPlannerTest {
                 livePayload = scenario.livePayload,
             )
 
-            assertIs<ReplayRowAction.AcceptAuthoritative>(plan.action, scenario.name)
+            assertIs<ReplayRowAction.PreserveLocal>(plan.action, scenario.name)
             assertTrue(plan.diagnostics.pendingMatches, scenario.name)
             assertTrue(plan.diagnostics.liveMatches, scenario.name)
         }
@@ -85,18 +102,18 @@ class OversqliteReplayPlannerTest {
             PreserveLocalScenario(
                 name = "latest live payload changed after upload",
                 uploadedOp = "UPDATE",
-                uploadedPayload = """{"id":"1","name":"Ada"}""",
-                livePayload = """{"id":"1","name":"Grace"}""",
+                uploadedPayload = """{"id":{"storage":"text","value":"1"},"name":{"storage":"text","value":"Ada"}}""",
+                livePayload = """{"id":{"storage":"text","value":"1"},"name":{"storage":"text","value":"Grace"}}""",
                 expectedRequeueOp = "UPDATE",
-                expectedRequeuePayload = """{"id":"1","name":"Grace"}""",
+                expectedRequeuePayload = """{"id":{"storage":"text","value":"1"},"name":{"storage":"text","value":"Grace"}}""",
             ),
             PreserveLocalScenario(
                 name = "delete upload was locally undone",
                 uploadedOp = "DELETE",
                 uploadedPayload = null,
-                livePayload = """{"id":"1","name":"Ada"}""",
+                livePayload = """{"id":{"storage":"text","value":"1"},"name":{"storage":"text","value":"Ada"}}""",
                 expectedRequeueOp = "INSERT",
-                expectedRequeuePayload = """{"id":"1","name":"Ada"}""",
+                expectedRequeuePayload = """{"id":{"storage":"text","value":"1"},"name":{"storage":"text","value":"Ada"}}""",
             ),
         )
 
@@ -179,6 +196,7 @@ class OversqliteReplayPlannerTest {
             baseRowVersion = 0,
             localPayload = payload,
             dirtyOrdinal = 1,
+            base = HistoricalBase("absent", null, "{\"origin\":\"never_published\"}"),
         )
     }
 }

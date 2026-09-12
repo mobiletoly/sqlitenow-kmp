@@ -45,22 +45,31 @@ the current sync writer identity as sync transport metadata.
 
 The oversqlite lifecycle is:
 
-1. `open()`
+1. `openForSync(...).advance()`
 2. `attach(userId)` whenever an authenticated session exists
 3. normal sync operations
 4. `detach()` or `syncThenDetach()` when leaving the attached account
 
-### `open()`
+The public `DefaultOversqliteClient` constructors remain available for source compatibility, but
+they do not grant coordinated ownership and cannot initialize a client over an ordinary-open
+database. Handwritten consumers must reserve and publish through `openForSync`; only that path can
+issue the internal ownership capability used by the runtime.
 
-`open()` is local-only.
+### Coordinated opening
+
+Fresh and unchanged coordinated opening is local-only. Generation changes may perform the
+explicitly journaled remote drain, discovery, replacement, and rebuild sequence.
+
+See [Synchronized schema evolution]({{ site.baseurl }}/sync/schema-evolution/) for the directed upgrade plan, supported additive table/column/FK changes, namespace checks, rollback behavior, and returning-device rules.
 
 It validates managed-table configuration, creates or repairs lifecycle metadata, installs local
 triggers, restores or creates the current internal `sourceId`, and captures pre-existing managed
 rows once when bootstrap policy allows it.
 
-It never talks to the server and never attaches an account.
+It never attaches an account. Before `advance()`, inspection does not prepare or mutate target
+storage.
 
-For KMP JS/Wasm browsers, the generated client uses the database's ordinary
+For KMP JS/Wasm browsers, coordinated opening uses the database's
 packaged worker and deterministic direct-OPFS target; it does not inject a
 snapshot backend. A one-time byte-level legacy import, when needed, completes
 before generated schema migrations and before this Oversqlite lifecycle opens
@@ -80,31 +89,28 @@ JS Node uses the same default provider with transient in-memory storage.
 
 Call it whenever an authenticated session exists, not only on the first sign-in gesture.
 
-For a new or remote attachment, the client first checks `/sync/capabilities` and rejects a different
-advertised sync-table contract before `/sync/connect` or snapshot work. A same-user durable resume
-is deliberately network-free; its first later remote operation performs the same check.
+Each opened client discovers and admits the selected generation before it publishes an attached
+result. A new attachment then connects using that exact contract. The client validates the complete
+managed schema, pending values, server limits, and watch availability, then stores the contract
+atomically. A same-user durable resume performs discovery again for the new client lifetime and
+does not add ordinary-operation discovery preflights.
 
-### Advertised Sync-Table Contract
+### Discovered Generation Contract
 
-Every capabilities response must include `registered_table_specs`. SQLiteNow treats it as the
-canonical server table contract and compares it with the already-validated local configuration:
+The v1 discovery response identifies one immutable generation, including its fingerprint, tables,
+columns, visible keys and foreign keys. Server schemas and wire types come from that descriptor;
+SQLite metadata determines compatible local storage. Missing or extra managed columns, mismatched
+keys, invalid values and changed generation identities fail before upload or remote application.
 
-- table order does not matter
-- logical schema, managed table names, and ordered sync-key columns must match exactly
-- missing, null, blank, duplicate, or malformed metadata is an invalid capabilities response
-- a valid difference throws `SyncTableContractMismatchException` with sorted server-only,
-  client-only, and sync-key mismatch diagnostics
-
-This is fail-fast table/key compatibility checking. It does not negotiate projections, payload
-columns, or a wire profile. Snapshot table checks remain in place as defense in depth.
+The discovery response is the only admitted contract. There is no separate capabilities preview.
 
 ### Automatic Downloads
 
 Automatic downloads are an optional attached-session worker. They are not part of `open()` or
 `attach(userId)` and must be started explicitly by app code.
 
-The worker only downloads. It may poll `pullToStable()` or, when the server supports
-`features.bundle_change_watch`, use `/sync/watch` as a metadata-only wake-up stream. The watch
+The worker only downloads. It may poll `pullToStable()` or, when the admitted discovery contract
+sets `watch_enabled`, use `/sync/watch` as a metadata-only wake-up stream. The watch
 payload is never applied directly; `pullToStable()` remains the authoritative remote-data path.
 
 ### `detach()`
@@ -122,9 +128,9 @@ id is preserved.
 
 ### `syncThenDetach()`
 
-`syncThenDetach()` is bounded convenience sugar. It runs `sync()` and then attempts `detach()`. If
-new local writes arrive during the previous round, it may retry a small number of times. It never
-loops forever, and it returns the final blocked outcome explicitly if detach still cannot proceed.
+`syncThenDetach()` runs at most three sync/detach rounds with one 64-attempt push allowance. If
+new local writes arrive during a round, it can drain them within that bound. A blocked result
+includes its reason and pending row count; the last sync report is absent when no round finished.
 When the final detach succeeds destructively, it rotates to a fresh internal source exactly like
 plain `detach()`.
 
@@ -137,6 +143,19 @@ For the currently attached account, oversqlite reports:
 - `AUTHORITATIVE_MATERIALIZED`
 
 These are scope/materialization states, not authentication states.
+
+## Conflict Resolution
+
+When concurrent local and remote changes overlap, the configured resolver receives the local,
+server, and common-base values for the affected row. It may defer the decision, accept the server
+value, keep the local value, or return a merged value. A deferred result keeps the conflict pending
+without publishing a false success. Accepted and merged outcomes are applied transactionally and
+advance sync state only after the resulting row is durable; invalid decisions fail without
+discarding the pending local intent.
+
+Delete-versus-update conflicts use the same outcome model. Resolvers must not infer visibility of
+fields absent from their generated schema, and mixed-generation peers preserve such hidden fields
+when applying a valid local or merged outcome.
 
 ## Rebuild And Recovery
 
@@ -173,9 +192,9 @@ Important rules:
 - callers must not infer lifecycle meaning from its format
 - callers must not treat it as a control surface
 
-## What `open()` Does Not Mean
+## What ready publication does not mean
 
-`open()` does not mean:
+Coordinated ready publication does not mean:
 
 - the account is attached
 - the server session is connected

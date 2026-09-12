@@ -1,0 +1,102 @@
+{
+  "format": "client-upgrade-conformance/v1",
+  "revision": "14",
+  "artifacts": [
+    {
+      "path": "README.md",
+      "sha256": "c9576e09c93b06f8e8e24d0eb849899574f29aadd1c7b5dda94bd28282e6ff78"
+    },
+    {
+      "path": "corrections.json",
+      "sha256": "8246e7437df58705c331fb2a6ecb8d78b9aa69bd63ecde62de5e524dfa924094"
+    },
+    {
+      "path": "go-adapter.json",
+      "sha256": "107bc6c0109a72fd433f066896ed59034a0c69b9cb653dac75687e964d3586a3"
+    },
+    {
+      "path": "invariants.json",
+      "sha256": "0b2e55341612ef2f7fd715ff2c29d3d863c3b1ccac8427241c235874e20c45bf"
+    },
+    {
+      "path": "limits.json",
+      "sha256": "7092d26f5d72a12e43f4603262119d2bf2411141494383caf0eb301cc8a89ab6"
+    },
+    {
+      "path": "scenarios/boundaries.json",
+      "sha256": "d0d6228c663be04dc6bebecf10114a4b00630ad0910642f7e33b1e8b020edeb9"
+    },
+    {
+      "path": "scenarios/core.json",
+      "sha256": "5030cc4c6aa492c8ba8fc4ee58ccc03eb41220875bf63ba3fe5accc2fe8c9947"
+    },
+    {
+      "path": "schema.json",
+      "sha256": "881de7cf8e05c86f3a9d24286461927f0bb5707caa609a82f502972f95a86b33"
+    },
+    {
+      "path": "transitions.json",
+      "sha256": "396fcdba9d7a47a494ef71669bae9bb647b8314322e44315cf2f430f99b2a018"
+    },
+    {
+      "path": "values.json",
+      "sha256": "9e8d89740c138486ff5f8a305c1148d64f9e21254be3114c28df21998b5b9ada"
+    },
+    {
+      "path": "wire/capabilities-target.request.json",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "wire/capabilities-unknown.request.json",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "wire/capabilities-unknown.response.json",
+      "sha256": "78946583afdcb3c6a012aa497464810c94bb5bc643cfd58eb2ba11f2227853c9"
+    },
+    {
+      "path": "wire/capabilities-mismatch.request.json",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "wire/capabilities-mismatch.response.json",
+      "sha256": "483d81174877b23e293420d6e473fe6f3a94e782bf632ddbf563df86112ebd70"
+    },
+    {
+      "path": "wire/capabilities-target.response.json",
+      "sha256": "188ff758ef0964e5a8754f7003da46f1c8bf5a55e730b50e907d28892b87ffb6"
+    },
+    {
+      "path": "wire/exchanges.json",
+      "sha256": "b93c2c509eb8c1156d5245d3985c754e7cce497a1a21a154b97c095ef5bd4e30"
+    },
+    {
+      "path": "wire/protocol-hashes.json",
+      "sha256": "67aaec0c1e47388eab8bd0fad1958e3952d0f6aeb70a06967152a9ed1620520d"
+    },
+    {
+      "path": "wire/push-conflict.request.json",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "wire/push-conflict.response.json",
+      "sha256": "18472bf3906fa7ee97bf870a8736aec2c2f44f449d1a26be9c63d204430e5703"
+    },
+    {
+      "path": "wire/replacement.request.json",
+      "sha256": "0ebbe71bc7da14fde7051d179b97d03094501175a5eb6866134207c154787f42"
+    },
+    {
+      "path": "wire/replacement.response.json",
+      "sha256": "7ec1f7e76b2af9fc15536d429d65b318cae078229ec260f715f713974fd15df0"
+    }
+  ],
+  "scenarios": [
+    "scenarios/boundaries.json",
+    "scenarios/core.json"
+  ],
+  "vectors": [
+    "values.json",
+    "limits.json"
+  ]
+}

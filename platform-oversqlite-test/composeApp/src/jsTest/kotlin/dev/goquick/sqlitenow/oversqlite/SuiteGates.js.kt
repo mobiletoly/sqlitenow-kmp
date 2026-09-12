@@ -21,12 +21,90 @@ internal actual fun webRuntimeKind(): String =
         "js-browser"
     }
 
-internal actual suspend fun cleanupPhase6DirectWorkerDatabase(dbName: String) {
-    cleanupPhase6DirectWorkerDatabaseJs(dbName).await()
+internal actual suspend fun cleanupWorkerDirectWorkerDatabase(dbName: String) {
+    cleanupWorkerDirectWorkerDatabaseJs(dbName).await()
 }
 
+internal actual suspend fun sameOriginIframeCanAcquireLifecycleLock(dbName: String): Boolean =
+    sameOriginIframeCanAcquireLifecycleLockJs(dbName).await()
+
 @Suppress("UNUSED_PARAMETER")
-private fun cleanupPhase6DirectWorkerDatabaseJs(dbName: String): Promise<dynamic> =
+private fun sameOriginIframeCanAcquireLifecycleLockJs(dbName: String): Promise<Boolean> =
+    js(
+        """
+        (() => {
+          if (typeof document === 'undefined') return false;
+          return crypto.subtle.digest('SHA-256', new TextEncoder().encode(dbName)).then((digest) => {
+            const hash = Array.from(new Uint8Array(digest))
+              .map((byte) => byte.toString(16).padStart(2, '0')).join('');
+            const lockName = 'sqlitenow-worker-v1-lifecycle-' + hash;
+            return new Promise((resolve, reject) => {
+              const iframe = document.createElement('iframe');
+              iframe.style.display = 'none';
+              const timer = setTimeout(() => finish(new Error('iframe lifecycle probe timed out')), 10000);
+              const finish = (error, value) => {
+                clearTimeout(timer);
+                iframe.remove();
+                if (error) reject(error); else resolve(value);
+              };
+              iframe.onload = () => {
+                const frameLocks = iframe.contentWindow && iframe.contentWindow.navigator.locks;
+                if (!frameLocks) {
+                  finish(new Error('same-origin iframe lacks Web Locks'));
+                  return;
+                }
+                frameLocks.request(lockName, {mode:'exclusive', ifAvailable:true}, (lock) => {
+                  finish(null, !!lock);
+                }).catch((error) => finish(error));
+              };
+              iframe.src = 'about:blank';
+              document.body.appendChild(iframe);
+            });
+          });
+        })()
+        """,
+    ).unsafeCast<Promise<Boolean>>()
+
+internal actual suspend fun directWorkerStorageCensus(dbName: String): String =
+    directWorkerStorageCensusJs(dbName).await()
+
+@Suppress("UNUSED_PARAMETER")
+private fun directWorkerStorageCensusJs(dbName: String): Promise<String> =
+    js(
+        """
+        (() => {
+          if (typeof document === 'undefined') return '';
+          return crypto.subtle.digest('SHA-256', new TextEncoder().encode(dbName)).then((digest) => {
+            const hash = Array.from(new Uint8Array(digest))
+              .map((byte) => byte.toString(16).padStart(2, '0')).join('');
+            const prefix = 'sqlitenow-worker-v1-' + hash + '.sqlite3';
+            return navigator.storage.getDirectory().then((root) => {
+              const iterator = root.entries();
+              const tasks = [];
+              const visit = () => iterator.next().then((item) => {
+                if (item.done) return Promise.all(tasks).then((rows) => rows.sort().join('|'));
+                const [name, handle] = item.value;
+                if (handle.kind === 'file' && name.startsWith(prefix)) {
+                  tasks.push(handle.getFile().then((file) => file.arrayBuffer()).then((buffer) => {
+                    const bytes = new Uint8Array(buffer);
+                    return crypto.subtle.digest('SHA-256', bytes).then((fileDigest) => {
+                      const fileHash = Array.from(new Uint8Array(fileDigest))
+                        .map((byte) => byte.toString(16).padStart(2, '0')).join('');
+                      return name + ':' + bytes.byteLength + ':' + fileHash;
+                    });
+                  }));
+                }
+                return visit();
+              });
+              return visit();
+            });
+          });
+        })()
+        """,
+    ).unsafeCast<Promise<String>>()
+
+@Suppress("UNUSED_PARAMETER")
+private fun cleanupWorkerDirectWorkerDatabaseJs(dbName: String): Promise<dynamic> =
     js(
         """
         (() => {
@@ -51,12 +129,12 @@ private fun cleanupPhase6DirectWorkerDatabaseJs(dbName: String): Promise<dynamic
         """,
     ).unsafeCast<Promise<dynamic>>()
 
-internal actual suspend fun cleanupPhase6LegacyOpfsDatabase(dbName: String) {
-    cleanupPhase6LegacyOpfsDatabaseJs(dbName).await()
+internal actual suspend fun cleanupWorkerLegacyOpfsDatabase(dbName: String) {
+    cleanupWorkerLegacyOpfsDatabaseJs(dbName).await()
 }
 
 @Suppress("UNUSED_PARAMETER")
-private fun cleanupPhase6LegacyOpfsDatabaseJs(dbName: String): Promise<dynamic> =
+private fun cleanupWorkerLegacyOpfsDatabaseJs(dbName: String): Promise<dynamic> =
     js(
         """
         (() => {
@@ -76,12 +154,12 @@ private fun cleanupPhase6LegacyOpfsDatabaseJs(dbName: String): Promise<dynamic> 
         """,
     ).unsafeCast<Promise<dynamic>>()
 
-internal actual suspend fun cleanupPhase6LegacyIndexedDbDatabase(dbName: String) {
-    cleanupPhase6LegacyIndexedDbDatabaseJs(dbName).await()
+internal actual suspend fun cleanupWorkerLegacyIndexedDbDatabase(dbName: String) {
+    cleanupWorkerLegacyIndexedDbDatabaseJs(dbName).await()
 }
 
 @Suppress("UNUSED_PARAMETER")
-private fun cleanupPhase6LegacyIndexedDbDatabaseJs(dbName: String): Promise<dynamic> =
+private fun cleanupWorkerLegacyIndexedDbDatabaseJs(dbName: String): Promise<dynamic> =
     js(
         """
         new Promise((resolve, reject) => {
@@ -108,13 +186,13 @@ private fun cleanupPhase6LegacyIndexedDbDatabaseJs(dbName: String): Promise<dyna
         """,
     ).unsafeCast<Promise<dynamic>>()
 
-internal actual suspend fun preparePhase6CleanupRegressionArtifacts(
+internal actual suspend fun prepareStatementReuseleanupRegressionArtifacts(
     directDbName: String,
     legacyOpfsDbName: String,
     legacyIndexedDbName: String,
     sentinelName: String,
 ) {
-    preparePhase6CleanupRegressionArtifactsJs(
+    prepareStatementReuseleanupRegressionArtifactsJs(
         directDbName,
         legacyOpfsDbName,
         legacyIndexedDbName,
@@ -123,7 +201,7 @@ internal actual suspend fun preparePhase6CleanupRegressionArtifacts(
 }
 
 @Suppress("UNUSED_PARAMETER")
-private fun preparePhase6CleanupRegressionArtifactsJs(
+private fun prepareStatementReuseleanupRegressionArtifactsJs(
     directDbName: String,
     legacyOpfsDbName: String,
     legacyIndexedDbName: String,
@@ -184,14 +262,14 @@ private fun preparePhase6CleanupRegressionArtifactsJs(
             tx.onabort = () => reject(tx.error);
           });
           database.close();
-          globalThis.__phase6IndexedDbDatabasesDescriptor =
+          globalThis.__workerIndexedDbDatabasesDescriptor =
             Object.getOwnPropertyDescriptor(indexedDB, "databases") || null;
-          globalThis.__phase6IndexedDbDatabasesCalls = 0;
+          globalThis.__workerIndexedDbDatabasesCalls = 0;
           Object.defineProperty(indexedDB, "databases", {
             configurable: true,
             value: () => {
-              globalThis.__phase6IndexedDbDatabasesCalls++;
-              throw new Error("origin catalog enumeration must not be used by Phase 6 cleanup");
+              globalThis.__workerIndexedDbDatabasesCalls++;
+              throw new Error("origin catalog enumeration must not be used by worker migration cleanup");
             },
           });
         })()
@@ -202,13 +280,13 @@ private fun preparePhase6CleanupRegressionArtifactsJs(
     ).unsafeCast<Promise<dynamic>>()
 }
 
-internal actual suspend fun verifyAndClearPhase6CleanupRegressionArtifacts(
+internal actual suspend fun verifyAndClearStatementReuseleanupRegressionArtifacts(
     directDbName: String,
     legacyOpfsDbName: String,
     legacyIndexedDbName: String,
     sentinelName: String,
 ) {
-    verifyAndClearPhase6CleanupRegressionArtifactsJs(
+    verifyAndClearStatementReuseleanupRegressionArtifactsJs(
         directDbName,
         legacyOpfsDbName,
         legacyIndexedDbName,
@@ -217,7 +295,7 @@ internal actual suspend fun verifyAndClearPhase6CleanupRegressionArtifacts(
 }
 
 @Suppress("UNUSED_PARAMETER")
-private fun verifyAndClearPhase6CleanupRegressionArtifactsJs(
+private fun verifyAndClearStatementReuseleanupRegressionArtifactsJs(
     directDbName: String,
     legacyOpfsDbName: String,
     legacyIndexedDbName: String,
@@ -227,10 +305,10 @@ private fun verifyAndClearPhase6CleanupRegressionArtifactsJs(
         """
         return (async () => {
           const restoreEnumeration = () => {
-            const descriptor = globalThis.__phase6IndexedDbDatabasesDescriptor;
+            const descriptor = globalThis.__workerIndexedDbDatabasesDescriptor;
             if (descriptor) Object.defineProperty(indexedDB, "databases", descriptor);
             else delete indexedDB.databases;
-            delete globalThis.__phase6IndexedDbDatabasesDescriptor;
+            delete globalThis.__workerIndexedDbDatabasesDescriptor;
           };
           const exists = async (directory, name) => {
             try { await directory.getFileHandle(name); return true; }
@@ -242,7 +320,7 @@ private fun verifyAndClearPhase6CleanupRegressionArtifactsJs(
               .map((byte) => byte.toString(16).padStart(2, "0")).join("");
           };
           try {
-            if (globalThis.__phase6IndexedDbDatabasesCalls !== 0) {
+            if (globalThis.__workerIndexedDbDatabasesCalls !== 0) {
               throw new Error("cleanup invoked origin catalog enumeration");
             }
             const root = await navigator.storage.getDirectory();
@@ -294,7 +372,7 @@ private fun verifyAndClearPhase6CleanupRegressionArtifactsJs(
             cleanupDatabase.close();
           } finally {
             restoreEnumeration();
-            delete globalThis.__phase6IndexedDbDatabasesCalls;
+            delete globalThis.__workerIndexedDbDatabasesCalls;
           }
         })()
         """
@@ -304,11 +382,11 @@ private fun verifyAndClearPhase6CleanupRegressionArtifactsJs(
     ).unsafeCast<Promise<dynamic>>()
 }
 
-internal actual suspend fun phase6WorkerStorageEvidence(dbName: String): String =
-    phase6WorkerStorageEvidenceJs(dbName).await().toString()
+internal actual suspend fun workerWorkerStorageEvidence(dbName: String): String =
+    workerWorkerStorageEvidenceJs(dbName).await().toString()
 
 @Suppress("UNUSED_PARAMETER")
-private fun phase6WorkerStorageEvidenceJs(dbName: String): Promise<dynamic> {
+private fun workerWorkerStorageEvidenceJs(dbName: String): Promise<dynamic> {
     val body =
         """
         return (async () => {

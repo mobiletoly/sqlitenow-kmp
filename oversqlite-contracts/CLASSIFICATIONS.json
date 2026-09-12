@@ -1,0 +1,94 @@
+{
+  "formatVersion": 1,
+  "currentProtocolFixtures": [
+    "local-apply/a1.json",
+    "protocol-handshake/connect.json",
+    "protocol-http/requests.json",
+    "pull-snapshot/basic.json",
+    "push/basic-insert.json",
+    "watch/basic.json",
+    "wire/"
+  ],
+  "contractConsumerCoverage": {
+    "go": "Semantic execution of every current wire family against normative Go codecs, hashes, HTTP boundaries, and declared invariants.",
+    "jvm": "Independent pure-contract semantic execution of every current wire family; this is not SQLiteNow K0 runtime implementation."
+  },
+  "historicalFixtureInputs": [
+    {
+      "path": "canonical-json/jcs-uniform-numeric-strings.json",
+      "reason": "Historical pre-simplification verbose-wire canonical examples retained only as codec migration input; they are not current HTTP payloads."
+    },
+    {
+      "path": "lifecycle/behavior/",
+      "reason": "Historical pre-simplification SQLite runtime-state fixtures retained only to prove that the replaced local layout is not accepted."
+    },
+    {
+      "path": "local-schema/",
+      "reason": "Historical pre-simplification generated local-schema expectations retained only as old-layout input."
+    },
+    {
+      "path": "pull-snapshot/behavior/",
+      "reason": "Historical pre-simplification verbose pull and snapshot behavior retained only as input; it is not accepted by the active compact decoder."
+    },
+    {
+      "path": "push/behavior/",
+      "reason": "Historical pre-simplification push-session and committed-row behavior retained only as input; it is not an active client path."
+    },
+    {
+      "path": "runtime-state/",
+      "reason": "Historical pre-simplification SQLite runtime schema and transition inputs retained only as fail-closed old-layout evidence."
+    },
+    {
+      "path": "watch/behavior/",
+      "reason": "Historical pre-simplification watch behavior retaining source-bearing events only as input; current watch events contain exactly bundle_seq."
+    },
+    {
+      "path": "schema-evolution/client-upgrade/v1/",
+      "reason": "Accepted historical client-upgrade corpus whose recorded wire exchanges predate protocol simplification."
+    },
+    {
+      "path": "schema-evolution/sqlitenow-adapter/v1.json",
+      "reason": "Historical dispatch index for the accepted client-upgrade corpus; not current wire authority."
+    }
+  ],
+  "localContractCandidates": [
+    {
+      "path": "local-planning/dependency-planning.json",
+      "coverage": "Paired pure-contract checks of state discriminators, full-base copy witnesses, hard-boundary arithmetic, guard equality, six bounded acyclic rekey relationship/order witnesses with live server-parent owner/target validation and explicit future ownership. No baseline, capture/coalescing, SQLite persistence/restart, SCC planner or lifecycle runtime execution.",
+      "goConsumer": "oversync/dependency_planning_contract_test.go:TestContractCorpus_DependencyPlanning",
+      "jvmConsumer": "SharedDependencyPlanningContractTest.dependencyPlanningContract",
+      "runtimeOwners": [
+        "baseline-lifecycle",
+        "dependency-planning",
+        "public-sync-live"
+      ],
+      "contract": "dependency-planning"
+    },
+    {
+      "path": "local-apply/a3-workspace.json",
+      "contract": "a3-workspace",
+      "coverage": "Independent pure local decision/arithmetic and exact physical-inventory checks. No SQLite execution or runtime qualification.",
+      "goConsumer": "oversync/contract_a3_test.go:TestContractCorpus_A3Workspace",
+      "jvmConsumer": "SharedWorkspaceContractTest.contract",
+      "runtimeOwners": [
+        "a3-settlement",
+        "a3-workspace",
+        "a3-replay",
+        "a3-format"
+      ]
+    },
+    {
+      "path": "local-apply/a3-pending.json",
+      "contract": "a3-pending",
+      "coverage": "Independent pure local decision/arithmetic and exact physical-inventory checks. No SQLite execution or runtime qualification.",
+      "goConsumer": "oversync/contract_a3_test.go:TestContractCorpus_A3Pending",
+      "jvmConsumer": "SharedPendingContractTest.contract",
+      "runtimeOwners": [
+        "a3-settlement",
+        "a3-workspace",
+        "a3-replay",
+        "a3-format"
+      ]
+    }
+  ]
+}

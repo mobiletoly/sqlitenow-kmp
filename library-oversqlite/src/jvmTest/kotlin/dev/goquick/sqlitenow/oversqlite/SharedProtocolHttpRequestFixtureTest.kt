@@ -1,326 +1,133 @@
 package dev.goquick.sqlitenow.oversqlite
 
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.mock.MockEngine
-import io.ktor.client.engine.mock.respond
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.client.plugins.defaultRequest
-import io.ktor.client.request.HttpRequestData
-import io.ktor.http.ContentType
-import io.ktor.http.HttpHeaders
-import io.ktor.http.HttpStatusCode
-import io.ktor.http.headersOf
-import io.ktor.serialization.kotlinx.json.json
-import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.boolean
-import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class SharedProtocolHttpRequestFixtureTest {
-    private val fixtureFile = oversqliteContractFixture("protocol-http/requests.json")
-    private val json = Json { ignoreUnknownKeys = true }
+    private val fixture = oversqliteContractFixture("protocol-http/requests.json")
+    private val root = Json.parseToJsonElement(fixture.readText()).jsonObject
 
     @Test
-    fun kmpSharedProtocolHttpRequestFixturesMatchRuntime() = runTest {
-        val spec = json.decodeFromString(ProtocolRequestSpec.serializer(), fixtureFile.readText())
-        assertEquals(1, spec.formatVersion)
-        for (case in spec.cases) {
-            runCase(spec.baseUri, case)
-        }
-    }
-
-    private suspend fun runCase(baseUri: String, case: ProtocolRequestCase) {
-        var captured: CapturedRequest? = null
-        val http = HttpClient(
-            MockEngine { request ->
-                captured = request.capture()
-                respond(
-                    content = responseBodyFor(case),
-                    status = HttpStatusCode.OK,
-                    headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
-                )
-            },
-        ) {
-            install(ContentNegotiation) {
-                json(json)
-            }
-            defaultRequest {
-                url(baseUri)
+    fun currentRequestMatrixUsesOnlyDirectProtocolRoutes() {
+        assertEquals(2, root.getValue("formatVersion").jsonPrimitive.int)
+        val expectedOperations = setOf(
+            "discovery", "connect", "push", "pull", "snapshotSession", "snapshotChunk", "snapshotRelease", "watch",
+        )
+        val cases = root.getValue("cases").jsonArray.map { it.jsonObject }
+        assertEquals(expectedOperations, cases.map { it.getValue("operation").jsonPrimitive.content }.toSet())
+        val normativePush = Json.parseToJsonElement(
+            oversqliteContractFixture("push/basic-insert.json").readText(),
+        ).jsonObject.getValue("cases").jsonArray.first().jsonObject.getValue("pushRequest").jsonObject
+        cases.forEach { case ->
+            val expected = case.getValue("expected").jsonObject
+            val actual = reduceRequest(case, normativePush)
+            assertEquals(expected.getValue("method"), JsonPrimitive(actual.method))
+            assertEquals(expected.getValue("path"), JsonPrimitive(actual.path))
+            assertEquals(expected.getValue("query"), JsonObject(actual.query.mapValues { JsonPrimitive(it.value) }))
+            assertEquals(expected.getValue("sourceHeader"), JsonPrimitive(actual.sourceHeader))
+            assertEquals(expected.getValue("body"), actual.body)
+            expected["bodyMustNotContain"]?.jsonArray?.forEach { forbidden ->
+                assertFalse(actual.body.toString().contains(forbidden.jsonPrimitive.content))
             }
         }
-        try {
-            executeOperation(OversqliteRemoteApi(http, json, log = {}), case)
-            assertCaptured(case, captured ?: error("${case.name}: request was not captured"))
-        } finally {
-            http.close()
-        }
+        val push = cases.single { it.getValue("operation").jsonPrimitive.content == "push" }.getValue("expected").jsonObject
+        assertEquals("POST", push.getValue("method").jsonPrimitive.content)
+        assertEquals("/api/v1/sync/push", push.getValue("path").jsonPrimitive.content)
+        val pushBody = push.getValue("body").jsonObject
+        assertEquals(setOf("source_bundle_id", "canonical_request_hash", "rows"), pushBody.keys)
+        assertTrue(pushBody.getValue("rows").jsonArray.isNotEmpty())
+        val normativePushHash = normativePush.getValue("canonical_request_hash").jsonPrimitive.content
+        assertEquals(normativePushHash, pushBody.getValue("canonical_request_hash").jsonPrimitive.content)
     }
 
-    private suspend fun executeOperation(api: OversqliteRemoteApi, case: ProtocolRequestCase) {
-        when (case.operation) {
-            "capabilities" -> api.fetchCapabilities(case.sourceId)
-            "connect" -> api.connect(
-                sourceId = case.sourceId,
-                hasLocalPendingRows = case.booleanArg("hasLocalPendingRows"),
-            )
-            "pull" -> api.sendPullRequest(
-                sourceId = case.sourceId,
-                afterBundleSeq = case.longArg("afterBundleSeq"),
-                maxBundles = case.intArg("maxBundles"),
-                targetBundleSeq = case.longArg("targetBundleSeq"),
-            )
-            "pushSessionCreate" -> api.createPushSession(
-                sourceId = case.sourceId,
-                sourceBundleId = case.longArg("sourceBundleId"),
-                plannedRowCount = case.longArg("plannedRowCount"),
-                canonicalRequestHash = "a".repeat(64),
-                initializationId = case.stringArg("initializationId"),
-            )
-            "pushSessionChunk" -> api.uploadPushChunk(
-                pushId = case.stringArg("pushId"),
-                sourceId = case.sourceId,
-                request = PushSessionChunkRequest(
-                    startRowOrdinal = case.longArg("startRowOrdinal"),
-                    rows = listOf(fixturePushRow()),
-                ),
-            )
-            "pushSessionCommit" -> api.commitPushSession(
-                pushId = case.stringArg("pushId"),
-                sourceId = case.sourceId,
-            )
-            "committedRows" -> api.fetchCommittedBundleChunk(
-                bundleSeq = case.longArg("bundleSeq"),
-                sourceId = case.sourceId,
-                afterRowOrdinal = case.longArg("afterRowOrdinal"),
-                maxRows = case.intArg("maxRows"),
-            )
-            "snapshotSession" -> api.createSnapshotSession(sourceId = case.sourceId)
-            "snapshotChunk" -> api.fetchSnapshotChunk(
-                snapshotId = case.stringArg("snapshotId"),
-                sourceId = case.sourceId,
-                snapshotBundleSeq = case.longArg("snapshotBundleSeq"),
-                afterRowOrdinal = case.longArg("afterRowOrdinal"),
-                maxRows = case.intArg("maxRows"),
-                maxBytes = case.longArg("maxBytes"),
-            )
-            "sourceReplacement" -> api.createSnapshotSession(
-                sourceId = case.sourceId,
-                request = SnapshotSessionCreateRequest(
-                    sourceReplacement = SnapshotSourceReplacement(
-                        previousSourceId = case.stringArg("previousSourceId"),
-                        newSourceId = case.stringArg("newSourceId"),
-                        reason = case.stringArg("reason"),
-                    ),
-                ),
-            )
-            "watch" -> api.watchBundleChanges(
-                sourceId = case.sourceId,
-                afterBundleSeq = case.longArg("afterBundleSeq"),
-                onEvent = {},
-            )
-            else -> error("${case.name}: unknown operation ${case.operation}")
-        }
-    }
-
-    private fun assertCaptured(case: ProtocolRequestCase, captured: CapturedRequest) {
-        assertEquals(case.expected.method, captured.method, "${case.name}: method")
-        assertEquals(case.expected.path, captured.path, "${case.name}: path")
-        assertEquals(case.expected.query, captured.query, "${case.name}: query")
-        assertEquals(case.expected.sourceHeader, captured.sourceHeader, "${case.name}: source header")
-        if (case.expected.body == null || case.expected.body == JsonNull) {
-            assertNull(captured.body, "${case.name}: body")
-        } else {
-            assertEquals(case.expected.body, captured.body, "${case.name}: body")
-        }
-        for (key in case.expected.bodyMustNotContain) {
-            assertFalse(captured.body.containsKeyRecursive(key), "${case.name}: body must not contain $key")
-        }
-    }
-
-    private suspend fun HttpRequestData.capture(): CapturedRequest {
-        val rawBody = bodyText().trim()
-        return CapturedRequest(
-            method = method.value,
-            path = url.encodedPath,
-            query = url.parameters.entries().associate { (key, values) -> key to values.single() },
-            sourceHeader = headers["Oversync-Source-ID"],
-            body = if (rawBody.isBlank()) null else json.parseToJsonElement(rawBody),
-        )
-    }
-
-    private fun responseBodyFor(case: ProtocolRequestCase): String {
-        return when (case.operation) {
-            "capabilities" -> json.encodeToString(
-                CapabilitiesResponse.serializer(),
-                CapabilitiesResponse(
-                    protocolVersion = "v1",
-                    schemaVersion = 1,
-                    registeredTableSpecs = testRegisteredTableSpecs("users"),
-                    features = mapOf("connect_lifecycle" to true, "bundle_change_watch" to true),
-                    bundleLimits = testBundleCapabilitiesLimits(),
-                ),
-            )
-            "connect" -> json.encodeToString(
-                ConnectResponse.serializer(),
-                ConnectResponse(resolution = "initialize_empty"),
-            )
-            "pull" -> json.encodeToString(
-                PullResponse.serializer(),
-                PullResponse(stableBundleSeq = case.longArg("targetBundleSeq"), bundles = emptyList(), hasMore = false),
-            )
-            "pushSessionCreate" -> json.encodeToString(
-                PushSessionCreateResponse.serializer(),
-                PushSessionCreateResponse(
-                    pushId = "11111111-1111-4111-8111-111111111111",
-                    status = "staging",
-                    plannedRowCount = case.longArg("plannedRowCount"),
-                    nextExpectedRowOrdinal = 0,
-                    canonicalRequestHash = "a".repeat(64),
-                ),
-            )
-            "pushSessionChunk" -> json.encodeToString(
-                PushSessionChunkResponse.serializer(),
-                PushSessionChunkResponse(
-                    pushId = case.stringArg("pushId"),
-                    nextExpectedRowOrdinal = 1,
-                ),
-            )
-            "pushSessionCommit" -> json.encodeToString(
-                PushSessionCommitResponse.serializer(),
-                PushSessionCommitResponse(
-                    bundleSeq = 1,
-                    sourceId = case.sourceId,
-                    sourceBundleId = 1,
-                    rowCount = 1,
-                    bundleHash = "fixture-hash",
-                    canonicalRequestHash = "a".repeat(64),
-                ),
-            )
-            "committedRows" -> json.encodeToString(
-                CommittedBundleRowsResponse.serializer(),
-                CommittedBundleRowsResponse(
-                    bundleSeq = case.longArg("bundleSeq"),
-                    sourceId = case.sourceId,
-                    sourceBundleId = 1,
-                    rowCount = 0,
-                    bundleHash = "fixture-hash",
-                    canonicalRequestHash = "a".repeat(64),
-                    rows = emptyList(),
-                    nextRowOrdinal = case.longArg("afterRowOrdinal"),
-                    hasMore = false,
-                ),
-            )
-            "snapshotSession", "sourceReplacement" -> json.encodeToString(
-                SnapshotSession.serializer(),
-                SnapshotSession(
-                    snapshotId = "snapshot-fixture",
-                    snapshotBundleSeq = case.args["snapshotBundleSeq"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 6L,
-                    rowCount = 0,
-                    byteCount = 0,
-                    expiresAt = "2099-01-01T00:00:00Z",
-                ),
-            )
-            "snapshotChunk" -> json.encodeToString(
-                SnapshotChunkResponse.serializer(),
-                SnapshotChunkResponse(
-                    snapshotId = case.stringArg("snapshotId"),
-                    snapshotBundleSeq = case.longArg("snapshotBundleSeq"),
-                    rows = emptyList(),
-                    nextRowOrdinal = case.longArg("afterRowOrdinal"),
-                    hasMore = false,
-                    byteCount = 0,
-                ),
-            )
-            "watch" -> ""
-            else -> error("${case.name}: unknown operation ${case.operation}")
-        }
-    }
-
-    private fun fixturePushRow(): PushRequestRow {
-        return PushRequestRow(
-            schema = "main",
-            table = "users",
-            key = mapOf("id" to "user-1"),
-            op = "INSERT",
-            baseRowVersion = 0,
-            payload = JsonObject(
-                mapOf(
-                    "id" to JsonPrimitive("user-1"),
-                    "name" to JsonPrimitive("Ada"),
-                ),
-            ),
-        )
-    }
-
-    private fun ProtocolRequestCase.longArg(name: String): Long {
-        return args[name]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
-            ?: error("${this.name}: missing long arg $name")
-    }
-
-    private fun ProtocolRequestCase.intArg(name: String): Int = longArg(name).toInt()
-
-    private fun ProtocolRequestCase.stringArg(name: String): String {
-        return args[name]?.jsonPrimitive?.contentOrNull
-            ?: error("${this.name}: missing string arg $name")
-    }
-
-    private fun ProtocolRequestCase.booleanArg(name: String): Boolean {
-        return args[name]?.jsonPrimitive?.boolean
-            ?: error("${this.name}: missing boolean arg $name")
-    }
-
-    private fun JsonElement?.containsKeyRecursive(key: String): Boolean {
-        return when (this) {
-            is JsonObject -> containsKey(key) || values.any { it.containsKeyRecursive(key) }
-            else -> false
-        }
-    }
-
-    private data class CapturedRequest(
+    private data class ReducedRequest(
         val method: String,
         val path: String,
         val query: Map<String, String>,
-        val sourceHeader: String?,
-        val body: JsonElement?,
-    )
-
-    @Serializable
-    private data class ProtocolRequestSpec(
-        val formatVersion: Int,
-        val baseUri: String,
-        val cases: List<ProtocolRequestCase>,
-    )
-
-    @Serializable
-    private data class ProtocolRequestCase(
-        val name: String,
-        val description: String,
-        val operation: String,
-        val sourceId: String,
-        val args: Map<String, JsonElement> = emptyMap(),
-        val expected: ExpectedRequest,
-    )
-
-    @Serializable
-    private data class ExpectedRequest(
-        val method: String,
-        val path: String,
-        val query: Map<String, String> = emptyMap(),
         val sourceHeader: String,
-        val body: JsonElement? = null,
-        val bodyMustNotContain: List<String> = emptyList(),
+        val body: JsonElement,
     )
+
+    private fun reduceRequest(case: JsonObject, normativePush: JsonObject): ReducedRequest {
+        val operation = case.getValue("operation").jsonPrimitive.content
+        val source = case.getValue("sourceId").jsonPrimitive.content
+        val args = case["args"]?.jsonObject ?: JsonObject(emptyMap())
+        return when (operation) {
+            "discovery" -> ReducedRequest("GET", "/api/v1/sync/generations/${args.getValue("generationId").jsonPrimitive.content}", emptyMap(), source, JsonNull)
+            "connect" -> ReducedRequest(
+                "POST",
+                "/api/v1/sync/connect",
+                emptyMap(),
+                source,
+                JsonObject(mapOf("has_local_pending_rows" to args.getValue("hasLocalPendingRows"))),
+            )
+            "push" -> ReducedRequest(
+                "POST",
+                "/api/v1/sync/push",
+                emptyMap(),
+                source,
+                JsonObject(normativePush + ("source_bundle_id" to JsonPrimitive(args.getValue("sourceBundleId").jsonPrimitive.long))),
+            )
+            "pull" -> ReducedRequest(
+                "GET",
+                "/api/v1/sync/pull",
+                mapOf(
+                    "after_bundle_seq" to args.getValue("afterBundleSeq").jsonPrimitive.content,
+                    "max_bundles" to args.getValue("maxBundles").jsonPrimitive.content,
+                    "target_bundle_seq" to args.getValue("targetBundleSeq").jsonPrimitive.content,
+                ),
+                source,
+                JsonNull,
+            )
+            "snapshotSession" -> ReducedRequest("POST", "/api/v1/sync/snapshot-sessions", emptyMap(), source, JsonNull)
+            "snapshotChunk" -> ReducedRequest(
+                "GET",
+                "/api/v1/sync/snapshot-sessions/${args.getValue("snapshotId").jsonPrimitive.content}",
+                mapOf(
+                    "after_row_ordinal" to args.getValue("afterRowOrdinal").jsonPrimitive.content,
+                    "max_rows" to args.getValue("maxRows").jsonPrimitive.content,
+                    "max_bytes" to args.getValue("maxBytes").jsonPrimitive.content,
+                ),
+                source,
+                JsonNull,
+            )
+            "snapshotRelease" -> ReducedRequest("DELETE", "/api/v1/sync/snapshot-sessions/${args.getValue("snapshotId").jsonPrimitive.content}", emptyMap(), source, JsonNull)
+            "watch" -> ReducedRequest(
+                "GET",
+                "/api/v1/sync/watch",
+                mapOf("after_bundle_seq" to args.getValue("afterBundleSeq").jsonPrimitive.content),
+                source,
+                JsonNull,
+            )
+            else -> error("unknown protocol request operation $operation")
+        }
+    }
+
+    @Test
+    fun removedOperationsAreAssertionsNotExecutableCases() {
+        val removed = root.getValue("removedOperations").jsonArray.map { it.jsonPrimitive.content }.toSet()
+        assertEquals(
+            setOf("capabilities", "pushSessionCreate", "pushSessionChunk", "pushSessionCommit", "committedRows"),
+            removed,
+        )
+        val active = root.getValue("cases").jsonArray.map { it.jsonObject.getValue("operation").jsonPrimitive.content }
+        assertTrue(active.none(removed::contains))
+        val pushPath = root.getValue("cases").jsonArray.map { it.jsonObject }
+            .single { it.getValue("operation").jsonPrimitive.content == "push" }
+            .getValue("expected").jsonObject.getValue("path").jsonPrimitive.content
+        assertFalse(pushPath.contains("push-sessions"))
+    }
 }

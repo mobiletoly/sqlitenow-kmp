@@ -1,6 +1,7 @@
 import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 import org.gradle.api.file.DuplicatesStrategy
 import org.gradle.api.tasks.Copy
+import org.gradle.api.tasks.testing.Test
 import org.gradle.language.jvm.tasks.ProcessResources
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
@@ -40,9 +41,16 @@ kotlin {
     jvm()
 
     js {
-        nodejs()
+        nodejs {
+            testTask {
+                useMocha {
+                    timeout = "180s"
+                }
+            }
+        }
         browser()
         binaries.library()
+        binaries.executable()
     }
 
     @OptIn(ExperimentalWasmDsl::class)
@@ -177,7 +185,7 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEa
 val coreProject = project(":library-core")
 val oversqliteProject = project(":library-oversqlite")
 
-listOf("Js", "WasmJs").forEach { targetSuffix ->
+listOf("Jvm", "Js", "WasmJs").forEach { targetSuffix ->
     val coreMainCompile =
         coreProject.tasks.named<BaseKotlinCompile>("compileKotlin$targetSuffix")
     val oversqliteMainCompile =
@@ -192,10 +200,78 @@ listOf("Js", "WasmJs").forEach { targetSuffix ->
     }
 }
 
+tasks.named<BaseKotlinCompile>("compileTestKotlinJvm") {
+    friendPaths.from(oversqliteProject.tasks.named<Jar>("jvmJar").flatMap { it.archiveFile })
+}
+
+tasks.named<Test>("jvmTest") {
+    systemProperty("a3.platform.jvmTest.classpath", classpath.asPath)
+}
+
+tasks.named<BaseKotlinCompile>("compileAndroidDeviceTest") {
+    val libraryJar = oversqliteProject.tasks.named("bundleAndroidMainClassesToCompileJar")
+    dependsOn(libraryJar)
+    friendPaths.from(libraryJar.map { it.outputs.files })
+}
+
+listOf("IosArm64", "IosSimulatorArm64", "MacosArm64").forEach { targetSuffix ->
+    val mainKlib = oversqliteProject.layout.buildDirectory.dir(
+        "classes/kotlin/${targetSuffix.replaceFirstChar(Char::lowercase)}/main/klib/library-oversqlite"
+    )
+    tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinNativeCompile>("compileTestKotlin$targetSuffix") {
+        dependsOn(oversqliteProject.tasks.named("compileKotlin$targetSuffix"))
+        compilerOptions.freeCompilerArgs.add(mainKlib.map { "-friend-modules=${it.asFile.absolutePath}" })
+    }
+}
+
+val mixedGenerationClasspath = layout.buildDirectory.file("mixed-generation/jvm-test-classpath.txt")
+
+tasks.register("writeMixedGenerationClasspath") {
+    dependsOn("jvmTestClasses")
+    outputs.file(mixedGenerationClasspath)
+    doLast {
+        val destination = mixedGenerationClasspath.get().asFile
+        destination.parentFile.mkdirs()
+        destination.writeText(tasks.named<Test>("jvmTest").get().classpath.asPath)
+    }
+}
+
 sqliteNow {
     databases {
         create("RealServerGeneratedDatabase") {
             packageName = "dev.goquick.sqlitenow.oversqlite.platform.generated"
+            oversqlite = true
+        }
+        create("CoordinatedOpeningGenerationOneDatabase") {
+            packageName = "dev.goquick.sqlitenow.oversqlite.coordinatedopening.generationone"
+            oversqlite = true
+        }
+        create("CoordinatedOpeningGenerationTwoDatabase") {
+            packageName = "dev.goquick.sqlitenow.oversqlite.coordinatedopening.generationtwo"
+            oversqlite = true
+        }
+        create("MixedGenerationOneDatabase") {
+            packageName = "dev.goquick.sqlitenow.oversqlite.mixedgeneration.generationone"
+            oversqlite = true
+        }
+        create("MixedGenerationTwoDatabase") {
+            packageName = "dev.goquick.sqlitenow.oversqlite.mixedgeneration.generationtwo"
+            oversqlite = true
+        }
+        create("SchemaEvolutionGenerationOneDatabase") {
+            packageName = "dev.goquick.sqlitenow.oversqlite.schemaevolution.generationone"
+            oversqlite = true
+        }
+        create("SchemaEvolutionLocalTwoDatabase") {
+            packageName = "dev.goquick.sqlitenow.oversqlite.schemaevolution.localtwo"
+            oversqlite = true
+        }
+        create("SchemaEvolutionGenerationTargetDatabase") {
+            packageName = "dev.goquick.sqlitenow.oversqlite.schemaevolution.target"
+            oversqlite = true
+        }
+        create("SchemaEvolutionInvalidTargetDatabase") {
+            packageName = "dev.goquick.sqlitenow.oversqlite.schemaevolution.invalidtarget"
             oversqlite = true
         }
     }

@@ -35,7 +35,7 @@ class RealServerGeneratedConfigTest {
                 db = dbA,
                 http = httpA,
                 oversqliteConfig = OversqliteConfig(
-                    schema = config.schema,
+                    generationId = 1L, databaseId = "platform-sync", serviceId = "nethttp-server-example",
                     syncTables = RealServerGeneratedDatabase.syncTables,
                 ),
             )
@@ -43,7 +43,7 @@ class RealServerGeneratedConfigTest {
                 db = dbB,
                 http = httpB,
                 oversqliteConfig = OversqliteConfig(
-                    schema = config.schema,
+                    generationId = 1L, databaseId = "platform-sync", serviceId = "nethttp-server-example",
                     syncTables = RealServerGeneratedDatabase.syncTables,
                 ),
             )
@@ -100,7 +100,19 @@ class RealServerGeneratedConfigTest {
                 client.openAndAttach(randomUserId()).getOrThrow()
             }.exceptionOrNull()
             assertTrue(error?.message?.contains("TEXT PRIMARY KEY or BLOB PRIMARY KEY") == true)
-            assertEquals(0L, scalarLong(db, "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '_sync_%'"))
+            val inspection = db.reopenForInspection()
+            try {
+                assertEquals(
+                    0L,
+                    scalarLong(
+                        inspection,
+                        "SELECT COUNT(*) FROM sqlite_master " +
+                            "WHERE name LIKE '_sync_%' AND lower(name) != '_sync_opening_state'",
+                    ),
+                )
+            } finally {
+                inspection.close()
+            }
         } finally {
             http.close()
             db.close()

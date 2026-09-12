@@ -6,12 +6,12 @@
       "name": "blob-key-insert",
       "dirtyRows": [
         {
-          "schemaName": "main",
+          "schemaName": "local",
           "tableName": "files",
           "keyJson": "{\"id\":\"00112233445566778899aabbccddeeff\"}",
           "op": "INSERT",
           "baseRowVersion": 0,
-          "payload": "{\"id\":\"00112233445566778899aabbccddeeff\",\"name\":\"Spec Blob\",\"payload\":\"6869\"}",
+          "payload": "{\"id\":{\"storage\":\"blob\",\"value\":\"00112233445566778899aabbccddeeff\"},\"name\":{\"storage\":\"text\",\"value\":\"Spec Blob\"},\"payload\":{\"storage\":\"blob\",\"value\":\"6869\"}}",
           "dirtyOrdinal": 1
         }
       ],

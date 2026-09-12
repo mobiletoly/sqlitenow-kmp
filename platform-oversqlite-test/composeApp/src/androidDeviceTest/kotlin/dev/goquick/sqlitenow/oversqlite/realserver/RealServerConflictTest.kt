@@ -1,9 +1,8 @@
 package dev.goquick.sqlitenow.oversqlite.realserver
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.oversqlite.ClientWinsResolver
-import dev.goquick.sqlitenow.oversqlite.DefaultOversqliteClient
+import dev.goquick.sqlitenow.oversqlite.OversqliteClient
 import dev.goquick.sqlitenow.oversqlite.MergeResult
 import dev.goquick.sqlitenow.oversqlite.Resolver
 import dev.goquick.sqlitenow.oversqlite.ServerWinsResolver
@@ -362,12 +361,12 @@ private data class ConflictHarness(
     val deviceA: String,
     val deviceB: String,
     val observerDevice: String,
-    val clientA: DefaultOversqliteClient,
-    val clientB: DefaultOversqliteClient,
-    val observerClient: DefaultOversqliteClient,
-    val dbA: SafeSQLiteConnection,
-    val dbB: SafeSQLiteConnection,
-    val observerDb: SafeSQLiteConnection,
+    val clientA: OversqliteClient,
+    val clientB: OversqliteClient,
+    val observerClient: OversqliteClient,
+    val dbA: RealServerDatabase,
+    val dbB: RealServerDatabase,
+    val observerDb: RealServerDatabase,
 )
 
 private suspend fun withConflictHarness(

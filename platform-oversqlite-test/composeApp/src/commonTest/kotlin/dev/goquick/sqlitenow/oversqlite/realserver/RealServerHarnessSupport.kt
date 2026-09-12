@@ -1,9 +1,10 @@
 package dev.goquick.sqlitenow.oversqlite.realserver
 
 import dev.goquick.sqlitenow.oversqlite.*
+import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import dev.goquick.sqlitenow.oversqlite.platform.PlatformTestDatabase
 import dev.goquick.sqlitenow.oversqlite.platform.PlatformCrossTargetTestSupport
 import dev.goquick.sqlitenow.oversqlite.platformsupport.assertConnectedOutcome
-import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -22,6 +23,7 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.CancellationException
 import kotlin.random.Random
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
@@ -47,7 +49,9 @@ internal open class RealServerHarnessSupport : PlatformCrossTargetTestSupport() 
         val baseUrl = realServerEnv("OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL")
             ?.trim()
             .takeUnless { it.isNullOrEmpty() }
-            ?: "http://localhost:8080"
+        check(baseUrl != null) {
+            "Realserver tests require an explicit OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL for their owned fixture"
+        }
         check(serverHealthAvailable(baseUrl)) {
             "Realserver tests are enabled, but /syncx/health is unavailable at $baseUrl"
         }
@@ -65,6 +69,7 @@ internal open class RealServerHarnessSupport : PlatformCrossTargetTestSupport() 
     protected fun newRealServerHttpClient(
         baseUrl: String,
         token: String? = null,
+        tokenProvider: () -> String? = { token },
         afterResponse: suspend (String) -> Unit = {},
         beforeRequest: suspend (String) -> Unit = {},
     ): HttpClient {
@@ -85,8 +90,8 @@ internal open class RealServerHarnessSupport : PlatformCrossTargetTestSupport() 
             }
             defaultRequest {
                 url(baseUrl)
-                if (token != null) {
-                    header(HttpHeaders.Authorization, "Bearer $token")
+                tokenProvider()?.let { currentToken ->
+                    header(HttpHeaders.Authorization, "Bearer $currentToken")
                 }
             }
         }
@@ -124,8 +129,22 @@ internal open class RealServerHarnessSupport : PlatformCrossTargetTestSupport() 
         }
     }
 
+    protected suspend fun createBusinessSubsetTables(db: PlatformTestDatabase) {
+        createProductionRealServerTables(db)
+    }
+
     protected suspend fun createBusinessSubsetTables(db: SafeSQLiteConnection) {
         createProductionRealServerTables(db)
+    }
+
+    protected suspend fun bootstrapManagedSourceId(
+        db: PlatformTestDatabase,
+        baseUrl: String,
+    ): String {
+        // Dummy sign-in does not bind the token to this value. Avoid opening the coordinated
+        // fixture here: JS Node databases are intentionally transient, so close/reopen would
+        // discard the local state that the real test is about to admit.
+        return randomRealServerId("signin-${(db.databaseName + baseUrl).hashCode()}")
     }
 
     protected suspend fun bootstrapManagedSourceId(
@@ -152,6 +171,26 @@ internal open class RealServerHarnessSupport : PlatformCrossTargetTestSupport() 
     }
 
     protected suspend fun insertBusinessUserAndPost(
+        db: PlatformTestDatabase,
+        userId: String,
+        postId: String,
+        suffix: String,
+    ) {
+        db.execSQL(
+            """
+            INSERT INTO users(id, name, email)
+            VALUES('$userId', 'User $suffix', '$suffix@example.com')
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            INSERT INTO posts(id, title, content, author_id)
+            VALUES('$postId', 'Title $suffix', 'Payload $suffix', '$userId')
+            """.trimIndent(),
+        )
+    }
+
+    protected suspend fun insertBusinessUserAndPost(
         db: SafeSQLiteConnection,
         userId: String,
         postId: String,
@@ -172,25 +211,58 @@ internal open class RealServerHarnessSupport : PlatformCrossTargetTestSupport() 
     }
 
     protected fun newRealServerClient(
-        db: SafeSQLiteConnection,
+        db: PlatformTestDatabase,
         http: HttpClient,
-        uploadLimit: Int = 8,
-        downloadLimit: Int = 8,
-        snapshotChunkRows: Int = 1000,
+        maxPushRows: Int = 8,
+        maxPullBundles: Int = 8,
+        maxSnapshotChunkRows: Int = 1000,
         transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy(),
-    ): DefaultOversqliteClient {
-        return DefaultOversqliteClient(
+    ): OversqliteClient {
+        return CoordinatedRealServerClient(
             db = db,
             config = OversqliteConfig(
-                schema = "business",
+                generationId = 1L, databaseId = "platform-sync", serviceId = "nethttp-server-example",
                 syncTables = productionRealServerSyncTables,
-                uploadLimit = uploadLimit,
-                downloadLimit = downloadLimit,
-                snapshotChunkRows = snapshotChunkRows,
+                transferTargets = OversqliteTransferTargets(
+                    maxPushRows = maxPushRows,
+                    maxPullBundles = maxPullBundles,
+                    maxSnapshotChunkRows = maxSnapshotChunkRows,
+                ),
                 transientRetryPolicy = transientRetryPolicy,
             ),
             http = http,
         )
+    }
+
+    protected fun newRealServerClient(
+        db: SafeSQLiteConnection,
+        http: HttpClient,
+        maxPushRows: Int = 8,
+        maxPullBundles: Int = 8,
+        maxSnapshotChunkRows: Int = 1000,
+        transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy(),
+    ): OversqliteClient {
+        return DefaultOversqliteClient(
+            db = db,
+            config = OversqliteConfig(
+                generationId = 1L, databaseId = "platform-sync", serviceId = "nethttp-server-example",
+                syncTables = productionRealServerSyncTables,
+                transferTargets = OversqliteTransferTargets(
+                    maxPushRows = maxPushRows,
+                    maxPullBundles = maxPullBundles,
+                    maxSnapshotChunkRows = maxSnapshotChunkRows,
+                ),
+                transientRetryPolicy = transientRetryPolicy,
+            ),
+            http = http,
+        )
+    }
+
+    protected suspend fun runRealServerAutomaticDownloads(
+        client: OversqliteClient,
+        automaticDownloadConfig: OversqliteAutomaticDownloadConfig,
+    ): Nothing {
+        return (client as CoordinatedRealServerClient).runAutomaticDownloads(automaticDownloadConfig)
     }
 
     protected fun randomRealServerId(prefix: String): String {
@@ -234,6 +306,70 @@ internal open class RealServerHarnessSupport : PlatformCrossTargetTestSupport() 
             "1", "true", "yes", "on" -> true
             else -> false
         }
+    }
+}
+
+private class CoordinatedRealServerClient(
+    private val db: PlatformTestDatabase,
+    private val config: OversqliteConfig,
+    private val http: HttpClient,
+) : OversqliteClient {
+    private var delegate: OversqliteClient? = null
+
+    private fun requireDelegate(): OversqliteClient = checkNotNull(delegate) {
+        "coordinated real-server client requires open()"
+    }
+
+    override val progress get() = requireDelegate().progress
+
+    override suspend fun pauseUploads() = requireDelegate().pauseUploads()
+    override suspend fun resumeUploads() = requireDelegate().resumeUploads()
+    override suspend fun pauseDownloads() = requireDelegate().pauseDownloads()
+    override suspend fun resumeDownloads() = requireDelegate().resumeDownloads()
+
+    override suspend fun open(): Result<Unit> {
+        if (delegate != null) return Result.success(Unit)
+        val next = try {
+            db.openClient(
+                config = config,
+                http = http,
+                resolver = DeferConflictResolver,
+            )
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (failure: Throwable) {
+            return Result.failure(failure)
+        }
+        delegate = next
+        return Result.success(Unit)
+    }
+
+    suspend fun runAutomaticDownloads(
+        automaticDownloadConfig: OversqliteAutomaticDownloadConfig,
+    ): Nothing = requireDelegate().runAutomaticDownloads(automaticDownloadConfig)
+
+    override suspend fun attach(userId: String) = requireDelegate().attach(userId)
+    override suspend fun sourceInfo() = requireDelegate().sourceInfo()
+    override suspend fun readPushDependencyDiagnostic(diagnosticId: String, cursor: String?, pageSize: Int) =
+        requireDelegate().readPushDependencyDiagnostic(diagnosticId, cursor, pageSize)
+    override suspend fun releasePushDependencyDiagnostic(diagnosticId: String) =
+        requireDelegate().releasePushDependencyDiagnostic(diagnosticId)
+    override suspend fun syncStatus() = requireDelegate().syncStatus()
+    override suspend fun detach() = requireDelegate().detach()
+    override suspend fun pushPending() = requireDelegate().pushPending()
+    override suspend fun pendingConflict() = requireDelegate().pendingConflict()
+    override suspend fun resolveConflict(selected: PendingConflict, result: MergeResult) =
+        requireDelegate().resolveConflict(selected, result)
+    override suspend fun retryConflict(selected: PendingConflict) = requireDelegate().retryConflict(selected)
+    override suspend fun pullToStable() = requireDelegate().pullToStable()
+    override suspend fun sync() = requireDelegate().sync()
+    override suspend fun syncThenDetach() = requireDelegate().syncThenDetach()
+    override suspend fun rebuild() = requireDelegate().rebuild()
+
+    override fun close() {
+        // The fixture owns the coordinated opening and closes it with the database. Keeping the
+        // connection alive here lets lifecycle tests inspect local state between client instances.
+        delegate = null
     }
 }
 

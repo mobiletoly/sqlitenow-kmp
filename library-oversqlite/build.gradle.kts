@@ -1,5 +1,7 @@
 @file:OptIn(org.jetbrains.kotlin.gradle.ExperimentalWasmDsl::class)
 
+import java.time.Duration
+
 import org.gradle.api.tasks.JavaExec
 import org.gradle.api.tasks.testing.Test
 import org.gradle.language.jvm.tasks.ProcessResources
@@ -55,6 +57,7 @@ kotlin {
     }
 
     js {
+        browser()
         nodejs {
             testTask {
                 useMocha {
@@ -112,6 +115,7 @@ kotlin {
 
         jvmTest.dependencies {
             implementation("io.ktor:ktor-client-cio:${libs.versions.ktor.get()}")
+            implementation("org.yaml:snakeyaml:2.7")
         }
 
         androidMain.dependencies {
@@ -169,7 +173,25 @@ mapOf(
         dependsOn(coreResources)
         from(coreResources.map { it.destinationDir }) {
             include("$sqliteWorkerResourceNamespace/**")
+            // The private test copy has W1 telemetry; published Core resources stay intact.
+            exclude("$sqliteWorkerResourceNamespace/client.mjs")
         }
+    }
+}
+
+val w1TestFixtureDir = layout.buildDirectory.dir("generated/w1-test-fixtures")
+val generateW1TestFixtures by tasks.registering(Exec::class) {
+    dependsOn(project(":library-core").tasks.named("copySqliteWorkerPublicationAssets"))
+    inputs.dir(layout.projectDirectory.dir("src/webTest/fixtures"))
+    inputs.dir(project(":library-core").layout.projectDirectory.dir("src/webMain/resources/sqlitenow-worker-v1"))
+    inputs.dir(project(":library-core").layout.buildDirectory.dir("generated/sqlite-worker/resources"))
+    outputs.dir(w1TestFixtureDir)
+    commandLine("node", project.file("src/webTest/fixtures/generate-w1-fixtures.mjs"))
+}
+listOf("jsTestProcessResources", "wasmJsTestProcessResources").forEach { taskName ->
+    tasks.named<ProcessResources>(taskName) {
+        dependsOn(generateW1TestFixtures)
+        from(w1TestFixtureDir)
     }
 }
 
@@ -180,6 +202,10 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEa
 }
 
 val jvmTest by tasks.existing(Test::class)
+
+tasks.withType<Test>().configureEach {
+    systemProperty("coordinatedopening.jvmTest.classpath", jvmTest.get().classpath.asPath)
+}
 
 jvmTest.configure {
     filter {
@@ -227,11 +253,13 @@ data class SnapshotMemoryProfile(
     val rows: Int,
     val rowBytes: Int,
     val runLabel: String,
+    val profileSet: String,
 )
 
 tasks.register<Test>("oversqliteSnapshotMemorySamplerControl") {
     group = "verification"
     description = "Runs the local-only five-second snapshot sampler control in a fresh JVM."
+    maxHeapSize = "128m"
     dependsOn(tasks.named("jvmTestClasses"))
     testClassesDirs = jvmTest.get().testClassesDirs
     classpath = jvmTest.get().classpath
@@ -246,26 +274,36 @@ tasks.register<Test>("oversqliteSnapshotMemorySamplerControl") {
     outputs.upToDateWhen { false }
 }
 
-val snapshotMemoryProfiles = listOf(
-    SnapshotMemoryProfile("oversqliteSnapshotMemory10k256", 10_000, 256, "representative-10k-256"),
-    SnapshotMemoryProfile("oversqliteSnapshotMemory10k1k", 10_000, 1024, "representative-10k-1k"),
-    SnapshotMemoryProfile("oversqliteSnapshotMemory100k256Warmup", 100_000, 256, "warmup-100k-256"),
-    SnapshotMemoryProfile("oversqliteSnapshotMemory100k256Run1", 100_000, 256, "measured-100k-256-1"),
-    SnapshotMemoryProfile("oversqliteSnapshotMemory100k256Run2", 100_000, 256, "measured-100k-256-2"),
-    SnapshotMemoryProfile("oversqliteSnapshotMemory100k256Run3", 100_000, 256, "measured-100k-256-3"),
-    SnapshotMemoryProfile("oversqliteSnapshotMemory100k1k", 100_000, 1024, "measured-100k-1k"),
-    SnapshotMemoryProfile("oversqliteSnapshotMemory1m256", 1_000_000, 256, "measured-1m-256"),
+val snapshotMemoryClosureProfiles = listOf(
+    SnapshotMemoryProfile("oversqliteSnapshotMemoryClosure10k256", 10_000, 256, "closure-10k-256", "closure"),
+    SnapshotMemoryProfile("oversqliteSnapshotMemoryClosure10k1k", 10_000, 1024, "closure-10k-1k", "closure"),
+    SnapshotMemoryProfile("oversqliteSnapshotMemoryClosure100k256", 100_000, 256, "closure-100k-256", "closure"),
+    SnapshotMemoryProfile("oversqliteSnapshotMemoryClosure100k1k", 100_000, 1024, "closure-100k-1k", "closure"),
 )
+val snapshotMemoryExtendedProfiles = listOf(
+    SnapshotMemoryProfile("oversqliteSnapshotMemory10k256", 10_000, 256, "representative-10k-256", "extended"),
+    SnapshotMemoryProfile("oversqliteSnapshotMemory10k1k", 10_000, 1024, "representative-10k-1k", "extended"),
+    SnapshotMemoryProfile("oversqliteSnapshotMemory100k256Warmup", 100_000, 256, "warmup-100k-256", "extended"),
+    SnapshotMemoryProfile("oversqliteSnapshotMemory100k256Run1", 100_000, 256, "measured-100k-256-1", "extended"),
+    SnapshotMemoryProfile("oversqliteSnapshotMemory100k256Run2", 100_000, 256, "measured-100k-256-2", "extended"),
+    SnapshotMemoryProfile("oversqliteSnapshotMemory100k256Run3", 100_000, 256, "measured-100k-256-3", "extended"),
+    SnapshotMemoryProfile("oversqliteSnapshotMemory100k1k", 100_000, 1024, "measured-100k-1k", "extended"),
+    SnapshotMemoryProfile("oversqliteSnapshotMemory1m256", 1_000_000, 256, "measured-1m-256", "extended"),
+)
+val snapshotMemoryProfiles = snapshotMemoryClosureProfiles + snapshotMemoryExtendedProfiles
 val snapshotMemoryResultDirectory = layout.buildDirectory.dir("snapshot-memory-results")
 
-var previousSnapshotMemoryTask: String? = null
+val previousSnapshotMemoryTaskBySet = mutableMapOf<String, String>()
 snapshotMemoryProfiles.forEach { profile ->
-    val predecessor = previousSnapshotMemoryTask
-    val resultFile = snapshotMemoryResultDirectory.map { it.file("${profile.runLabel}.properties") }
+    val predecessor = previousSnapshotMemoryTaskBySet[profile.profileSet]
+    val resultFile = snapshotMemoryResultDirectory.map {
+        it.file("${profile.profileSet}/${profile.runLabel}.properties")
+    }
     tasks.register<Test>(profile.taskName) {
         group = "verification"
-        description = "Runs the local-heavy ${profile.runLabel} bounded snapshot profile in a fresh JVM."
+        description = "Runs the local-heavy ${profile.runLabel} compact snapshot profile in a fresh JVM."
         maxHeapSize = "128m"
+        timeout.set(Duration.ofHours(2))
         dependsOn(tasks.named("jvmTestClasses"))
         testClassesDirs = jvmTest.get().testClassesDirs
         classpath = jvmTest.get().classpath
@@ -278,6 +316,7 @@ snapshotMemoryProfiles.forEach { profile ->
         environment("OVERSQLITE_MEMORY_BASELINE_ROWS", profile.rows.toString())
         environment("OVERSQLITE_MEMORY_ROW_BYTES", profile.rowBytes.toString())
         environment("OVERSQLITE_MEMORY_RUN_LABEL", profile.runLabel)
+        environment("OVERSQLITE_SNAPSHOT_PROFILE_SET", profile.profileSet)
         environment("OVERSQLITE_MEMORY_RESULT_FILE", resultFile.get().asFile.absolutePath)
         environment("OVERSQLITE_MEMORY_SERVER_CLASSPATH", jvmTest.get().classpath.asPath)
         doFirst {
@@ -288,35 +327,105 @@ snapshotMemoryProfiles.forEach { profile ->
         outputs.upToDateWhen { false }
         predecessor?.let { mustRunAfter(tasks.named(it)) }
     }
-    previousSnapshotMemoryTask = profile.taskName
+    previousSnapshotMemoryTaskBySet[profile.profileSet] = profile.taskName
 }
 
-val verifySnapshotMemoryResults = tasks.register<JavaExec>("verifyOversqliteSnapshotMemoryResults") {
+val compactPullMemoryResult = snapshotMemoryResultDirectory.map {
+    it.file("pull/large-pull-25k-1k.properties")
+}
+tasks.register<Test>("oversqliteCompactPullMemoryJvm") {
     group = "verification"
-    description = "Verifies completeness, the one-million-row ceiling, and snapshot-memory scaling gates."
+    description = "Measures one large compact pull response in a fresh bounded JVM."
+    maxHeapSize = "128m"
+    timeout.set(Duration.ofHours(2))
     dependsOn(tasks.named("jvmTestClasses"))
-    snapshotMemoryProfiles.forEach { profile ->
+    testClassesDirs = jvmTest.get().testClassesDirs
+    classpath = jvmTest.get().classpath
+    useJUnit()
+    filter {
+        includeTestsMatching("dev.goquick.sqlitenow.oversqlite.SnapshotMemoryBaselineTest.pullMemoryBaseline")
+    }
+    environment("OVERSQLITE_PULL_MEMORY_ROWS", "25000")
+    environment("OVERSQLITE_PULL_MEMORY_ROW_BYTES", "1024")
+    environment("OVERSQLITE_PULL_MEMORY_RUN_LABEL", "large-pull-25k-1k")
+    environment("OVERSQLITE_PULL_MEMORY_RESULT_FILE", compactPullMemoryResult.get().asFile.absolutePath)
+    environment("OVERSQLITE_MEMORY_SERVER_CLASSPATH", jvmTest.get().classpath.asPath)
+    doFirst { compactPullMemoryResult.get().asFile.delete() }
+    outputs.file(compactPullMemoryResult)
+    testLogging.showStandardStreams = true
+    outputs.upToDateWhen { false }
+}
+
+val verifySnapshotMemoryClosureResults = tasks.register<JavaExec>("verifyOversqliteSnapshotMemoryClosureResults") {
+    group = "verification"
+    description = "Verifies the mandatory schema-evolution closure snapshot-memory profile set and RSS ceiling."
+    dependsOn(tasks.named("jvmTestClasses"))
+    snapshotMemoryClosureProfiles.forEach { profile ->
         mustRunAfter(tasks.named(profile.taskName))
     }
     classpath = jvmTest.get().classpath
     mainClass.set("dev.goquick.sqlitenow.oversqlite.SnapshotMemoryResultVerifier")
-    args(snapshotMemoryResultDirectory.get().asFile.absolutePath)
+    args(snapshotMemoryResultDirectory.get().dir("closure").asFile.absolutePath, "closure")
     outputs.upToDateWhen { false }
+}
+
+val verifySnapshotMemoryExtendedResults = tasks.register<JavaExec>("verifyOversqliteSnapshotMemoryResults") {
+    group = "verification"
+    description = "Verifies the optional extended one-million-row and repeatability/scaling snapshot-memory gates."
+    dependsOn(tasks.named("jvmTestClasses"))
+    snapshotMemoryExtendedProfiles.forEach { profile ->
+        mustRunAfter(tasks.named(profile.taskName))
+    }
+    classpath = jvmTest.get().classpath
+    mainClass.set("dev.goquick.sqlitenow.oversqlite.SnapshotMemoryResultVerifier")
+    args(snapshotMemoryResultDirectory.get().dir("extended").asFile.absolutePath, "extended")
+    outputs.upToDateWhen { false }
+}
+
+tasks.register("oversqliteSnapshotMemoryJvmClosure") {
+    group = "verification"
+    description = "Runs mandatory compact snapshot KMP JVM memory profiles; never run in GitHub Actions."
+    dependsOn(tasks.named("oversqliteSnapshotMemorySamplerControl"))
+    dependsOn(snapshotMemoryClosureProfiles.map { tasks.named(it.taskName) })
+    dependsOn(verifySnapshotMemoryClosureResults)
+}
+
+tasks.named("oversqliteCompactPullMemoryJvm") {
+    mustRunAfter(tasks.named("oversqliteSnapshotMemoryJvmClosure"))
+}
+
+tasks.register("oversqliteCompactMemoryJvm") {
+    group = "verification"
+    description = "Runs compact snapshot closure and large-pull JVM memory evidence."
+    dependsOn(tasks.named("oversqliteSnapshotMemoryJvmClosure"))
+    dependsOn(tasks.named("oversqliteCompactPullMemoryJvm"))
+}
+
+tasks.register("oversqliteSnapshotMemoryJvmExtended") {
+    group = "verification"
+    description = "Runs the optional extended KMP JVM repeatability and one-million-row benchmark."
+    dependsOn(tasks.named("oversqliteSnapshotMemorySamplerControl"))
+    dependsOn(snapshotMemoryExtendedProfiles.map { tasks.named(it.taskName) })
+    dependsOn(verifySnapshotMemoryExtendedResults)
 }
 
 tasks.register("oversqliteSnapshotMemoryJvmLocalHeavy") {
     group = "verification"
-    description = "Runs all required local-heavy Phase 3 KMP JVM memory profiles; never run in GitHub Actions."
-    dependsOn(snapshotMemoryProfiles.map { tasks.named(it.taskName) })
-    dependsOn(verifySnapshotMemoryResults)
+    description = "Compatibility alias for the optional extended KMP JVM snapshot-memory benchmark."
+    dependsOn(tasks.named("oversqliteSnapshotMemoryJvmExtended"))
 }
 
 val localOnlySnapshotMemoryTaskPaths =
     (snapshotMemoryProfiles.map { it.taskName } +
         listOf(
             "oversqliteSnapshotMemorySamplerControl",
+            "verifyOversqliteSnapshotMemoryClosureResults",
             "verifyOversqliteSnapshotMemoryResults",
+            "oversqliteSnapshotMemoryJvmClosure",
+            "oversqliteSnapshotMemoryJvmExtended",
             "oversqliteSnapshotMemoryJvmLocalHeavy",
+            "oversqliteCompactPullMemoryJvm",
+            "oversqliteCompactMemoryJvm",
         ))
         .map { ":library-oversqlite:$it" }
         .toSet()
@@ -345,6 +454,9 @@ tasks.register<Test>("oversqliteRealserverJvm") {
         includeTestsMatching("dev.goquick.sqlitenow.oversqlite.RealServerComprehensiveTest")
         includeTestsMatching("dev.goquick.sqlitenow.oversqlite.RealServerBundleChangeWatchTest")
         includeTestsMatching("dev.goquick.sqlitenow.oversqlite.RealServerRichSchemaTest")
+        includeTestsMatching("dev.goquick.sqlitenow.oversqlite.SettlementLiveTest")
+        includeTestsMatching("dev.goquick.sqlitenow.oversqlite.A1LiveSurvivorsTest")
+        includeTestsMatching("dev.goquick.sqlitenow.oversqlite.RealServerDependencyPlanningTest.publicSync*")
     }
 
     environment("OVERSQLITE_REALSERVER_TESTS", "true")
@@ -361,7 +473,7 @@ tasks.register<Test>("oversqliteRealserverJvm") {
 
 tasks.register<Test>("jvmRealServerSharedConnectionStress") {
     group = "verification"
-    description = "Runs the local-only shared realserver stress and Phase 5 profile tests on the JVM target."
+    description = "Runs the local-only shared realserver stress and snapshot profile tests on the JVM target."
 
     dependsOn(tasks.named("jvmTestClasses"))
 
@@ -372,6 +484,7 @@ tasks.register<Test>("jvmRealServerSharedConnectionStress") {
     filter {
         includeTestsMatching("dev.goquick.sqlitenow.oversqlite.RealServerSharedConnectionStressTest")
         includeTestsMatching("dev.goquick.sqlitenow.oversqlite.RealServerSnapshotProfileJvmTest")
+        includeTestsMatching("dev.goquick.sqlitenow.oversqlite.SettlementLiveTest.backlogBound")
     }
 
     environment("OVERSQLITE_REALSERVER_TESTS", "true")

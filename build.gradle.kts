@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsEnvSpec
+import org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsPlugin
 import org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsRootPlugin
 import groovy.json.JsonSlurper
 import java.io.File
@@ -26,10 +27,18 @@ val swiftPackageDefaultMinimumIos = "15"
 val swiftPackageDefaultMinimumMacos = "14"
 
 // Kotlin/JS uses Yarn v1 internally; with Node 24+ it emits `url.parse()` deprecation warnings during `kotlinNpmInstall`.
-// Pin Node to LTS for quieter, reproducible builds.
+// Pin a supported Node 22 LTS baseline for quieter, reproducible builds.
 plugins.withType<NodeJsRootPlugin> {
     extensions.configure<NodeJsEnvSpec> {
-        version.convention("22.0.0")
+        version.convention("22.15.0")
+    }
+}
+
+allprojects {
+    plugins.withType<NodeJsPlugin> {
+        extensions.configure<NodeJsEnvSpec> {
+            version.convention("22.15.0")
+        }
     }
 }
 
@@ -47,6 +56,18 @@ fun registerOversqliteExecTask(
         executable = rootProject.file("gradlew").absolutePath
         args(arguments + "--no-daemon" + if (alwaysRun) listOf("--rerun-tasks") else emptyList())
         environment(env)
+        if (name.startsWith("oversqliteRealserver")) {
+            val requiredUrl = if (name.contains("Android")) {
+                "OVERSQLITE_ANDROID_REAL_SERVER_SMOKE_BASE_URL"
+            } else {
+                "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL"
+            }
+            doFirst {
+                check(!System.getenv(requiredUrl).isNullOrBlank()) {
+                    "$name requires an explicit $requiredUrl for its owned authority fixture"
+                }
+            }
+        }
     }
 }
 
@@ -78,7 +99,7 @@ fun sha256(file: File): String {
     return digest.digest().joinToString("") { byte -> "%02x".format(byte) }
 }
 
-fun verifyNoPhase7GeneratedProductionResidue(root: File, owner: String) {
+fun verifyNoLegacySqlJsProductionResidue(root: File, owner: String) {
     check(root.isDirectory) { "$owner production output is missing: $root" }
     val forbiddenAssetNames = setOf(
         "sqlitenow-sqljs.js",
@@ -967,6 +988,7 @@ tasks.register<Exec>("swiftStaticSyncSupportSwift6Typecheck") {
     val supportSources = files(
         "swift/support/Sources/SQLiteNowSyncSupport/SQLiteNowCoreSupport.swift",
         "swift/support/Sources/SQLiteNowSyncSupport/SQLiteNowSyncSupport.swift",
+        "swift/support/Sources/SQLiteNowSyncSupport/SQLiteNowCoordinatedOpening.swift",
     )
     val coreFrameworkDir = layout.projectDirectory.dir(
         "swift/runtime/core/build/bin/macosArm64/debugFramework"
@@ -1014,6 +1036,8 @@ tasks.register("swiftHybridSupportGate") {
         ":swift:runtime:sync:swiftTest",
         ":swift:fixtures:package:core:swiftTest",
         ":swift:fixtures:package:sync:swiftTest",
+        ":swift:runtime:sync:macosArm64Test",
+        "swiftStaticSyncSupportTest",
         ":library-core:jvmTest",
         "oversqliteComprehensive",
     )
@@ -1114,48 +1138,48 @@ registerCorePlatformExecTask(
     arguments = listOf(":platform-core-test:harness:wasmJsBrowserTest"),
 )
 
-val obsoletePhase0GeneratedPackageRoots = listOf(
+val obsoleteSqliteProofGeneratedPackageRoots = listOf(
     layout.buildDirectory.dir("js/packages/sqlitenow-kmp-platform-core-test-sqlite27-proof"),
     layout.buildDirectory.dir("js/packages/sqlitenow-kmp-platform-core-test-sqlite27-proof-test"),
     layout.buildDirectory.dir("wasm/packages/sqlitenow-kmp-platform-core-test-sqlite27-proof"),
     layout.buildDirectory.dir("wasm/packages/sqlitenow-kmp-platform-core-test-sqlite27-proof-test"),
 )
 
-val obsoletePhase7SqlJsGeneratedRoots = listOf(
+val obsoleteSqlJsGeneratedRoots = listOf(
     layout.buildDirectory.dir("js/packages/sqlitenow-kmp-library-oversqlite-test"),
     layout.buildDirectory.dir("wasm/packages/sqlitenow-kmp-library-oversqlite-test"),
     project(":library-core").layout.buildDirectory.dir("generated/sqljs/wasm"),
 )
 
-val cleanObsoletePhase0GeneratedPackages by tasks.registering(org.gradle.api.tasks.Delete::class) {
-    delete(obsoletePhase0GeneratedPackageRoots)
+val cleanObsoleteSqliteProofGeneratedPackages by tasks.registering(org.gradle.api.tasks.Delete::class) {
+    delete(obsoleteSqliteProofGeneratedPackageRoots)
 }
 
-val cleanObsoletePhase7SqlJsGeneratedState by tasks.registering(org.gradle.api.tasks.Delete::class) {
-    delete(obsoletePhase7SqlJsGeneratedRoots)
+val cleanObsoleteSqlJsGeneratedState by tasks.registering(org.gradle.api.tasks.Delete::class) {
+    delete(obsoleteSqlJsGeneratedRoots)
 }
 
-val verifyNoObsoletePhase0GeneratedPackages by tasks.registering {
+val verifyNoObsoleteSqliteProofGeneratedPackages by tasks.registering {
     group = "verification"
-    description = "Requires all generated package copies of the removed SQLite 2.7 Phase 0 proof to be absent."
+    description = "Requires all generated package copies of the removed SQLite 2.7 obsolete SQLite proof to be absent."
 
     doLast {
-        val retainedRoots = obsoletePhase0GeneratedPackageRoots
+        val retainedRoots = obsoleteSqliteProofGeneratedPackageRoots
             .map { it.get().asFile }
             .filter { it.exists() }
             .map { it.relativeTo(rootDir).invariantSeparatorsPath }
         check(retainedRoots.isEmpty()) {
-            "Removed Phase 0 proof generated package roots remain: ${retainedRoots.sorted()}"
+            "Removed obsolete SQLite proof generated package roots remain: ${retainedRoots.sorted()}"
         }
     }
 }
 
-val verifyNoObsoletePhase7SqlJsGeneratedState by tasks.registering {
+val verifyNoObsoleteSqlJsGeneratedState by tasks.registering {
     group = "verification"
     description = "Requires obsolete generated SQL.js state and stale test-package residue to be absent."
 
     doLast {
-        val generatedRoots = obsoletePhase7SqlJsGeneratedRoots.map { it.get().asFile }
+        val generatedRoots = obsoleteSqlJsGeneratedRoots.map { it.get().asFile }
         val obsoleteFixtureRoot = generatedRoots.last()
         check(!obsoleteFixtureRoot.exists()) {
             "Obsolete generated SQL.js fixture root remains: " +
@@ -1215,13 +1239,13 @@ val verifyNoObsoletePhase7SqlJsGeneratedState by tasks.registering {
     }
 }
 
-val refreshPhase7GeneratedProductionOutputs by tasks.registering(Exec::class) {
+val refreshGeneratedProductionOutputs by tasks.registering(Exec::class) {
     group = "verification"
     description = "Regenerates exact production Core-consumer sample JS/Wasm outputs."
     dependsOn(
         ":library-core:verifySqliteWorkerPublicationAssets",
-        cleanObsoletePhase0GeneratedPackages,
-        cleanObsoletePhase7SqlJsGeneratedState,
+        cleanObsoleteSqliteProofGeneratedPackages,
+        cleanObsoleteSqlJsGeneratedState,
     )
     workingDir = rootDir
 
@@ -1261,27 +1285,27 @@ val refreshPhase7GeneratedProductionOutputs by tasks.registering(Exec::class) {
     )
 }
 
-verifyNoObsoletePhase0GeneratedPackages {
+verifyNoObsoleteSqliteProofGeneratedPackages {
     mustRunAfter(
-        cleanObsoletePhase0GeneratedPackages,
-        refreshPhase7GeneratedProductionOutputs,
+        cleanObsoleteSqliteProofGeneratedPackages,
+        refreshGeneratedProductionOutputs,
     )
 }
 
-verifyNoObsoletePhase7SqlJsGeneratedState {
+verifyNoObsoleteSqlJsGeneratedState {
     mustRunAfter(
-        cleanObsoletePhase7SqlJsGeneratedState,
-        refreshPhase7GeneratedProductionOutputs,
+        cleanObsoleteSqlJsGeneratedState,
+        refreshGeneratedProductionOutputs,
     )
 }
 
-tasks.register("verifyPhase7GeneratedProductionOutputs") {
+tasks.register("verifyGeneratedProductionOutputs") {
     group = "verification"
     description = "Regenerates and verifies production-shaped Core and sample web outputs."
     dependsOn(
-        refreshPhase7GeneratedProductionOutputs,
-        verifyNoObsoletePhase0GeneratedPackages,
-        verifyNoObsoletePhase7SqlJsGeneratedState,
+        refreshGeneratedProductionOutputs,
+        verifyNoObsoleteSqliteProofGeneratedPackages,
+        verifyNoObsoleteSqlJsGeneratedState,
     )
 
     doLast {
@@ -1291,7 +1315,7 @@ tasks.register("verifyPhase7GeneratedProductionOutputs") {
             "js" to "sqlitenow-kmp-samplesync-kmp-composeApp",
             "wasm" to "sqlitenow-kmp-samplesync-kmp-composeApp",
         ).forEach { (target, packageName) ->
-            verifyNoPhase7GeneratedProductionResidue(
+            verifyNoLegacySqlJsProductionResidue(
                 layout.buildDirectory.dir("$target/packages/$packageName").get().asFile,
                 "$packageName generated $target package",
             )
@@ -1306,7 +1330,7 @@ tasks.register("verifyPhase7GeneratedProductionOutputs") {
                 "kotlin-webpack/js/productionExecutable",
                 "kotlin-webpack/wasmJs/productionExecutable",
             ).forEach { relativePath ->
-                verifyNoPhase7GeneratedProductionResidue(
+                verifyNoLegacySqlJsProductionResidue(
                     sampleProject.layout.buildDirectory.dir(relativePath).get().asFile,
                     "${sampleProject.path} $relativePath",
                 )
@@ -1424,9 +1448,9 @@ registerOversqliteExecTask(
     arguments = listOf(":platform-oversqlite-test:composeApp:wasmJsBrowserTest"),
 )
 
-val hostRealserverBaseUrl = System.getenv("OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL") ?: "http://localhost:8080"
+val hostRealserverBaseUrl = System.getenv("OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL").orEmpty()
 val androidRealserverBaseUrl =
-    System.getenv("OVERSQLITE_ANDROID_REAL_SERVER_SMOKE_BASE_URL") ?: "http://10.0.2.2:8080"
+    System.getenv("OVERSQLITE_ANDROID_REAL_SERVER_SMOKE_BASE_URL").orEmpty()
 
 registerOversqliteExecTask(
     name = "oversqliteRealserverAndroid",
@@ -1435,6 +1459,7 @@ registerOversqliteExecTask(
     arguments =
         listOf(
             ":platform-oversqlite-test:composeApp:connectedAndroidDeviceTest",
+            "-Pandroid.testInstrumentationRunnerArguments.OVERSQLITE_PLATFORM_TESTS=true",
             "-Pandroid.testInstrumentationRunnerArguments.OVERSQLITE_REALSERVER_TESTS=true",
             "-Pandroid.testInstrumentationRunnerArguments.OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL=$androidRealserverBaseUrl",
         ),
@@ -1447,6 +1472,7 @@ registerOversqliteExecTask(
     arguments =
         listOf(
             ":platform-oversqlite-test:composeApp:connectedAndroidDeviceTest",
+            "-Pandroid.testInstrumentationRunnerArguments.OVERSQLITE_PLATFORM_TESTS=true",
             "-Pandroid.testInstrumentationRunnerArguments.OVERSQLITE_REALSERVER_TESTS=true",
             "-Pandroid.testInstrumentationRunnerArguments.OVERSQLITE_REALSERVER_HEAVY=true",
             "-Pandroid.testInstrumentationRunnerArguments.OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL=$androidRealserverBaseUrl",
@@ -1592,3 +1618,13 @@ registerOversqliteExecTask(
     ),
     arguments = listOf(":platform-oversqlite-test:composeApp:wasmJsBrowserTest"),
 )
+
+
+tasks.register<Exec>("swiftStaticSyncSupportTest") {
+    group = "verification"
+    description = "Executes shared Sync ownership races against static Swift support."
+    dependsOn(":swift:runtime:sync:packageDebugRuntimeXcframework")
+    workingDir(rootProject.file("swift/support"))
+    commandLine("swift", "test")
+    outputs.upToDateWhen { false }
+}

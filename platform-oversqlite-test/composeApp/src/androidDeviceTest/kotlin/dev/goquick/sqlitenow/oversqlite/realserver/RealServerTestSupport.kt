@@ -5,12 +5,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import dev.goquick.sqlitenow.core.BundledSqliteConnectionProvider
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.sqlite.use
-import dev.goquick.sqlitenow.oversqlite.DefaultOversqliteClient
-import dev.goquick.sqlitenow.oversqlite.OversqliteConfig
-import dev.goquick.sqlitenow.oversqlite.OversqliteTransientRetryPolicy
-import dev.goquick.sqlitenow.oversqlite.Resolver
-import dev.goquick.sqlitenow.oversqlite.ServerWinsResolver
-import dev.goquick.sqlitenow.oversqlite.SyncTable
+import dev.goquick.sqlitenow.oversqlite.*
+import dev.goquick.sqlitenow.oversqlite.platform.PlatformTestDatabase
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.okhttp.OkHttp
@@ -25,6 +21,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -41,6 +38,8 @@ import java.util.UUID
 
 private val e2eJson = Json { ignoreUnknownKeys = true }
 private const val expectedRealServerAppName = "nethttp-server-example"
+
+internal typealias RealServerDatabase = PlatformTestDatabase
 
 internal data class HotGraphIds(
     val userId: String,
@@ -102,8 +101,13 @@ internal fun requireRealServerConfig(): RealServerConfig {
 private fun instrumentationArgs(): Bundle =
     InstrumentationRegistry.getArguments()
 
-internal suspend fun newFileBackedDb(debug: Boolean = false): SafeSQLiteConnection =
-    BundledSqliteConnectionProvider.openConnection(createTempDbFile().absolutePath, debug)
+internal suspend fun newFileBackedDb(debug: Boolean = false): RealServerDatabase =
+    RealServerDatabase(
+        dbName = createTempDbFile().absolutePath,
+        connectionProvider = BundledSqliteConnectionProvider,
+        schemaStatements = mutableListOf(),
+        connectionConfig = null,
+    )
 
 private fun createTempDbFile(prefix: String = "oversqlite-realserver-e2e"): File {
     val cacheDir = InstrumentationRegistry.getInstrumentation().targetContext.cacheDir
@@ -194,7 +198,7 @@ internal suspend fun issueDummySigninToken(baseUrl: String, userId: String, sour
 }
 
 internal suspend fun bootstrapManagedSourceId(
-    db: SafeSQLiteConnection,
+    db: RealServerDatabase,
     config: RealServerConfig,
 ): String {
     val http = newBaseHttpClient(config.baseUrl)
@@ -263,12 +267,12 @@ internal suspend fun setRetainedBundleFloor(
     }
 }
 
-internal suspend fun createBusinessSubsetTables(db: SafeSQLiteConnection) {
+internal suspend fun createBusinessSubsetTables(db: RealServerDatabase) {
     createProductionRealServerTables(db)
 }
 
 internal suspend fun insertBusinessUserAndPost(
-    db: SafeSQLiteConnection,
+    db: RealServerDatabase,
     userId: String,
     postId: String,
     suffix: String,
@@ -287,15 +291,15 @@ internal suspend fun insertBusinessUserAndPost(
     )
 }
 
-internal suspend fun createBusinessRichSchemaTables(db: SafeSQLiteConnection) {
+internal suspend fun createBusinessRichSchemaTables(db: RealServerDatabase) {
     createProductionRealServerTables(db)
 }
 
-internal suspend fun createBusinessBlobKeyTables(db: SafeSQLiteConnection) {
+internal suspend fun createBusinessBlobKeyTables(db: RealServerDatabase) {
     createProductionRealServerTables(db)
 }
 
-internal suspend fun createBusinessIntegerKeyTables(db: SafeSQLiteConnection) {
+internal suspend fun createBusinessIntegerKeyTables(db: RealServerDatabase) {
     db.execSQL(
         """
         CREATE TABLE users (
@@ -316,7 +320,7 @@ internal fun randomRowId(): String =
     UUID.randomUUID().toString()
 
 internal suspend fun insertUserAndPostBatch(
-    db: SafeSQLiteConnection,
+    db: RealServerDatabase,
     batchPrefix: String,
     count: Int,
     titlePrefix: String,
@@ -342,7 +346,7 @@ internal suspend fun insertUserAndPostBatch(
 }
 
 internal suspend fun insertRichSchemaBatch(
-    db: SafeSQLiteConnection,
+    db: RealServerDatabase,
     batchPrefix: String,
 ) {
     insertUserAndPostBatch(
@@ -432,7 +436,7 @@ internal suspend fun insertRichSchemaBatch(
 }
 
 internal suspend fun insertCategoryGraph(
-    db: SafeSQLiteConnection,
+    db: RealServerDatabase,
     label: String,
 ) {
     val rootId = randomRowId()
@@ -459,7 +463,7 @@ internal suspend fun insertCategoryGraph(
 }
 
 internal suspend fun insertTeamGraph(
-    db: SafeSQLiteConnection,
+    db: RealServerDatabase,
     label: String,
 ) {
     val teamId = randomRowId()
@@ -488,7 +492,7 @@ internal suspend fun insertTeamGraph(
 }
 
 internal suspend fun insertBlobPair(
-    db: SafeSQLiteConnection,
+    db: RealServerDatabase,
     label: String,
 ): BlobPairRow {
     val fileId = randomRowId()
@@ -517,7 +521,7 @@ internal suspend fun insertBlobPair(
 }
 
 internal suspend fun insertTypedRow(
-    db: SafeSQLiteConnection,
+    db: RealServerDatabase,
     row: TypedRowFixture,
 ) {
     val noteValue = row.note?.let { "'$it'" } ?: "NULL"
@@ -534,7 +538,7 @@ internal suspend fun insertTypedRow(
 }
 
 internal suspend fun assertTypedRowState(
-    db: SafeSQLiteConnection,
+    db: RealServerDatabase,
     row: TypedRowFixture,
 ) {
     assertEquals(row.name, scalarText(db, "SELECT name FROM typed_rows WHERE id = '${row.id}'"))
@@ -571,7 +575,7 @@ internal suspend fun assertTypedRowState(
 }
 
 internal suspend fun insertHotGraph(
-    db: SafeSQLiteConnection,
+    db: RealServerDatabase,
 ): HotGraphIds {
     val ids = HotGraphIds(
         userId = randomRowId(),
@@ -653,7 +657,7 @@ internal suspend fun insertHotGraph(
 }
 
 internal suspend fun mutateHotGraph(
-    db: SafeSQLiteConnection,
+    db: RealServerDatabase,
     ids: HotGraphIds,
     round: Int,
 ) {
@@ -724,7 +728,7 @@ internal suspend fun mutateHotGraph(
 }
 
 internal suspend fun assertHotGraphDrivenCounts(
-    db: SafeSQLiteConnection,
+    db: RealServerDatabase,
     rounds: Int,
     extraRichBatches: Int = 0,
 ) {
@@ -738,8 +742,21 @@ internal suspend fun assertHotGraphDrivenCounts(
     assertEquals((1 + 2 * totalBatches).toLong(), scalarLong(db, "SELECT COUNT(*) FROM file_reviews"))
 }
 
+internal suspend fun drainPendingRealServerPushes(
+    client: OversqliteClient,
+    db: RealServerDatabase,
+) {
+    repeat(64) {
+        val pending = scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows") +
+            scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows")
+        if (pending == 0L) return
+        client.pushPending().getOrThrow()
+    }
+    error("bounded push did not drain local dirty and outbox rows")
+}
+
 internal suspend fun assertHotGraphState(
-    db: SafeSQLiteConnection,
+    db: RealServerDatabase,
     ids: HotGraphIds,
     finalRound: Int,
 ) {
@@ -760,7 +777,7 @@ internal suspend fun assertHotGraphState(
 }
 
 internal suspend fun assertRoundPresence(
-    db: SafeSQLiteConnection,
+    db: RealServerDatabase,
     label: String,
 ) {
     assertEquals(
@@ -806,7 +823,7 @@ internal suspend fun assertRoundPresence(
 }
 
 internal suspend fun assertForeignKeyIntegrity(
-    db: SafeSQLiteConnection,
+    db: RealServerDatabase,
 ) {
     assertEquals(
         0L,
@@ -871,22 +888,26 @@ internal suspend fun assertForeignKeyIntegrity(
 }
 
 internal fun newRealServerClient(
-    db: SafeSQLiteConnection,
+    db: RealServerDatabase,
     config: RealServerConfig,
     http: HttpClient,
     syncTables: List<SyncTable> = productionRealServerSyncTables,
-    uploadLimit: Int = 200,
-    downloadLimit: Int = 1000,
+    maxPushRows: Int = 200,
+    maxPushDecodedBytes: Long = 1L * 1024L * 1024L,
+    maxPullBundles: Int = 1000,
     transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy(),
     resolver: Resolver = ServerWinsResolver,
-): DefaultOversqliteClient {
+): OversqliteClient {
     return newRealServerClient(
         db = db,
         http = http,
         oversqliteConfig = OversqliteConfig(
-            schema = config.schema,
-            uploadLimit = uploadLimit,
-            downloadLimit = downloadLimit,
+            generationId = 1L, databaseId = "platform-sync", serviceId = "nethttp-server-example",
+            transferTargets = OversqliteTransferTargets(
+                maxPushRows = maxPushRows,
+                maxPushDecodedBytes = maxPushDecodedBytes,
+                maxPullBundles = maxPullBundles,
+            ),
             syncTables = syncTables,
             transientRetryPolicy = transientRetryPolicy,
         ),
@@ -895,12 +916,12 @@ internal fun newRealServerClient(
 }
 
 internal fun newRealServerClient(
-    db: SafeSQLiteConnection,
+    db: RealServerDatabase,
     http: HttpClient,
     oversqliteConfig: OversqliteConfig,
     resolver: Resolver = ServerWinsResolver,
-): DefaultOversqliteClient {
-    return DefaultOversqliteClient(
+): OversqliteClient {
+    return CoordinatedAndroidRealServerClient(
         db = db,
         config = oversqliteConfig,
         http = http,
@@ -911,6 +932,15 @@ internal fun newRealServerClient(
 internal fun uuidTextToBlobHex(uuidText: String): String =
     uuidText.replace("-", "").lowercase()
 
+internal suspend fun scalarLong(db: RealServerDatabase, sql: String): Long {
+    return db.withExclusiveAccess {
+        db.prepare(sql).use { st ->
+            check(st.step())
+            st.getLong(0)
+        }
+    }
+}
+
 internal suspend fun scalarLong(db: SafeSQLiteConnection, sql: String): Long {
     return db.withExclusiveAccess {
         db.prepare(sql).use { st ->
@@ -920,12 +950,67 @@ internal suspend fun scalarLong(db: SafeSQLiteConnection, sql: String): Long {
     }
 }
 
-internal suspend fun scalarText(db: SafeSQLiteConnection, sql: String): String {
+internal suspend fun scalarText(db: RealServerDatabase, sql: String): String {
     return db.withExclusiveAccess {
         db.prepare(sql).use { st ->
             check(st.step())
             st.getText(0)
         }
+    }
+}
+
+private class CoordinatedAndroidRealServerClient(
+    private val db: RealServerDatabase,
+    private val config: OversqliteConfig,
+    private val http: HttpClient,
+    private val resolver: Resolver,
+) : OversqliteClient {
+    private var delegate: DefaultOversqliteClient? = null
+
+    private fun requireDelegate(): OversqliteClient = checkNotNull(delegate) {
+        "coordinated Android real-server client requires open()"
+    }
+
+    override val progress get() = requireDelegate().progress
+
+    override suspend fun pauseUploads() = requireDelegate().pauseUploads()
+    override suspend fun resumeUploads() = requireDelegate().resumeUploads()
+    override suspend fun pauseDownloads() = requireDelegate().pauseDownloads()
+    override suspend fun resumeDownloads() = requireDelegate().resumeDownloads()
+
+    override suspend fun open(): Result<Unit> {
+        val next = try {
+            db.openClient(config = config, http = http, resolver = resolver)
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (failure: Throwable) {
+            return Result.failure(failure)
+        }
+        delegate = next
+        return Result.success(Unit)
+    }
+
+    override suspend fun attach(userId: String) = requireDelegate().attach(userId)
+    override suspend fun sourceInfo() = requireDelegate().sourceInfo()
+    override suspend fun syncStatus() = requireDelegate().syncStatus()
+    override suspend fun detach() = requireDelegate().detach()
+    override suspend fun pushPending() = requireDelegate().pushPending()
+    override suspend fun pendingConflict() = requireDelegate().pendingConflict()
+    override suspend fun readPushDependencyDiagnostic(diagnosticId: String, cursor: String?, pageSize: Int) =
+        requireDelegate().readPushDependencyDiagnostic(diagnosticId, cursor, pageSize)
+    override suspend fun releasePushDependencyDiagnostic(diagnosticId: String) =
+        requireDelegate().releasePushDependencyDiagnostic(diagnosticId)
+    override suspend fun resolveConflict(selected: PendingConflict, result: MergeResult) =
+        requireDelegate().resolveConflict(selected, result)
+    override suspend fun retryConflict(selected: PendingConflict) = requireDelegate().retryConflict(selected)
+    override suspend fun pullToStable() = requireDelegate().pullToStable()
+    override suspend fun sync() = requireDelegate().sync()
+    override suspend fun syncThenDetach() = requireDelegate().syncThenDetach()
+    override suspend fun rebuild() = requireDelegate().rebuild()
+
+    override fun close() {
+        // The database owns the coordinated opening and closes it after the test's inspections.
+        delegate = null
     }
 }
 

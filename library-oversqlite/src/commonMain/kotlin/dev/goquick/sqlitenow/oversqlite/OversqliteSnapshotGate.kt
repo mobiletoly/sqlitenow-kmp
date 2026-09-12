@@ -24,8 +24,6 @@ internal data class SnapshotOutboxFingerprint(
     val sourceBundleId: Long,
     val canonicalRequestHash: String,
     val rowCount: Long,
-    val remoteBundleSeq: Long,
-    val remoteBundleHash: String,
     val actualRowCount: Long,
 )
 
@@ -79,7 +77,7 @@ internal class OversqliteSnapshotGate(
                 mode = pinned.mode.name,
                 reason = "outbox fingerprint or actual row count changed",
                 cause = PendingPushReplayException(
-                    saturatingLegacyCount(current.outbox.actualRowCount),
+                    current.outbox.actualRowCount,
                 ),
             )
         }
@@ -104,18 +102,6 @@ internal class OversqliteSnapshotGate(
                 cause = cause,
             )
         }
-        if (
-            pinned.mode == SnapshotRebuildOutboxMode.PRESERVE_COMMITTED_REMOTE &&
-            session.snapshotBundleSeq < current.outbox.remoteBundleSeq
-        ) {
-            throw SnapshotFinalApplyGateException(
-                mode = pinned.mode.name,
-                reason = "snapshot is older than the committed remote bundle",
-                cause = PendingPushReplayException(
-                    saturatingLegacyCount(current.outbox.actualRowCount),
-                ),
-            )
-        }
     }
 
     private suspend fun load(
@@ -133,8 +119,6 @@ internal class OversqliteSnapshotGate(
                 sourceBundleId = outbox.sourceBundleId,
                 canonicalRequestHash = outbox.canonicalRequestHash,
                 rowCount = outbox.rowCount,
-                remoteBundleSeq = outbox.remoteBundleSeq,
-                remoteBundleHash = outbox.remoteBundleHash,
                 actualRowCount = outboxStateStore.countRows(),
             ),
             lifecycle = SnapshotLifecycleFingerprint(
@@ -176,20 +160,18 @@ internal class OversqliteSnapshotGate(
                 }
             }
 
-            SnapshotRebuildOutboxMode.PRESERVE_COMMITTED_REMOTE -> {
+            SnapshotRebuildOutboxMode.PRESERVE_PREPARED -> {
                 val outbox = guard.outbox
                 if (
-                    outbox.state != outboxStateCommittedRemote ||
+                    outbox.state != outboxStatePrepared ||
                     outbox.sourceId.isBlank() ||
                     outbox.sourceBundleId <= 0L ||
                     outbox.canonicalRequestHash.isBlank() ||
                     outbox.rowCount <= 0L ||
-                    outbox.remoteBundleSeq <= 0L ||
-                    outbox.remoteBundleHash.isBlank() ||
                     outbox.actualRowCount != outbox.rowCount
                 ) {
                     throw PendingPushReplayException(
-                        saturatingLegacyCount(outbox.actualRowCount),
+                        outbox.actualRowCount,
                     )
                 }
                 if (
@@ -218,12 +200,10 @@ internal class OversqliteSnapshotGate(
                             outbox.sourceBundleId <= 0L ||
                             outbox.canonicalRequestHash.isBlank() ||
                             outbox.rowCount <= 0L ||
-                            outbox.actualRowCount != outbox.rowCount ||
-                            outbox.remoteBundleSeq != 0L ||
-                            outbox.remoteBundleHash.isNotBlank()
+                            outbox.actualRowCount != outbox.rowCount
                         ) {
                             throw PendingPushReplayException(
-                                saturatingLegacyCount(outbox.actualRowCount),
+                                outbox.actualRowCount,
                             )
                         }
                     }
@@ -236,7 +216,7 @@ internal class OversqliteSnapshotGate(
     private fun requireNoOutbox(guard: SnapshotApplyGuard) {
         if (guard.outbox.state != outboxStateNone || guard.outbox.actualRowCount != 0L) {
             throw PendingPushReplayException(
-                saturatingLegacyCount(guard.outbox.actualRowCount),
+                guard.outbox.actualRowCount,
             )
         }
     }

@@ -1,4 +1,5 @@
 import org.gradle.api.tasks.Exec
+import dev.goquick.sqlitenow.gradle.GenerateDatabaseFilesTask
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 plugins {
@@ -35,6 +36,12 @@ val swiftGeneratedSourceDir = layout.buildDirectory.dir("generated/sqlitenow/swi
 val swiftTestSourceDir = layout.projectDirectory.dir("Tests")
 val runtimeXcframeworkDir =
     project(":swift:runtime:sync").layout.buildDirectory.dir("runtime/$fixtureRuntimeModuleName.xcframework")
+val coordinatedopeningGenerationOnePackageName = "CoordinatedOpeningGenerationOneDatabaseSQLiteNow"
+val coordinatedopeningGenerationTwoPackageName = "CoordinatedOpeningGenerationTwoDatabaseSQLiteNow"
+val schemaevolutionGenerationOnePackageName = "SchemaEvolutionGenerationOneDatabaseSQLiteNow"
+val schemaevolutionLocalTwoPackageName = "SchemaEvolutionLocalTwoDatabaseSQLiteNow"
+val schemaevolutionGenerationTargetPackageName = "SchemaEvolutionGenerationTargetDatabaseSQLiteNow"
+val schemaevolutionInvalidTargetPackageName = "SchemaEvolutionInvalidTargetDatabaseSQLiteNow"
 
 sqliteNow {
     databases {
@@ -52,6 +59,74 @@ sqliteNow {
                 runtimeModuleName.set(fixtureRuntimeModuleName)
             }
         }
+        create("CoordinatedOpeningGenerationOneDatabase") {
+            packageName = "dev.goquick.sqlitenow.swiftfixtures.sync.coordinatedopening.generationone"
+            oversqlite = true
+            debug = false
+            swiftPackage {
+                packageName.set(coordinatedopeningGenerationOnePackageName)
+                swiftTargetName.set(coordinatedopeningGenerationOnePackageName)
+                outputDirectory.set(layout.projectDirectory.dir("../build/swift-package/$coordinatedopeningGenerationOnePackageName"))
+                generatedSourceDirectory.set(
+                    layout.buildDirectory.dir("generated/sqlitenow/swift-product/$coordinatedopeningGenerationOnePackageName"),
+                )
+                runtimeXcframework.set(runtimeXcframeworkDir)
+                runtimeTaskPath.set(":swift:runtime:sync:packageDebugRuntimeXcframework")
+                runtimeModuleName.set(fixtureRuntimeModuleName)
+            }
+        }
+        create("CoordinatedOpeningGenerationTwoDatabase") {
+            packageName = "dev.goquick.sqlitenow.swiftfixtures.sync.coordinatedopening.generationtwo"
+            oversqlite = true
+            debug = false
+            swiftPackage {
+                packageName.set(coordinatedopeningGenerationTwoPackageName)
+                swiftTargetName.set(coordinatedopeningGenerationTwoPackageName)
+                outputDirectory.set(layout.projectDirectory.dir("../build/swift-package/$coordinatedopeningGenerationTwoPackageName"))
+                generatedSourceDirectory.set(
+                    layout.buildDirectory.dir("generated/sqlitenow/swift-product/$coordinatedopeningGenerationTwoPackageName"),
+                )
+                runtimeXcframework.set(runtimeXcframeworkDir)
+                runtimeTaskPath.set(":swift:runtime:sync:packageDebugRuntimeXcframework")
+                runtimeModuleName.set(fixtureRuntimeModuleName)
+            }
+        }
+        listOf(
+            "SchemaEvolutionGenerationOneDatabase" to "dev.goquick.sqlitenow.swiftfixtures.sync.schemaevolution.generationone",
+            "SchemaEvolutionLocalTwoDatabase" to "dev.goquick.sqlitenow.swiftfixtures.sync.schemaevolution.localtwo",
+            "SchemaEvolutionGenerationTargetDatabase" to "dev.goquick.sqlitenow.swiftfixtures.sync.schemaevolution.target",
+            "SchemaEvolutionInvalidTargetDatabase" to "dev.goquick.sqlitenow.swiftfixtures.sync.schemaevolution.invalidtarget",
+        ).forEach { (databaseName, kotlinPackage) ->
+            create(databaseName) {
+                packageName = kotlinPackage
+                oversqlite = true
+                debug = false
+                swiftPackage {
+                    packageName.set("${databaseName}SQLiteNow")
+                    swiftTargetName.set("${databaseName}SQLiteNow")
+                    outputDirectory.set(layout.projectDirectory.dir("../build/swift-package/${databaseName}SQLiteNow"))
+                    generatedSourceDirectory.set(
+                        layout.buildDirectory.dir("generated/sqlitenow/swift-product/${databaseName}SQLiteNow"),
+                    )
+                    runtimeXcframework.set(runtimeXcframeworkDir)
+                    runtimeTaskPath.set(":swift:runtime:sync:packageDebugRuntimeXcframework")
+                    runtimeModuleName.set(fixtureRuntimeModuleName)
+                }
+            }
+        }
+    }
+}
+
+val sharedSchemaEvolutionSqlRoot = rootProject.layout.projectDirectory.dir("platform-oversqlite-test/composeApp/src/commonMain/sql")
+tasks.withType<GenerateDatabaseFilesTask>().configureEach {
+    if (listOf(
+            "SchemaEvolutionGenerationOneDatabase",
+            "SchemaEvolutionLocalTwoDatabase",
+            "SchemaEvolutionGenerationTargetDatabase",
+            "SchemaEvolutionInvalidTargetDatabase",
+        ).any(name::contains)
+    ) {
+        sqlDir.set(sharedSchemaEvolutionSqlRoot)
     }
 }
 
@@ -69,9 +144,27 @@ tasks.register<Exec>("swiftTest") {
     description = "Runs SwiftPM tests for the generated sync fixture package without enabling the realserver XCTest."
 
     dependsOn(
-        "packageDebugSwiftPackage",
-        "validateDebugSwiftPackageManifest",
-        "checkDebugSwiftPackageLeaks",
+        "packageSyncFixtureDatabaseDebugSwiftPackage",
+        "validateSyncFixtureDatabaseDebugSwiftPackageManifest",
+        "checkSyncFixtureDatabaseDebugSwiftPackageLeaks",
+        "packageCoordinatedOpeningGenerationOneDatabaseDebugSwiftPackage",
+        "validateCoordinatedOpeningGenerationOneDatabaseDebugSwiftPackageManifest",
+        "checkCoordinatedOpeningGenerationOneDatabaseDebugSwiftPackageLeaks",
+        "packageCoordinatedOpeningGenerationTwoDatabaseDebugSwiftPackage",
+        "validateCoordinatedOpeningGenerationTwoDatabaseDebugSwiftPackageManifest",
+        "checkCoordinatedOpeningGenerationTwoDatabaseDebugSwiftPackageLeaks",
+        "packageSchemaEvolutionGenerationOneDatabaseDebugSwiftPackage",
+        "validateSchemaEvolutionGenerationOneDatabaseDebugSwiftPackageManifest",
+        "checkSchemaEvolutionGenerationOneDatabaseDebugSwiftPackageLeaks",
+        "packageSchemaEvolutionLocalTwoDatabaseDebugSwiftPackage",
+        "validateSchemaEvolutionLocalTwoDatabaseDebugSwiftPackageManifest",
+        "checkSchemaEvolutionLocalTwoDatabaseDebugSwiftPackageLeaks",
+        "packageSchemaEvolutionGenerationTargetDatabaseDebugSwiftPackage",
+        "validateSchemaEvolutionGenerationTargetDatabaseDebugSwiftPackageManifest",
+        "checkSchemaEvolutionGenerationTargetDatabaseDebugSwiftPackageLeaks",
+        "packageSchemaEvolutionInvalidTargetDatabaseDebugSwiftPackage",
+        "validateSchemaEvolutionInvalidTargetDatabaseDebugSwiftPackageManifest",
+        "checkSchemaEvolutionInvalidTargetDatabaseDebugSwiftPackageLeaks",
     )
 
     inputs.file(layout.projectDirectory.file("Package.swift"))
@@ -90,9 +183,27 @@ tasks.register<Exec>("swiftRealserverSmoke") {
     description = "Runs the generated Swift sync package realserver smoke against go-oversync/examples/nethttp_server."
 
     dependsOn(
-        "packageDebugSwiftPackage",
-        "validateDebugSwiftPackageManifest",
-        "checkDebugSwiftPackageLeaks",
+        "packageSyncFixtureDatabaseDebugSwiftPackage",
+        "validateSyncFixtureDatabaseDebugSwiftPackageManifest",
+        "checkSyncFixtureDatabaseDebugSwiftPackageLeaks",
+        "packageCoordinatedOpeningGenerationOneDatabaseDebugSwiftPackage",
+        "validateCoordinatedOpeningGenerationOneDatabaseDebugSwiftPackageManifest",
+        "checkCoordinatedOpeningGenerationOneDatabaseDebugSwiftPackageLeaks",
+        "packageCoordinatedOpeningGenerationTwoDatabaseDebugSwiftPackage",
+        "validateCoordinatedOpeningGenerationTwoDatabaseDebugSwiftPackageManifest",
+        "checkCoordinatedOpeningGenerationTwoDatabaseDebugSwiftPackageLeaks",
+        "packageSchemaEvolutionGenerationOneDatabaseDebugSwiftPackage",
+        "validateSchemaEvolutionGenerationOneDatabaseDebugSwiftPackageManifest",
+        "checkSchemaEvolutionGenerationOneDatabaseDebugSwiftPackageLeaks",
+        "packageSchemaEvolutionLocalTwoDatabaseDebugSwiftPackage",
+        "validateSchemaEvolutionLocalTwoDatabaseDebugSwiftPackageManifest",
+        "checkSchemaEvolutionLocalTwoDatabaseDebugSwiftPackageLeaks",
+        "packageSchemaEvolutionGenerationTargetDatabaseDebugSwiftPackage",
+        "validateSchemaEvolutionGenerationTargetDatabaseDebugSwiftPackageManifest",
+        "checkSchemaEvolutionGenerationTargetDatabaseDebugSwiftPackageLeaks",
+        "packageSchemaEvolutionInvalidTargetDatabaseDebugSwiftPackage",
+        "validateSchemaEvolutionInvalidTargetDatabaseDebugSwiftPackageManifest",
+        "checkSchemaEvolutionInvalidTargetDatabaseDebugSwiftPackageLeaks",
     )
 
     inputs.file(layout.projectDirectory.file("Package.swift"))

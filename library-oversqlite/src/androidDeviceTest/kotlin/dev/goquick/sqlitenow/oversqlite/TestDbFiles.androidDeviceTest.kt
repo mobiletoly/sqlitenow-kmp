@@ -5,6 +5,8 @@ import dev.goquick.sqlitenow.core.SqliteConnectionConfig
 import java.io.File
 import java.util.UUID
 
+internal actual fun supportsDurableTestDatabaseRestart(): Boolean = true
+
 internal actual fun createTempSqliteNowTestDbPath(prefix: String): String {
     val context = InstrumentationRegistry.getInstrumentation().targetContext
     return File(context.cacheDir, "$prefix-${UUID.randomUUID()}.db").absolutePath

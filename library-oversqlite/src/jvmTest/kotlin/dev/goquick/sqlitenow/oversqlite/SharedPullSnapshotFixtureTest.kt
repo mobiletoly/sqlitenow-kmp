@@ -1,161 +1,115 @@
 package dev.goquick.sqlitenow.oversqlite
 
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SharedPullSnapshotFixtureTest {
-    private val contractJson = Json {
-        ignoreUnknownKeys = true
-        explicitNulls = true
-    }
-    private val fixtureFile = oversqliteContractFixture("pull-snapshot/basic.json")
+    private val root = Json.parseToJsonElement(
+        oversqliteContractFixture("pull-snapshot/basic.json").readText(),
+    ).jsonObject
 
     @Test
-    fun kmpSharedPullSnapshotFixturesDecodeAgainstModels() {
-        val spec = contractJson.decodeFromString<PullSnapshotFixtureSpec>(fixtureFile.readText())
-        assertEquals(1, spec.formatVersion)
-        for (case in spec.cases) {
-            case.pullResponse?.let {
-                val result = runCatching {
-                    val response = contractJson.decodeFromString(
-                        PullResponse.serializer(),
-                        it.toString(),
-                    )
-                    validatePullResponse(response, case.afterBundleSeq)
-                    response
-                }
-                assertValidationResult(case.name, case.expectedPullErrorContains, result)
-                result.getOrNull()?.let { response ->
-                    case.expectedFinalState?.get("lastBundleSeqSeen")?.let { expected ->
-                        assertEquals(expected.toString(), response.stableBundleSeq.toString(), case.name)
-                    }
-                }
-            }
-            case.historyPrunedResponse?.let {
-                val error = contractJson.decodeFromString(
-                    ErrorResponse.serializer(),
-                    it.body.toString(),
-                )
-                assertEquals(409, it.status, case.name)
-                assertEquals("history_pruned", error.error, case.name)
-            }
-            case.checkpointAheadResponse?.let {
-                val error = contractJson.decodeFromString(
-                    ErrorResponse.serializer(),
-                    it.body.toString(),
-                )
-                assertEquals(409, it.status, case.name)
-                assertEquals("checkpoint_ahead", error.error, case.name)
-            }
-            case.snapshotSessionCreateRequest?.let {
-                val request = contractJson.decodeFromString(
-                    SnapshotSessionCreateRequest.serializer(),
-                    it.toString(),
-                )
-                assertEquals("source_retired", request.sourceReplacement?.reason, case.name)
-            }
-            case.snapshotSession?.let { sessionJson ->
-                val sessionResult = runCatching {
-                    val session = contractJson.decodeFromString(
-                        SnapshotSession.serializer(),
-                        sessionJson.toString(),
-                    )
-                    validateSnapshotSession(session)
-                    session
-                }
-                assertValidationResult(
-                    case.name,
-                    case.expectedKmpSnapshotSessionErrorContains ?: case.expectedSnapshotSessionErrorContains,
-                    sessionResult,
-                )
-                sessionResult.getOrNull()?.let { session ->
-                    case.snapshotChunkResponse?.let { chunkJson ->
-                        val chunkResult = runCatching {
-                            val chunk = contractJson.decodeFromString(
-                                SnapshotChunkResponse.serializer(),
-                                chunkJson.toString(),
-                            )
-                            validateSnapshotChunkResponse(
-                                chunk,
-                                snapshotId = session.snapshotId,
-                                snapshotBundleSeq = session.snapshotBundleSeq,
-                                afterRowOrdinal = case.snapshotChunkAfterRowOrdinal,
-                                maxRows = 1000,
-                                maxBytes = 4L * 1024L * 1024L,
-                            )
-                            chunk
-                        }
-                        assertValidationResult(
-                            case.name,
-                            case.expectedKmpSnapshotChunkErrorContains ?: case.expectedSnapshotChunkErrorContains,
-                            chunkResult,
+    fun compactPullAndSnapshotCasesExerciseCurrentWireShapes() {
+        assertEquals(2, root.getValue("formatVersion").jsonPrimitive.int)
+        root.getValue("cases").jsonArray.map { it.jsonObject }.forEach { case ->
+            val users = mutableSetOf<String>()
+            var deletedRows = 0
+            var checkpoint = case["afterBundleSeq"]?.jsonPrimitive?.long ?: 0L
+            case["pullResponse"]?.jsonObject?.let { response ->
+                assertEquals(setOf("stable_bundle_seq", "bundles", "has_more"), response.keys)
+                var expectedBundleSeq = case.getValue("afterBundleSeq").jsonPrimitive.long + 1
+                response.getValue("bundles").jsonArray.map { it.jsonObject }.forEach { bundle ->
+                    assertEquals(setOf("bundle_seq", "source_id", "source_bundle_id", "bundle_hash", "rows"), bundle.keys)
+                    assertEquals(expectedBundleSeq++, bundle.getValue("bundle_seq").jsonPrimitive.long)
+                    val rows = bundle.getValue("rows").jsonArray
+                    if (rows.isEmpty()) {
+                        assertEquals(
+                            "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+                            bundle.getValue("bundle_hash").jsonPrimitive.content,
                         )
+                    } else {
+                        validateCompactGroups(rows, allowDelete = true)
+                        deletedRows += applyUserRows(rows, users, allowDelete = true)
+                    }
+                    checkpoint = bundle.getValue("bundle_seq").jsonPrimitive.long
+                }
+                assertEquals(response.getValue("stable_bundle_seq").jsonPrimitive.long, checkpoint)
+            }
+            case["snapshotSession"]?.jsonObject?.let { session ->
+                users.clear()
+                deletedRows = 0
+                assertEquals(
+                    setOf("snapshot_id", "snapshot_bundle_seq", "row_count", "logical_byte_count", "expires_at"),
+                    session.keys,
+                )
+                val chunk = case.getValue("snapshotChunkResponse").jsonObject
+                assertEquals(setOf("rows", "next_row_ordinal", "logical_byte_count", "has_more"), chunk.keys)
+                val rows = chunk.getValue("rows").jsonArray
+                validateCompactGroups(rows, allowDelete = false)
+                deletedRows += applyUserRows(rows, users, allowDelete = false)
+                val logicalBytes = rows.sumOf { groupElement ->
+                    val group = groupElement.jsonArray
+                    val tableIndex = group[0]
+                    group[2].jsonArray.sumOf { tupleElement ->
+                        val tuple = tupleElement.jsonArray
+                        val logical = JsonArray(listOf(tuple[0], tableIndex, tuple[1], tuple[2], tuple[3]))
+                        canonicalizeJsonElement(logical).encodeToByteArray().size.toLong()
                     }
                 }
+                assertEquals(chunk.getValue("logical_byte_count").jsonPrimitive.long, logicalBytes)
+                assertEquals(session.getValue("logical_byte_count").jsonPrimitive.long, logicalBytes)
+                assertEquals(session.getValue("row_count").jsonPrimitive.long, chunk.getValue("next_row_ordinal").jsonPrimitive.long)
+                checkpoint = session.getValue("snapshot_bundle_seq").jsonPrimitive.long
             }
-            case.sourceReplacementInvalidResponse?.let {
-                val error = contractJson.decodeFromString(
-                    ErrorResponse.serializer(),
-                    it.body.toString(),
-                )
-                assertEquals(409, it.status, case.name)
-                assertEquals("source_replacement_invalid", error.error, case.name)
-            }
+            val expected = case.getValue("expectedFinalState").jsonObject
+            assertEquals(expected.getValue("lastBundleSeqSeen").jsonPrimitive.long, checkpoint)
+            assertEquals(expected.getValue("usersRowCount").jsonPrimitive.int, users.size)
+            assertEquals(expected.getValue("rowStateDeleted").jsonPrimitive.int, deletedRows)
         }
     }
 
-    private fun assertValidationResult(
-        caseName: String,
-        expectedMessage: String?,
-        result: Result<*>,
-    ) {
-        if (expectedMessage == null) {
-            assertNull(result.exceptionOrNull(), "$caseName: expected validation success")
-            return
+    private fun applyUserRows(groups: JsonArray, users: MutableSet<String>, allowDelete: Boolean): Int {
+        var deleted = 0
+        groups.forEach { groupElement ->
+            val group = groupElement.jsonArray
+            require(group[0].jsonPrimitive.int == 0) { "unexpected fixture table index" }
+            group[2].jsonArray.forEach { tupleElement ->
+                val tuple = tupleElement.jsonArray
+                val key = tuple[1].jsonArray.single().jsonPrimitive.content
+                when (tuple[0].jsonPrimitive.content) {
+                    "i", "u" -> users += key
+                    "d" -> {
+                        require(allowDelete) { "snapshot fixture contains delete" }
+                        users -= key
+                        deleted++
+                    }
+                    else -> error("unknown compact operation")
+                }
+            }
         }
-        val error = assertNotNull(result.exceptionOrNull(), "$caseName: expected validation error")
-        assertTrue(
-            error.message?.contains(expectedMessage) == true,
-            "$caseName: expected validation error containing '$expectedMessage' but was '${error.message}'",
-        )
+        return deleted
     }
 
-    @Serializable
-    private data class PullSnapshotFixtureSpec(
-        val formatVersion: Int,
-        val cases: List<PullSnapshotFixtureCase>,
-    )
-
-    @Serializable
-    private data class PullSnapshotFixtureCase(
-        val name: String,
-        val afterBundleSeq: Long = 0,
-        val pullResponse: JsonObject? = null,
-        val expectedPullErrorContains: String? = null,
-        val historyPrunedResponse: FixtureHttpResponse? = null,
-        val checkpointAheadResponse: FixtureHttpResponse? = null,
-        val snapshotSessionCreateRequest: JsonObject? = null,
-        val snapshotSession: JsonObject? = null,
-        val snapshotChunkResponse: JsonObject? = null,
-        val snapshotChunkAfterRowOrdinal: Long = 0,
-        val expectedSnapshotSessionErrorContains: String? = null,
-        val expectedKmpSnapshotSessionErrorContains: String? = null,
-        val expectedSnapshotChunkErrorContains: String? = null,
-        val expectedKmpSnapshotChunkErrorContains: String? = null,
-        val sourceReplacementInvalidResponse: FixtureHttpResponse? = null,
-        val expectedFinalState: JsonObject? = null,
-    )
-
-    @Serializable
-    private data class FixtureHttpResponse(
-        val status: Int,
-        val body: JsonObject,
-    )
+    private fun validateCompactGroups(groups: JsonArray, allowDelete: Boolean) {
+        groups.forEach { groupElement ->
+            val group = groupElement.jsonArray
+            assertEquals(3, group.size)
+            assertTrue(group[0].jsonPrimitive.int >= 0)
+            group[2].jsonArray.forEach { tupleElement ->
+                val tuple = tupleElement.jsonArray
+                val op = tuple[0].jsonPrimitive.content
+                assertTrue(op in if (allowDelete) setOf("i", "u", "d") else setOf("i"))
+                assertEquals(if (op == "d") 3 else 4, tuple.size)
+            }
+        }
+    }
 }

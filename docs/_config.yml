@@ -21,7 +21,7 @@
 title: SQLiteNow
 email:
 description: >- # this means to ignore newlines until "baseurl:"
-  SQL-first, type-safe SQLite tooling for Flutter, Dart, and Kotlin Multiplatform
+  SQL-first, type-safe SQLite tooling for Kotlin Multiplatform and Swift
 baseurl: "/sqlitenow-kmp" # the subpath of your site, e.g. /blog
 url: "https://mobiletoly.github.io" # the base hostname & protocol for your site, e.g. http://example.com
 twitter_username:

@@ -31,15 +31,15 @@ class RealServerStaleFollowerPruneRecoveryStressTest {
                 db = leaderDb,
                 config = config,
                 http = leaderHttp,
-                uploadLimit = 8,
-                downloadLimit = 2,
+                maxPushRows = 8,
+                maxPullBundles = 2,
             )
             val follower = newRealServerClient(
                 db = followerDb,
                 config = config,
                 http = followerHttp,
-                uploadLimit = 8,
-                downloadLimit = 2,
+                maxPushRows = 8,
+                maxPullBundles = 2,
             )
 
             leader.openAndAttach(userId).getOrThrow()
@@ -48,24 +48,25 @@ class RealServerStaleFollowerPruneRecoveryStressTest {
             follower.rebuild().getOrThrow()
 
             val hotGraph = insertHotGraph(leaderDb)
-            leader.pushPending().getOrThrow()
+            drainPendingRealServerPushes(leader, leaderDb)
             follower.pullToStable().getOrThrow()
 
             val rounds = 8
             for (round in 1..rounds) {
                 mutateHotGraph(leaderDb, hotGraph, round)
                 insertRichSchemaBatch(leaderDb, "prune-recovery-$round")
-                leader.pushPending().getOrThrow()
+                drainPendingRealServerPushes(leader, leaderDb)
 
                 if (round == 3) {
                     follower.pullToStable().getOrThrow()
-                    assertEquals(4L, follower.syncStatus().getOrThrow().lastBundleSeqSeen)
+                    assertEquals(leader.syncStatus().getOrThrow().lastBundleSeqSeen,
+                        follower.syncStatus().getOrThrow().lastBundleSeqSeen)
                 }
             }
 
             val followerSourceIdBefore = scalarText(followerDb, "SELECT current_source_id FROM _sync_attachment_state")
             val leaderBundleSeq = leader.syncStatus().getOrThrow().lastBundleSeqSeen
-            assertEquals(9L, leaderBundleSeq)
+            assertEquals(true, leaderBundleSeq > 9L)
 
             setRetainedBundleFloor(config.baseUrl, userId, leaderBundleSeq)
 

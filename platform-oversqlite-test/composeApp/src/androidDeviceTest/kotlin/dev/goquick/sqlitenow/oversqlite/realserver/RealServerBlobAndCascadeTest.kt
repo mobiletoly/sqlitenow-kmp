@@ -61,7 +61,7 @@ class RealServerBlobAndCascadeTest {
     }
 
     private suspend fun assertBlobState(
-        db: dev.goquick.sqlitenow.core.SafeSQLiteConnection,
+        db: RealServerDatabase,
         vararg rows: BlobPairRow,
     ) {
         assertEquals(2L, scalarLong(db, "SELECT COUNT(*) FROM files"))

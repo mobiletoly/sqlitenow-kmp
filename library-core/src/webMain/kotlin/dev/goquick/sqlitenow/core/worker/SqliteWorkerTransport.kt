@@ -40,6 +40,8 @@ internal expect class SqliteWorkerTransport {
 
     suspend fun awaitCleanupDeadline()
 
+    val terminationConfirmed: Boolean
+
     fun runtimeKind(): String
 
     fun diagnosticsForTest(): String

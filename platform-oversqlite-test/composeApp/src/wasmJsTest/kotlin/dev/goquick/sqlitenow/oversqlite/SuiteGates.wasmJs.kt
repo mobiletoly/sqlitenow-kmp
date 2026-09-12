@@ -27,9 +27,73 @@ internal actual fun suiteEnv(name: String): String? = readWasmSuiteEnv(name)
 
 internal actual fun webRuntimeKind(): String = "wasm-browser"
 
-internal actual suspend fun cleanupPhase6DirectWorkerDatabase(dbName: String) {
-    cleanupPhase6DirectWorkerDatabaseWasm(dbName).await<JsAny?>()
+internal actual suspend fun cleanupWorkerDirectWorkerDatabase(dbName: String) {
+    cleanupWorkerDirectWorkerDatabaseWasm(dbName).await<JsAny?>()
 }
+
+internal actual suspend fun sameOriginIframeCanAcquireLifecycleLock(dbName: String): Boolean =
+    sameOriginIframeCanAcquireLifecycleLockWasm(dbName).await<JsAny?>().toString().toBooleanStrict()
+
+@JsFun(
+    """
+    async (dbName) => {
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(dbName));
+      const hash = Array.from(new Uint8Array(digest))
+        .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+      const lockName = "sqlitenow-worker-v1-lifecycle-" + hash;
+      const acquired = await new Promise((resolve, reject) => {
+        const iframe = document.createElement("iframe");
+        iframe.style.display = "none";
+        const timer = setTimeout(() => finish(new Error("iframe lifecycle probe timed out")), 10000);
+        const finish = (error, value) => {
+          clearTimeout(timer);
+          iframe.remove();
+          if (error) reject(error); else resolve(value);
+        };
+        iframe.onload = () => {
+          const frameLocks = iframe.contentWindow && iframe.contentWindow.navigator.locks;
+          if (!frameLocks) {
+            finish(new Error("same-origin iframe lacks Web Locks"));
+            return;
+          }
+          frameLocks.request(lockName, {mode:"exclusive", ifAvailable:true}, (lock) => {
+            finish(null, !!lock);
+          }).catch((error) => finish(error));
+        };
+        iframe.src = "about:blank";
+        document.body.appendChild(iframe);
+      });
+      return String(acquired);
+    }
+    """,
+)
+private external fun sameOriginIframeCanAcquireLifecycleLockWasm(dbName: String): Promise<JsAny?>
+
+internal actual suspend fun directWorkerStorageCensus(dbName: String): String =
+    directWorkerStorageCensusWasm(dbName).await<JsAny?>().toString()
+
+@JsFun(
+    """
+    async (dbName) => {
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(dbName));
+      const hash = Array.from(new Uint8Array(digest))
+        .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+      const prefix = "sqlitenow-worker-v1-" + hash + ".sqlite3";
+      const root = await navigator.storage.getDirectory();
+      const rows = [];
+      for await (const [name, handle] of root.entries()) {
+        if (handle.kind !== "file" || !name.startsWith(prefix)) continue;
+        const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+        const fileDigest = await crypto.subtle.digest("SHA-256", bytes);
+        const fileHash = Array.from(new Uint8Array(fileDigest))
+          .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+        rows.push(name + ":" + bytes.byteLength + ":" + fileHash);
+      }
+      return rows.sort().join("|");
+    }
+    """,
+)
+private external fun directWorkerStorageCensusWasm(dbName: String): Promise<JsAny?>
 
 @JsFun(
     """
@@ -47,12 +111,12 @@ internal actual suspend fun cleanupPhase6DirectWorkerDatabase(dbName: String) {
     }
     """,
 )
-private external fun cleanupPhase6DirectWorkerDatabaseWasm(
+private external fun cleanupWorkerDirectWorkerDatabaseWasm(
     dbName: String,
 ): Promise<JsAny?>
 
-internal actual suspend fun cleanupPhase6LegacyOpfsDatabase(dbName: String) {
-    cleanupPhase6LegacyOpfsDatabaseWasm(dbName).await<JsAny?>()
+internal actual suspend fun cleanupWorkerLegacyOpfsDatabase(dbName: String) {
+    cleanupWorkerLegacyOpfsDatabaseWasm(dbName).await<JsAny?>()
 }
 
 @JsFun(
@@ -69,12 +133,12 @@ internal actual suspend fun cleanupPhase6LegacyOpfsDatabase(dbName: String) {
     }
     """,
 )
-private external fun cleanupPhase6LegacyOpfsDatabaseWasm(
+private external fun cleanupWorkerLegacyOpfsDatabaseWasm(
     dbName: String,
 ): Promise<JsAny?>
 
-internal actual suspend fun cleanupPhase6LegacyIndexedDbDatabase(dbName: String) {
-    cleanupPhase6LegacyIndexedDbDatabaseWasm(dbName).await<JsAny?>()
+internal actual suspend fun cleanupWorkerLegacyIndexedDbDatabase(dbName: String) {
+    cleanupWorkerLegacyIndexedDbDatabaseWasm(dbName).await<JsAny?>()
 }
 
 @JsFun(
@@ -102,17 +166,17 @@ internal actual suspend fun cleanupPhase6LegacyIndexedDbDatabase(dbName: String)
     })
     """,
 )
-private external fun cleanupPhase6LegacyIndexedDbDatabaseWasm(
+private external fun cleanupWorkerLegacyIndexedDbDatabaseWasm(
     dbName: String,
 ): Promise<JsAny?>
 
-internal actual suspend fun preparePhase6CleanupRegressionArtifacts(
+internal actual suspend fun prepareStatementReuseleanupRegressionArtifacts(
     directDbName: String,
     legacyOpfsDbName: String,
     legacyIndexedDbName: String,
     sentinelName: String,
 ) {
-    preparePhase6CleanupRegressionArtifactsWasm(
+    prepareStatementReuseleanupRegressionArtifactsWasm(
         directDbName,
         legacyOpfsDbName,
         legacyIndexedDbName,
@@ -175,33 +239,33 @@ internal actual suspend fun preparePhase6CleanupRegressionArtifacts(
         tx.onabort = () => reject(tx.error);
       });
       database.close();
-      globalThis.__phase6IndexedDbDatabasesDescriptor =
+      globalThis.__workerIndexedDbDatabasesDescriptor =
         Object.getOwnPropertyDescriptor(indexedDB, "databases") || null;
-      globalThis.__phase6IndexedDbDatabasesCalls = 0;
+      globalThis.__workerIndexedDbDatabasesCalls = 0;
       Object.defineProperty(indexedDB, "databases", {
         configurable: true,
         value: () => {
-          globalThis.__phase6IndexedDbDatabasesCalls++;
-          throw new Error("origin catalog enumeration must not be used by Phase 6 cleanup");
+          globalThis.__workerIndexedDbDatabasesCalls++;
+          throw new Error("origin catalog enumeration must not be used by worker migration cleanup");
         },
       });
     }
     """,
 )
-private external fun preparePhase6CleanupRegressionArtifactsWasm(
+private external fun prepareStatementReuseleanupRegressionArtifactsWasm(
     directDbName: String,
     legacyOpfsDbName: String,
     legacyIndexedDbName: String,
     sentinelName: String,
 ): Promise<JsAny?>
 
-internal actual suspend fun verifyAndClearPhase6CleanupRegressionArtifacts(
+internal actual suspend fun verifyAndClearStatementReuseleanupRegressionArtifacts(
     directDbName: String,
     legacyOpfsDbName: String,
     legacyIndexedDbName: String,
     sentinelName: String,
 ) {
-    verifyAndClearPhase6CleanupRegressionArtifactsWasm(
+    verifyAndClearStatementReuseleanupRegressionArtifactsWasm(
         directDbName,
         legacyOpfsDbName,
         legacyIndexedDbName,
@@ -213,10 +277,10 @@ internal actual suspend fun verifyAndClearPhase6CleanupRegressionArtifacts(
     """
     async (directDbName, legacyOpfsDbName, legacyIndexedDbName, sentinelName) => {
       const restoreEnumeration = () => {
-        const descriptor = globalThis.__phase6IndexedDbDatabasesDescriptor;
+        const descriptor = globalThis.__workerIndexedDbDatabasesDescriptor;
         if (descriptor) Object.defineProperty(indexedDB, "databases", descriptor);
         else delete indexedDB.databases;
-        delete globalThis.__phase6IndexedDbDatabasesDescriptor;
+        delete globalThis.__workerIndexedDbDatabasesDescriptor;
       };
       const exists = async (directory, name) => {
         try { await directory.getFileHandle(name); return true; }
@@ -228,7 +292,7 @@ internal actual suspend fun verifyAndClearPhase6CleanupRegressionArtifacts(
           .map((byte) => byte.toString(16).padStart(2, "0")).join("");
       };
       try {
-        if (globalThis.__phase6IndexedDbDatabasesCalls !== 0) {
+        if (globalThis.__workerIndexedDbDatabasesCalls !== 0) {
           throw new Error("cleanup invoked origin catalog enumeration");
         }
         const root = await navigator.storage.getDirectory();
@@ -280,20 +344,20 @@ internal actual suspend fun verifyAndClearPhase6CleanupRegressionArtifacts(
         cleanupDatabase.close();
       } finally {
         restoreEnumeration();
-        delete globalThis.__phase6IndexedDbDatabasesCalls;
+        delete globalThis.__workerIndexedDbDatabasesCalls;
       }
     }
     """,
 )
-private external fun verifyAndClearPhase6CleanupRegressionArtifactsWasm(
+private external fun verifyAndClearStatementReuseleanupRegressionArtifactsWasm(
     directDbName: String,
     legacyOpfsDbName: String,
     legacyIndexedDbName: String,
     sentinelName: String,
 ): Promise<JsAny?>
 
-internal actual suspend fun phase6WorkerStorageEvidence(dbName: String): String =
-    phase6WorkerStorageEvidenceWasm(dbName).await<JsAny?>().toString()
+internal actual suspend fun workerWorkerStorageEvidence(dbName: String): String =
+    workerWorkerStorageEvidenceWasm(dbName).await<JsAny?>().toString()
 
 @JsFun(
     """
@@ -320,4 +384,4 @@ internal actual suspend fun phase6WorkerStorageEvidence(dbName: String): String 
     }
     """,
 )
-private external fun phase6WorkerStorageEvidenceWasm(dbName: String): Promise<JsAny?>
+private external fun workerWorkerStorageEvidenceWasm(dbName: String): Promise<JsAny?>

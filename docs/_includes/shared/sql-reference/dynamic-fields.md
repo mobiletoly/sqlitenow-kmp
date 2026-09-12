@@ -28,14 +28,7 @@ The important pieces are:
 - `aliasPrefix` tells SQLiteNow which selected columns belong to the nested
   value.
 
-{% if include.platform == "dart" %}
-Generated Dart SELECT models expose nested properties directly:
-
-```dart
-final tasks = await db.task.selectWithNotes().asList();
-final firstNote = tasks.first.notes.isEmpty ? null : tasks.first.notes.first;
-```
-{% elsif include.platform == "kmp" %}
+{% if include.platform == "kmp" %}
 Generated KMP SELECT models expose nested properties directly:
 
 ```kotlin

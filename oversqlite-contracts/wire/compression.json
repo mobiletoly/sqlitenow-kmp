@@ -1,0 +1,36 @@
+{
+  "formatVersion": 2,
+  "thresholdDecodedBytes": 2048,
+  "bodyGenerator": {
+    "algorithm": "jcs-object-pad",
+    "description": "Encode {\"pad\": <ASCII payload>} as compact UTF-8 JSON; padLength is selected so encodedBodyBytes is exact.",
+    "incompressiblePayload": "deterministic-xorshift64star-seed-oversqlite-p0000"
+  },
+  "selectionCases": [
+    {"name":"below-threshold","encodedBodyBytes":2047,"payload":"repeat:A","selectedEncoding":"identity","applicability":"all"},
+    {"name":"at-threshold-compressible","encodedBodyBytes":2048,"payload":"repeat:A","selectedEncoding":"gzip","gzipStrictlySmaller":true,"applicability":"all"},
+    {"name":"above-threshold-compressible","encodedBodyBytes":2049,"payload":"repeat:A","selectedEncoding":"gzip","gzipStrictlySmaller":true,"applicability":"all"},
+    {"name":"at-threshold-incompressible","encodedBodyBytes":2048,"payload":"xorshift64star","selectedEncoding":"identity","gzipStrictlySmaller":false,"applicability":"all"},
+    {"name":"above-threshold-incompressible","encodedBodyBytes":4096,"payload":"xorshift64star","selectedEncoding":"identity","gzipStrictlySmaller":false,"applicability":"all"}
+  ],
+  "receiverCases": [
+    {"name":"malformed-gzip","contentEncoding":"gzip","body":"not-a-gzip-member","expectedError":"invalid_gzip","applicability":"raw_transport"},
+    {"name":"truncated-gzip","contentEncoding":"gzip","fixtureEncoding":"single-member-truncated","expectedError":"invalid_gzip","applicability":"raw_transport"},
+    {"name":"concatenated-gzip-members","contentEncoding":"gzip","fixtureEncoding":"two-members","expectedError":"invalid_gzip","applicability":"raw_transport"},
+    {"name":"unsupported-content-encoding","contentEncoding":"br","expectedError":"unsupported_content_encoding","applicability":"raw_transport"},
+    {"name":"multiple-content-encodings","contentEncoding":"gzip, identity","expectedError":"unsupported_content_encoding","applicability":"raw_transport"},
+    {"name":"encoded-overflow","contentEncoding":"gzip","encodedBytes":1048577,"encodedLimit":1048576,"expectedError":"encoded_body_too_large","applicability":"raw_transport"},
+    {"name":"decoded-overflow","contentEncoding":"gzip","decodedBytes":1048577,"decodedLimit":1048576,"expectedError":"decoded_body_too_large","applicability":"all"},
+    {"name":"fetch-server-wire-gzip","serverEncoding":"gzip","applicationVisibleBytes":"decoded-only","applicability":"fetch_server_wire"},
+    {"name":"fetch-decoded-overflow","contentEncoding":"gzip","decodedBytes":1048577,"decodedLimit":1048576,"expectedError":"decoded_body_too_large","applicability":"fetch_managed"}
+  ],
+  "workloads": [
+    {"name":"small-single-row-insert","expectedEncoding":"identity"},
+    {"name":"small-single-row-delete","expectedEncoding":"identity"},
+    {"name":"two-hundred-one-table-push","expectedCompressionWhenBeneficial":true},
+    {"name":"mixed-table-push","expectedCompressionWhenBeneficial":true},
+    {"name":"ordinary-multi-bundle-pull","expectedCompressionWhenBeneficial":true},
+    {"name":"large-snapshot-chunk","expectedCompressionWhenBeneficial":true},
+    {"name":"deterministic-incompressible-above-threshold","expectedEncoding":"identity"}
+  ]
+}

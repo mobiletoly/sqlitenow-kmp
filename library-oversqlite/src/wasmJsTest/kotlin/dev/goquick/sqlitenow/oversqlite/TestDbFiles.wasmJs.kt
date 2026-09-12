@@ -10,6 +10,8 @@ import kotlin.js.Promise
 import kotlin.random.Random
 import kotlinx.coroutines.await
 
+internal actual fun supportsDurableTestDatabaseRestart(): Boolean = true
+
 internal actual fun createTempSqliteNowTestDbPath(prefix: String): String =
     "$prefix-${Random.nextInt()}-${Random.nextInt()}.db"
 

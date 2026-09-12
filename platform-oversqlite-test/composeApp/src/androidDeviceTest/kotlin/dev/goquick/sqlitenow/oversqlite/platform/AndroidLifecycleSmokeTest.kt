@@ -19,27 +19,22 @@ class AndroidLifecycleSmokeTest {
         val http = newNoopHttpClient()
         try {
             db.execSQL("CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)")
-            val client = DefaultOversqliteClient(
-                db = db,
-                config = OversqliteConfig(
-                    schema = "main",
-                    syncTables = listOf(SyncTable("users", syncKeyColumnName = "id"))
-                ),
-                http = http,
+            val client = newCoordinatedClient(
+                db,
+                http,
+                syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
             )
-
-            client.open().getOrThrow()
             db.execSQL("INSERT INTO users(id, name) VALUES('user-1', 'Ada')")
 
-            val dirtyCount = db.prepare("SELECT COUNT(*) FROM _sync_dirty_rows").use { st ->
+            val dirtyCount = db.connection().prepare("SELECT COUNT(*) FROM _sync_dirty_rows").use { st ->
                 check(st.step())
                 st.getLong(0)
             }
-            val keyJson = db.prepare("SELECT key_json FROM _sync_dirty_rows LIMIT 1").use { st ->
+            val keyJson = db.connection().prepare("SELECT key_json FROM _sync_dirty_rows LIMIT 1").use { st ->
                 check(st.step())
                 st.getText(0)
             }
-            val unexpectedControlTableCount = db.prepare(
+            val unexpectedControlTableCount = db.connection().prepare(
                 """
                 SELECT COUNT(*)
                 FROM sqlite_master
@@ -47,9 +42,13 @@ class AndroidLifecycleSmokeTest {
                   AND name GLOB '_sync_*'
                   AND name NOT IN (
                     '_sync_apply_state',
+                    '_sync_contract_identity',
+                    '_sync_admitted_contracts',
                     '_sync_attachment_state',
                     '_sync_dirty_rows',
+                    '_sync_conflict_state',
                     '_sync_managed_tables',
+                    '_sync_opening_state',
                     '_sync_operation_state',
                     '_sync_outbox_bundle',
                     '_sync_outbox_rows',
@@ -67,6 +66,13 @@ class AndroidLifecycleSmokeTest {
             assertEquals(1L, dirtyCount)
             assertEquals("user-1", parsedKey["id"]?.jsonPrimitive?.content)
             assertEquals(0L, unexpectedControlTableCount)
+            db.connection().prepare(
+                "SELECT COUNT(*) FROM _sync_opening_state " +
+                    "WHERE singleton_key=1 AND phase='ready' AND outcome='ready' AND writes_available=1",
+            ).use { st ->
+                check(st.step())
+                assertEquals(1L, st.getLong(0))
+            }
         } finally {
             http.close()
             db.close()

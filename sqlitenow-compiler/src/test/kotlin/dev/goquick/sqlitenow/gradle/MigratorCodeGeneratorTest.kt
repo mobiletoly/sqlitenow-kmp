@@ -79,6 +79,7 @@ class MigratorCodeGeneratorTest {
                 migrationFiles = mapOf("0001.sql" to "CREATE TABLE migration_test (id INTEGER);"),
                 expectedSnippets = listOf(
                     "class VersionBasedDatabaseMigrations" to "File should contain the class declaration",
+                    "override val targetVersion: Int = 1" to "File should expose the immutable migration target",
                     "override suspend fun applyMigration" to "File should contain the applyMigration function",
                     "private suspend fun executeAllSql" to "File should contain the executeAllSql function",
                     "migrateToVersion1" to "File should contain migration function for version 1",
@@ -305,6 +306,9 @@ class MigratorCodeGeneratorTest {
                 package dev.goquick.sqlitenow.core
 
                 interface DatabaseMigrations {
+                    val targetVersion: Int?
+                        get() = null
+
                     suspend fun applyMigration(conn: SafeSQLiteConnection, currentVersion: Int): Int
                 }
             """.trimIndent()

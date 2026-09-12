@@ -5,8 +5,6 @@ permalink: /kmp/getting-started/
 ---
 
 This guide is for Kotlin Multiplatform projects using the SQLiteNow Gradle plugin.
-Flutter and pure Dart apps should start with the
-[Flutter/Dart getting-started guide]({{ site.baseurl }}/flutter/getting-started/).
 
 This page will help you set up SQLiteNow in your Kotlin Multiplatform project
 and create your first type-safe database queries.

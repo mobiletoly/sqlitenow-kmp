@@ -1,0 +1,16 @@
+{
+  "format": "client-upgrade-conformance/v1",
+  "transitions": [
+    {"id":"U0","from":"ready","to":"upgrade_started","requires":["installed_identity_exact","target_preview_exact","exclusive_writer"],"transaction":"freeze+plan+started","remote":[],"idempotent":"old-ready before commit; frozen after commit","recovery":"resume upgrade_started"},
+    {"id":"U1","from":"upgrade_started","to":"resolving_old_intent","requires":["exclusive_owner"],"transaction":"phase","remote":[],"idempotent":"same old proof/source/request","recovery":"resume old intent"},
+    {"id":"U2","from":"resolving_old_intent","to":"resolving_old_intent","requires":["dirty_empty","outbox_empty","stages_empty","receipt_resolved","old_recovery_complete"],"transaction":"drain witness","remote":["old push","old pull","old keep-source snapshot"],"idempotent":"frozen Q39 request identity","recovery":"resume from durable drain without old-generation I/O"},
+    {"id":"U3","from":"resolving_old_intent","to":"migrating_local","requires":["drain_witness","target_preview_exact"],"transaction":"pre-migration gate+phase","remote":["target capabilities"],"idempotent":"preview has no identity effect","recovery":"rerun only uncommitted migration"},
+    {"id":"U4","from":"migrating_local","to":"local_migrated","requires":["old_version","old_schema"],"transaction":"DDL+data+version+schema validation+triggers+witness","remote":[],"idempotent":"rollback old; commit target frozen","recovery":"inspect version and witness"},
+    {"id":"U5","from":"local_migrated","to":"reattach_pending","requires":["target_schema","local_only_digest"],"transaction":"clear reconstructible+reserve source+tuple","remote":[],"idempotent":"one persisted new source","recovery":"reuse tuple"},
+    {"id":"U6","from":"reattach_pending","to":"rebuild_running","requires":["exact replacement tuple"],"transaction":"snapshot descriptor+replacement receipt","remote":["target replacement snapshot create"],"idempotent":"retry exact tuple after ambiguity","recovery":"replay request"},
+    {"id":"U7","from":"rebuild_running","to":"rebuild_running","requires":["pinned proof/source/session/limits"],"transaction":"bounded verified chunk stage","remote":["target snapshot chunks","ordinary target snapshot after expiry"],"idempotent":"resume ordinal or replace expired session","recovery":"inspect stage prefix"},
+    {"id":"U8","from":"rebuild_running","to":"ready","requires":["complete descriptor","schema","freeze","integrity","local_only_digest"],"transaction":"apply+verify+checkpoint+attachment+identity+ready","remote":["best-effort snapshot delete after commit"],"idempotent":"rollback keeps stage; commit is ready","recovery":"open immutable target client"},
+    {"id":"FRESH","from":"absent","to":"ready","requires":["anonymous","empty file","target contract"],"transaction":"migration+version+validation+triggers+identity+ready","remote":[],"idempotent":"rollback empty control scaffold; commit ready","recovery":"resume migrating_local"},
+    {"id":"LOCAL_ONLY","from":"ready","to":"ready","requires":["same proof","offline allowed","exact installed version"],"transaction":"migration+version+validation+preservation+ready","remote":[],"idempotent":"sync state unchanged","recovery":"resume migrating_local"}
+  ]
+}

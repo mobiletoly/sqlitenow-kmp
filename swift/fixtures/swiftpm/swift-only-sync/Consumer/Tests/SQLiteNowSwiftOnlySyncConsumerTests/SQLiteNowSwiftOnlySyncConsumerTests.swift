@@ -5,8 +5,8 @@ import XCTest
 final class SQLiteNowSwiftOnlySyncConsumerTests: XCTestCase {
     func testGeneratedSyncDatabaseCrudUsesLocalRuntime() async throws {
         let db = SwiftOnlySyncDatabase(path: temporaryDatabaseURL())
-        try await db.open()
-        try await withAsyncCleanup({ try await db.close() }) {
+        let opening = try await openForSync(db)
+        try await withAsyncCleanup({ try await opening.close() }) {
             let emptyRows = try await db.docs.selectAll().list()
             XCTAssertEqual(emptyRows, [])
 
@@ -33,16 +33,9 @@ final class SQLiteNowSwiftOnlySyncConsumerTests: XCTestCase {
 
     func testGeneratedSyncClientOpensLocally() async throws {
         let db = SwiftOnlySyncDatabase(path: temporaryDatabaseURL())
-        try await db.open()
-        try await withAsyncCleanup({ try await db.close() }) {
-            let sync = try db.makeSyncClient(
-                baseURL: URL(string: "http://127.0.0.1:1")!,
-                auth: .bearer(token: "fixture-token")
-            )
-            try await sync.open()
-            defer {
-                sync.close()
-            }
+        let opening = try await openForSync(db)
+        try await withAsyncCleanup({ try await opening.close() }) {
+            let sync = try XCTUnwrap(opening.readyOrNil()?.client)
 
             let sourceInfo = try await sync.sourceInfo()
             XCTAssertFalse(sourceInfo.currentSourceId.isEmpty)
@@ -58,20 +51,32 @@ final class SQLiteNowSwiftOnlySyncConsumerTests: XCTestCase {
 
     func testProgressStreamEmitsIdle() async throws {
         let db = SwiftOnlySyncDatabase(path: temporaryDatabaseURL())
-        try await db.open()
-        try await withAsyncCleanup({ try await db.close() }) {
-            let sync = try db.makeSyncClient(
-                baseURL: URL(string: "http://127.0.0.1:1")!,
-                auth: .bearer(token: "fixture-token")
-            )
-            defer {
-                sync.close()
-            }
+        let opening = try await openForSync(db)
+        try await withAsyncCleanup({ try await opening.close() }) {
+            let sync = try XCTUnwrap(opening.readyOrNil()?.client)
 
             var iterator = sync.progress().makeAsyncIterator()
             let first = try await iterator.next()
             XCTAssertEqual(first, .idle)
         }
+    }
+
+    private func openForSync(
+        _ db: SwiftOnlySyncDatabase
+    ) async throws -> SQLiteNowSyncOpening<SwiftOnlySyncDatabase> {
+        let opening = try await db.openForSync(
+            baseURL: URL(string: "http://127.0.0.1:1")!,
+            auth: .bearer(token: "fixture-token"),
+            config: .init(
+                generationId: 1,
+                databaseId: "swift-sync-fixture",
+                serviceId: "nethttp-server-example"
+            )
+        )
+        let status = try await opening.advance()
+        XCTAssertEqual(status.outcome, .ready)
+        XCTAssertNotNil(opening.readyOrNil())
+        return opening
     }
 
     private func temporaryDatabaseURL() -> URL {

@@ -3,6 +3,7 @@ package dev.goquick.sqlitenow.oversqlite.realserver
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -36,22 +37,22 @@ class RealServerThreeDeviceConvergenceTest {
                 db = dbA,
                 config = config,
                 http = httpA,
-                uploadLimit = 8,
-                downloadLimit = 2,
+                maxPushRows = 8,
+                maxPullBundles = 2,
             )
             val clientB = newRealServerClient(
                 db = dbB,
                 config = config,
                 http = httpB,
-                uploadLimit = 8,
-                downloadLimit = 2,
+                maxPushRows = 8,
+                maxPullBundles = 2,
             )
             val clientC = newRealServerClient(
                 db = dbC,
                 config = config,
                 http = httpC,
-                uploadLimit = 8,
-                downloadLimit = 2,
+                maxPushRows = 8,
+                maxPullBundles = 2,
             )
 
             clientA.openAndAttach(userId).getOrThrow()
@@ -63,32 +64,33 @@ class RealServerThreeDeviceConvergenceTest {
 
             val hotGraph = insertHotGraph(dbA)
             insertRichSchemaBatch(dbA, "three-a-0")
-            clientA.pushPending().getOrThrow()
+            drainPendingRealServerPushes(clientA, dbA)
 
             clientB.pullToStable().getOrThrow()
             clientC.pullToStable().getOrThrow()
 
             mutateHotGraph(dbB, hotGraph, 1)
             insertRichSchemaBatch(dbB, "three-b-1")
-            clientB.pushPending().getOrThrow()
+            drainPendingRealServerPushes(clientB, dbB)
 
             clientC.pullToStable().getOrThrow()
             mutateHotGraph(dbC, hotGraph, 2)
             insertRichSchemaBatch(dbC, "three-c-2")
-            clientC.pushPending().getOrThrow()
+            drainPendingRealServerPushes(clientC, dbC)
 
             clientA.pullToStable().getOrThrow()
             mutateHotGraph(dbA, hotGraph, 3)
             insertRichSchemaBatch(dbA, "three-a-3")
-            clientA.pushPending().getOrThrow()
+            drainPendingRealServerPushes(clientA, dbA)
 
             clientA.pullToStable().getOrThrow()
             clientB.pullToStable().getOrThrow()
             clientC.pullToStable().getOrThrow()
 
-            assertEquals(4L, clientA.syncStatus().getOrThrow().lastBundleSeqSeen)
-            assertEquals(4L, clientB.syncStatus().getOrThrow().lastBundleSeqSeen)
-            assertEquals(4L, clientC.syncStatus().getOrThrow().lastBundleSeqSeen)
+            val finalBundleSeq = clientA.syncStatus().getOrThrow().lastBundleSeqSeen
+            assertTrue(finalBundleSeq > 4L)
+            assertEquals(finalBundleSeq, clientB.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(finalBundleSeq, clientC.syncStatus().getOrThrow().lastBundleSeqSeen)
 
             assertHotGraphDrivenCounts(dbA, rounds = 3, extraRichBatches = 1)
             assertHotGraphDrivenCounts(dbB, rounds = 3, extraRichBatches = 1)

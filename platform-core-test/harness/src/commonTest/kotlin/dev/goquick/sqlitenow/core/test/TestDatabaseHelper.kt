@@ -22,7 +22,7 @@ object TestDatabaseHelper {
     fun createDatabaseLease(debug: Boolean = true): TestDatabaseLease {
         val dbName = if (platform() == PlatformType.JS) {
             webDatabaseSequence += 1
-            "phase7-platform-core-${webDatabaseSequence}-${Random.nextInt()}.db"
+            "default_persistence-platform-core-${webDatabaseSequence}-${Random.nextInt()}.db"
         } else {
             ":memory:"
         }

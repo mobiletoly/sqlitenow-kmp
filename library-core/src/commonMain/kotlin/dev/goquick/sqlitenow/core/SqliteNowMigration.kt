@@ -116,6 +116,90 @@ private val forbiddenMigrationStatementKeywords = setOf(
     "RELEASE",
 )
 
+/** Failure raised when coordinated migration SQL would bypass opening invariants. */
+@SqliteNowInternalApi
+class SqliteNowCoordinatedMigrationException(
+    val diagnosticCode: String,
+    message: String,
+) : IllegalArgumentException(message)
+
+/**
+ * Exact SQL restrictions installed only while a coordinated migration body is running.
+ *
+ * Ordinary SQLiteNow migrations do not install this policy. Oversqlite supplies the exact
+ * coordinator-owned object names for the active opening, so application objects are never
+ * rejected merely because they share a reserved-looking prefix.
+ */
+@SqliteNowInternalApi
+class SqliteNowCoordinatedMigrationSqlPolicy(
+    forbiddenObjectNames: Set<String>,
+) {
+    private val forbiddenObjects = forbiddenObjectNames.mapTo(linkedSetOf()) { it.lowercase() }
+
+    internal fun requireAllowed(sql: String) {
+        try {
+            requireMigrationSqlAllowed(sql)
+        } catch (failure: IllegalArgumentException) {
+            throw SqliteNowCoordinatedMigrationException(
+                diagnosticCode = "coordinated_migration_lifecycle_sql_forbidden",
+                message = failure.message ?: "lifecycle SQL is forbidden during coordinated migration",
+            )
+        }
+
+        val sanitized = stripMigrationSqlCommentsAndStrings(sql)
+        for ((statementStart, statementEnd) in migrationSqlStatementRanges(sanitized)) {
+            val statement = sanitized.substring(statementStart, statementEnd)
+            val originalStatement = sql.substring(statementStart, statementEnd)
+            val keywordMatch = Regex("[A-Za-z_]+").find(statement) ?: continue
+            val keyword = keywordMatch.value.uppercase()
+            if (keyword == "ATTACH" || keyword == "DETACH") {
+                fail("coordinated_migration_attachment_sql_forbidden", "$keyword is forbidden during coordinated migration")
+            }
+            if (keyword == "PRAGMA") {
+                rejectIntegrityDisablingPragma(originalStatement, keywordMatch.range.last + 1)
+            }
+        }
+
+        val protected = migrationSqlIdentifiers(sql).firstOrNull { it.lowercase() in forbiddenObjects }
+        if (protected != null) {
+            fail(
+                "coordinated_migration_protected_object_forbidden",
+                "direct access to coordinator-owned object $protected is forbidden during coordinated migration",
+            )
+        }
+    }
+
+    private fun rejectIntegrityDisablingPragma(statement: String, startIndex: Int) {
+        val pragma = readMigrationPragma(statement, startIndex) ?: return
+        val name = pragma.name.lowercase()
+        if (pragma.hasAssignment && !pragma.valid && name in integritySensitiveMigrationPragmas) {
+            fail(
+                "coordinated_migration_integrity_pragma_forbidden",
+                "PRAGMA $name has a malformed integrity-sensitive assignment",
+            )
+        }
+        val value = pragma.value?.lowercase() ?: return
+        val booleanValue = migrationPragmaBoolean(value)
+        val disablesIntegrity = when (name) {
+            "foreign_keys" -> booleanValue != MigrationPragmaBoolean.ENABLED
+            "defer_foreign_keys", "ignore_check_constraints", "writable_schema", "trusted_schema" ->
+                booleanValue != MigrationPragmaBoolean.DISABLED
+            "journal_mode" -> value !in setOf("delete", "truncate", "persist", "wal")
+            "locking_mode" -> true
+            else -> false
+        }
+        if (disablesIntegrity) {
+            fail(
+                "coordinated_migration_integrity_pragma_forbidden",
+                "PRAGMA $name=$value may not disable integrity during coordinated migration",
+            )
+        }
+    }
+
+    private fun fail(code: String, message: String): Nothing =
+        throw SqliteNowCoordinatedMigrationException(code, message)
+}
+
 internal fun requireMigrationSqlAllowed(sql: String) {
     val sanitized = stripMigrationSqlCommentsAndStrings(sql)
     for ((statementStart, statementEnd) in migrationSqlStatementRanges(sanitized)) {
@@ -128,10 +212,10 @@ internal fun requireMigrationSqlAllowed(sql: String) {
         }
 
         if (keyword == "PRAGMA") {
-            val pragmaName = readMigrationPragmaName(
+            val pragmaName = readMigrationPragma(
                 originalStatement,
                 keywordMatch.range.last + 1,
-            )
+            )?.name
             require(!pragmaName.equals("user_version", ignoreCase = true)) {
                 "PRAGMA user_version is owned by SQLiteNow during migration"
             }
@@ -191,16 +275,85 @@ private fun migrationSqlStatementRanges(sql: String): List<Pair<Int, Int>> {
     return ranges
 }
 
-private fun readMigrationPragmaName(statement: String, startIndex: Int): String? {
-    var index = skipMigrationSqlTrivia(statement, startIndex)
+private data class MigrationPragma(
+    val name: String,
+    val value: String?,
+    val hasAssignment: Boolean,
+    val valid: Boolean,
+)
+
+private data class MigrationPragmaValue(val value: String, val endIndex: Int)
+
+private val integritySensitiveMigrationPragmas = setOf(
+    "foreign_keys",
+    "defer_foreign_keys",
+    "ignore_check_constraints",
+    "writable_schema",
+    "trusted_schema",
+    "journal_mode",
+    "locking_mode",
+)
+
+private fun readMigrationPragma(statement: String, startIndex: Int): MigrationPragma? {
+    var index = skipMigrationSqlTrivia(statement, startIndex) ?: return null
     val first = readMigrationSqlIdentifier(statement, index) ?: return null
-    index = skipMigrationSqlTrivia(statement, first.second)
-    if (statement.getOrNull(index) != '.') return first.first
-    index = skipMigrationSqlTrivia(statement, index + 1)
-    return readMigrationSqlIdentifier(statement, index)?.first
+    index = skipMigrationSqlTrivia(statement, first.second) ?: return null
+    var name = first.first
+    if (statement.getOrNull(index) == '.') {
+        index = skipMigrationSqlTrivia(statement, index + 1) ?: return null
+        val second = readMigrationSqlIdentifier(statement, index) ?: return null
+        name = second.first
+        index = skipMigrationSqlTrivia(statement, second.second) ?: return null
+    }
+    val operator = statement.getOrNull(index)
+    if (operator != '=' && operator != '(') return MigrationPragma(name, null, false, valid = true)
+    val parenthesized = operator == '('
+    if (operator == '=' && statement.getOrNull(index + 1) == '=') index += 2 else index++
+    index = skipMigrationSqlTrivia(statement, index)
+        ?: return MigrationPragma(name, null, true, valid = false)
+    val parsedValue = readMigrationPragmaValue(statement, index)
+        ?: return MigrationPragma(name, null, true, valid = false)
+    index = skipMigrationSqlTrivia(statement, parsedValue.endIndex)
+        ?: return MigrationPragma(name, parsedValue.value, true, valid = false)
+    if (parenthesized) {
+        if (statement.getOrNull(index) != ')') {
+            return MigrationPragma(name, parsedValue.value, true, valid = false)
+        }
+        index = skipMigrationSqlTrivia(statement, index + 1)
+            ?: return MigrationPragma(name, parsedValue.value, true, valid = false)
+    }
+    return MigrationPragma(name, parsedValue.value, true, valid = index == statement.length)
 }
 
-private fun skipMigrationSqlTrivia(sql: String, startIndex: Int): Int {
+private enum class MigrationPragmaBoolean { ENABLED, DISABLED, UNKNOWN }
+
+private fun migrationPragmaBoolean(value: String): MigrationPragmaBoolean {
+    val normalized = value.lowercase()
+    if (normalized in setOf("on", "true", "yes")) return MigrationPragmaBoolean.ENABLED
+    if (normalized in setOf("off", "false", "no")) return MigrationPragmaBoolean.DISABLED
+    val unsigned = normalized.removePrefix("+").removePrefix("-")
+    val hexadecimal = unsigned.startsWith("0x")
+    val digits = if (hexadecimal) unsigned.drop(2) else unsigned
+    val radix = if (hexadecimal) 16 else 10
+    if (digits.isEmpty() || digits.any { it.digitToIntOrNull(radix) == null }) {
+        return MigrationPragmaBoolean.UNKNOWN
+    }
+    return if (digits.all { it == '0' }) MigrationPragmaBoolean.DISABLED else MigrationPragmaBoolean.ENABLED
+}
+
+private fun readMigrationPragmaValue(sql: String, startIndex: Int): MigrationPragmaValue? {
+    var index = startIndex
+    if (sql.getOrNull(index) == '+' || sql.getOrNull(index) == '-') index++
+    val hexadecimal = sql.getOrNull(index) == '0' && sql.getOrNull(index + 1)?.lowercaseChar() == 'x'
+    if (hexadecimal) index += 2
+    val digitsStart = index
+    val radix = if (hexadecimal) 16 else 10
+    while (index < sql.length && sql[index].digitToIntOrNull(radix) != null) index++
+    if (index > digitsStart) return MigrationPragmaValue(sql.substring(startIndex, index), index)
+    return readMigrationSqlIdentifier(sql, startIndex)?.let { MigrationPragmaValue(it.first, it.second) }
+}
+
+private fun skipMigrationSqlTrivia(sql: String, startIndex: Int): Int? {
     var index = startIndex
     while (index < sql.length) {
         when {
@@ -211,13 +364,16 @@ private fun skipMigrationSqlTrivia(sql: String, startIndex: Int): Int {
             }
             sql[index] == '/' && sql.getOrNull(index + 1) == '*' -> {
                 index += 2
+                var terminated = false
                 while (index < sql.length) {
                     if (sql[index] == '*' && sql.getOrNull(index + 1) == '/') {
                         index += 2
+                        terminated = true
                         break
                     }
                     index++
                 }
+                if (!terminated) return null
             }
             else -> return index
         }
@@ -244,13 +400,55 @@ private fun readMigrationSqlIdentifier(sql: String, startIndex: Int): Pair<Strin
             value.append(sql[index])
             index++
         }
-        return value.toString() to index
+        return null
     }
 
     var index = startIndex
     while (index < sql.length && (sql[index].isLetterOrDigit() || sql[index] == '_')) index++
     if (index == startIndex) return null
     return sql.substring(startIndex, index) to index
+}
+
+private fun migrationSqlIdentifiers(sql: String): List<String> {
+    val identifiers = mutableListOf<String>()
+    var index = 0
+    while (index < sql.length) {
+        when {
+            sql[index] == '\'' -> {
+                index++
+                while (index < sql.length) {
+                    if (sql[index] == '\'' && sql.getOrNull(index + 1) == '\'') {
+                        index += 2
+                    } else if (sql[index] == '\'') {
+                        index++
+                        break
+                    } else {
+                        index++
+                    }
+                }
+            }
+            sql[index] == '-' && sql.getOrNull(index + 1) == '-' -> {
+                index += 2
+                while (index < sql.length && sql[index] != '\n') index++
+            }
+            sql[index] == '/' && sql.getOrNull(index + 1) == '*' -> {
+                index += 2
+                while (index < sql.length && !(sql[index] == '*' && sql.getOrNull(index + 1) == '/')) index++
+                index = (index + 2).coerceAtMost(sql.length)
+            }
+            sql[index].isLetter() || sql[index] == '_' || sql[index] in setOf('"', '`', '[') -> {
+                val identifier = readMigrationSqlIdentifier(sql, index)
+                if (identifier == null) {
+                    index++
+                } else {
+                    identifiers += identifier.first
+                    index = identifier.second
+                }
+            }
+            else -> index++
+        }
+    }
+    return identifiers
 }
 
 private fun stripMigrationSqlCommentsAndStrings(sql: String): String {

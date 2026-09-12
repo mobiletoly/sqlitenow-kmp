@@ -9,6 +9,7 @@ import dev.goquick.sqlitenow.oversqlite.realserver.RichNumericScenario
 import dev.goquick.sqlitenow.oversqlite.realserver.createProductionRealServerTables
 import dev.goquick.sqlitenow.oversqlite.realserver.productionRealServerSyncTables
 import dev.goquick.sqlitenow.oversqlite.realserver.richNumericScenarios
+import io.ktor.client.HttpClient
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.Serializable
 import java.nio.file.Path
@@ -56,11 +57,21 @@ class GeneratedRichSchemaManifestJvmTest {
             migration = VersionBasedDatabaseMigrations(),
             debug = true,
         )
+        val http = HttpClient()
+        val opening = database.openForSync(
+            config = database.buildOversqliteConfig(
+                generationId = 1L,
+                databaseId = "platform-sync",
+                serviceId = "nethttp-server-example",
+            ),
+            httpClient = http,
+        )
         try {
-            database.open()
+            opening.advance()
             assertDatabaseMatchesManifest(database.connection(), manifest)
         } finally {
-            database.close()
+            opening.close()
+            http.close()
         }
 
         val fixtureConnection = BundledSqliteConnectionProvider.openConnection(":memory:", debug = true)

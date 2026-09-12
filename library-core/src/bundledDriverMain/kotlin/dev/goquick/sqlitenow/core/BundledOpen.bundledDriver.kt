@@ -18,11 +18,19 @@ package dev.goquick.sqlitenow.core
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.sqlite.driver.bundled.SQLITE_OPEN_CREATE
+import androidx.sqlite.driver.bundled.SQLITE_OPEN_READONLY
 import androidx.sqlite.driver.bundled.SQLITE_OPEN_READWRITE
 
 internal fun openBundledSqliteDriverConnection(dbName: String): SQLiteConnection {
     return BundledSQLiteDriver().open(
         fileName = dbName,
         flags = SQLITE_OPEN_CREATE or SQLITE_OPEN_READWRITE,
+    )
+}
+
+internal fun openBundledSqliteDriverInspectionConnection(dbName: String): SQLiteConnection {
+    return BundledSQLiteDriver().open(
+        fileName = dbName,
+        flags = SQLITE_OPEN_READONLY,
     )
 }

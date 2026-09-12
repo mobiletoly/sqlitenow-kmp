@@ -15,16 +15,48 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
+import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+
 internal data class ValidatedSyncTable(
     val tableName: String,
     val syncKeyColumnName: String,
 )
 
 internal data class ValidatedConfig(
-    val schema: String,
+    val generation: SyncGeneration?,
     val tables: List<ValidatedSyncTable>,
     val pkByTable: Map<String, String>,
     val keyByTable: Map<String, List<String>>,
     val tableOrder: Map<String, Int>,
     val tableInfoByName: Map<String, TableInfo>,
-)
+) {
+    val replaySql = ReplaySchemaSql(tables, tableInfoByName, pkByTable)
+
+    fun schemaForTable(table: String): String {
+        require(tables.any { it.tableName == table }) { "table $table is not managed" }
+        return generation?.tables?.single { it.table == table }?.schema ?: unconfirmedLocalSchema
+    }
+
+    fun withGeneration(accepted: SyncGeneration?): ValidatedConfig {
+        if (accepted == null) return this
+        accepted.requireMatchingLocalSchema(tableInfoByName, keyByTable)
+        val mapped = accepted.tables.associate { table ->
+            val physical = tableInfoByName.getValue(table.table)
+            table.table to physical.copy(columns = physical.columns.map { column ->
+                column.copy(wireType = table.columns.single { it.name == column.name }.wireType)
+            })
+        }
+        return copy(generation = accepted, tableInfoByName = mapped)
+    }
+
+    suspend fun contractIdentity(config: OversqliteConfig, db: SafeSQLiteConnection): LocalContractIdentity {
+        val localVersion = db.scalarLong("PRAGMA user_version")
+        require(localVersion >= 0L) { "PRAGMA user_version must be nonnegative" }
+        return LocalContractIdentity(
+            config.databaseId, config.serviceId, config.generationId, localVersion,
+            managedPhysicalShape(tableInfoByName, keyByTable),
+        )
+    }
+}
+
+internal const val unconfirmedLocalSchema = "local"

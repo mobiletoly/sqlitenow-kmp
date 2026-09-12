@@ -34,8 +34,8 @@ code, and wire platform SQLite drivers.
 
 ## SQL Reference
 
-Reference topics use the same SQL concepts as Flutter/Dart docs, but render KMP
-paths, generated Kotlin APIs, and Gradle plugin examples.
+Reference topics render KMP paths, generated Kotlin APIs, and Gradle plugin
+examples.
 
 [SQL reference]({{ site.baseurl }}/kmp/sql-reference/)
 

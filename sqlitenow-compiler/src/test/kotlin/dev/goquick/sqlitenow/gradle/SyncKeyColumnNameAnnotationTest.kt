@@ -7,6 +7,7 @@ import org.junit.jupiter.api.TestFactory
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SyncKeyColumnNameAnnotationTest {
@@ -67,17 +68,23 @@ class SyncKeyColumnNameAnnotationTest {
             "Should generate buildOversqliteConfig function"
         )
         assertTrue(
-            generatedContent.contains("OversqliteConfig(schema = schema, syncTables = syncTables"),
-            "buildOversqliteConfig should use syncTables parameter"
+            generatedContent.contains("OversqliteConfig(generationId = generationId, databaseId = databaseId, serviceId = serviceId, syncTables = Companion.syncTables"),
+            "buildOversqliteConfig should bind the generated syncTables metadata"
+        )
+        val configFactory = generatedContent
+            .substringAfter("fun buildOversqliteConfig")
+            .substringBefore("fun buildOversqliteAutomaticDownloadConfig")
+        assertFalse(
+            configFactory.contains("syncTables:"),
+            "buildOversqliteConfig must derive generated tables rather than accept syncTables",
         )
         listOf(
-            "snapshot chunk row default" to "snapshotChunkRows: Int = 1000",
-            "snapshot chunk byte default" to "snapshotChunkBytes: Long = 4L * 1024L * 1024L",
+            "transfer targets default" to "transferTargets: OversqliteTransferTargets = OversqliteTransferTargets()",
             "snapshot apply row default" to "snapshotApplyBatchRows: Int = 256",
             "snapshot apply byte default" to "snapshotApplyBatchBytes: Long = 4L * 1024L * 1024L",
             "transient retry default" to "transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy()",
             "capacity retry default" to "snapshotCapacityRetryPolicy: OversqliteSnapshotCapacityRetryPolicy = OversqliteSnapshotCapacityRetryPolicy()",
-            "explicit snapshot forwarding" to "snapshotChunkRows = snapshotChunkRows",
+            "explicit transfer target forwarding" to "transferTargets = transferTargets",
             "explicit transient forwarding" to "transientRetryPolicy = transientRetryPolicy",
             "explicit capacity forwarding" to "snapshotCapacityRetryPolicy = snapshotCapacityRetryPolicy",
         ).forEach { (scenario, expected) ->
@@ -95,15 +102,35 @@ class SyncKeyColumnNameAnnotationTest {
             generatedContent.contains("OversqliteAutomaticDownloadConfig("),
             "Automatic download helper should build OversqliteAutomaticDownloadConfig"
         )
+        assertTrue(generatedContent.contains("generationId: Long"))
+        assertTrue(generatedContent.contains("databaseId: String"))
+        assertTrue(generatedContent.contains("serviceId: String"))
+        assertTrue(!generatedContent.contains("schema: String"))
         assertTrue(
             generatedContent.contains("fun newOversqliteClient("),
             "Should generate newOversqliteClient helper for sync-enabled databases"
         )
         assertTrue(
             generatedContent.contains(
-                "return DefaultOversqliteClient(db = this.connection(), config = cfg, http = httpClient, resolver = resolver)"
+                "suspend fun openForSync("
             ),
-            "Generated oversqlite helper should bind directly to the database connection without callback glue"
+            "Generated sync databases should expose coordinated opening before target DDL"
+        )
+        assertTrue(
+            generatedContent.contains("openSqliteNowDatabaseForSync(database = this"),
+            "Generated coordinated opening should delegate to the shared runtime implementation"
+        )
+        assertTrue(
+            generatedContent.contains("check(frozenConfig.syncTables == Companion.syncTables)"),
+            "Generated coordinated opening should reject table/key metadata mismatches before reservation"
+        )
+        assertTrue(
+            generatedContent.contains("return checkNotNull(_oversqliteOpening?.readyOrNull())"),
+            "Generated factory name should be a guarded accessor for the published ready client"
+        )
+        assertTrue(
+            !generatedContent.contains("return DefaultOversqliteClient(db = this.connection()"),
+            "Generated code must not construct a second client after coordinated opening"
         )
         assertTrue(
             !generatedContent.contains("tablesUpdateListener"),

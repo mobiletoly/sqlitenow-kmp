@@ -1,0 +1,3530 @@
+{
+  "schema_version": 3,
+  "default_timeout_seconds": 1800,
+  "repositories": [
+    {
+      "id": "sqlite-now",
+      "path": "sqlitenow-kmp",
+      "read_only": false,
+      "roles": [
+        "planning",
+        "execution"
+      ]
+    },
+    {
+      "id": "go-oversync",
+      "path": "go-oversync",
+      "read_only": true,
+      "roles": [
+        "planning",
+        "existing-command-execution"
+      ]
+    }
+  ],
+  "toolchains": [
+    {
+      "id": "python",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "python3",
+        "--version"
+      ]
+    },
+    {
+      "id": "gradle-java",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "--version",
+        "--no-daemon"
+      ]
+    },
+    {
+      "id": "swift",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "swift",
+        "--version"
+      ]
+    },
+    {
+      "id": "go",
+      "repository": "go-oversync",
+      "cwd": ".",
+      "argv": [
+        "go",
+        "version"
+      ]
+    }
+  ],
+  "lanes": [
+    {
+      "id": "planner-infrastructure",
+      "description": "qualification planner and repository hygiene infrastructure tests",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "python3",
+        "tools/validate_qualification_infrastructure.py"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "PYTHONPATH"
+      ],
+      "environment": {},
+      "toolchains": [
+        "python"
+      ],
+      "classification": "infrastructure",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "tools/qualification/**",
+        "tools/check_repository_hygiene.py",
+        "tools/repository-hygiene-exceptions.json",
+        "tools/tests/**",
+        "tools/validate_qualification_infrastructure.py"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "timeout_seconds": 300,
+      "environment_class": "infrastructure",
+      "resource_locks": [
+        "infrastructure"
+      ],
+      "scheduling_class": "host",
+      "memory_class": "light",
+      "campaign_eligible": true
+    },
+    {
+      "id": "compiler",
+      "description": "SQLiteNow compiler unit and generation tests",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        ":sqlitenow-compiler:test",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "sqlitenow-compiler/**",
+        "gradle/libs.versions.toml",
+        "settings.gradle.kts"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "host",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "gradle-plugin",
+      "description": "Gradle plugin integration and TestKit tests",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        ":sqlitenow-gradle-plugin:test",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "sqlitenow-gradle-plugin/**",
+        "gradle/libs.versions.toml",
+        "settings.gradle.kts"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "host",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "core-jvm",
+      "description": "Direct Core JVM tests",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        ":library-core:jvmTest",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "library-core/**",
+        "gradle/libs.versions.toml"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "host",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "core-platform-jvm",
+      "description": "Generated Core JVM platform harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "corePlatformJvm",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "platform-core-test/**",
+        "library-core/**",
+        "sqlitenow-compiler/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "host",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "core-platform-android",
+      "description": "Generated Core Android device platform harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "corePlatformAndroid",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "platform-core-test/**",
+        "library-core/**",
+        "sqlitenow-compiler/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "android",
+      "resource_locks": [
+        "android-control",
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "core-platform-ios-simulator",
+      "description": "Generated Core iOS simulator platform harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "corePlatformIosSimulatorArm64",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "platform-core-test/**",
+        "library-core/**",
+        "sqlitenow-compiler/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "apple-swift",
+      "resource_locks": [
+        "gradle-build",
+        "ios-control"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "core-platform-macos",
+      "description": "Generated Core macOS platform harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "corePlatformMacosArm64",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "platform-core-test/**",
+        "library-core/**",
+        "sqlitenow-compiler/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "apple-swift",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "core-platform-linux-x64",
+      "description": "Generated Core Linux x64 platform harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "corePlatformLinuxX64",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "platform-core-test/**",
+        "library-core/**",
+        "sqlitenow-compiler/**",
+        "scripts/test-linux-arm64-on-mac.sh"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "host",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "core-platform-linux-arm64",
+      "description": "Generated Core Linux arm64 platform harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "corePlatformLinuxArm64",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "platform-core-test/**",
+        "library-core/**",
+        "sqlitenow-compiler/**",
+        "scripts/test-linux-arm64-on-mac.sh"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "host",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "core-platform-js-node",
+      "description": "Generated Core JS Node platform harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "corePlatformJsNode",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "platform-core-test/**",
+        "library-core/**",
+        "sqlitenow-compiler/**",
+        "package.json",
+        "package-lock.json"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "web",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "core-platform-wasm-browser",
+      "description": "Generated Core Wasm browser platform harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "corePlatformWasmBrowser",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "platform-core-test/**",
+        "library-core/**",
+        "sqlitenow-compiler/**",
+        "package.json",
+        "package-lock.json"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "web",
+      "resource_locks": [
+        "browser-profile",
+        "gradle-build",
+        "high-memory"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "core-platform-all",
+      "description": "All configured generated Core platform harnesses",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "corePlatformAll",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "platform-core-test/**",
+        "library-core/**",
+        "sqlitenow-compiler/**",
+        "package.json",
+        "package-lock.json"
+      ],
+      "depends_on": [],
+      "subsumes": [
+        "core-platform-jvm",
+        "core-platform-android",
+        "core-platform-ios-simulator",
+        "core-platform-macos",
+        "core-platform-linux-x64",
+        "core-platform-linux-arm64",
+        "core-platform-js-node",
+        "core-platform-wasm-browser"
+      ],
+      "environment_class": "host",
+      "resource_locks": [
+        "android-control",
+        "browser-profile",
+        "gradle-build",
+        "high-memory",
+        "ios-control"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-comprehensive",
+      "description": "Host-side Oversqlite comprehensive suite",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqliteComprehensive",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "library-oversqlite/**",
+        "library-core/**",
+        "oversqlite-contracts/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "host",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "cross-repo-conformance",
+      "description": "SQLiteNow checks against Go-owned Swagger",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqliteCrossRepoConformance",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "GRADLE_USER_HOME",
+        "GOTOOLCHAIN"
+      ],
+      "environment": {
+        "GOTOOLCHAIN": "go1.25.12"
+      },
+      "toolchains": [
+        "gradle-java",
+        "go"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "library-oversqlite/**",
+        "oversqlite-contracts/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "host",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-platform-jvm",
+      "description": "Oversqlite JVM platform harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqlitePlatformJvm",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "platform-oversqlite-test/**",
+        "library-oversqlite/**",
+        "library-core/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "host",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-platform-android",
+      "description": "Oversqlite Android platform harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqlitePlatformAndroid",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "platform-oversqlite-test/**",
+        "library-oversqlite/**",
+        "library-core/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "android",
+      "resource_locks": [
+        "android-control",
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-platform-ios-simulator",
+      "description": "Oversqlite iOS simulator platform harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqlitePlatformIosSimulatorArm64",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "platform-oversqlite-test/**",
+        "library-oversqlite/**",
+        "library-core/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "apple-swift",
+      "resource_locks": [
+        "gradle-build",
+        "ios-control"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-platform-macos",
+      "description": "Oversqlite macOS platform harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqlitePlatformMacosArm64",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "platform-oversqlite-test/**",
+        "library-oversqlite/**",
+        "library-core/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "apple-swift",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-platform-js-node",
+      "description": "Oversqlite JS Node platform harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqlitePlatformJsNode",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "platform-oversqlite-test/**",
+        "library-oversqlite/**",
+        "library-core/**",
+        "package.json",
+        "package-lock.json"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "web",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-platform-js-browser",
+      "description": "Oversqlite JS browser platform harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqlitePlatformJsBrowser",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "platform-oversqlite-test/**",
+        "library-oversqlite/**",
+        "library-core/**",
+        "package.json",
+        "package-lock.json"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "web",
+      "resource_locks": [
+        "browser-profile",
+        "gradle-build",
+        "high-memory"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-platform-wasm-browser",
+      "description": "Oversqlite Wasm browser platform harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqlitePlatformWasmBrowser",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "platform-oversqlite-test/**",
+        "library-oversqlite/**",
+        "library-core/**",
+        "package.json",
+        "package-lock.json"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "web",
+      "resource_locks": [
+        "browser-profile",
+        "gradle-build",
+        "high-memory"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-platform-all",
+      "description": "All configured Oversqlite platform harnesses",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqlitePlatformAll",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "platform-oversqlite-test/**",
+        "library-oversqlite/**",
+        "library-core/**",
+        "package.json",
+        "package-lock.json"
+      ],
+      "depends_on": [],
+      "subsumes": [
+        "oversqlite-platform-jvm",
+        "oversqlite-platform-android",
+        "oversqlite-platform-ios-simulator",
+        "oversqlite-platform-macos",
+        "oversqlite-platform-js-node",
+        "oversqlite-platform-js-browser",
+        "oversqlite-platform-wasm-browser"
+      ],
+      "environment_class": "host",
+      "resource_locks": [
+        "android-control",
+        "browser-profile",
+        "gradle-build",
+        "high-memory",
+        "ios-control"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "worker-publication",
+      "description": "SQLite worker publication asset verification",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        ":library-core:verifySqliteWorkerPublicationAssets",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "library-core/src/webMain/**",
+        "library-core/src/webTest/**",
+        "package.json",
+        "package-lock.json"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "host",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "worker-js-node",
+      "description": "Direct Core JS Node runtime checks",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        ":library-core:jsNodeTest",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "library-core/src/webMain/**",
+        "library-core/src/webTest/**",
+        "package.json",
+        "package-lock.json"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "web",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "worker-js-browser",
+      "description": "Direct Core JS browser runtime checks",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        ":library-core:jsBrowserTest",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "library-core/src/webMain/**",
+        "library-core/src/webTest/**",
+        "package.json",
+        "package-lock.json"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "web",
+      "resource_locks": [
+        "browser-profile",
+        "gradle-build",
+        "high-memory"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "worker-wasm-browser",
+      "description": "Direct Core Wasm browser runtime checks",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        ":library-core:wasmJsBrowserTest",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "library-core/src/webMain/**",
+        "library-core/src/webTest/**",
+        "package.json",
+        "package-lock.json"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "web",
+      "resource_locks": [
+        "browser-profile",
+        "gradle-build",
+        "high-memory"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "swift-sample-core",
+      "description": "Swift Core sample support gate",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "sampleSwiftSupportGate",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "swift/**",
+        "sqlitenow-compiler/**",
+        "library-core/**",
+        "library-oversqlite/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "apple-swift",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "swift-sample-sync",
+      "description": "Swift Sync sample support gate",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "sampleSyncSwiftSupportGate",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "swift/**",
+        "sqlitenow-compiler/**",
+        "library-core/**",
+        "library-oversqlite/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "apple-swift",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "swift-static-typecheck",
+      "description": "Swift static support Swift 6 typecheck",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "swiftStaticSupportSwift6Typecheck",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "swift/**",
+        "sqlitenow-compiler/**",
+        "library-core/**",
+        "library-oversqlite/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "apple-swift",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "swift-runtime-core",
+      "description": "Direct Swift Core runtime tests",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        ":swift:runtime:core:swiftTest",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "swift/**",
+        "sqlitenow-compiler/**",
+        "library-core/**",
+        "library-oversqlite/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "apple-swift",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "swift-runtime-sync",
+      "description": "Direct Swift Sync runtime tests",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        ":swift:runtime:sync:swiftTest",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "swift/**",
+        "sqlitenow-compiler/**",
+        "library-core/**",
+        "library-oversqlite/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "apple-swift",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "swift-generated-core",
+      "description": "Generated Swift Core package tests",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        ":swift:fixtures:package:core:swiftTest",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "swift/**",
+        "sqlitenow-compiler/**",
+        "library-core/**",
+        "library-oversqlite/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "apple-swift",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "swift-generated-sync",
+      "description": "Generated Swift Sync package tests",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        ":swift:fixtures:package:sync:swiftTest",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "swift/**",
+        "sqlitenow-compiler/**",
+        "library-core/**",
+        "library-oversqlite/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "apple-swift",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "swift-native-sync",
+      "description": "Swift Sync macOS Kotlin runtime tests",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        ":swift:runtime:sync:macosArm64Test",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "swift/**",
+        "sqlitenow-compiler/**",
+        "library-core/**",
+        "library-oversqlite/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "apple-swift",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "swift-static-sync",
+      "description": "Swift static Sync support tests",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "swiftStaticSyncSupportTest",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "swift/**",
+        "sqlitenow-compiler/**",
+        "library-core/**",
+        "library-oversqlite/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "apple-swift",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "swift-hybrid",
+      "description": "Direct, generated, static, and consumer Swift support gate",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "swiftHybridSupportGate",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "swift/**",
+        "sqlitenow-compiler/**",
+        "library-core/**",
+        "library-oversqlite/**"
+      ],
+      "depends_on": [],
+      "subsumes": [
+        "swift-sample-core",
+        "swift-sample-sync",
+        "swift-static-typecheck",
+        "swift-runtime-core",
+        "swift-runtime-sync",
+        "swift-generated-core",
+        "swift-generated-sync",
+        "swift-native-sync",
+        "swift-static-sync",
+        "core-jvm",
+        "oversqlite-comprehensive"
+      ],
+      "environment_class": "apple-swift",
+      "resource_locks": [
+        "gradle-build"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "swift-generated-realserver",
+      "description": "Generated Swift Sync package real-server smoke",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        ":swift:fixtures:package:sync:swiftRealserverSmoke",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME",
+        "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": false,
+      "static_inputs": [
+        "swift/**",
+        "sqlitenow-compiler/**",
+        "library-core/**",
+        "library-oversqlite/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "live-authority",
+      "resource_locks": [
+        "gradle-build",
+        "live-authority"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "swift-realserver",
+      "description": "Swift hybrid gate with generated real-server smoke",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "swiftHybridSupportRealserverGate",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME",
+        "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": false,
+      "static_inputs": [
+        "swift/**",
+        "sqlitenow-compiler/**",
+        "library-core/**",
+        "library-oversqlite/**"
+      ],
+      "depends_on": [],
+      "subsumes": [
+        "swift-hybrid",
+        "swift-generated-realserver"
+      ],
+      "environment_class": "live-authority",
+      "resource_locks": [
+        "gradle-build",
+        "live-authority"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-realserver-jvm",
+      "description": "KMP shared JVM real-server suite",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqliteRealserverJvm",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME",
+        "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL",
+        "OVERSQLITE_ANDROID_REAL_SERVER_SMOKE_BASE_URL"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": false,
+      "static_inputs": [
+        "library-oversqlite/**",
+        "platform-oversqlite-test/**",
+        "build.gradle.kts"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "live-authority",
+      "resource_locks": [
+        "gradle-build",
+        "live-authority"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-realserver-android",
+      "description": "KMP Android real-server runtime harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqliteRealserverAndroid",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME",
+        "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL",
+        "OVERSQLITE_ANDROID_REAL_SERVER_SMOKE_BASE_URL"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": false,
+      "static_inputs": [
+        "library-oversqlite/**",
+        "platform-oversqlite-test/**",
+        "build.gradle.kts"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "live-authority",
+      "resource_locks": [
+        "android-control",
+        "gradle-build",
+        "live-authority"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-realserver-jvm-harness",
+      "description": "KMP JVM real-server runtime harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqliteRealserverJvmHarness",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME",
+        "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL",
+        "OVERSQLITE_ANDROID_REAL_SERVER_SMOKE_BASE_URL"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": false,
+      "static_inputs": [
+        "library-oversqlite/**",
+        "platform-oversqlite-test/**",
+        "build.gradle.kts"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "live-authority",
+      "resource_locks": [
+        "gradle-build",
+        "live-authority"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-realserver-ios-simulator",
+      "description": "KMP iOS simulator real-server runtime harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqliteRealserverIosSimulatorArm64",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME",
+        "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL",
+        "OVERSQLITE_ANDROID_REAL_SERVER_SMOKE_BASE_URL"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": false,
+      "static_inputs": [
+        "library-oversqlite/**",
+        "platform-oversqlite-test/**",
+        "build.gradle.kts"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "live-authority",
+      "resource_locks": [
+        "gradle-build",
+        "ios-control",
+        "live-authority"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-realserver-macos",
+      "description": "KMP macOS real-server runtime harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqliteRealserverMacosArm64",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME",
+        "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL",
+        "OVERSQLITE_ANDROID_REAL_SERVER_SMOKE_BASE_URL"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": false,
+      "static_inputs": [
+        "library-oversqlite/**",
+        "platform-oversqlite-test/**",
+        "build.gradle.kts"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "live-authority",
+      "resource_locks": [
+        "gradle-build",
+        "live-authority"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-realserver-js-node",
+      "description": "KMP JS Node real-server runtime harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqliteRealserverJsNode",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME",
+        "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL",
+        "OVERSQLITE_ANDROID_REAL_SERVER_SMOKE_BASE_URL"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": false,
+      "static_inputs": [
+        "library-oversqlite/**",
+        "platform-oversqlite-test/**",
+        "build.gradle.kts"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "live-authority",
+      "resource_locks": [
+        "gradle-build",
+        "live-authority"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-realserver-js-browser",
+      "description": "KMP JS browser real-server runtime harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqliteRealserverJsBrowser",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME",
+        "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL",
+        "OVERSQLITE_ANDROID_REAL_SERVER_SMOKE_BASE_URL"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": false,
+      "static_inputs": [
+        "library-oversqlite/**",
+        "platform-oversqlite-test/**",
+        "build.gradle.kts"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "live-authority",
+      "resource_locks": [
+        "browser-profile",
+        "gradle-build",
+        "high-memory",
+        "live-authority"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-realserver-wasm-browser",
+      "description": "KMP Wasm browser real-server runtime harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqliteRealserverWasmBrowser",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME",
+        "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL",
+        "OVERSQLITE_ANDROID_REAL_SERVER_SMOKE_BASE_URL"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": false,
+      "static_inputs": [
+        "library-oversqlite/**",
+        "platform-oversqlite-test/**",
+        "build.gradle.kts"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "live-authority",
+      "resource_locks": [
+        "browser-profile",
+        "gradle-build",
+        "high-memory",
+        "live-authority"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-realserver-all",
+      "description": "All ordinary KMP Oversqlite real-server runtime surfaces",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqliteRealserverAll",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME",
+        "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL",
+        "OVERSQLITE_ANDROID_REAL_SERVER_SMOKE_BASE_URL"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": false,
+      "static_inputs": [
+        "library-oversqlite/**",
+        "platform-oversqlite-test/**",
+        "build.gradle.kts"
+      ],
+      "depends_on": [],
+      "subsumes": [
+        "oversqlite-realserver-jvm",
+        "oversqlite-realserver-android",
+        "oversqlite-realserver-jvm-harness",
+        "oversqlite-realserver-ios-simulator",
+        "oversqlite-realserver-macos",
+        "oversqlite-realserver-js-node",
+        "oversqlite-realserver-js-browser",
+        "oversqlite-realserver-wasm-browser"
+      ],
+      "environment_class": "live-authority",
+      "resource_locks": [
+        "android-control",
+        "browser-profile",
+        "gradle-build",
+        "high-memory",
+        "ios-control",
+        "live-authority"
+      ],
+      "scheduling_class": "gradle",
+      "memory_class": "normal",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-realserver-jvm-heavy",
+      "description": "KMP JVM heavy real-server scenario",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqliteRealserverJvmHeavy",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME",
+        "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL",
+        "OVERSQLITE_ANDROID_REAL_SERVER_SMOKE_BASE_URL"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": true,
+      "static_inputs": [
+        "library-oversqlite/**",
+        "platform-oversqlite-test/**",
+        "build.gradle.kts"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "resource-or-heavy",
+      "resource_locks": [
+        "live-authority",
+        "measurement-exclusive"
+      ],
+      "scheduling_class": "measurement",
+      "memory_class": "measurement-exclusive",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-realserver-android-heavy",
+      "description": "KMP Android heavy real-server runtime harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqliteRealserverAndroidHeavy",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME",
+        "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL",
+        "OVERSQLITE_ANDROID_REAL_SERVER_SMOKE_BASE_URL"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": true,
+      "static_inputs": [
+        "library-oversqlite/**",
+        "platform-oversqlite-test/**",
+        "build.gradle.kts"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "resource-or-heavy",
+      "resource_locks": [
+        "android-control",
+        "live-authority",
+        "measurement-exclusive"
+      ],
+      "scheduling_class": "measurement",
+      "memory_class": "measurement-exclusive",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-realserver-jvm-harness-heavy",
+      "description": "KMP JVM heavy real-server runtime harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqliteRealserverJvmHarnessHeavy",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME",
+        "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL",
+        "OVERSQLITE_ANDROID_REAL_SERVER_SMOKE_BASE_URL"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": true,
+      "static_inputs": [
+        "library-oversqlite/**",
+        "platform-oversqlite-test/**",
+        "build.gradle.kts"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "resource-or-heavy",
+      "resource_locks": [
+        "live-authority",
+        "measurement-exclusive"
+      ],
+      "scheduling_class": "measurement",
+      "memory_class": "measurement-exclusive",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-realserver-ios-simulator-heavy",
+      "description": "KMP iOS simulator heavy real-server runtime harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqliteRealserverIosSimulatorArm64Heavy",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME",
+        "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL",
+        "OVERSQLITE_ANDROID_REAL_SERVER_SMOKE_BASE_URL"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": true,
+      "static_inputs": [
+        "library-oversqlite/**",
+        "platform-oversqlite-test/**",
+        "build.gradle.kts"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "resource-or-heavy",
+      "resource_locks": [
+        "ios-control",
+        "live-authority",
+        "measurement-exclusive"
+      ],
+      "scheduling_class": "measurement",
+      "memory_class": "measurement-exclusive",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-realserver-macos-heavy",
+      "description": "KMP macOS heavy real-server runtime harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqliteRealserverMacosArm64Heavy",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME",
+        "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL",
+        "OVERSQLITE_ANDROID_REAL_SERVER_SMOKE_BASE_URL"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": true,
+      "static_inputs": [
+        "library-oversqlite/**",
+        "platform-oversqlite-test/**",
+        "build.gradle.kts"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "resource-or-heavy",
+      "resource_locks": [
+        "live-authority",
+        "measurement-exclusive"
+      ],
+      "scheduling_class": "measurement",
+      "memory_class": "measurement-exclusive",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-realserver-js-node-heavy",
+      "description": "KMP JS Node heavy real-server runtime harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqliteRealserverJsNodeHeavy",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME",
+        "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL",
+        "OVERSQLITE_ANDROID_REAL_SERVER_SMOKE_BASE_URL"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": true,
+      "static_inputs": [
+        "library-oversqlite/**",
+        "platform-oversqlite-test/**",
+        "build.gradle.kts"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "resource-or-heavy",
+      "resource_locks": [
+        "live-authority",
+        "measurement-exclusive"
+      ],
+      "scheduling_class": "measurement",
+      "memory_class": "measurement-exclusive",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-realserver-wasm-browser-heavy",
+      "description": "KMP Wasm browser heavy real-server runtime harness",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqliteRealserverWasmBrowserHeavy",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME",
+        "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL",
+        "OVERSQLITE_ANDROID_REAL_SERVER_SMOKE_BASE_URL"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": true,
+      "static_inputs": [
+        "library-oversqlite/**",
+        "platform-oversqlite-test/**",
+        "build.gradle.kts"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "resource-or-heavy",
+      "resource_locks": [
+        "browser-profile",
+        "high-memory",
+        "live-authority",
+        "measurement-exclusive"
+      ],
+      "scheduling_class": "measurement",
+      "memory_class": "measurement-exclusive",
+      "campaign_eligible": true
+    },
+    {
+      "id": "oversqlite-realserver-all-heavy",
+      "description": "All heavy KMP Oversqlite real-server runtime surfaces",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        "oversqliteRealserverAllHeavy",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "DEVELOPER_DIR",
+        "GRADLE_USER_HOME",
+        "OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL",
+        "OVERSQLITE_ANDROID_REAL_SERVER_SMOKE_BASE_URL"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java",
+        "swift"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": true,
+      "static_inputs": [
+        "library-oversqlite/**",
+        "platform-oversqlite-test/**",
+        "build.gradle.kts"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "resource-or-heavy",
+      "resource_locks": [
+        "live-authority",
+        "measurement-exclusive"
+      ],
+      "scheduling_class": "measurement",
+      "memory_class": "measurement-exclusive",
+      "campaign_eligible": true
+    },
+    {
+      "id": "kmp-resource",
+      "description": "KMP closure resource matrix",
+      "repository": "sqlite-now",
+      "cwd": ".",
+      "argv": [
+        "./gradlew",
+        ":library-oversqlite:oversqliteSnapshotMemoryJvmLocalHeavy",
+        "--no-daemon"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "JAVA_HOME",
+        "GRADLE_USER_HOME"
+      ],
+      "environment": {},
+      "toolchains": [
+        "gradle-java"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": true,
+      "static_inputs": [
+        "library-oversqlite/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "resource-or-heavy",
+      "resource_locks": [
+        "measurement-exclusive"
+      ],
+      "scheduling_class": "measurement",
+      "memory_class": "measurement-exclusive",
+      "campaign_eligible": true
+    },
+    {
+      "id": "go-fast",
+      "description": "Focused Go schema, catalog, and layout lane",
+      "repository": "go-oversync",
+      "cwd": ".",
+      "argv": [
+        "scripts/test-lane.sh",
+        "fast"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "GOTOOLCHAIN"
+      ],
+      "environment": {
+        "GOTOOLCHAIN": "go1.25.12"
+      },
+      "toolchains": [
+        "go"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "oversync/**",
+        "go.mod",
+        "go.sum",
+        "scripts/test-lane.sh"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "host",
+      "resource_locks": [
+        "repository-identity"
+      ],
+      "scheduling_class": "go",
+      "memory_class": "normal",
+      "campaign_eligible": false
+    },
+    {
+      "id": "go-package",
+      "description": "Go Oversync and Oversqlite package lane",
+      "repository": "go-oversync",
+      "cwd": ".",
+      "argv": [
+        "scripts/test-lane.sh",
+        "package"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "GOTOOLCHAIN"
+      ],
+      "environment": {
+        "GOTOOLCHAIN": "go1.25.12"
+      },
+      "toolchains": [
+        "go"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "oversync/**",
+        "oversqlite/**",
+        "go.mod",
+        "go.sum",
+        "scripts/test-lane.sh"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "host",
+      "resource_locks": [
+        "repository-identity"
+      ],
+      "scheduling_class": "go",
+      "memory_class": "normal",
+      "campaign_eligible": false
+    },
+    {
+      "id": "go-full",
+      "description": "Go root-module full test lane",
+      "repository": "go-oversync",
+      "cwd": ".",
+      "argv": [
+        "scripts/test-lane.sh",
+        "full"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "GOTOOLCHAIN",
+        "TEST_DATABASE_URL",
+        "OVERSYNC_TEST_ISOLATE_DATABASES"
+      ],
+      "environment": {
+        "GOTOOLCHAIN": "go1.25.12"
+      },
+      "toolchains": [
+        "go"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": false,
+      "static_inputs": [
+        "**/*.go",
+        "go.mod",
+        "go.sum",
+        "scripts/**",
+        "conformance/**",
+        "integration/schema_evolution/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "live-authority",
+      "resource_locks": [
+        "repository-identity",
+        "live-authority",
+        "shared-output"
+      ],
+      "scheduling_class": "live",
+      "memory_class": "normal",
+      "campaign_eligible": false
+    },
+    {
+      "id": "go-audit",
+      "description": "Go opt-in audit-tag lane",
+      "repository": "go-oversync",
+      "cwd": ".",
+      "argv": [
+        "scripts/test-lane.sh",
+        "audit"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "GOTOOLCHAIN",
+        "TEST_DATABASE_URL"
+      ],
+      "environment": {
+        "GOTOOLCHAIN": "go1.25.12"
+      },
+      "toolchains": [
+        "go"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": true,
+      "static_inputs": [
+        "oversync/**",
+        "go.mod",
+        "go.sum",
+        "scripts/test-lane.sh"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "resource-or-heavy",
+      "resource_locks": [
+        "repository-identity",
+        "measurement-exclusive",
+        "shared-output"
+      ],
+      "scheduling_class": "measurement",
+      "memory_class": "measurement-exclusive",
+      "campaign_eligible": false
+    },
+    {
+      "id": "go-mobile",
+      "description": "Nested Go mobile-flow module lane",
+      "repository": "go-oversync",
+      "cwd": ".",
+      "argv": [
+        "scripts/test-lane.sh",
+        "mobile"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "GOTOOLCHAIN",
+        "TEST_DATABASE_URL"
+      ],
+      "environment": {
+        "GOTOOLCHAIN": "go1.25.12"
+      },
+      "toolchains": [
+        "go"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": false,
+      "static_inputs": [
+        "integration/mobile_flow/**",
+        "scripts/test-lane.sh"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "live-authority",
+      "resource_locks": [
+        "repository-identity",
+        "live-authority",
+        "shared-output"
+      ],
+      "scheduling_class": "live",
+      "memory_class": "normal",
+      "campaign_eligible": false
+    },
+    {
+      "id": "go-coexistence",
+      "description": "Go PostgreSQL 16/17 mixed-schema coexistence matrix",
+      "repository": "go-oversync",
+      "cwd": ".",
+      "argv": [
+        "scripts/test-lane.sh",
+        "coexistence"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "GOTOOLCHAIN",
+        "TEST_DATABASE_URL"
+      ],
+      "environment": {
+        "GOTOOLCHAIN": "go1.25.12"
+      },
+      "toolchains": [
+        "go",
+        "python"
+      ],
+      "classification": "product",
+      "live": true,
+      "heavy": false,
+      "static_inputs": [
+        "integration/schema_evolution/**",
+        "scripts/mixed-schema.py",
+        "scripts/mixed-schema-fixture.py"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "live-authority",
+      "resource_locks": [
+        "repository-identity",
+        "live-authority",
+        "shared-output"
+      ],
+      "scheduling_class": "live",
+      "memory_class": "normal",
+      "campaign_eligible": false
+    },
+    {
+      "id": "go-vet-root",
+      "description": "Go root-module vet",
+      "repository": "go-oversync",
+      "cwd": ".",
+      "argv": [
+        "go",
+        "vet",
+        "./..."
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "GOTOOLCHAIN"
+      ],
+      "environment": {
+        "GOTOOLCHAIN": "go1.25.12"
+      },
+      "toolchains": [
+        "go"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "**/*.go",
+        "go.mod",
+        "go.sum"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "host",
+      "resource_locks": [
+        "repository-identity"
+      ],
+      "scheduling_class": "go",
+      "memory_class": "normal",
+      "campaign_eligible": false
+    },
+    {
+      "id": "go-vet-mobile",
+      "description": "Nested mobile-flow module vet",
+      "repository": "go-oversync",
+      "cwd": "integration/mobile_flow",
+      "argv": [
+        "go",
+        "vet",
+        "./..."
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "GOTOOLCHAIN"
+      ],
+      "environment": {
+        "GOTOOLCHAIN": "go1.25.12"
+      },
+      "toolchains": [
+        "go"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "integration/mobile_flow/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "host",
+      "resource_locks": [
+        "repository-identity"
+      ],
+      "scheduling_class": "go",
+      "memory_class": "normal",
+      "campaign_eligible": false
+    },
+    {
+      "id": "go-client-upgrade-conformance",
+      "description": "Revisioned client-upgrade conformance and mapped consumers",
+      "repository": "go-oversync",
+      "cwd": ".",
+      "argv": [
+        "go",
+        "run",
+        "./cmd/client-upgrade-conformance",
+        "-root",
+        "conformance/client-upgrade/v1"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "GOTOOLCHAIN"
+      ],
+      "environment": {
+        "GOTOOLCHAIN": "go1.25.12"
+      },
+      "toolchains": [
+        "go"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "cmd/client-upgrade-conformance/**",
+        "conformance/client-upgrade/**",
+        "oversqlite/**",
+        "integration/mobile_flow/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "host",
+      "resource_locks": [
+        "repository-identity"
+      ],
+      "scheduling_class": "go",
+      "memory_class": "normal",
+      "campaign_eligible": false
+    },
+    {
+      "id": "go-maintenance-conformance",
+      "description": "Maintenance/conflict portable conformance and mapped consumers",
+      "repository": "go-oversync",
+      "cwd": ".",
+      "argv": [
+        "python3",
+        "scripts/check-maintenance-conformance.py",
+        "--execute"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "GOTOOLCHAIN"
+      ],
+      "environment": {
+        "GOTOOLCHAIN": "go1.25.12"
+      },
+      "toolchains": [
+        "go",
+        "python"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "scripts/check-maintenance-conformance.py",
+        "conformance/maintenance-conflicts/**",
+        "oversqlite/**",
+        "integration/mobile_flow/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "host",
+      "resource_locks": [
+        "repository-identity"
+      ],
+      "scheduling_class": "go",
+      "memory_class": "normal",
+      "campaign_eligible": false
+    },
+    {
+      "id": "go-table-evolution-conformance",
+      "description": "Table-evolution portable conformance and mapped consumers",
+      "repository": "go-oversync",
+      "cwd": ".",
+      "argv": [
+        "python3",
+        "scripts/check-table-evolution-conformance.py",
+        "--execute"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "GOTOOLCHAIN"
+      ],
+      "environment": {
+        "GOTOOLCHAIN": "go1.25.12"
+      },
+      "toolchains": [
+        "go",
+        "python"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "scripts/check-table-evolution-conformance.py",
+        "conformance/table-evolution/**",
+        "integration/schema_evolution/**",
+        "integration/mobile_flow/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "host",
+      "resource_locks": [
+        "repository-identity"
+      ],
+      "scheduling_class": "go",
+      "memory_class": "normal",
+      "campaign_eligible": false
+    },
+    {
+      "id": "go-rollout-conformance",
+      "description": "Rollout/retirement portable conformance and mapped consumers",
+      "repository": "go-oversync",
+      "cwd": ".",
+      "argv": [
+        "python3",
+        "scripts/check-rollout-retirement-conformance.py",
+        "--execute"
+      ],
+      "environment_allowlist": [
+        "PATH",
+        "GOTOOLCHAIN"
+      ],
+      "environment": {
+        "GOTOOLCHAIN": "go1.25.12"
+      },
+      "toolchains": [
+        "go",
+        "python"
+      ],
+      "classification": "product",
+      "live": false,
+      "heavy": false,
+      "static_inputs": [
+        "scripts/check-rollout-retirement-conformance.py",
+        "conformance/rollout-retirement/**",
+        "integration/schema_evolution/**",
+        "integration/mobile_flow/**"
+      ],
+      "depends_on": [],
+      "subsumes": [],
+      "environment_class": "host",
+      "resource_locks": [
+        "repository-identity"
+      ],
+      "scheduling_class": "go",
+      "memory_class": "normal",
+      "campaign_eligible": false
+    }
+  ],
+  "path_rules": [
+    {
+      "id": "planner-files",
+      "repository": "sqlite-now",
+      "includes": [
+        "tools/qualification/**",
+        ".gitignore"
+      ],
+      "excludes": [],
+      "lanes": [
+        "planner-infrastructure"
+      ],
+      "reason_code": "planner_change",
+      "reason": "Qualification planner infrastructure changed",
+      "validation_paths": [
+        "tools/qualification/planner.py"
+      ],
+      "class": "planner"
+    },
+    {
+      "id": "compiler-source",
+      "repository": "sqlite-now",
+      "includes": [
+        "sqlitenow-compiler/**"
+      ],
+      "excludes": [
+        "sqlitenow-compiler/**/test/**"
+      ],
+      "lanes": [
+        "compiler",
+        "gradle-plugin",
+        "core-platform-all",
+        "swift-hybrid"
+      ],
+      "reason_code": "generator_change",
+      "reason": "shared compiler or emitter input changed",
+      "validation_paths": [
+        "sqlitenow-compiler/src/main/kotlin/Example.kt"
+      ],
+      "class": "source"
+    },
+    {
+      "id": "compiler-tests",
+      "repository": "sqlite-now",
+      "includes": [
+        "sqlitenow-compiler/**/test/**"
+      ],
+      "excludes": [],
+      "lanes": [
+        "compiler"
+      ],
+      "reason_code": "owning_test_change",
+      "reason": "compiler test input changed",
+      "validation_paths": [
+        "sqlitenow-compiler/src/test/kotlin/ExampleTest.kt"
+      ],
+      "class": "test"
+    },
+    {
+      "id": "gradle-plugin-source",
+      "repository": "sqlite-now",
+      "includes": [
+        "sqlitenow-gradle-plugin/**"
+      ],
+      "excludes": [
+        "sqlitenow-gradle-plugin/**/test/**"
+      ],
+      "lanes": [
+        "gradle-plugin",
+        "core-platform-all"
+      ],
+      "reason_code": "plugin_change",
+      "reason": "Gradle plugin implementation changed",
+      "validation_paths": [
+        "sqlitenow-gradle-plugin/src/main/kotlin/Example.kt"
+      ],
+      "class": "source"
+    },
+    {
+      "id": "gradle-plugin-tests",
+      "repository": "sqlite-now",
+      "includes": [
+        "sqlitenow-gradle-plugin/**/test/**"
+      ],
+      "excludes": [],
+      "lanes": [
+        "gradle-plugin"
+      ],
+      "reason_code": "owning_test_change",
+      "reason": "Gradle plugin test input changed",
+      "validation_paths": [
+        "sqlitenow-gradle-plugin/src/test/kotlin/ExampleTest.kt"
+      ],
+      "class": "test"
+    },
+    {
+      "id": "core-source",
+      "repository": "sqlite-now",
+      "includes": [
+        "library-core/src/**"
+      ],
+      "excludes": [
+        "library-core/src/**Test/**",
+        "library-core/src/**/test/**"
+      ],
+      "lanes": [
+        "core-jvm",
+        "core-platform-all",
+        "oversqlite-comprehensive"
+      ],
+      "reason_code": "core_source_change",
+      "reason": "Core production input changed",
+      "validation_paths": [
+        "library-core/src/commonMain/kotlin/Example.kt"
+      ],
+      "class": "source"
+    },
+    {
+      "id": "core-tests",
+      "repository": "sqlite-now",
+      "includes": [
+        "library-core/src/**Test/**",
+        "library-core/src/**/test/**",
+        "platform-core-test/**"
+      ],
+      "excludes": [],
+      "lanes": [
+        "core-jvm",
+        "core-platform-all"
+      ],
+      "reason_code": "owning_test_change",
+      "reason": "Core test or platform fixture changed",
+      "validation_paths": [
+        "library-core/src/commonTest/kotlin/ExampleTest.kt"
+      ],
+      "class": "test"
+    },
+    {
+      "id": "worker-source",
+      "repository": "sqlite-now",
+      "includes": [
+        "library-core/src/webMain/**",
+        "library-core/src/webTest/**",
+        "package.json",
+        "package-lock.json"
+      ],
+      "excludes": [],
+      "lanes": [
+        "worker-publication",
+        "worker-js-node",
+        "worker-js-browser",
+        "worker-wasm-browser",
+        "core-platform-js-node",
+        "core-platform-wasm-browser",
+        "oversqlite-platform-js-node",
+        "oversqlite-platform-js-browser",
+        "oversqlite-platform-wasm-browser"
+      ],
+      "reason_code": "worker_change",
+      "reason": "worker protocol, resource, or web dependency changed",
+      "validation_paths": [
+        "library-core/src/webMain/kotlin/Worker.kt"
+      ],
+      "class": "generated-support"
+    },
+    {
+      "id": "oversqlite-source",
+      "repository": "sqlite-now",
+      "includes": [
+        "library-oversqlite/src/**"
+      ],
+      "excludes": [
+        "library-oversqlite/src/**Test/**",
+        "library-oversqlite/src/**/test/**"
+      ],
+      "lanes": [
+        "oversqlite-comprehensive",
+        "oversqlite-platform-all"
+      ],
+      "reason_code": "oversqlite_source_change",
+      "reason": "Oversqlite production input changed",
+      "validation_paths": [
+        "library-oversqlite/src/commonMain/kotlin/Example.kt"
+      ],
+      "class": "source"
+    },
+    {
+      "id": "oversqlite-tests",
+      "repository": "sqlite-now",
+      "includes": [
+        "library-oversqlite/src/**Test/**",
+        "library-oversqlite/src/**/test/**",
+        "platform-oversqlite-test/**"
+      ],
+      "excludes": [],
+      "lanes": [
+        "oversqlite-comprehensive",
+        "oversqlite-platform-all"
+      ],
+      "reason_code": "owning_test_change",
+      "reason": "Oversqlite test or platform fixture changed",
+      "validation_paths": [
+        "library-oversqlite/src/commonTest/kotlin/ExampleTest.kt"
+      ],
+      "class": "test"
+    },
+    {
+      "id": "portable-contracts",
+      "repository": "sqlite-now",
+      "includes": [
+        "oversqlite-contracts/**"
+      ],
+      "excludes": [],
+      "lanes": [
+        "oversqlite-comprehensive",
+        "cross-repo-conformance",
+        "swift-hybrid",
+        "go-client-upgrade-conformance",
+        "go-maintenance-conformance",
+        "go-table-evolution-conformance",
+        "go-rollout-conformance"
+      ],
+      "reason_code": "shared_contract_change",
+      "reason": "portable contract or shared scenario changed",
+      "validation_paths": [
+        "oversqlite-contracts/schema/example.json"
+      ],
+      "class": "fixture-contract"
+    },
+    {
+      "id": "swift-support",
+      "repository": "sqlite-now",
+      "includes": [
+        "swift/**"
+      ],
+      "excludes": [],
+      "lanes": [
+        "swift-hybrid"
+      ],
+      "reason_code": "swift_support_change",
+      "reason": "Swift runtime, support, plugin, or consumer input changed",
+      "validation_paths": [
+        "swift/support/Sources/Example.swift"
+      ],
+      "class": "generated-support"
+    },
+    {
+      "id": "shared-build",
+      "repository": "sqlite-now",
+      "includes": [
+        "build.gradle.kts",
+        "settings.gradle.kts",
+        "gradle/**",
+        "gradlew",
+        "gradlew.bat"
+      ],
+      "excludes": [],
+      "lanes": [
+        "compiler",
+        "gradle-plugin",
+        "core-platform-all",
+        "oversqlite-platform-all",
+        "worker-publication",
+        "worker-js-node",
+        "worker-js-browser",
+        "worker-wasm-browser",
+        "swift-hybrid"
+      ],
+      "reason_code": "shared_build_change",
+      "reason": "shared Gradle or toolchain input changed",
+      "validation_paths": [
+        "build.gradle.kts"
+      ],
+      "class": "build-toolchain"
+    },
+    {
+      "id": "governing-documents",
+      "repository": "sqlite-now",
+      "includes": [
+        "AGENTS.md",
+        "docs-engineering/qualification.md",
+        "docs-engineering/repository-hygiene.md",
+        "tools/qualification/README.md",
+        "docs/sync/schema-evolution.md"
+      ],
+      "excludes": [],
+      "lanes": [
+        "planner-infrastructure",
+        "compiler",
+        "gradle-plugin",
+        "core-platform-all",
+        "oversqlite-platform-all",
+        "cross-repo-conformance",
+        "worker-publication",
+        "worker-js-node",
+        "worker-js-browser",
+        "worker-wasm-browser",
+        "swift-realserver",
+        "oversqlite-realserver-all",
+        "kmp-resource",
+        "go-full",
+        "go-audit",
+        "go-mobile",
+        "go-coexistence",
+        "go-vet-root",
+        "go-vet-mobile",
+        "go-client-upgrade-conformance",
+        "go-maintenance-conformance",
+        "go-table-evolution-conformance",
+        "go-rollout-conformance"
+      ],
+      "reason_code": "governing_document_change",
+      "reason": "governing qualification or schema-evolution instruction changed",
+      "validation_paths": [
+        "AGENTS.md"
+      ],
+      "class": "governing-docs"
+    },
+    {
+      "id": "ordinary-documents",
+      "repository": "sqlite-now",
+      "includes": [
+        "**/*.md"
+      ],
+      "excludes": [
+        "AGENTS.md",
+        "docs-engineering/qualification.md",
+        "docs-engineering/repository-hygiene.md",
+        "tools/qualification/README.md",
+        "docs/sync/schema-evolution.md"
+      ],
+      "lanes": [
+        "planner-infrastructure"
+      ],
+      "reason_code": "ordinary_document_change",
+      "reason": "ordinary documentation changed; product evidence is not invalidated",
+      "validation_paths": [
+        "docs/example.md"
+      ],
+      "class": "ordinary-docs"
+    },
+    {
+      "id": "go-schema-evolution-authority-fixture",
+      "repository": "go-oversync",
+      "includes": [
+        "integration/schema_evolution_authority/**"
+      ],
+      "excludes": [],
+      "lanes": [
+        "cross-repo-conformance"
+      ],
+      "reason_code": "cross_repository_fixture_change",
+      "reason": "schema-evolution test-only authority fixture changed",
+      "validation_paths": [
+        "integration/schema_evolution_authority/authority.go"
+      ],
+      "class": "test"
+    },
+    {
+      "id": "go-production",
+      "repository": "go-oversync",
+      "includes": [
+        "oversync/**",
+        "oversqlite/**",
+        "integration/schema_evolution/**"
+      ],
+      "excludes": [
+        "**/*_test.go"
+      ],
+      "lanes": [
+        "go-full",
+        "go-vet-root",
+        "go-client-upgrade-conformance",
+        "go-maintenance-conformance",
+        "go-table-evolution-conformance",
+        "go-rollout-conformance",
+        "cross-repo-conformance"
+      ],
+      "reason_code": "go_source_change",
+      "reason": "Go authority or client production input changed",
+      "validation_paths": [
+        "oversync/example.go"
+      ],
+      "class": "source"
+    },
+    {
+      "id": "go-tests",
+      "repository": "go-oversync",
+      "includes": [
+        "**/*_test.go"
+      ],
+      "excludes": [
+        "integration/mobile_flow/**",
+        "integration/schema_evolution_authority/**"
+      ],
+      "lanes": [
+        "go-full"
+      ],
+      "reason_code": "owning_test_change",
+      "reason": "Go root-module test input changed",
+      "validation_paths": [
+        "oversync/example_test.go"
+      ],
+      "class": "test"
+    },
+    {
+      "id": "go-mobile",
+      "repository": "go-oversync",
+      "includes": [
+        "integration/mobile_flow/**"
+      ],
+      "excludes": [],
+      "lanes": [
+        "go-mobile",
+        "go-vet-mobile",
+        "go-client-upgrade-conformance",
+        "go-maintenance-conformance",
+        "go-table-evolution-conformance",
+        "go-rollout-conformance"
+      ],
+      "reason_code": "go_mobile_change",
+      "reason": "nested Go mobile-flow input changed",
+      "validation_paths": [
+        "integration/mobile_flow/example_test.go"
+      ],
+      "class": "test"
+    },
+    {
+      "id": "go-contracts",
+      "repository": "go-oversync",
+      "includes": [
+        "conformance/**",
+        "swagger/**"
+      ],
+      "excludes": [],
+      "lanes": [
+        "go-full",
+        "go-client-upgrade-conformance",
+        "go-maintenance-conformance",
+        "go-table-evolution-conformance",
+        "go-rollout-conformance",
+        "cross-repo-conformance",
+        "oversqlite-comprehensive",
+        "swift-hybrid"
+      ],
+      "reason_code": "go_contract_change",
+      "reason": "Go-owned portable contract or Swagger changed",
+      "validation_paths": [
+        "conformance/example.yaml"
+      ],
+      "class": "fixture-contract"
+    },
+    {
+      "id": "go-build",
+      "repository": "go-oversync",
+      "includes": [
+        "go.mod",
+        "go.sum",
+        "integration/mobile_flow/go.mod",
+        "integration/mobile_flow/go.sum",
+        "scripts/**"
+      ],
+      "excludes": [],
+      "lanes": [
+        "go-full",
+        "go-mobile",
+        "go-vet-root",
+        "go-vet-mobile",
+        "go-client-upgrade-conformance",
+        "go-maintenance-conformance",
+        "go-table-evolution-conformance",
+        "go-rollout-conformance"
+      ],
+      "reason_code": "go_build_change",
+      "reason": "Go dependency, toolchain, or lane script changed",
+      "validation_paths": [
+        "go.mod"
+      ],
+      "class": "build-toolchain"
+    },
+    {
+      "id": "go-governing-documents",
+      "repository": "go-oversync",
+      "includes": [
+        "AGENTS.md",
+        "integration/schema_evolution/QUALIFICATION.md",
+        "integration/schema_evolution/ROLLOUT.md"
+      ],
+      "excludes": [],
+      "lanes": [
+        "go-full",
+        "go-audit",
+        "go-mobile",
+        "go-coexistence",
+        "go-vet-root",
+        "go-vet-mobile",
+        "go-client-upgrade-conformance",
+        "go-maintenance-conformance",
+        "go-table-evolution-conformance",
+        "go-rollout-conformance",
+        "cross-repo-conformance",
+        "oversqlite-comprehensive",
+        "swift-hybrid"
+      ],
+      "reason_code": "go_governing_document_change",
+      "reason": "Go governing qualification instruction changed",
+      "validation_paths": [
+        "AGENTS.md"
+      ],
+      "class": "governing-docs"
+    },
+    {
+      "id": "go-ordinary-documents",
+      "repository": "go-oversync",
+      "includes": [
+        "**/*.md"
+      ],
+      "excludes": [
+        "AGENTS.md",
+        "integration/schema_evolution/QUALIFICATION.md",
+        "integration/schema_evolution/ROLLOUT.md"
+      ],
+      "lanes": [
+        "planner-infrastructure"
+      ],
+      "reason_code": "ordinary_document_change",
+      "reason": "ordinary Go documentation changed; product evidence is not invalidated",
+      "validation_paths": [
+        "docs/example.md"
+      ],
+      "class": "ordinary-docs"
+    }
+  ],
+  "fallback_lane_ids": [
+    "planner-infrastructure",
+    "compiler",
+    "gradle-plugin",
+    "core-jvm",
+    "core-platform-all",
+    "oversqlite-platform-all",
+    "oversqlite-comprehensive",
+    "cross-repo-conformance",
+    "worker-publication",
+    "worker-js-node",
+    "worker-js-browser",
+    "worker-wasm-browser",
+    "swift-realserver",
+    "oversqlite-realserver-all",
+    "oversqlite-realserver-all-heavy",
+    "kmp-resource",
+    "go-full",
+    "go-audit",
+    "go-mobile",
+    "go-coexistence",
+    "go-vet-root",
+    "go-vet-mobile",
+    "go-client-upgrade-conformance",
+    "go-maintenance-conformance",
+    "go-table-evolution-conformance",
+    "go-rollout-conformance"
+  ],
+  "forbidden_planning_validation_prefixes": [
+    [
+      "./gradlew"
+    ],
+    [
+      "swift",
+      "test"
+    ],
+    [
+      "xcodebuild"
+    ],
+    [
+      "go",
+      "test"
+    ],
+    [
+      "go",
+      "vet"
+    ],
+    [
+      "go",
+      "run"
+    ],
+    [
+      "python3",
+      "scripts/check-maintenance-conformance.py"
+    ],
+    [
+      "python3",
+      "scripts/check-table-evolution-conformance.py"
+    ],
+    [
+      "python3",
+      "scripts/check-rollout-retirement-conformance.py"
+    ],
+    [
+      "scripts/test-lane.sh"
+    ]
+  ],
+  "campaign_max_workers": 4,
+  "resources": {
+    "repository-identity": 1,
+    "gradle-build": 1,
+    "high-memory": 1,
+    "android-control": 1,
+    "ios-control": 1,
+    "browser-profile": 1,
+    "live-authority": 1,
+    "shared-output": 1,
+    "measurement-exclusive": 1,
+    "infrastructure": 1
+  }
+}

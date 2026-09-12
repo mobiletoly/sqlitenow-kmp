@@ -117,17 +117,10 @@ internal fun buildJsonObjectExprHexAware(
     prefix: String,
 ): String {
     val pairs = tableInfo.columns.map { column ->
-        val name = column.name.lowercase()
-        val valueExpr = when {
-            column.kind.isBlobKind() ->
-                "CASE WHEN $prefix.${quoteIdent(column.name)} IS NULL THEN NULL ELSE lower(hex($prefix.${quoteIdent(column.name)})) END"
-            column.kind == ColumnKind.INTEGER ->
-                "CASE WHEN $prefix.${quoteIdent(column.name)} IS NULL THEN NULL ELSE CAST($prefix.${quoteIdent(column.name)} AS TEXT) END"
-            column.kind == ColumnKind.REAL ->
-                "CASE WHEN $prefix.${quoteIdent(column.name)} IS NULL THEN NULL ELSE printf('%!.17g', $prefix.${quoteIdent(column.name)}) END"
-            else -> "$prefix.${quoteIdent(column.name)}"
-        }
-        "'$name', $valueExpr"
+        val expression = "$prefix.${quoteIdent(column.name)}"
+        val value = "CASE typeof($expression) WHEN 'blob' THEN lower(hex($expression)) " +
+            "WHEN 'real' THEN printf('%!.17g', $expression) WHEN 'null' THEN NULL ELSE CAST($expression AS TEXT) END"
+        "'${column.name}', json_object('storage', typeof($expression), 'value', $value)"
     }
     return "json_object(${pairs.joinToString(", ")})"
 }

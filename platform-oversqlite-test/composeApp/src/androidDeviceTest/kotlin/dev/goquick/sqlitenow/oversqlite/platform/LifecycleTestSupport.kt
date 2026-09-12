@@ -6,6 +6,5 @@ import dev.goquick.sqlitenow.oversqlite.OversqliteClient
 suspend fun OversqliteClient.openAndAttach(
     userId: String,
 ): Result<AttachResult> {
-    open().getOrThrow()
     return attach(userId)
 }

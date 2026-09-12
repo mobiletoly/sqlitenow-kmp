@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "required_postgresql_major": 16,
+  "required_rows": 24,
+  "pairings": ["go-g1-kmp-g2", "kmp-g1-go-g2"],
+  "rows": [
+    {"id":"go-g1-kmp-g2/C01","selector":"goG1KmpG2BidirectionalCrud","implemented":true,"facts":["sqlite_g1","sqlite_g2","postgresql","settled","visibility"]},
+    {"id":"kmp-g1-go-g2/C01","selector":"kmpG1GoG2BidirectionalCrud","implemented":true,"facts":["sqlite_g1","sqlite_g2","postgresql","settled","visibility"]},
+    {"id":"go-g1-kmp-g2/C02","selector":"goG1KmpG2HiddenFieldPreservation","implemented":true,"facts":["sqlite_g1","sqlite_g2","postgresql","hidden_field_preserved"]},
+    {"id":"kmp-g1-go-g2/C02","selector":"kmpG1GoG2HiddenFieldPreservation","implemented":true,"facts":["sqlite_g1","sqlite_g2","postgresql","hidden_field_preserved"]},
+    {"id":"go-g1-kmp-g2/C03","selector":"goG1KmpG2DefaultsAndNull","implemented":true,"facts":["null","default","old_write_preserves_hidden"]},
+    {"id":"kmp-g1-go-g2/C03","selector":"kmpG1GoG2DefaultsAndNull","implemented":true,"facts":["null","default","old_write_preserves_hidden"]},
+    {"id":"go-g1-kmp-g2/C04","selector":"goG1KmpG2NullableRelationships","implemented":true,"facts":["foreign_key","hidden_tables","postgresql","visibility"]},
+    {"id":"kmp-g1-go-g2/C04","selector":"kmpG1GoG2NullableRelationships","implemented":true,"facts":["foreign_key","hidden_tables","postgresql","visibility"]},
+    {"id":"go-g1-kmp-g2/C05","selector":"goG1KmpG2HiddenCheckpoint","implemented":true,"facts":["empty_projection_checkpoint","reopen","row_version"]},
+    {"id":"kmp-g1-go-g2/C05","selector":"kmpG1GoG2HiddenCheckpoint","implemented":true,"facts":["empty_projection_checkpoint","reopen","row_version"]},
+    {"id":"go-g1-kmp-g2/C06","selector":"goG1KmpG2OfflineConflicts","implemented":true,"facts":["both_orders","defer","accept_server","keep_local","keep_merged"]},
+    {"id":"kmp-g1-go-g2/C06","selector":"kmpG1GoG2OfflineConflicts","implemented":true,"facts":["both_orders","defer","accept_server","keep_local","keep_merged"]},
+    {"id":"go-g1-kmp-g2/C07","selector":"goG1KmpG2DisjointConflicts","implemented":true,"facts":["both_orders","defer","keep_merged"]},
+    {"id":"kmp-g1-go-g2/C07","selector":"kmpG1GoG2DisjointConflicts","implemented":true,"facts":["both_orders","defer","keep_merged"]},
+    {"id":"go-g1-kmp-g2/C08","selector":"goG1KmpG2LostReplyNewerIntent","implemented":true,"facts":["kmp_process_crash","lost_commit_reply","newer_intent","duplicate_free"]},
+    {"id":"kmp-g1-go-g2/C08","selector":"kmpG1GoG2LostReplyNewerIntent","implemented":true,"facts":["kmp_process_crash","lost_commit_reply","newer_intent","duplicate_free"]},
+    {"id":"go-g1-kmp-g2/C09","selector":"goG1KmpG2DeleteConflicts","implemented":true,"facts":["reversed_roles","both_orders","valid_decisions","invalid_decisions"]},
+    {"id":"kmp-g1-go-g2/C09","selector":"kmpG1GoG2DeleteConflicts","implemented":true,"facts":["reversed_roles","both_orders","valid_decisions","invalid_decisions"]},
+    {"id":"go-g1-kmp-g2/C10","selector":"goG1KmpG2ProcessRecovery","implemented":true,"facts":["kmp_process_crash","go_server_restart","retained_staging","retained_commit","duplicate_free"]},
+    {"id":"kmp-g1-go-g2/C10","selector":"kmpG1GoG2ProcessRecovery","implemented":true,"facts":["kmp_process_crash","go_server_restart","retained_staging","retained_commit","duplicate_free"]},
+    {"id":"go-g1-kmp-g2/C11","selector":"goG1KmpG2InterruptedRebuild","implemented":true,"facts":["nonfinal_stage","final_stage_before_promotion","kmp_process_crash","unchanged_generation","sentinel"]},
+    {"id":"kmp-g1-go-g2/C11","selector":"kmpG1GoG2InterruptedRebuild","implemented":true,"facts":["nonfinal_stage","final_stage_before_promotion","kmp_process_crash","unchanged_generation","sentinel"]},
+    {"id":"go-g1-kmp-g2/C12","selector":"goG1KmpG2RetryRecovery","implemented":true,"facts":["interrupted_pull_response","typed_retry_exhaustion","blocked_upload","pending_intent","duplicate_free"]},
+    {"id":"kmp-g1-go-g2/C12","selector":"kmpG1GoG2RetryRecovery","implemented":true,"facts":["interrupted_pull_response","typed_retry_exhaustion","blocked_upload","pending_intent","duplicate_free"]}
+  ]
+}

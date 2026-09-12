@@ -36,6 +36,41 @@ fun interface SqliteConnectionProvider {
         dbName: String,
         debug: Boolean,
     ): SafeSQLiteConnection = openConnection(dbName, debug, SqliteConnectionConfig())
+
+    /**
+     * Creates the internal provider session used by coordinated opening.
+     *
+     * The default deliberately fails before calling [openConnection]: an ordinary provider open
+     * may restore bytes, create storage, or otherwise mutate provider state and therefore cannot
+     * be used for the inspection-only `openForSync` boundary.
+     */
+    @SqliteNowInternalApi
+    suspend fun openCoordinatedSession(
+        dbName: String,
+        debug: Boolean,
+        config: SqliteConnectionConfig,
+    ): SqliteNowCoordinatedProviderSession = throw UnsupportedOperationException(
+        "The selected SQLite connection provider does not support coordinated-opening inspection",
+    )
+}
+
+/** Provider-owned connection lifecycle spanning inspection, preparation, and publication. */
+@SqliteNowInternalApi
+interface SqliteNowCoordinatedProviderSession {
+    /** A side-effect-free inspection connection, or null until explicit preparation is run. */
+    val inspectionConnection: SafeSQLiteConnection?
+
+    /** True when no complete local inspection was possible without provider preparation. */
+    val preparationRequired: Boolean
+
+    /** Performs writable provider preparation after explicit `advance()` consent. */
+    suspend fun prepareConnection(): SafeSQLiteConnection
+
+    /** Transfers the prepared connection to the published database lifetime. */
+    fun publish(connection: SafeSQLiteConnection)
+
+    /** Joins cleanup of all unpublished provider resources. */
+    suspend fun close()
 }
 
 /**
@@ -45,6 +80,17 @@ fun interface SqliteConnectionProvider {
  * persistence behavior.
  */
 object BundledSqliteConnectionProvider : SqliteConnectionProvider {
+    @OptIn(SqliteNowInternalApi::class)
+    override suspend fun openCoordinatedSession(
+        dbName: String,
+        debug: Boolean,
+        config: SqliteConnectionConfig,
+    ): SqliteNowCoordinatedProviderSession = createBundledCoordinatedOpeningProviderSession(
+        dbName = dbName,
+        debug = debug,
+        config = config,
+    )
+
     override suspend fun openConnection(
         dbName: String,
         debug: Boolean,
@@ -99,6 +145,7 @@ object BundledSqliteConnectionProvider : SqliteConnectionProvider {
             return SafeSQLiteConnection(
                 ref = connection,
                 debug = debug,
+                activeClientIdentity = sqliteNowActiveClientIdentity(dbName, connection),
                 persistenceController = persistenceController,
                 executionContextHook = config.executionContextHook,
                 executionContext = executionContext,
@@ -109,6 +156,13 @@ object BundledSqliteConnectionProvider : SqliteConnectionProvider {
         }
     }
 }
+
+@OptIn(SqliteNowInternalApi::class)
+internal expect suspend fun createBundledCoordinatedOpeningProviderSession(
+    dbName: String,
+    debug: Boolean,
+    config: SqliteConnectionConfig,
+): SqliteNowCoordinatedProviderSession
 
 internal expect suspend fun openBundledSqliteConnection(
     dbName: String,

@@ -3,18 +3,9 @@
 SQLiteNow uses SQLite's `PRAGMA user_version` to decide what migration work a
 database needs when it opens.
 
-{% if include.platform == "dart" %}
-For Flutter and Dart projects, migration inputs live beside the rest of the SQL
-files:
+For synchronized databases, a numbered migration proves only the local SQLite transition. A generation change also needs a directed upgrade plan and must fit the [synchronized schema evolution profile]({{ site.baseurl }}/sync/schema-evolution/).
 
-```text
-lib/db/sql/AppDatabase/
-  schema/
-  init/
-  migration/
-  queries/
-```
-{% elsif include.platform == "kmp" %}
+{% if include.platform == "kmp" %}
 For Kotlin Multiplatform projects, migration inputs live beside the rest of the
 shared SQL files:
 
@@ -90,13 +81,7 @@ the newer value. SQLiteNow does not downgrade the database.
 
 Migration files go under `migration/` and must start with a four-digit version:
 
-{% if include.platform == "dart" %}
-```text
-lib/db/sql/AppDatabase/migration/
-  0002_add_task_due_date.sql
-  0003_add_task_archived.sql
-```
-{% elsif include.platform == "kmp" %}
+{% if include.platform == "kmp" %}
 ```text
 src/commonMain/sql/AppDatabase/migration/
   0002_add_task_due_date.sql
@@ -178,20 +163,6 @@ let database = AppDatabase(
 
 The callback type is `@Sendable (SQLiteNowMigrationScope) async throws ->
 Void`. The scoped connection supplies low-level `execute` and `query` methods.
-{% elsif include.platform == "dart" %}
-```dart
-final database = AppDatabase(
-  path: databasePath,
-  onMigrationStep: (scope) async {
-    if (scope.toVersion == 2) {
-      await migrateFullNames(scope);
-    }
-  },
-);
-```
-
-The callback returns `FutureOr<void>`. The scoped connection supplies
-`execute`, `select`, and `usePrepared`.
 {% endif %}
 
 Each callback receives a scope with these values:
@@ -248,10 +219,7 @@ CREATE TABLE task (
 );
 ```
 
-{% if include.platform == "dart" %}
-With no `migration/` files, the generated Dart database creates this schema on a
-fresh database and stores version `1`.
-{% elsif include.platform == "kmp" %}
+{% if include.platform == "kmp" %}
 With no `migration/` files, the generated KMP database creates this schema on a
 fresh database and stores version `1`.
 {% elsif include.platform == "swift" %}
@@ -297,9 +265,7 @@ These two files serve different users:
   not replay older migration files to build the schema from version 1.
 - A user upgrading from version 1 already has a SQLite database with
   `PRAGMA user_version = 1`.
-  {% if include.platform == "dart" -%}
-  SQLiteNow reads that version during `open()`,
-  {%- elsif include.platform == "kmp" -%}
+  {% if include.platform == "kmp" %}
   SQLiteNow reads that version during generated database initialization,
   {%- elsif include.platform == "swift" -%}
   SQLiteNow reads that version during `open()`,
@@ -351,9 +317,7 @@ backfilled.
 
 ## Transaction And Failure Behavior
 
-{% if include.platform == "dart" %}
-SQLiteNow applies migration work during `open()` inside a transaction.
-{% elsif include.platform == "kmp" %}
+{% if include.platform == "kmp" %}
 SQLiteNow applies migration work during generated database initialization inside
 a transaction.
 {% elsif include.platform == "swift" %}
@@ -364,10 +328,7 @@ If migration SQL or a callback fails or is cancelled:
 
 - the transaction rolls back
 - `PRAGMA user_version` is not advanced
-{% if include.platform == "dart" %}
-- the database is not marked open
-- the caller receives the error from `open()`
-{% elsif include.platform == "kmp" %}
+{% if include.platform == "kmp" %}
 - database initialization fails
 - the caller receives the migration error
 {% elsif include.platform == "swift" %}
@@ -390,13 +351,7 @@ When changing schema after release:
 1. Update `schema/` so it represents the latest database shape.
 2. Add one new `migration/NNNN_description.sql` file for existing databases.
 3. Update affected queries under `queries/`.
-{% if include.platform == "dart" %}
-4. Regenerate Dart code:
-
-   ```shell
-   flutter pub run sqlitenow_cli generate
-   ```
-{% elsif include.platform == "kmp" %}
+{% if include.platform == "kmp" %}
 4. Regenerate KMP code:
 
    ```shell

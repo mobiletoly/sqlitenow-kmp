@@ -31,15 +31,15 @@ class RealServerStressTest {
                 db = dbA,
                 config = config,
                 http = httpA,
-                uploadLimit = 16,
-                downloadLimit = 2,
+                maxPushRows = 16,
+                maxPullBundles = 2,
             )
             val clientB = newRealServerClient(
                 db = dbB,
                 config = config,
                 http = httpB,
-                uploadLimit = 16,
-                downloadLimit = 2,
+                maxPushRows = 16,
+                maxPullBundles = 2,
             )
 
             clientA.openAndAttach(userId).getOrThrow()

@@ -7,6 +7,8 @@ import kotlinx.cinterop.toKString
 import platform.posix.getenv
 import platform.posix.remove
 
+internal actual fun supportsDurableTestDatabaseRestart(): Boolean = true
+
 internal actual fun createTempSqliteNowTestDbPath(prefix: String): String {
     val tempDir =
         getenv("TMPDIR")?.toKString()?.trimEnd('/')?.takeIf { it.isNotEmpty() }

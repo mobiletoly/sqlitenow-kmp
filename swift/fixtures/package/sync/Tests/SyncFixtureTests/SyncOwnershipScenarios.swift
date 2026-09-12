@@ -1,0 +1,1 @@
+../../../../../support/Tests/SQLiteNowSyncSupportTests/SyncOwnershipScenarios.swift

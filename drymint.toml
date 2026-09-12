@@ -8,6 +8,11 @@ version = "v0"
 # Keep indexing deterministic and avoid generated, vendored, cache, and
 # unsupported-language trees.
 ignore = [
+  # Retained evidence and generated frontend dependency caches.
+  ".artifacts/**",
+  "**/.artifacts/**",
+  ".sass-cache/**",
+  "kotlin-js-store/**",
   ".codex/**",
   ".drymint/**",
   ".git/**",
@@ -26,7 +31,6 @@ ignore = [
   "**/vendor/**",
   "**/venv/**",
   "build/**",
-  "dart/**",
   "dist/**",
   "docs/_site/**",
   "node_modules/**",

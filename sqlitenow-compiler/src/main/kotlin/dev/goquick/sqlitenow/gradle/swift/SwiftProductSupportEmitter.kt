@@ -266,8 +266,25 @@ internal class SwiftProductSupportEmitter(
             line("case cancelled(message: String)")
             line("case observation(message: String)")
             line("case adapter(message: String)")
-            if (syncEnabled) line("case sync(message: String)")
+            if (syncEnabled) {
+                line("case sync(message: String)")
+                line("case conflictNeedsResolution(message: String)")
+                line("case staleConflictResolution(message: String)")
+            }
             if (syncEnabled) line("case `protocol`(message: String)")
+            if (syncEnabled) {
+                line("case remote(")
+                indent {
+                    line("code: String,")
+                    line("httpStatus: Int,")
+                    line("operation: String,")
+                    line("remediation: String?,")
+                    line("retryable: Bool,")
+                    line("generationId: Int64?,")
+                    line("message: String")
+                }
+                line(")")
+            }
             line("case unknown(message: String)")
             line()
             line("public var description: String {")
@@ -279,8 +296,13 @@ internal class SwiftProductSupportEmitter(
                 line("case let .cancelled(message): return message")
                 line("case let .observation(message): return message")
                 line("case let .adapter(message): return message")
-                if (syncEnabled) line("case let .sync(message): return message")
+                if (syncEnabled) {
+                    line("case let .sync(message): return message")
+                    line("case let .conflictNeedsResolution(message): return message")
+                    line("case let .staleConflictResolution(message): return message")
+                }
                 if (syncEnabled) line("case let .protocol(message): return message")
+                if (syncEnabled) line("case let .remote(_, _, _, _, _, _, message): return message")
                 line("case let .unknown(message): return message")
                 line("}")
             }
@@ -339,6 +361,40 @@ internal class SwiftProductSupportEmitter(
                 line()
                 line("internal static func from(_ payload: SQLiteNowSyncRuntimeErrorPayload) -> SQLiteNowError {")
                 indent {
+                    line("if payload.code == \"ConflictNeedsResolutionException\" { return .conflictNeedsResolution(message: payload.message) }")
+                    line("if payload.code == \"StaleConflictResolutionException\" { return .staleConflictResolution(message: payload.message) }")
+                    line("if payload.remoteContract {")
+                    indent {
+                        line("let generationId: Int64?")
+                        line("if let rawGenerationId = payload.generationId {")
+                        indent {
+                            line("guard let parsedGenerationId = Int64(rawGenerationId),")
+                            line("      (1...Int64(Int32.max)).contains(parsedGenerationId),")
+                            line("      String(parsedGenerationId) == rawGenerationId else {")
+                            indent {
+                                line("return .protocol(message: \"remote contract error contained an invalid generation ID\")")
+                            }
+                            line("}")
+                            line("generationId = parsedGenerationId")
+                        }
+                        line("} else {")
+                        indent {
+                            line("generationId = nil")
+                        }
+                        line("}")
+                        line("return .remote(")
+                        indent {
+                            line("code: payload.code,")
+                            line("httpStatus: Int(payload.httpStatus),")
+                            line("operation: payload.operation,")
+                            line("remediation: payload.remediation,")
+                            line("retryable: payload.retryable,")
+                            line("generationId: generationId,")
+                            line("message: payload.message")
+                        }
+                        line(")")
+                    }
+                    line("}")
                     line("switch payload.category {")
                     line("case \"cancelled\": return .cancelled(message: payload.message)")
                     line("case \"state\": return .misuse(message: payload.message)")

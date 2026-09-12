@@ -1,0 +1,110 @@
+{
+  "format": "sqlitenow-opening-scenarios/v1",
+  "scenarios": [
+    {
+      "id": "fresh",
+      "category": "mode",
+      "required_observations": [
+        "offline_admission",
+        "unpublished_before_ready",
+        "ready_commit"
+      ],
+      "kmp": {
+        "source": "library-oversqlite/src/jvmTest/kotlin/dev/goquick/sqlitenow/oversqlite/OversqliteOpeningJvmTest.kt",
+        "test": "freshThenUnchangedRemainOfflineAndPublishOnlyAfterReadyCommit"
+      }
+    },
+    {
+      "id": "unchanged",
+      "category": "mode",
+      "required_observations": [
+        "retained_identity",
+        "no_migration_callback",
+        "ready_commit"
+      ],
+      "kmp": {
+        "source": "library-oversqlite/src/jvmTest/kotlin/dev/goquick/sqlitenow/oversqlite/OversqliteOpeningJvmTest.kt",
+        "test": "freshThenUnchangedRemainOfflineAndPublishOnlyAfterReadyCommit"
+      }
+    },
+    {
+      "id": "local_only",
+      "category": "mode",
+      "required_observations": [
+        "same_generation",
+        "atomic_version_advance",
+        "local_rows_retained"
+      ],
+      "kmp": {
+        "source": "library-oversqlite/src/jvmTest/kotlin/dev/goquick/sqlitenow/oversqlite/OversqliteOpeningJvmTest.kt",
+        "test": "localOnlyUpgradeAtomicallyAdvancesVersionAndRetainsRows"
+      }
+    },
+    {
+      "id": "generation_change",
+      "category": "mode",
+      "required_observations": [
+        "exact_edge",
+        "u0_through_u8",
+        "preservation_witness",
+        "ready_publication"
+      ],
+      "kmp": {
+        "source": "library-oversqlite/src/jvmTest/kotlin/dev/goquick/sqlitenow/oversqlite/OversqliteOpeningJvmTest.kt",
+        "test": "generationChangeCommitsU0ThroughU8AndPreservesLocalState"
+      }
+    },
+    {
+      "id": "malformed_admission",
+      "category": "admission",
+      "required_observations": [
+        "reject_before_migration",
+        "reject_before_initialization",
+        "no_reserved_artifacts"
+      ],
+      "kmp": {
+        "source": "library-oversqlite/src/jvmTest/kotlin/dev/goquick/sqlitenow/oversqlite/OversqliteOpeningJvmTest.kt",
+        "test": "reservedMarkerCollisionsRejectBeforeMigrationAndInitialization"
+      }
+    },
+    {
+      "id": "pending_admission",
+      "category": "admission",
+      "required_observations": [
+        "provider_preparation_first",
+        "pending_decision_guard",
+        "no_ready_escape"
+      ],
+      "kmp": {
+        "source": "library-oversqlite/src/jvmTest/kotlin/dev/goquick/sqlitenow/oversqlite/OversqliteOpeningJvmTest.kt",
+        "test": "providerPreparationGuardPrecedesRejectionOperations"
+      }
+    },
+    {
+      "id": "handwritten_escape",
+      "category": "escape_probe",
+      "required_observations": [
+        "ordinary_open_rejected",
+        "no_runtime_writes",
+        "canonical_path_alias_rejected"
+      ],
+      "kmp": {
+        "source": "library-oversqlite/src/jvmTest/kotlin/dev/goquick/sqlitenow/oversqlite/OversqliteOpeningJvmTest.kt",
+        "test": "publicDirectClientsRejectOrdinaryOpenConnectionsBeforeRuntimeWrites"
+      }
+    },
+    {
+      "id": "generated_escape",
+      "category": "escape_probe",
+      "required_observations": [
+        "metadata_mismatch_rejected",
+        "unpublished_before_ready",
+        "exact_ready_client"
+      ],
+      "kmp": {
+        "source": "samplesync-kmp/composeApp/src/commonTest/kotlin/dev/goquick/sqlitenow/samplesynckmp/GeneratedOpeningOwnershipTest.kt",
+        "test": "generatedOpeningRejectsMetadataMismatchThenReturnsExactReadyClient"
+      }
+    }
+  ]
+}

@@ -49,9 +49,15 @@ internal class OversqliteApplyExecutor(
 
     suspend fun <T> inApplyModeTransaction(
         state: RuntimeState,
+        beforeApplyMode: suspend (StatementCache) -> Unit = {},
         block: suspend (StatementCache) -> T,
     ): T {
-        return db.transaction(TransactionMode.IMMEDIATE) {
+        db.execSQL("PRAGMA foreign_keys = ON")
+        require(db.scalarLong("PRAGMA foreign_keys") == 1L) {
+            "foreign keys must be enabled before applying synchronized rows"
+        }
+        var incomplete: SyncWorkLimitException? = null
+        val transactionResult: T? = db.transaction(TransactionMode.IMMEDIATE) {
             val injector = faultInjector
             val cleanupTimeoutMillis = injector?.cleanupTimeoutMillis ?: SNAPSHOT_CLEANUP_TIMEOUT_MILLIS
             require(cleanupTimeoutMillis > 0L) { "snapshot cleanup timeout must be positive" }
@@ -63,8 +69,11 @@ internal class OversqliteApplyExecutor(
             var primaryFailure: Throwable? = null
             var result: T? = null
             try {
+                beforeApplyMode(statementCache)
                 applyStateStore.setApplyMode(true, statementCache)
                 result = block(statementCache)
+            } catch (progress: ApplyProgressPending) {
+                incomplete = progress.result
             } catch (error: Throwable) {
                 primaryFailure = error
             }
@@ -107,10 +116,16 @@ internal class OversqliteApplyExecutor(
                 throw failure
             }
 
+            require(db.scalarLong("SELECT count(*) FROM pragma_foreign_key_check") == 0L) {
+                "synchronized row apply violates a foreign key constraint"
+            }
+
             injector?.beforeCommit?.invoke()
-            @Suppress("UNCHECKED_CAST")
-            result as T
+            result
         }
+        incomplete?.let { throw it }
+        @Suppress("UNCHECKED_CAST")
+        return transactionResult as T
     }
 }
 

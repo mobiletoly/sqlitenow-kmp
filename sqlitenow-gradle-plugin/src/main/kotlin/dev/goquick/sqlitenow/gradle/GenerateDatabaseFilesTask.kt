@@ -18,7 +18,6 @@ package dev.goquick.sqlitenow.gradle
 import dev.goquick.sqlitenow.gradle.compiler.SqliteNowCompilerInput
 import dev.goquick.sqlitenow.gradle.compiler.SqliteNowCompilerResult
 import dev.goquick.sqlitenow.gradle.compiler.compileSqliteNowDatabase
-import dev.goquick.sqlitenow.gradle.swift.SqliteNowSwiftExportConfig
 import dev.goquick.sqlitenow.gradle.swift.SqliteNowSwiftProductExportConfig
 import dev.goquick.sqlitenow.gradle.swift.SwiftProductRuntimeMode
 import dev.goquick.sqlitenow.gradle.swift.requireValidSwiftIdentifier
@@ -89,22 +88,6 @@ abstract class GenerateDatabaseFilesTask @Inject constructor(
 
     @get:OutputDirectory
     @get:Optional
-    val swiftOverlayOutputDir: DirectoryProperty = objects.directoryProperty()
-
-    @get:Input
-    @get:Optional
-    abstract val swiftOverlayModuleName: Property<String>
-
-    @get:Input
-    @get:Optional
-    abstract val swiftFrameworkModuleName: Property<String>
-
-    @get:Input
-    @get:Optional
-    abstract val swiftBridgePackageName: Property<String>
-
-    @get:OutputDirectory
-    @get:Optional
     val swiftProductOutputDir: DirectoryProperty = objects.directoryProperty()
 
     @get:Input
@@ -146,16 +129,6 @@ abstract class GenerateDatabaseFilesTask @Inject constructor(
         } else {
             SwiftProductRuntimeMode.CORE
         }
-        val swiftExport = if (swiftOverlayOutputDir.isPresent) {
-            SqliteNowSwiftExportConfig(
-                swiftOutputDirectory = swiftOverlayOutputDir.get().asFile,
-                swiftModuleName = swiftOverlayModuleName.get(),
-                frameworkModuleName = swiftFrameworkModuleName.get(),
-                bridgePackageName = swiftBridgePackageName.get(),
-            )
-        } else {
-            null
-        }
         val swiftProductExport = if (swiftProductOutputDir.isPresent && swiftProductRuntimeModuleName.isPresent) {
             SqliteNowSwiftProductExportConfig(
                 swiftOutputDirectory = swiftProductOutputDir.get().asFile,
@@ -181,10 +154,6 @@ abstract class GenerateDatabaseFilesTask @Inject constructor(
         } else {
             null
         }
-        require(swiftExport == null || swiftProductExport == null) {
-            "Configure either Swift overlay export or product Swift source export, not both, for '${dbName.get()}'."
-        }
-
         if (oversqliteEnabled && !oversqliteRuntimePresent.get()) {
             error(
                 "Database '${dbName.get()}' sets oversqlite=true, but no oversqlite runtime dependency was found. " +
@@ -201,7 +170,6 @@ abstract class GenerateDatabaseFilesTask @Inject constructor(
                 schemaDatabaseFile = dbFile,
                 debug = debug.get(),
                 oversqlite = oversqliteEnabled,
-                swiftExport = swiftExport,
                 swiftProductExport = swiftProductExport,
             )
         ) { logger.lifecycle(it) }

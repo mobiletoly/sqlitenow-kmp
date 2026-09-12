@@ -16,73 +16,117 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import androidx.sqlite.SQLiteStatement
-import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.common.sqliteNowLogger
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
-import dev.goquick.sqlitenow.core.TransactionMode
-import dev.goquick.sqlitenow.core.sqlite.use
+import dev.goquick.sqlitenow.core.SqliteNowInternalApi
 import io.ktor.client.HttpClient
-import io.ktor.client.network.sockets.ConnectTimeoutException
-import io.ktor.client.network.sockets.SocketTimeoutException
-import io.ktor.client.plugins.HttpRequestTimeoutException
-import io.ktor.client.plugins.compression.ContentEncoding
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.io.IOException
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
-import kotlin.concurrent.Volatile
-import kotlin.random.Random
-import kotlin.uuid.ExperimentalUuidApi
-import kotlin.uuid.Uuid
 
-class DefaultOversqliteClient(
+class DefaultOversqliteClient private constructor(
     private val db: SafeSQLiteConnection,
     private val config: OversqliteConfig,
     private val http: HttpClient,
-    private val resolver: Resolver = ServerWinsResolver,
+    private val resolver: Resolver,
+    private val requestGzipEngine: OversqliteRequestGzipEngine,
 ) : OversqliteClient {
-    private companion object {
-        const val MAX_SYNC_THEN_DETACH_ROUNDS = 3
+    constructor(
+        db: SafeSQLiteConnection,
+        config: OversqliteConfig,
+        http: HttpClient,
+        resolver: Resolver = DeferConflictResolver,
+    ) : this(db, config, http, resolver, OversqliteRequestGzipEngine(::compressOversqliteRequestGzip))
+
+    companion object {
+        internal fun forOpening(
+            db: SafeSQLiteConnection,
+            config: OversqliteConfig,
+            http: HttpClient,
+            resolver: Resolver,
+            leaseGroup: Any,
+            mutationAuthority: OversqliteOpeningMutationAuthority? = null,
+            requestGzipEngine: OversqliteRequestGzipEngine = OversqliteRequestGzipEngine(::compressOversqliteRequestGzip),
+        ): DefaultOversqliteClient = DefaultOversqliteClient(db, config, http, resolver, requestGzipEngine).also {
+            it.resourceOwner.activeClientLeaseGroup = leaseGroup
+            it.sessionState.coordinatorAuthorized = true
+            it.sessionState.openingMutationAuthority = mutationAuthority
+        }
+
+        internal fun forTesting(
+            db: SafeSQLiteConnection,
+            config: OversqliteConfig,
+            http: HttpClient,
+            resolver: Resolver = DeferConflictResolver,
+            requestGzipEngine: OversqliteRequestGzipEngine = OversqliteRequestGzipEngine(::compressOversqliteRequestGzip),
+        ): DefaultOversqliteClient = forOpening(db, config, http, resolver, Any(), requestGzipEngine = requestGzipEngine)
     }
 
-    private val progressState = MutableStateFlow<OversqliteProgress>(OversqliteProgress.Idle)
-    private val syncGate = Mutex()
     private val tableInfoCache = TableInfoCache()
     private val runtimeInitializer = SyncRuntimeInitializer(config, tableInfoCache)
+
     @OptIn(ExperimentalSerializationApi::class)
     private val json = Json {
         ignoreUnknownKeys = true
         exceptionsWithDebugInfo = false
     }
+
     private val managedTableStore = OversqliteManagedTableStore(db)
     private val applyStateStore = OversqliteApplyStateStore(db)
     private val sourceStateStore = OversqliteSourceStateStore(db)
     private val attachmentStateStore = OversqliteAttachmentStateStore(db)
     private val operationStateStore = OversqliteOperationStateStore(db)
-    private val syncStateStore = OversqliteSyncStateStore(db)
+    private val syncStateStore: OversqliteSyncStateStore = OversqliteSyncStateStore(db) { localStore }
     private val outboxStateStore = OversqliteOutboxStateStore(db)
+    private val conflictStateStore = OversqliteConflictStateStore(db, json)
     private val snapshotDiagnosticsState = SnapshotDiagnosticsState()
-    private val decodedHttp = http.config {
-        expectSuccess = false
-        installOrReplace(ContentEncoding) {
-            gzip()
-            identity()
-        }
-    }
+    private val resourceOwner = OversqliteClientResourceOwner(db, http)
+    private val operationController = OversqliteClientOperationController(
+        config = config,
+        resources = resourceOwner,
+        snapshotDiagnosticsState = snapshotDiagnosticsState,
+        log = ::verboseLog,
+    )
+    internal fun workspaceDiagnostics(): A3AccountingStats = operationController.a3Stats.copy(work=operationController.usedSyncWork())
+    private val sessionState = OversqliteClientSessionState(
+        db = db,
+        config = config,
+        tableInfoCache = tableInfoCache,
+        runtimeInitializer = runtimeInitializer,
+        managedTableStore = managedTableStore,
+        applyStateStore = applyStateStore,
+        sourceStateStore = sourceStateStore,
+        attachmentStateStore = attachmentStateStore,
+        operationStateStore = operationStateStore,
+        syncStateStore = syncStateStore,
+        outboxStateStore = outboxStateStore,
+    )
     private val remoteApi = OversqliteRemoteApi(
-        http = decodedHttp,
+        http = resourceOwner.http,
         json = json,
+        requestGzipEngine = requestGzipEngine,
         log = { message -> verboseLog(message) },
         snapshotDiagnostics = snapshotDiagnosticsState::current,
+        generation = {
+            checkNotNull(sessionState.requireValidatedConfig().generation) {
+                "generation contract is unconfirmed"
+            }
+        },
     )
-    private val localStore = OversqliteLocalStore(db, json, ::requireValidatedConfig)
-    private val bundleApplier = OversqliteBundleApplier(localStore, syncStateStore)
-    private val stageStore = OversqliteStageStore(db, localStore, syncStateStore, json)
+    private val contractGateway = OversqliteContractGateway(
+        db = db,
+        config = config,
+        json = json,
+        tableInfoCache = tableInfoCache,
+        runtimeInitializer = runtimeInitializer,
+        remoteApi = remoteApi,
+        sessionState = sessionState,
+        operationController = operationController,
+    )
+    private val localStore: OversqliteLocalStore = OversqliteLocalStore(db, json, sessionState::requireValidatedConfig)
+    private val bundleApplier = OversqliteBundleApplier(localStore, syncStateStore,
+        OversqliteApplySurvivors(db, localStore, config, operationController, json))
+    private val stageStore = OversqliteStageStore(db, localStore, syncStateStore, json, config, operationController)
     private val applyExecutor = OversqliteApplyExecutor(db, applyStateStore)
     private val snapshotGate = OversqliteSnapshotGate(
         db = db,
@@ -100,18 +144,19 @@ class DefaultOversqliteClient(
         sourceStateStore = sourceStateStore,
         attachmentStateStore = attachmentStateStore,
         outboxStateStore = outboxStateStore,
+        conflictStateStore = conflictStateStore,
         syncStateStore = syncStateStore,
         localStore = localStore,
         bundleApplier = bundleApplier,
         stageStore = stageStore,
         applyExecutor = applyExecutor,
+        openingMutationAuthority = { sessionState.openingMutationAuthority },
         json = json,
     ) { message -> verboseLog(message) }
     private val downloadWorkflow = OversqliteDownloadWorkflow(
         db = db,
         config = config,
         remoteApi = remoteApi,
-        fetchCapabilities = ::fetchValidatedCapabilities,
         sourceStateStore = sourceStateStore,
         outboxStateStore = outboxStateStore,
         attachmentStateStore = attachmentStateStore,
@@ -124,30 +169,50 @@ class DefaultOversqliteClient(
         snapshotGate = snapshotGate,
         snapshotDiagnostics = snapshotDiagnosticsState::current,
         json = json,
+        notifyUpdatedTables = ::notifyUpdatedTables,
     ) { message -> verboseLog(message) }
+    private val lifecycleCoordinator = OversqliteClientLifecycleCoordinator(
+        db = db,
+        config = config,
+        resources = resourceOwner,
+        operations = operationController,
+        session = sessionState,
+        contractGateway = contractGateway,
+        remoteApi = remoteApi,
+        applyStateStore = applyStateStore,
+        sourceStateStore = sourceStateStore,
+        attachmentStateStore = attachmentStateStore,
+        operationStateStore = operationStateStore,
+        syncStateStore = syncStateStore,
+        outboxStateStore = outboxStateStore,
+        stageStore = stageStore,
+        snapshotDiagnosticsState = snapshotDiagnosticsState,
+        snapshotGate = snapshotGate,
+        downloadWorkflow = downloadWorkflow,
+        notifyUpdatedTables = ::notifyUpdatedTables,
+    )
+    private val syncCoordinator = OversqliteClientSyncCoordinator(
+        operations = operationController,
+        session = sessionState,
+        contractGateway = contractGateway,
+        lifecycle = lifecycleCoordinator,
+        pushWorkflow = pushWorkflow,
+        downloadWorkflow = downloadWorkflow,
+        attachmentStateStore = attachmentStateStore,
+        operationStateStore = operationStateStore,
+        syncStateStore = syncStateStore,
+        outboxStateStore = outboxStateStore,
+        conflictStateStore = conflictStateStore,
+        notifyUpdatedTables = ::notifyUpdatedTables,
+    )
 
-    @Volatile
-    private var uploadsPaused = false
+    internal var cleanupObservationTimeoutMillis: Long
+        get() = resourceOwner.cleanupObservationTimeoutMillis
+        set(value) {
+            resourceOwner.cleanupObservationTimeoutMillis = value
+        }
 
-    @Volatile
-    private var downloadsPaused = false
-
-    @Volatile
-    private var validatedConfig: ValidatedConfig? = null
-
-    @Volatile
-    private var currentSourceId: String? = null
-
-    @Volatile
-    private var currentUserId: String? = null
-
-    @Volatile
-    private var sessionConnected = false
-
-    @Volatile
-    private var pendingInitializationId: String = ""
-
-    override val progress: StateFlow<OversqliteProgress> = progressState.asStateFlow()
+    override val progress: StateFlow<OversqliteProgress> = operationController.progress
 
     internal fun snapshotRestoreDiagnosticsForTest(): SnapshotRestoreDiagnostics =
         snapshotDiagnosticsState.published()
@@ -156,27 +221,20 @@ class DefaultOversqliteClient(
         applyExecutor.faultInjector = injector
     }
 
-    internal fun setSnapshotStageStatementCloseForTest(
-        close: ((SQLiteStatement) -> Unit)?,
-    ) {
+    internal fun setBeforeDetachWriteReservationForTest(hook: (suspend () -> Unit)?) {
+        lifecycleCoordinator.beforeDetachWriteReservationForTest = hook
+    }
+
+    internal fun setSnapshotStageStatementCloseForTest(close: ((SQLiteStatement) -> Unit)?) {
         stageStore.snapshotStatementCloseForTest = close
     }
 
-    internal fun setSnapshotStageReusableStatementCleanupForTest(
-        cleanup: ReusableStatementCleanup?,
-    ) {
+    internal fun setSnapshotStageReusableStatementCleanupForTest(cleanup: ReusableStatementCleanup?) {
         stageStore.reusableStatementCleanupForTest = cleanup
     }
 
     internal fun resetSnapshotRestoreDiagnosticsForTest() {
-        if (!syncGate.tryLock()) {
-            throw SyncOperationInProgressException()
-        }
-        try {
-            snapshotDiagnosticsState.reset()
-        } finally {
-            syncGate.unlock()
-        }
+        operationController.resetSnapshotRestoreDiagnosticsForTest()
     }
 
     private fun verboseLog(message: () -> String) {
@@ -189,1317 +247,132 @@ class DefaultOversqliteClient(
         db.reportExternalTableChanges(updatedTables)
     }
 
-    override suspend fun pauseUploads() {
-        uploadsPaused = true
-    }
+    override suspend fun pauseUploads() = operationController.pauseUploads()
 
-    override suspend fun resumeUploads() {
-        uploadsPaused = false
-    }
+    override suspend fun resumeUploads() = operationController.resumeUploads()
 
-    override suspend fun pauseDownloads() {
-        downloadsPaused = true
-    }
+    override suspend fun pauseDownloads() = operationController.pauseDownloads()
 
-    override suspend fun resumeDownloads() {
-        downloadsPaused = false
-    }
+    override suspend fun resumeDownloads() = operationController.resumeDownloads()
 
     suspend fun runAutomaticDownloads(
         automaticDownloadConfig: OversqliteAutomaticDownloadConfig = OversqliteAutomaticDownloadConfig(),
-    ): Nothing {
-        return OversqliteAutomaticDownloads(
+    ): Nothing = resourceOwner.trackOwnedOperation {
+        OversqliteAutomaticDownloads(
             automaticDownloadConfig = automaticDownloadConfig,
             remoteApi = remoteApi,
             attachmentStateStore = attachmentStateStore,
-            downloadsPaused = { downloadsPaused },
-            connectedRuntimeState = ::requireConnectedRuntimeState,
-            fetchCapabilities = { sourceId ->
-                fetchValidatedCapabilities(sourceId, "automatic downloads capability check")
-            },
-            pullToStable = { pullToStable() },
+            downloadsPaused = operationController::downloadsPaused,
+            connectedRuntimeState = sessionState::requireConnectedRuntimeState,
+            pullToStable = syncCoordinator::pullToStable,
             log = { message -> verboseLog(message) },
         ).run()
     }
 
-    override suspend fun open(): Result<Unit> = runExclusiveOperation {
-        openInternal()
-        restoreInMemoryLifecycleState()
-    }
-
-    private suspend fun restoreInMemoryLifecycleState() {
-        val state = loadDurableLifecycleView()
-        if (state.isAttached) {
-            currentUserId = state.attachedUserId
-            pendingInitializationId = state.pendingInitializationId
-            sessionConnected = false
-            return
+    override suspend fun open(): Result<Unit> = lifecycleCoordinator.open()
+    override suspend fun sourceInfo(): Result<SourceInfo> = lifecycleCoordinator.sourceInfo()
+    override suspend fun attach(userId: String): Result<AttachResult> = lifecycleCoordinator.attach(userId)
+    override suspend fun syncStatus(): Result<SyncStatus> = syncCoordinator.syncStatus()
+    override suspend fun detach(): Result<DetachOutcome> = lifecycleCoordinator.detach()
+    override suspend fun pushPending(): Result<PushReport> = syncCoordinator.pushPending()
+    override suspend fun readPushDependencyDiagnostic(diagnosticId: String,cursor: String?,pageSize: Int): Result<PushDependencyDiagnosticPage> =
+        operationController.runExclusiveOperation {
+            val attachment=attachmentStateStore.loadState()
+            val state=RuntimeState(sessionState.requireValidatedConfig(),sessionState.requireAdmittedContract(),attachment.attachedUserId,attachment.currentSourceId,attachment.pendingInitializationId)
+            stageStore.readPushDependencyDiagnostic(state,diagnosticId,cursor,pageSize)
         }
-        currentUserId = null
-        pendingInitializationId = ""
-        sessionConnected = false
-    }
-
-    override suspend fun sourceInfo(): Result<SourceInfo> = runExclusiveOperation {
-        ensureOpened("sourceInfo()")
-        val attachment = attachmentStateStore.loadState()
-        val operation = operationStateStore.loadState()
-        SourceInfo(
-            currentSourceId = resolveSourceIdOrCurrent(attachment.currentSourceId),
-            rebuildRequired = attachment.rebuildRequired || operation.isSourceRecoveryRequired(),
-            sourceRecoveryRequired = operation.isSourceRecoveryRequired(),
-            sourceRecoveryReason = operation.sourceRecoveryReasonOrNull(),
-        )
-    }
-
-    override suspend fun attach(userId: String): Result<AttachResult> = runExclusiveOperation {
-        withSnapshotDiagnosticsScope {
-            withOperationProgress(OversqliteOperation.ATTACH) {
-            setProgress(OversqliteOperation.ATTACH, OversqlitePhase.ATTACHING)
-            val requestedUserId = userId.trim()
-            require(requestedUserId.isNotEmpty()) { "userId must be provided" }
-            ensureOpened("attach(userId)")
-            val validated = requireValidatedConfig()
-            val state = loadDurableLifecycleView()
-            val sourceId = resolveSourceIdOrCurrent(state.sourceId)
-
-            if (state.operation.kind == operationKindRemoteReplace) {
-                if (state.operation.targetUserId != requestedUserId || state.sourceId != sourceId) {
-                    throw ConnectLocalStateConflictException(
-                        "pending remote_replace belongs to a different local scope",
-                    )
-                }
-            }
-
-            if (state.isAttached &&
-                state.attachedUserId == requestedUserId &&
-                state.operation.kind != operationKindRemoteReplace
-            ) {
-                currentUserId = requestedUserId
-                pendingInitializationId = state.pendingInitializationId
-                sessionConnected = true
-                val status = syncStatusInternal(requireConnectedRuntimeState("attach(userId)"))
-                return@withOperationProgress AttachResult.Connected(
-                    outcome = AttachOutcome.RESUMED_ATTACHED_STATE,
-                    status = status,
-                )
-            }
-
-            if (state.isAttached && state.attachedUserId != requestedUserId) {
-                throw ConnectBindingConflictException(
-                    attachedUserId = state.attachedUserId,
-                    requestedUserId = requestedUserId,
-                )
-            }
-
-            verifyConnectLifecycleSupported()
-            if (state.operation.kind == operationKindRemoteReplace) {
-                val downloadResult = finalizeRemoteReplace(
-                    validated = validated,
-                    state = state,
-                    operation = OversqliteOperation.ATTACH,
-                )
-                notifyUpdatedTables(downloadResult.updatedTables)
-                currentUserId = requestedUserId
-                sessionConnected = true
-                pendingInitializationId = ""
-                val runtimeState = requireConnectedRuntimeState("attach(userId)")
-                val status = syncStatusInternal(runtimeState)
-                return@withOperationProgress AttachResult.Connected(
-                    outcome = AttachOutcome.USED_REMOTE_STATE,
-                    status = status,
-                    restore = downloadResult.restore,
-                )
-            }
-
-            val hasLocalPendingRows = pendingLocalChangeCount() > 0L
-            val response = withTransientRetry("attach() transport") {
-                remoteApi.connect(sourceId, hasLocalPendingRows)
-            }
-            return@withOperationProgress when (response.resolution) {
-                "retry_later" -> {
-                    sessionConnected = false
-                    AttachResult.RetryLater(response.retryAfterSeconds.toLong())
-                }
-
-                "initialize_empty" -> {
-                    persistConnectedLifecycleState(requestedUserId, initializationId = "")
-                    currentUserId = requestedUserId
-                    pendingInitializationId = ""
-                    sessionConnected = true
-                    val status = syncStatusInternal(requireConnectedRuntimeState("attach(userId)"))
-                    AttachResult.Connected(
-                        outcome = AttachOutcome.STARTED_EMPTY,
-                        status = status,
-                    )
-                }
-
-                "initialize_local" -> {
-                    persistConnectedLifecycleState(requestedUserId, initializationId = response.initializationId)
-                    currentUserId = requestedUserId
-                    pendingInitializationId = response.initializationId
-                    sessionConnected = true
-                    val status = syncStatusInternal(requireConnectedRuntimeState("attach(userId)"))
-                    AttachResult.Connected(
-                        outcome = AttachOutcome.SEEDED_FROM_LOCAL,
-                        status = status,
-                    )
-                }
-
-                "remote_authoritative" -> {
-                    beginRemoteReplace(requestedUserId, sourceId)
-                    val refreshedState = loadDurableLifecycleView()
-                    val downloadResult = finalizeRemoteReplace(
-                        validated = validated,
-                        state = refreshedState,
-                        operation = OversqliteOperation.ATTACH,
-                    )
-                    notifyUpdatedTables(downloadResult.updatedTables)
-                    currentUserId = requestedUserId
-                    pendingInitializationId = ""
-                    sessionConnected = true
-                    val status = syncStatusInternal(requireConnectedRuntimeState("attach(userId)"))
-                    AttachResult.Connected(
-                        outcome = AttachOutcome.USED_REMOTE_STATE,
-                        status = status,
-                        restore = downloadResult.restore,
-                    )
-                }
-
-                else -> error("unexpected connect resolution ${response.resolution}")
-            }
-            }
+    override suspend fun releasePushDependencyDiagnostic(diagnosticId: String): Result<Unit> =
+        operationController.runExclusiveOperation {
+            stageStore.releasePushDependencyDiagnostic(diagnosticId)
         }
-    }
 
-    override suspend fun syncStatus(): Result<SyncStatus> = runSyncOperation("syncStatus()") {
-        ensureNoDestructiveTransition()
-        syncStatusInternal(requireConnectedRuntimeState("syncStatus()"))
-    }
+    override suspend fun pendingConflict(): Result<PendingConflict?> = syncCoordinator.pendingConflict()
+    override suspend fun retryConflict(selected: PendingConflict): Result<Unit> = syncCoordinator.retryConflict(selected)
+    override suspend fun resolveConflict(selected: PendingConflict, result: MergeResult): Result<Unit> =
+        syncCoordinator.resolveConflict(selected, result)
+    override suspend fun pullToStable(): Result<RemoteSyncReport> = syncCoordinator.pullToStable()
+    override suspend fun sync(): Result<SyncReport> = syncCoordinator.sync()
+    override suspend fun syncThenDetach(): Result<SyncThenDetachResult> = syncCoordinator.syncThenDetach()
+    override suspend fun rebuild(): Result<RemoteSyncReport> = syncCoordinator.rebuild()
 
-    override suspend fun detach(): Result<DetachOutcome> = runExclusiveOperation {
-        val execution = executeDetach("detach()")
-        notifyUpdatedTables(execution.updatedTables)
-        execution.outcome
-    }
+    internal suspend fun rebuildForOpening(finalizer: suspend (String) -> Unit): Result<RemoteSyncReport> =
+        syncCoordinator.rebuildForOpening(finalizer)
 
-    override suspend fun pushPending(): Result<PushReport> = runSyncOperation("pushPending()") {
-        verifyProtocolGate("pushPending()")
-        withOperationProgress(OversqliteOperation.PUSH_PENDING) {
-            val execution = executePush(
-                operationName = "pushPending()",
-                operation = OversqliteOperation.PUSH_PENDING,
-            )
-            notifyUpdatedTables(execution.updatedTables)
-            execution.report
-        }
-    }
-
-    override suspend fun pullToStable(): Result<RemoteSyncReport> = runSyncOperation("pullToStable()") {
-        verifyProtocolGate("pullToStable()")
-        withOperationProgress(OversqliteOperation.PULL_TO_STABLE) {
-            val execution = executePullToStable(
-                operationName = "pullToStable()",
-                operation = OversqliteOperation.PULL_TO_STABLE,
-            )
-            notifyUpdatedTables(execution.updatedTables)
-            execution.report
-        }
-    }
-
-    override suspend fun sync(): Result<SyncReport> = runSyncOperation("sync()") {
-        verifyProtocolGate("sync()")
-        withOperationProgress(OversqliteOperation.SYNC) {
-            val execution = executeSyncRound(
-                operationName = "sync()",
-                operation = OversqliteOperation.SYNC,
-            )
-            notifyUpdatedTables(execution.updatedTables)
-            execution.report
-        }
-    }
-
-    override suspend fun syncThenDetach(): Result<SyncThenDetachResult> = runSyncOperation("syncThenDetach()") {
-        verifyProtocolGate("syncThenDetach()")
-        withOperationProgress(OversqliteOperation.SYNC) {
-            var previousPendingRowCount = Long.MAX_VALUE
-            var lastReport: SyncReport? = null
-            repeat(MAX_SYNC_THEN_DETACH_ROUNDS) { roundIndex ->
-                val syncExecution = executeSyncRound(
-                    operationName = "syncThenDetach()",
-                    operation = OversqliteOperation.SYNC,
-                )
-                lastReport = syncExecution.report
-                notifyUpdatedTables(syncExecution.updatedTables)
-
-                val detachExecution = executeDetach("syncThenDetach()")
-                notifyUpdatedTables(detachExecution.updatedTables)
-                if (detachExecution.outcome == DetachOutcome.DETACHED) {
-                    return@withOperationProgress SyncThenDetachResult(
-                        lastSync = syncExecution.report,
-                        detach = DetachOutcome.DETACHED,
-                        syncRounds = roundIndex + 1,
-                        remainingPendingRowCount = 0L,
-                    )
-                }
-
-                val pending = pendingSyncStatusInternal()
-                if (pending.pendingRowCount >= previousPendingRowCount) {
-                    return@withOperationProgress SyncThenDetachResult(
-                        lastSync = syncExecution.report,
-                        detach = DetachOutcome.BLOCKED_UNSYNCED_DATA,
-                        syncRounds = roundIndex + 1,
-                        remainingPendingRowCount = pending.pendingRowCount,
-                    )
-                }
-                previousPendingRowCount = pending.pendingRowCount
-            }
-
-            val finalReport = lastReport ?: error("syncThenDetach() did not execute a sync round")
-            val pending = pendingSyncStatusInternal()
-            SyncThenDetachResult(
-                lastSync = finalReport,
-                detach = DetachOutcome.BLOCKED_UNSYNCED_DATA,
-                syncRounds = MAX_SYNC_THEN_DETACH_ROUNDS,
-                remainingPendingRowCount = pending.pendingRowCount,
-            )
-        }
-    }
-
-    override suspend fun rebuild(): Result<RemoteSyncReport> = runSyncOperation("rebuild()") {
-        verifyProtocolGate("rebuild()")
-        val plan = selectRebuildPlan()
-        withOperationProgress(plan.operation) {
-            val execution = executeSnapshotRebuild(
-                operationName = "rebuild()",
-                operation = plan.operation,
-                rotatedSourceId = plan.rotatedSourceId,
-                outboxMode = plan.outboxMode,
-                sourceReplacementReason = plan.sourceReplacementReason,
-            )
-            notifyUpdatedTables(execution.updatedTables)
-            execution.report
-        }
-    }
-
+    @OptIn(SqliteNowInternalApi::class)
     override fun close() {
-        decodedHttp.close()
+        resourceOwner.close()
     }
 
-    private suspend fun openInternal(): ValidatedConfig {
-        val validated = runtimeInitializer.prepareLocalRuntime(db, managedTableStore)
-        var attachmentState: OversqliteAttachmentState? = null
-        db.transaction(TransactionMode.IMMEDIATE) {
-            val operation = operationStateStore.loadState()
-            val currentAttachment = attachmentStateStore.loadState()
-            val boundSourceId = currentAttachment.currentSourceId
-                .takeIf { it.isNotEmpty() }
-                ?.let(::requireValidOversqliteSourceId)
-                ?: generateFreshSourceId()
-            sourceStateStore.ensureSource(boundSourceId)
-            if (currentAttachment.currentSourceId.isBlank()) {
-                runtimeInitializer.capturePreexistingAnonymousRows(db, validated)
-            }
-            val normalizedAttachment = currentAttachment.copy(
-                currentSourceId = boundSourceId,
-                bindingState = if (
-                    operation.kind == operationKindRemoteReplace ||
-                    currentAttachment.bindingState != attachmentBindingAttached ||
-                    currentAttachment.attachedUserId.isBlank()
-                ) {
-                    attachmentBindingAnonymous
-                } else {
-                    attachmentBindingAttached
-                },
-                attachedUserId = currentAttachment.attachedUserId.takeIf {
-                    operation.kind != operationKindRemoteReplace &&
-                        currentAttachment.bindingState == attachmentBindingAttached &&
-                        it.isNotBlank()
-                }.orEmpty(),
-                schemaName = config.schema.trim().takeIf {
-                    operation.kind != operationKindRemoteReplace &&
-                        currentAttachment.bindingState == attachmentBindingAttached &&
-                        currentAttachment.attachedUserId.isNotBlank()
-                }.orEmpty(),
-                lastBundleSeqSeen = currentAttachment.lastBundleSeqSeen.takeIf {
-                    operation.kind != operationKindRemoteReplace &&
-                        currentAttachment.bindingState == attachmentBindingAttached &&
-                        currentAttachment.attachedUserId.isNotBlank()
-                } ?: 0L,
-                rebuildRequired = currentAttachment.rebuildRequired &&
-                    operation.kind != operationKindRemoteReplace &&
-                    currentAttachment.bindingState == attachmentBindingAttached &&
-                    currentAttachment.attachedUserId.isNotBlank(),
-                pendingInitializationId = currentAttachment.pendingInitializationId.takeIf {
-                    operation.kind == operationKindNone &&
-                        currentAttachment.bindingState == attachmentBindingAttached &&
-                        currentAttachment.attachedUserId.isNotBlank()
-                }.orEmpty(),
-            )
-            attachmentStateStore.persistState(normalizedAttachment)
-            attachmentState = normalizedAttachment
-        }
+    internal fun bindCoordinatedClose(handler: () -> Unit) = resourceOwner.bindCoordinatedClose(handler)
 
-        validatedConfig = validated
-        currentSourceId = requireValidOversqliteSourceId(attachmentState!!.currentSourceId)
-        pendingInitializationId = attachmentState.pendingInitializationId
-        if (attachmentState.bindingState == attachmentBindingAttached && attachmentState.attachedUserId.isNotBlank()) {
-            currentUserId = attachmentState.attachedUserId
-        } else {
-            currentUserId = null
-        }
-        return validated
-    }
+    internal val cleanupPending: Boolean
+        get() = resourceOwner.cleanupPending
 
-    private suspend fun verifyConnectLifecycleSupported() {
-        val capabilities = fetchValidatedCapabilities(requireCurrentSourceId(), "attach() capability gate")
-        if (!capabilities.features.getOrElse("connect_lifecycle") { false }) {
-            throw ConnectLifecycleUnsupportedException("connect_lifecycle capability is absent")
-        }
-    }
+    internal suspend fun closeFromCoordinatedOwner() = resourceOwner.closeFromCoordinatedOwner()
 
-    private suspend fun verifyProtocolGate(operation: String) {
-        requireConnectedRuntimeState(operation)
-        fetchValidatedCapabilities(requireCurrentSourceId(), "$operation capability gate")
-    }
-
-    private suspend fun fetchValidatedCapabilities(
+    internal suspend fun previewGenerationForUpgrade(
         sourceId: String,
-        operation: String,
-    ): CapabilitiesResponse = withTransientRetry(operation) {
-        remoteApi.fetchCapabilities(sourceId)
-            .requireMatchingSyncTableContract(requireValidatedConfig())
-    }
+        generationId: Long,
+    ): SyncGeneration = lifecycleCoordinator.previewGenerationForUpgrade(sourceId, generationId)
 
-    private suspend fun beginRemoteReplace(
+    internal suspend fun admitAttachedGenerationOpening(userId: String) =
+        lifecycleCoordinator.admitAttachedGenerationOpening(userId)
+
+    internal suspend fun prepareGenerationReplacement(
+        oldSourceId: String,
+        newSourceId: String,
         userId: String,
-        sourceId: String,
-    ) {
-        db.transaction(TransactionMode.IMMEDIATE) {
-            val outboxState = outboxStateStore.loadBundleState()
-            val pendingOutboundCount = outboxStateStore.countRows()
-            if (outboxState.state != outboxStateNone || pendingOutboundCount != 0L) {
-                throw PendingPushReplayException(saturatingLegacyCount(pendingOutboundCount))
-            }
-            attachmentStateStore.persistAnonymousState(sourceId)
-            operationStateStore.persistState(
-                OversqliteOperationState(
-                    kind = operationKindRemoteReplace,
-                    targetUserId = userId,
-                ),
-            )
-            syncStateStore.clearDirtyRows()
-        }
-    }
+        precondition: suspend () -> Unit,
+        finalizer: suspend () -> Unit,
+    ) = lifecycleCoordinator.prepareGenerationReplacement(
+        oldSourceId,
+        newSourceId,
+        userId,
+        precondition,
+        finalizer,
+    )
 
-    private suspend fun finalizeRemoteReplace(
-        validated: ValidatedConfig,
-        state: DurableLifecycleView,
-        operation: OversqliteOperation,
-    ): DownloadWorkflowResult {
-        require(state.operation.kind == operationKindRemoteReplace) {
-            "cannot finalize durable operation ${state.operation.kind} as remote_replace"
-        }
-        val refreshedState = ensureRemoteReplaceSnapshotStaged(state, operation)
-        val runtimeState = RuntimeState(
-            validated = validated,
-            userId = refreshedState.operation.targetUserId,
-            sourceId = refreshedState.sourceId,
-        )
-        val session = SnapshotSession(
-            snapshotId = refreshedState.operation.stagedSnapshotId,
-            snapshotBundleSeq = refreshedState.operation.snapshotBundleSeq,
-            rowCount = refreshedState.operation.snapshotRowCount,
-            byteCount = refreshedState.operation.snapshotByteCount,
-            expiresAt = "",
-        )
-        setProgress(operation, OversqlitePhase.APPLYING_REMOTE_STATE)
-        val guard = snapshotGate.pin(
-            mode = SnapshotRebuildOutboxMode.CLEAR_ALL,
-            remoteReplace = true,
-            remoteTargetUserId = refreshedState.operation.targetUserId,
-        )
-        val result = downloadWorkflow.applyStagedSnapshot(
-            state = runtimeState,
-            session = session,
-            rotatedSourceId = null,
-            outboxMode = SnapshotRebuildOutboxMode.CLEAR_ALL,
-            pinnedGuard = guard,
-        )
-        applyDownloadResult(result)
-        return result
-    }
+    internal suspend fun createGenerationReplacementSnapshot(
+        oldSourceId: String,
+        newSourceId: String,
+        reason: String,
+    ): SnapshotSession = lifecycleCoordinator.createGenerationReplacementSnapshot(
+        oldSourceId,
+        newSourceId,
+        reason,
+    )
 
-    private suspend fun ensureRemoteReplaceSnapshotStaged(
-        state: DurableLifecycleView,
-        operation: OversqliteOperation,
-    ): DurableLifecycleView {
-        val diagnostics = requireNotNull(snapshotDiagnosticsState.current()) {
-            "snapshot diagnostics scope is missing for remote replacement"
-        }
-        diagnostics.markRestoreAttempt()
-        var nextOperation = state.operation
-        if (nextOperation.stagedSnapshotId.isNotBlank()) {
-            val stagedCount = countSnapshotStageRows(nextOperation.stagedSnapshotId)
-            if (
-                nextOperation.snapshotStageComplete &&
-                nextOperation.snapshotByteCount >= 0L &&
-                stagedCount == nextOperation.snapshotRowCount
-            ) {
-                diagnostics.recordStagedRows(stagedCount)
-                return state.copy(operation = nextOperation)
-            }
-            stageStore.clearAllSnapshotStages()
-            nextOperation = nextOperation.copy(
-                stagedSnapshotId = "",
-                snapshotBundleSeq = 0,
-                snapshotRowCount = 0,
-                snapshotByteCount = 0,
-                snapshotStageComplete = false,
-            )
-            operationStateStore.persistState(nextOperation)
-        }
+    internal suspend fun createGenerationRecoverySnapshot(newSourceId: String): SnapshotSession =
+        lifecycleCoordinator.createGenerationRecoverySnapshot(newSourceId)
 
-        setProgress(operation, OversqlitePhase.STAGING_REMOTE_STATE)
-        val sourceId = resolveSourceIdOrCurrent(state.sourceId)
-        val limits = negotiateSnapshotLimits(
-            fetchValidatedCapabilities(sourceId, "remote_replace snapshot capability negotiation"),
-            config,
-        )
-        val session = withTransientRetry("remote_replace snapshot create") {
-            remoteApi.createSnapshotSession(sourceId)
-        }
-        try {
-            stageStore.clearAllSnapshotStages()
-            nextOperation = nextOperation.copy(
-                stagedSnapshotId = session.snapshotId,
-                snapshotBundleSeq = session.snapshotBundleSeq,
-                snapshotRowCount = session.rowCount,
-                snapshotByteCount = session.byteCount,
-                snapshotStageComplete = false,
-            )
-            operationStateStore.persistState(nextOperation)
-
-            val runtimeState = RuntimeState(
-                validated = requireValidatedConfig(),
-                userId = nextOperation.targetUserId,
-                sourceId = sourceId,
-            )
-            val totals = downloadWorkflow.downloadSnapshotSession(runtimeState, session, limits) { afterRowOrdinal ->
-                withTransientRetry("remote_replace snapshot fetch") {
-                    remoteApi.fetchSnapshotChunk(
-                        snapshotId = session.snapshotId,
-                        sourceId = sourceId,
-                        snapshotBundleSeq = session.snapshotBundleSeq,
-                        afterRowOrdinal = afterRowOrdinal,
-                        maxRows = limits.maxRows,
-                        maxBytes = limits.maxBytes,
-                    )
-                }
-            }
-            diagnostics.recordStagedRows(totals.rows)
-            nextOperation = nextOperation.copy(snapshotStageComplete = true)
-            operationStateStore.persistState(nextOperation)
-            return state.copy(operation = nextOperation)
-        } finally {
-            remoteApi.deleteSnapshotSessionBestEffort(
-                snapshotId = session.snapshotId,
-                sourceId = sourceId,
-            )
-        }
-    }
-
-    private suspend fun persistConnectedLifecycleState(
+    internal suspend fun stageGenerationSnapshot(
+        session: SnapshotSession,
+        newSourceId: String,
         userId: String,
-        initializationId: String,
-    ) {
-        val existing = attachmentStateStore.loadState()
-        attachmentStateStore.persistAttachedState(
-            sourceId = resolveSourceIdOrCurrent(existing.currentSourceId),
-            userId = userId,
-            schemaName = config.schema.trim(),
-            lastBundleSeqSeen = existing.lastBundleSeqSeen,
-            rebuildRequired = existing.rebuildRequired,
-            pendingInitializationId = initializationId,
-        )
-        operationStateStore.persistState(OversqliteOperationState())
-    }
+        initialTotals: SnapshotTransferTotals = SnapshotTransferTotals(),
+        onChunkStaged: suspend (SnapshotTransferTotals) -> Unit,
+    ): SnapshotTransferTotals = lifecycleCoordinator.stageGenerationSnapshot(
+        session,
+        newSourceId,
+        userId,
+        initialTotals,
+        onChunkStaged,
+    )
 
-    private suspend fun cancelPendingRemoteReplace(
-        state: DurableLifecycleView,
-    ) {
-        if (state.operation.stagedSnapshotId.isNotBlank()) {
-            stageStore.deleteSnapshotStage(state.operation.stagedSnapshotId)
-        } else {
-            stageStore.clearAllSnapshotStages()
-        }
-        attachmentStateStore.persistAnonymousState(
-            sourceId = resolveSourceIdOrCurrent(state.sourceId),
-        )
-        operationStateStore.persistState(OversqliteOperationState())
-    }
+    internal suspend fun applyGenerationSnapshot(
+        session: SnapshotSession,
+        oldSourceId: String,
+        newSourceId: String,
+        userId: String,
+        finalizer: suspend () -> Unit,
+    ) = lifecycleCoordinator.applyGenerationSnapshot(
+        session,
+        oldSourceId,
+        newSourceId,
+        userId,
+        finalizer,
+    )
 
-    private suspend fun clearFullLocalSyncState(
-        validated: ValidatedConfig,
-        statementCache: StatementCache,
-    ) {
-        // Destructive lifecycle cleanup may temporarily violate managed-table FK edges
-        // until the whole graph is cleared within this transaction.
-        db.execSQL("PRAGMA defer_foreign_keys = ON")
-        applyStateStore.setApplyMode(true, statementCache)
-        try {
-            clearManagedTables(validated, statementCache)
-            stageStore.clearAllSnapshotStages(statementCache)
-        } finally {
-            applyStateStore.setApplyMode(false, statementCache)
-        }
-    }
-
-    private suspend fun clearManagedTables(
-        validated: ValidatedConfig,
-        statementCache: StatementCache? = null,
-    ) {
-        for (tableName in managedTableNames(validated)) {
-            if (tableName.isBlank()) continue
-            if (sqliteTableExists(tableName)) {
-                db.execSQL("DELETE FROM ${quoteIdent(tableName)}")
-            }
-            syncStateStore.clearStructuredRowState(validated.schema, tableName, statementCache)
-        }
-        syncStateStore.clearDirtyRows()
-        outboxStateStore.clearBundleAndRows(statementCache)
-    }
-
-    private suspend fun managedTableNames(validated: ValidatedConfig): Set<String> {
-        val tables = linkedSetOf<String>()
-        tables += managedTableStore.loadManagedTables(validated.schema).map { it.lowercase() }
-        tables += validated.tables.map { it.tableName.lowercase() }
-        return tables.filter { it.isNotBlank() }.toCollection(linkedSetOf())
-    }
-
-    private suspend fun sqliteTableExists(tableName: String): Boolean {
-        return db.withExclusiveAccess {
-            db.prepare(
-                """
-                SELECT COUNT(*)
-                FROM sqlite_master
-                WHERE type = 'table' AND name = ?
-                """.trimIndent(),
-            ).use { st ->
-                st.bindText(1, tableName)
-                check(st.step())
-                st.getLong(0) > 0L
-            }
-        }
-    }
-
-    private suspend fun countSnapshotStageRows(snapshotId: String): Long {
-        return db.withExclusiveAccess {
-            db.prepare(
-                """
-                SELECT COUNT(*)
-                FROM _sync_snapshot_stage
-                WHERE snapshot_id = ?
-                """.trimIndent(),
-            ).use { st ->
-                st.bindText(1, snapshotId)
-                check(st.step())
-                st.getLong(0)
-            }
-        }
-    }
-
-    private suspend fun pendingSyncStatusInternal(): PendingSyncStatus {
-        val total = pendingLocalChangeCount()
-        val state = attachmentStateStore.loadState()
-        return PendingSyncStatus(
-            hasPendingSyncData = total > 0,
-            pendingRowCount = total,
-            blocksDetach = state.bindingState == attachmentBindingAttached && total > 0,
-        )
-    }
-
-    private suspend fun pendingLocalChangeCount(): Long {
-        return OversqliteCountEvaluation(
-            dirtyRowCount = syncStateStore.countDirtyRows(),
-            outboundRowCount = outboxStateStore.countRows(),
-        ).totalPendingRowCount
-    }
-
-    private suspend fun syncStatusInternal(
-        state: RuntimeState,
-    ): SyncStatus {
-        val authority = when {
-            state.pendingInitializationId.isNotEmpty() -> AuthorityStatus.PENDING_LOCAL_SEED
-            syncStateStore.countLiveStructuredRows() == 0L -> AuthorityStatus.AUTHORITATIVE_EMPTY
-            else -> AuthorityStatus.AUTHORITATIVE_MATERIALIZED
-        }
-        return SyncStatus(
-            authority = authority,
-            pending = pendingSyncStatusInternal(),
-            lastBundleSeqSeen = attachmentStateStore.loadState().lastBundleSeqSeen,
-        )
-    }
-
-    private fun setProgress(
-        operation: OversqliteOperation,
-        phase: OversqlitePhase,
-    ) {
-        progressState.value = OversqliteProgress.Active(operation, phase)
-    }
-
-    private suspend fun <T> withOperationProgress(
-        operation: OversqliteOperation,
-        block: suspend () -> T,
-    ): T {
-        try {
-            return block()
-        } finally {
-            progressState.value = OversqliteProgress.Idle
-        }
-    }
-
-    private suspend fun executePush(
-        operationName: String,
-        operation: OversqliteOperation,
-        allowCheckpointRecovery: Boolean = false,
-    ): PushExecution {
-        val state = requireConnectedRuntimeState(operationName)
-        val durableOperation = operationStateStore.loadState()
-        if (durableOperation.isSourceRecoveryRequired()) {
-            throw SourceRecoveryRequiredException(durableOperation.requireSourceRecoveryReason())
-        }
-        setProgress(
-            operation = operation,
-            phase = if (state.pendingInitializationId.isNotEmpty()) {
-                OversqlitePhase.SEEDING
-            } else {
-                OversqlitePhase.PUSHING
-            },
-        )
-        val workflowResult = try {
-            pushWorkflow.pushPending(state, allowCheckpointRecovery = allowCheckpointRecovery)
-        } catch (e: SourceRecoveryRequiredHttpException) {
-            persistSourceRecoveryRequiredState(state, e.reason, e.replacementSourceId)
-            throw SourceRecoveryRequiredException(e.reason)
-        } catch (e: CommittedReplayPrunedException) {
-            attachmentStateStore.setRebuildRequired(true)
-            if (allowCheckpointRecovery) throw e
-            throw RebuildRequiredException()
-        } catch (e: SourceSequenceMismatchException) {
-            if (outboxStateStore.loadBundleState().state == outboxStateCommittedRemote) {
-                attachmentStateStore.setRebuildRequired(true)
-                throw RebuildRequiredException()
-            }
-            throw e
-        } catch (e: InitializationLeaseInvalidException) {
-            clearStaleInitializationState()
-            throw e
-        }
-        if (state.pendingInitializationId.isNotEmpty() && workflowResult.outcome == PushOutcome.COMMITTED) {
-            attachmentStateStore.clearPendingInitializationId()
-            pendingInitializationId = ""
-        }
-        val status = syncStatusInternal(requireConnectedRuntimeState(operationName))
-        return PushExecution(
-            report = PushReport(
-                outcome = workflowResult.outcome,
-                status = status,
-            ),
-            updatedTables = workflowResult.updatedTables,
-        )
-    }
-
-    private suspend fun executeSyncRound(
-        operationName: String,
-        operation: OversqliteOperation,
-    ): SyncExecution {
-        ensureNoDestructiveTransition()
-        if (checkpointRecoveryRequired()) {
-            val remoteExecution = executeCheckpointRecovery(operationName, operation)
-            return SyncExecution(
-                report = SyncReport(
-                    pushOutcome = PushOutcome.NO_CHANGE,
-                    remoteOutcome = remoteExecution.report.outcome,
-                    status = remoteExecution.report.status,
-                    restore = remoteExecution.report.restore,
-                ),
-                updatedTables = remoteExecution.updatedTables,
-            )
-        }
-        val pushExecution = executePush(
-            operationName = operationName,
-            operation = operation,
-        )
-        val remoteExecution = executePullToStable(
-            operationName = operationName,
-            operation = operation,
-        )
-        val updatedTables = linkedSetOf<String>()
-        updatedTables += pushExecution.updatedTables
-        updatedTables += remoteExecution.updatedTables
-        return SyncExecution(
-            report = SyncReport(
-                pushOutcome = pushExecution.report.outcome,
-                remoteOutcome = remoteExecution.report.outcome,
-                status = remoteExecution.report.status,
-                restore = remoteExecution.report.restore,
-            ),
-            updatedTables = updatedTables,
-        )
-    }
-
-    private suspend fun executePullToStable(
-        operationName: String,
-        operation: OversqliteOperation,
-    ): RemoteExecution {
-        if (checkpointRecoveryRequired()) {
-            return executeCheckpointRecovery(operationName, operation)
-        }
-        return executeRemoteDownload(operationName, operation) { state, onPhaseChanged ->
-            downloadWorkflow.pullToStable(
-                state = state,
-                onPhaseChanged = onPhaseChanged,
-            )
-        }
-    }
-
-    private suspend fun checkpointRecoveryRequired(): Boolean {
-        val attachment = attachmentStateStore.loadState()
-        if (!attachment.rebuildRequired) return false
-        val operation = operationStateStore.loadState()
-        return !operation.isSourceRecoveryRequired()
-    }
-
-    private suspend fun executeCheckpointRecovery(
-        operationName: String,
-        operation: OversqliteOperation,
-    ): RemoteExecution {
-        var dirtyCount = syncStateStore.countDirtyRows()
-        var outboundCount = outboxStateStore.countRows()
-        var replayState = outboxStateStore.loadBundleState().state
-        if (dirtyCount > 0 || outboundCount > 0) {
-            if (uploadsPaused) {
-                throw CheckpointRecoveryBlockedException(
-                    reason = CheckpointRecoveryBlockedReason.UPLOAD_PAUSED,
-                    dirtyCount = saturatingLegacyCount(dirtyCount),
-                    outboundCount = saturatingLegacyCount(outboundCount),
-                    replayState = replayState,
-                )
-            }
-            try {
-                executePush(
-                    operationName = operationName,
-                    operation = operation,
-                    allowCheckpointRecovery = true,
-                )
-            } catch (e: SourceRecoveryRequiredException) {
-                throw e
-            } catch (e: CommittedReplayPrunedException) {
-                return executeSnapshotRebuild(
-                    operationName = operationName,
-                    operation = operation,
-                    rotatedSourceId = null,
-                    outboxMode = SnapshotRebuildOutboxMode.PRESERVE_COMMITTED_REMOTE,
-                    sourceReplacementReason = null,
-                )
-            } catch (e: Throwable) {
-                if (e is CancellationException) throw e
-                if (shouldRetryTransportFailure(e)) throw e
-                if (
-                    (e as? OversqliteCategorizedException)?.category == OversqliteErrorCategory.AUTH
-                ) {
-                    throw e
-                }
-                dirtyCount = syncStateStore.countDirtyRows()
-                outboundCount = outboxStateStore.countRows()
-                replayState = outboxStateStore.loadBundleState().state
-                throw CheckpointRecoveryBlockedException(
-                    reason = CheckpointRecoveryBlockedReason.PUSH_FAILED,
-                    dirtyCount = saturatingLegacyCount(dirtyCount),
-                    outboundCount = saturatingLegacyCount(outboundCount),
-                    replayState = replayState,
-                    cause = e,
-                )
-            }
-            dirtyCount = syncStateStore.countDirtyRows()
-            outboundCount = outboxStateStore.countRows()
-            replayState = outboxStateStore.loadBundleState().state
-            if (dirtyCount > 0 || outboundCount > 0) {
-                throw CheckpointRecoveryBlockedException(
-                    reason = CheckpointRecoveryBlockedReason.PENDING_WORK,
-                    dirtyCount = saturatingLegacyCount(dirtyCount),
-                    outboundCount = saturatingLegacyCount(outboundCount),
-                    replayState = replayState,
-                )
-            }
-        }
-        return executeSnapshotRebuild(
-            operationName = operationName,
-            operation = operation,
-            rotatedSourceId = null,
-            outboxMode = SnapshotRebuildOutboxMode.CLEAR_ALL,
-            sourceReplacementReason = null,
-        )
-    }
-
-    private suspend fun executeDetach(operationName: String): DetachExecution {
-        ensureOpened(operationName)
-        val state = loadDurableLifecycleView()
-        if (state.operation.kind == operationKindRemoteReplace) {
-            cancelPendingRemoteReplace(state)
-            currentSourceId = resolveSourceIdOrCurrent(state.sourceId)
-            currentUserId = null
-            pendingInitializationId = ""
-            sessionConnected = false
-            return DetachExecution(
-                outcome = DetachOutcome.DETACHED,
-                updatedTables = emptySet(),
-                currentSourceId = currentSourceId,
-            )
-        }
-
-        val status = pendingSyncStatusInternal()
-        if (status.blocksDetach) {
-            return DetachExecution(
-                outcome = DetachOutcome.BLOCKED_UNSYNCED_DATA,
-                updatedTables = emptySet(),
-            )
-        }
-
-        val validated = requireValidatedConfig()
-        val managedTables = managedTableNames(validated)
-        val previousSourceId = resolveSourceIdOrCurrent(state.sourceId)
-        val rotatedSourceId = generateFreshReplacementSourceId(previousSourceId)
-        db.transaction(TransactionMode.IMMEDIATE) {
-            db.withStatementCache { statementCache ->
-                clearFullLocalSyncState(validated, statementCache)
-                sourceStateStore.ensureSource(
-                    sourceId = rotatedSourceId,
-                    initialNextSourceBundleId = 1L,
-                    statementCache = statementCache,
-                )
-                sourceStateStore.markRotated(
-                    previousSourceId = previousSourceId,
-                    replacementSourceId = rotatedSourceId,
-                    statementCache = statementCache,
-                )
-                attachmentStateStore.persistAnonymousState(
-                    sourceId = rotatedSourceId,
-                    statementCache = statementCache,
-                )
-                operationStateStore.persistState(OversqliteOperationState(), statementCache)
-            }
-        }
-
-        currentSourceId = rotatedSourceId
-        currentUserId = null
-        pendingInitializationId = ""
-        sessionConnected = false
-        return DetachExecution(
-            outcome = DetachOutcome.DETACHED,
-            updatedTables = managedTables,
-            currentSourceId = rotatedSourceId,
-        )
-    }
-
-    private suspend fun executeSnapshotRebuild(
-        operationName: String,
-        operation: OversqliteOperation,
-        rotatedSourceId: String?,
-        outboxMode: SnapshotRebuildOutboxMode,
-        sourceReplacementReason: String?,
-    ): RemoteExecution {
-        return executeRemoteDownload(operationName, operation) { state, onPhaseChanged ->
-            downloadWorkflow.rebuildFromSnapshot(
-                state = state,
-                rotatedSourceId = rotatedSourceId,
-                sourceReplacementReason = sourceReplacementReason,
-                outboxMode = outboxMode,
-                onPhaseChanged = onPhaseChanged,
-            )
-        }
-    }
-
-    private suspend fun executeRemoteDownload(
-        operationName: String,
-        operation: OversqliteOperation,
-        download: suspend (RuntimeState, suspend (OversqlitePhase) -> Unit) -> DownloadWorkflowResult,
-    ): RemoteExecution {
-        ensureNoDestructiveTransition()
-        val state = requireConnectedRuntimeState(operationName)
-        val result = try {
-            download(state) { phase ->
-                setProgress(operation, phase)
-            }
-        } catch (e: SourceRecoveryRequiredHttpException) {
-            persistSourceRecoveryRequiredState(state, e.reason, e.replacementSourceId)
-            throw SourceRecoveryRequiredException(e.reason)
-        } catch (e: SnapshotSourceRecoveryRequiredException) {
-            persistSourceRecoveryRequiredState(state, e.reason, e.replacementSourceId)
-            throw SourceRecoveryRequiredException(e.reason)
-        } catch (_: SourceReplacementInvalidHttpException) {
-            throw SourceReplacementInvalidException()
-        }
-        applyDownloadResult(result)
-        val status = syncStatusInternal(requireConnectedRuntimeState(operationName))
-        return RemoteExecution(
-            report = RemoteSyncReport(
-                outcome = result.outcome,
-                status = status,
-                restore = result.restore,
-            ),
-            updatedTables = result.updatedTables,
-        )
-    }
-
-    private suspend fun clearStaleInitializationState() {
-        val sourceId = currentSourceId ?: return
-        attachmentStateStore.persistAnonymousState(sourceId)
-        operationStateStore.persistState(OversqliteOperationState())
-        currentUserId = null
-        pendingInitializationId = ""
-        sessionConnected = false
-    }
-
-    private suspend fun ensureNoDestructiveTransition() {
-        val operation = operationStateStore.loadState()
-        if (
-            operation.kind != operationKindNone &&
-            operation.kind != operationKindRemoteReplace &&
-            operation.kind != operationKindSourceRecovery
-        ) {
-            throw DestructiveTransitionInProgressException(operation.kind)
-        }
-    }
-
-    private suspend fun loadDurableLifecycleView(): DurableLifecycleView {
-        val attachment = attachmentStateStore.loadState()
-        val operation = operationStateStore.loadState()
-        return DurableLifecycleView(
-            sourceId = attachment.currentSourceId,
-            bindingState = attachment.bindingState,
-            attachedUserId = attachment.attachedUserId,
-            pendingInitializationId = attachment.pendingInitializationId,
-            operation = operation,
-        )
-    }
-
-    private suspend fun requireConnectedRuntimeState(operation: String): RuntimeState {
-        val validated = requireValidatedConfig()
-        val attachment = attachmentStateStore.loadState()
-        val sourceId = attachment.currentSourceId.takeIf { it.isNotEmpty() }?.let(::requireValidOversqliteSourceId) ?: run {
-            currentSourceId ?: throw OpenRequiredException(operation)
-        }
-        val userId = attachment.attachedUserId.takeIf {
-            attachment.bindingState == attachmentBindingAttached && it.isNotBlank()
-        } ?: throw ConnectRequiredException(operation)
-        if (!sessionConnected) {
-            throw ConnectRequiredException(operation)
-        }
-        if (currentUserId != null && currentUserId != userId) {
-            throw ConnectRequiredException(operation)
-        }
-        if (sourceStateStore.loadState(sourceId) == null) {
-            throw ConnectRequiredException(operation)
-        }
-        pendingInitializationId = attachment.pendingInitializationId
-        return RuntimeState(
-            validated = validated,
-            userId = userId,
-            sourceId = sourceId,
-            pendingInitializationId = attachment.pendingInitializationId,
-        )
-    }
-
-    private fun requireValidatedConfig(): ValidatedConfig {
-        return validatedConfig ?: throw OpenRequiredException("oversqlite runtime access")
-    }
-
-    private fun requireCurrentSourceId(): String {
-        return requireValidOversqliteSourceId(
-            currentSourceId ?: throw OpenRequiredException("oversqlite runtime access"),
-        )
-    }
-
-    private fun resolveSourceIdOrCurrent(sourceId: String): String =
-        if (sourceId.isEmpty()) requireCurrentSourceId() else requireValidOversqliteSourceId(sourceId)
-
-    private fun ensureOpened(operation: String) {
-        if (currentSourceId == null || validatedConfig == null) {
-            throw OpenRequiredException(operation)
-        }
-    }
-
-    private fun applyDownloadResult(result: DownloadWorkflowResult) {
-        result.rotatedSourceId?.let { currentSourceId = requireValidOversqliteSourceId(it) }
-    }
-
-    private suspend fun selectRebuildPlan(): RebuildPlan {
-        val operation = operationStateStore.loadState()
-        if (operation.isSourceRecoveryRequired()) {
-            val replacementSourceId = requireValidOversqliteSourceId(operation.replacementSourceId)
-            val sourceReplacementReason = operation.reason.trim()
-            check(sourceReplacementReason.isNotBlank()) {
-                "source recovery operation state is missing reason"
-            }
-            return RebuildPlan(
-                operation = OversqliteOperation.REBUILD_ROTATE_SOURCE,
-                rotatedSourceId = replacementSourceId,
-                sourceReplacementReason = sourceReplacementReason,
-                outboxMode = SnapshotRebuildOutboxMode.PRESERVE_SOURCE_RECOVERY,
-            )
-        }
-        val outboxState = outboxStateStore.loadBundleState()
-        return RebuildPlan(
-            operation = OversqliteOperation.REBUILD_KEEP_SOURCE,
-            rotatedSourceId = null,
-            sourceReplacementReason = null,
-            outboxMode = if (outboxState.state == outboxStateCommittedRemote) {
-                SnapshotRebuildOutboxMode.PRESERVE_COMMITTED_REMOTE
-            } else {
-                SnapshotRebuildOutboxMode.CLEAR_ALL
-            },
-        )
-    }
-
-    private suspend fun persistSourceRecoveryRequiredState(
-        state: RuntimeState,
-        reason: SourceRecoveryReason,
-        replacementSourceId: String? = null,
-    ) {
-        db.transaction(TransactionMode.IMMEDIATE) {
-            attachmentStateStore.setRebuildRequired(true)
-            val reservedReplacementSourceId = reserveReplacementSourceId(
-                currentSourceId = state.sourceId,
-                preferredReplacementSourceId = replacementSourceId,
-            )
-            operationStateStore.persistState(
-                OversqliteOperationState(
-                    kind = operationKindSourceRecovery,
-                    reason = reason.toPersistedOperationReason(),
-                    replacementSourceId = reservedReplacementSourceId,
-                ),
-            )
-        }
-    }
-
-    @OptIn(ExperimentalUuidApi::class)
-    private fun generateFreshSourceId(): String {
-        return Uuid.random().toString()
-    }
-
-    private fun generateFreshReplacementSourceId(currentSourceId: String): String {
-        var candidate = generateFreshSourceId()
-        while (candidate == currentSourceId) {
-            candidate = generateFreshSourceId()
-        }
-        return candidate
-    }
-
-    private suspend fun reserveReplacementSourceId(
-        currentSourceId: String,
-        preferredReplacementSourceId: String? = null,
-    ): String {
-        requireValidOversqliteSourceId(currentSourceId)
-        val durableOperation = operationStateStore.loadState()
-        val existingReplacementSourceId = durableOperation.replacementSourceId
-            .takeIf { it.isNotEmpty() }
-            ?.let(::requireValidOversqliteSourceId)
-            .orEmpty()
-        val preferred = preferredReplacementSourceId
-            ?.let(::requireValidOversqliteSourceId)
-            .orEmpty()
-        val reserved = when {
-            existingReplacementSourceId.isNotBlank() && preferred.isNotBlank() &&
-                existingReplacementSourceId != preferred ->
-                throw SourceReplacementDivergedException()
-
-            existingReplacementSourceId.isNotBlank() -> existingReplacementSourceId
-            preferred.isNotBlank() -> preferred
-            else -> generateFreshReplacementSourceId(currentSourceId)
-        }
-        ensureFreshReplacementSourceState(currentSourceId, reserved)
-        return reserved
-    }
-
-    private suspend fun ensureFreshReplacementSourceState(
-        currentSourceId: String,
-        replacementSourceId: String,
-    ) {
-        requireValidOversqliteSourceId(currentSourceId)
-        requireValidOversqliteSourceId(replacementSourceId)
-        check(replacementSourceId != currentSourceId) {
-            "replacement source id must differ from current source id"
-        }
-        sourceStateStore.ensureSource(replacementSourceId)
-        val state = sourceStateStore.loadState(replacementSourceId)
-            ?: error("_sync_source_state is missing for the reserved replacement source")
-        check(state.nextSourceBundleId == 1L && state.replacedBySourceId.isBlank()) {
-            "reserved replacement source is not fresh for source recovery"
-        }
-    }
-
-    private suspend fun maybeRetryTransportFailure(
-        attempt: Int,
-    ) {
-        if (attempt <= 0) {
-            return
-        }
-        val policy = config.transientRetryPolicy
-        var backoff = policy.initialBackoffMillis
-        repeat(attempt - 1) {
-            backoff = minOf(backoff * 2, policy.maxBackoffMillis)
-        }
-        val jitterSpan = (backoff * policy.jitterRatio).toLong().coerceAtLeast(0L)
-        val jitter = if (jitterSpan == 0L) 0L else Random.nextLong(0L, jitterSpan + 1)
-        delay(backoff + jitter)
-    }
-
-    private suspend fun <T> withTransientRetry(
-        operation: String,
-        block: suspend () -> T,
-    ): T = withSnapshotCapacityRetry(
-        policy = config.snapshotCapacityRetryPolicy,
-        operation = operation,
-        onCapacityResponse = { snapshotDiagnosticsState.current()?.recordCapacityResponse() },
-        onRetry = { snapshotDiagnosticsState.current()?.recordCapacityRetry() },
-        onWait = { snapshotDiagnosticsState.current()?.recordCapacityWait(it) },
-    ) {
-        withGenericTransientRetry(operation, block)
-    }
-
-    private suspend fun <T> withGenericTransientRetry(
-        operation: String,
-        block: suspend () -> T,
-    ): T {
-        val maxAttempts = config.transientRetryPolicy.maxAttempts.coerceAtLeast(1)
-        repeat(maxAttempts) { attemptIndex ->
-            try {
-                return block()
-            } catch (error: Throwable) {
-                if (error is CancellationException) {
-                    throw error
-                }
-                val retryable = shouldRetryTransportFailure(error)
-                verboseLog {
-                    "oversqlite operation failure op=$operation attempt=${attemptIndex + 1}/$maxAttempts " +
-                        "retryable=$retryable error=${error::class.simpleName ?: "Throwable"}"
-                }
-                if (!retryable) {
-                    throw error
-                }
-                if (attemptIndex == maxAttempts - 1) {
-                    verboseLog {
-                        "oversqlite transient retry exhausted op=$operation attempts=$maxAttempts " +
-                            "error=${error::class.simpleName ?: "Throwable"}"
-                    }
-                    throw TransientRetryExhaustedException(operation, maxAttempts)
-                }
-                verboseLog {
-                    "oversqlite transient retry op=$operation attempt=${attemptIndex + 1}/$maxAttempts " +
-                        "error=${error::class.simpleName ?: "Throwable"}"
-                }
-                maybeRetryTransportFailure(attemptIndex + 1)
-            }
-        }
-        throw IllegalStateException("oversqlite retry state is invalid")
-    }
-
-    private suspend fun <T> runExclusiveOperation(block: suspend () -> T): Result<T> {
-        return try {
-            if (!syncGate.tryLock()) {
-                throw SyncOperationInProgressException()
-            }
-            try {
-                Result.success(block())
-            } finally {
-                syncGate.unlock()
-            }
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: Throwable) {
-            Result.failure(error)
-        }
-    }
-
-    private suspend fun <T> runSyncOperation(
-        operation: String,
-        block: suspend () -> T,
-    ): Result<T> = runExclusiveOperation {
-        withSnapshotDiagnosticsScope {
-            withTransientRetry(operation, block)
-        }
-    }
-
-    private suspend fun <T> withSnapshotDiagnosticsScope(block: suspend () -> T): T {
-        val scope = snapshotDiagnosticsState.begin()
-        return try {
-            block()
-        } finally {
-            snapshotDiagnosticsState.finish(scope)
-        }
-    }
-
-    private fun shouldRetryTransportFailure(error: Throwable): Boolean {
-        return when (error) {
-            is UploadHttpException -> error.status.value in 500..599
-            is DownloadHttpException -> error.status.value in 500..599
-            is HttpRequestTimeoutException,
-            is ConnectTimeoutException,
-            is SocketTimeoutException,
-            is IOException,
-            -> true
-            else -> false
-        }
-    }
+    internal suspend fun deleteGenerationSnapshotBestEffort(snapshotId: String, sourceId: String) =
+        lifecycleCoordinator.deleteGenerationSnapshotBestEffort(snapshotId, sourceId)
 }
-
-private data class PushExecution(
-    val report: PushReport,
-    val updatedTables: Set<String>,
-)
-
-private data class SyncExecution(
-    val report: SyncReport,
-    val updatedTables: Set<String>,
-)
-
-suspend fun OversqliteClient.runAutomaticDownloads(
-    automaticDownloadConfig: OversqliteAutomaticDownloadConfig = OversqliteAutomaticDownloadConfig(),
-): Nothing {
-    val defaultClient = this as? DefaultOversqliteClient
-        ?: throw UnsupportedOperationException(
-            "automatic downloads require DefaultOversqliteClient or generated clients backed by DefaultOversqliteClient",
-        )
-    return defaultClient.runAutomaticDownloads(automaticDownloadConfig)
-}
-
-private data class DurableLifecycleView(
-    val sourceId: String,
-    val bindingState: String,
-    val attachedUserId: String,
-    val pendingInitializationId: String,
-    val operation: OversqliteOperationState,
-) {
-    val isAttached: Boolean
-        get() = bindingState == attachmentBindingAttached && attachedUserId.isNotBlank()
-}
-
-private data class RebuildPlan(
-    val operation: OversqliteOperation,
-    val rotatedSourceId: String?,
-    val sourceReplacementReason: String?,
-    val outboxMode: SnapshotRebuildOutboxMode,
-)
-
-private data class RemoteExecution(
-    val report: RemoteSyncReport,
-    val updatedTables: Set<String>,
-)
-
-private data class DetachExecution(
-    val outcome: DetachOutcome,
-    val updatedTables: Set<String>,
-    val currentSourceId: String? = null,
-)

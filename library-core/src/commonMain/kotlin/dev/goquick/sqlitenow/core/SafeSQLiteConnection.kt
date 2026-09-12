@@ -24,6 +24,7 @@ import dev.goquick.sqlitenow.core.sqlite.clearTrackedSQLiteStatementObservers
 import dev.goquick.sqlitenow.core.sqlite.executeSqliteNowSql
 import dev.goquick.sqlitenow.core.sqlite.SqliteException
 import dev.goquick.sqlitenow.core.sqlite.trackSQLiteStatement
+import dev.goquick.sqlitenow.core.sqlite.OwnedStatementClose
 import dev.goquick.sqlitenow.core.sqlite.wrapAndroidxSqliteAsyncCall
 import dev.goquick.sqlitenow.core.sqlite.wrapAndroidxSqliteCall
 import kotlin.coroutines.AbstractCoroutineContextElement
@@ -56,6 +57,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 class SafeSQLiteConnection internal constructor(
     val ref: SQLiteConnection,
     val debug: Boolean = false,
+    @SqliteNowInternalApi
+    val activeClientIdentity: Any = Any(),
     private val persistenceController: PersistenceController = NoopPersistenceController(),
     private val executionContextHook: SqliteNowContextHook? = null,
     private val executionContext: SqliteConnectionExecutionContext,
@@ -70,24 +73,65 @@ class SafeSQLiteConnection internal constructor(
     private val closeCoordinationMutex = Mutex()
     @kotlin.concurrent.Volatile
     private var state = ConnectionState.OPEN
+    @kotlin.concurrent.Volatile
+    private var publicAccessRevoked = false
     private var executionContextClosed = false
     private var closeAttempt: CloseAttempt? = null
     private var fatalFailure: Throwable? = null
+    private val statementsCloseComplete: Boolean
+        get() = liveStatements.all { (it.statement as OwnedStatementClose).closeProgress.physicallyComplete }
+    private var persistenceCloseComplete = false
+    private var rawDriverCloseComplete = false
+    private var providerCleanupComplete = false
+    private var migrationSqlValidator: ((String) -> Unit)? = null
     private val liveStatements = mutableListOf<LiveStatement>()
     internal var beforeTransactionCommitForTest: (() -> Unit)? = null
     internal var beforeTransactionRollbackForTest: (() -> Unit)? = null
+    internal var closeRawDriverForTest: (() -> Unit)? = null
+    internal var closeAttemptJoinedForTest: (() -> Unit)? = null
 
     internal val restoredFromSnapshot: Boolean
         get() = persistenceController.restoredFromSnapshot
+
+    internal val ownedCloseComplete: Boolean
+        get() = state == ConnectionState.CLOSED && executionContextClosed
+
+    internal val isPublicAccessRevoked: Boolean
+        get() = publicAccessRevoked
+
+    @SqliteNowInternalApi
+    fun revokePublicAccess() {
+        revokeApplicationAccess()
+    }
+
+    private fun revokeApplicationAccess() {
+        publicAccessRevoked = true
+        tableInvalidationListener = null
+    }
+
+    internal suspend fun beginApplicationClose() {
+        if (coroutineContext[ConnectionOwnerContext]?.connection === this) {
+            throw IllegalStateException("Cannot close SQLite connection from its active owner context")
+        }
+        revokeApplicationAccess()
+        if (state == ConnectionState.OPEN) state = ConnectionState.CLOSING
+    }
+
+    private fun requireApplicationAccess(owner: ConnectionOwnerContext?) {
+        val ownsPrivateCleanup =
+            owner?.connection === this && owner.capability == ConnectionOwnerCapability.PRIVATE_CLEANUP
+        if (publicAccessRevoked && !ownsPrivateCleanup) throw closedConnectionFailure()
+    }
 
     private fun isInTransaction(): Boolean =
         activeTransactionDepth > 0 || wrapAndroidxSqliteCall { ref.inTransaction() }
 
     internal suspend fun <T> withDispatcherContext(block: suspend () -> T): T {
-        val hook = executionContextHook
-        val captured = hook?.capture()
         val currentOwner = coroutineContext[ConnectionOwnerContext]
         val alreadyOwnsConnection = currentOwner?.connection === this
+        requireApplicationAccess(currentOwner)
+        val hook = executionContextHook
+        val captured = hook?.capture()
         val alreadyOnDispatcher = coroutineContext[ContinuationInterceptor] === dispatcher
         val ownerToken = currentOwner?.token ?: Any()
         if (alreadyOwnsConnection && alreadyOnDispatcher) {
@@ -110,9 +154,16 @@ class SafeSQLiteConnection internal constructor(
 
         connectionMutex.lock()
         try {
+            requireApplicationAccess(currentOwner)
             if (state != ConnectionState.OPEN) {
                 if (state == ConnectionState.FATAL) {
-                    val failure = withContext(dispatcher + ConnectionOwnerContext(this, ownerToken)) {
+                    val failure = withContext(
+                        dispatcher + ConnectionOwnerContext(
+                            this,
+                            ownerToken,
+                            ConnectionOwnerCapability.PRIVATE_CLEANUP,
+                        ),
+                    ) {
                         withContext(NonCancellable) { disposeFatalConnection(null) }
                     }
                     throw failure ?: closedConnectionFailure()
@@ -207,7 +258,23 @@ class SafeSQLiteConnection internal constructor(
         }
     }
 
+    @OptIn(SqliteNowInternalApi::class)
+    internal suspend fun <T> withMigrationSqlValidation(
+        policy: SqliteNowCoordinatedMigrationSqlPolicy?,
+        block: suspend () -> T,
+    ): T {
+        if (policy == null) return block()
+        check(migrationSqlValidator == null) { "Migration SQL validation is already active" }
+        migrationSqlValidator = policy::requireAllowed
+        return try {
+            block()
+        } finally {
+            migrationSqlValidator = null
+        }
+    }
+
     suspend fun execSQL(sql: String) {
+        migrationSqlValidator?.invoke(sql)
         sqliteNowLogger.d { "SafeSQLiteConnection.execSQL: $sql" }
         withDispatcherContext {
             wrapAndroidxSqliteAsyncCall { executeSqliteNowSql(ref, sql) }
@@ -216,6 +283,7 @@ class SafeSQLiteConnection internal constructor(
     }
 
     suspend fun prepare(sql: String): SQLiteStatement {
+        migrationSqlValidator?.invoke(sql)
         sqliteNowLogger.d { "SafeSQLiteConnection.prepare: $sql" }
         return withDispatcherContext {
             registerStatement(wrapAndroidxSqliteAsyncCall { ref.prepare(sql) })
@@ -223,27 +291,28 @@ class SafeSQLiteConnection internal constructor(
     }
 
     suspend fun close() {
-        if (coroutineContext[ConnectionOwnerContext]?.connection === this) {
-            throw IllegalStateException("Cannot close SQLite connection from its active owner context")
-        }
-
-        val cleanupController = ref as? SuspendSQLiteConnectionCleanup
-        if (cleanupController == null) {
-            closeOrdinaryConnection()
-            return
-        }
+        beginApplicationClose()
 
         val callerContext = coroutineContext
         val cancellationSignal = callerContext[Job]?.let(::Job)
         val (attempt, isOwner) = withContext(NonCancellable) {
             claimCloseAttempt()
         }
+        if (!isOwner && !attempt.completed.isCompleted) closeAttemptJoinedForTest?.invoke()
+        val cleanupController = ref as? SuspendSQLiteConnectionCleanup
         val primaryFailure = try {
-            withContext(NonCancellable) {
-                if (isOwner) {
-                    performWorkerClose(attempt, cancellationSignal, cleanupController)
-                } else {
-                    awaitCloseAttempt(attempt, cancellationSignal)
+            if (cleanupController == null && isOwner) {
+                // Mutex acquisition remains cancellable for the first ordinary close owner.
+                performOrdinaryClose(attempt)
+            } else {
+                withContext(NonCancellable) {
+                    if (cleanupController == null) {
+                        attempt.completed.await()
+                    } else if (isOwner) {
+                        performWorkerClose(attempt, cancellationSignal, cleanupController)
+                    } else {
+                        awaitCloseAttempt(attempt, cancellationSignal)
+                    }
                 }
             }
         } finally {
@@ -252,10 +321,43 @@ class SafeSQLiteConnection internal constructor(
         try {
             callerContext.ensureActive()
         } catch (cancellation: CancellationException) {
-            primaryFailure?.let { cancellation.addSuppressed(it) }
+            when (primaryFailure) {
+                null -> Unit
+                is CancellationException -> primaryFailure.suppressedExceptions.forEach {
+                    if (!cancellation.containsThrowableIdentity(it)) cancellation.addSuppressed(it)
+                }
+                else -> if (!cancellation.containsThrowableIdentity(primaryFailure)) {
+                    cancellation.addSuppressed(primaryFailure)
+                }
+            }
             throw cancellation
         }
         primaryFailure?.let { throw it }
+    }
+
+    /**
+     * Closes only the underlying inspection handle so its provider can reopen writable on the
+     * same execution context (and, on web, in the same lifetime-owning worker).
+     */
+    internal suspend fun closeInspectionHandleForProviderPreparation() {
+        connectionMutex.withLock {
+            check(state == ConnectionState.OPEN) { "SQLite inspection connection is not open" }
+            withContext(
+                dispatcher + ConnectionOwnerContext(
+                    this@SafeSQLiteConnection,
+                    Any(),
+                    ConnectionOwnerCapability.PRIVATE_CLEANUP,
+                ),
+            ) {
+                check(liveStatements.all { (it.statement as OwnedStatementClose).closeProgress.physicallyComplete }) {
+                    "SQLite inspection connection still owns prepared statements"
+                }
+                wrapAndroidxSqliteCall { closeRawDriverForTest?.invoke() ?: ref.close() }
+                state = ConnectionState.CLOSED
+                tableInvalidationListener = null
+                clearLiveStatementObservers()
+            }
+        }
     }
 
     private suspend fun closeOrdinaryConnection() {
@@ -284,7 +386,11 @@ class SafeSQLiteConnection internal constructor(
             val closeOutcome = OrdinaryCloseOutcome()
             try {
                 withContext(
-                    dispatcher + ConnectionOwnerContext(this@SafeSQLiteConnection, ownerToken),
+                    dispatcher + ConnectionOwnerContext(
+                        this@SafeSQLiteConnection,
+                        ownerToken,
+                        ConnectionOwnerCapability.PRIVATE_CLEANUP,
+                    ),
                 ) {
                     val closeBlock: suspend () -> Unit = {
                         cleanupInvoked = true
@@ -316,6 +422,7 @@ class SafeSQLiteConnection internal constructor(
                                     ConnectionOwnerContext(
                                         this@SafeSQLiteConnection,
                                         ownerToken,
+                                        ConnectionOwnerCapability.PRIVATE_CLEANUP,
                                     ),
                             ) {
                                 closeOwnedResources(fallbackOutcome)
@@ -332,12 +439,25 @@ class SafeSQLiteConnection internal constructor(
                 try {
                     closeExecutionContextOnce()
                 } catch (executionFailure: Throwable) {
+                    state = ConnectionState.CLOSING
                     primaryFailure = appendFailure(primaryFailure, executionFailure)
                 }
             }
             connectionMutex.unlock()
         }
         primaryFailure?.let { throw it }
+    }
+
+    private suspend fun performOrdinaryClose(attempt: CloseAttempt): Throwable? {
+        var failure: Throwable? = null
+        try {
+            closeOrdinaryConnection()
+        } catch (closeFailure: Throwable) {
+            failure = closeFailure
+        } finally {
+            attempt.completed.complete(failure)
+        }
+        return failure
     }
 
     private suspend fun runOrdinaryCloseWithDeadline(
@@ -439,10 +559,11 @@ class SafeSQLiteConnection internal constructor(
                         primaryFailure = primaryFailure,
                         cleanupController = cleanupController,
                     )
-                } else if (result.performedClose) {
+                } else if (result.performedClose && state == ConnectionState.CLOSED) {
                     try {
                         closeExecutionContextOnce()
                     } catch (executionFailure: Throwable) {
+                        state = ConnectionState.CLOSING
                         primaryFailure = appendFailure(primaryFailure, executionFailure)
                     }
                 }
@@ -483,19 +604,27 @@ class SafeSQLiteConnection internal constructor(
     ): Throwable? {
         var failure = primaryFailure
         state = ConnectionState.CLOSING
+        var forceComplete = false
         try {
             cleanupController.forceCleanup()
+            forceComplete = true
         } catch (forceFailure: Throwable) {
             failure = appendFailure(failure, forceFailure)
-        } finally {
+            forceComplete = cleanupController.physicalCleanupComplete
+        }
+        if (forceComplete) {
+            rawDriverCloseComplete = true
+            providerCleanupComplete = true
+            persistenceCloseComplete = true
             state = ConnectionState.CLOSED
             fatalFailure = null
             clearLiveStatementObservers()
-        }
-        try {
-            closeExecutionContextOnce()
-        } catch (executionFailure: Throwable) {
-            failure = appendFailure(failure, executionFailure)
+            try {
+                closeExecutionContextOnce()
+            } catch (executionFailure: Throwable) {
+                state = ConnectionState.CLOSING
+                failure = appendFailure(failure, executionFailure)
+            }
         }
         return failure
     }
@@ -527,7 +656,11 @@ class SafeSQLiteConnection internal constructor(
                 var cleanupInvoked = false
                 try {
                     val closeFailure = withContext(
-                        dispatcher + ConnectionOwnerContext(this@SafeSQLiteConnection, ownerToken),
+                        dispatcher + ConnectionOwnerContext(
+                            this@SafeSQLiteConnection,
+                            ownerToken,
+                            ConnectionOwnerCapability.PRIVATE_CLEANUP,
+                        ),
                     ) {
                         val closeBlock: suspend () -> Throwable? = {
                             cleanupInvoked = true
@@ -549,7 +682,11 @@ class SafeSQLiteConnection internal constructor(
                     try {
                         val fallbackFailure = withContext(
                             dispatcher +
-                                ConnectionOwnerContext(this@SafeSQLiteConnection, ownerToken),
+                                ConnectionOwnerContext(
+                                    this@SafeSQLiteConnection,
+                                    ownerToken,
+                                    ConnectionOwnerCapability.PRIVATE_CLEANUP,
+                                ),
                         ) {
                             closeOwnedResources()
                         }
@@ -586,15 +723,9 @@ class SafeSQLiteConnection internal constructor(
     }
 
     private suspend fun closeExecutionContextOnce() {
-        val shouldClose = closeCoordinationMutex.withLock {
-            if (executionContextClosed) {
-                false
-            } else {
-                executionContextClosed = true
-                true
-            }
-        }
-        if (shouldClose) executionContext.close()
+        if (closeCoordinationMutex.withLock { executionContextClosed }) return
+        executionContext.close()
+        closeCoordinationMutex.withLock { executionContextClosed = true }
     }
 
     suspend fun inTransaction(): Boolean {
@@ -698,17 +829,16 @@ class SafeSQLiteConnection internal constructor(
     }
 
     private fun registerStatement(statement: SQLiteStatement): SQLiteStatement {
-        lateinit var record: LiveStatement
+        liveStatements.removeAll { (it.statement as OwnedStatementClose).closeProgress.physicallyComplete }
         val trackedStatement = trackSQLiteStatement(
             statement = statement,
-            cleanupFailureObserver = ::markFatal,
-            beforeCloseObserver = { record.closeAttempted = true },
-            closeSuccessObserver = {
-                liveStatements.remove(record)
-                clearTrackedSQLiteStatementObservers(record.statement)
+            cleanupFailureObserver = { failure ->
+                markFatal(failure)
             },
+            beforeCloseObserver = {},
+            closeSuccessObserver = {},
         )
-        record = LiveStatement(
+        val record = LiveStatement(
             statement = trackedStatement,
             transactionToken = activeTransactionToken,
         )
@@ -721,7 +851,7 @@ class SafeSQLiteConnection internal constructor(
         fatalFailure = appendFailure(fatalFailure, failure)
     }
 
-    private fun closeLiveStatements(
+    private suspend fun closeLiveStatements(
         primary: Throwable?,
         transactionToken: Any? = null,
     ): Throwable? {
@@ -730,13 +860,13 @@ class SafeSQLiteConnection internal constructor(
             .filter { transactionToken == null || it.transactionToken === transactionToken }
             .asReversed()
         for (record in records) {
-            if (record.closeAttempted) continue
             try {
-                record.statement.close()
+                (record.statement as OwnedStatementClose).closeFromOwner()
             } catch (closeFailure: Throwable) {
                 failure = appendFailure(failure, closeFailure)
             }
         }
+        liveStatements.removeAll { (it.statement as OwnedStatementClose).closeProgress.physicallyComplete }
         return failure
     }
 
@@ -746,53 +876,68 @@ class SafeSQLiteConnection internal constructor(
         val fatal = state == ConnectionState.FATAL
         state = ConnectionState.CLOSING
         var failure = if (fatal) fatalFailure else null
-        failure = closeLiveStatements(failure)
-        if (!fatal && failure == null) {
+        if (!statementsCloseComplete) {
+            failure = closeLiveStatements(failure)
+            if (!statementsCloseComplete) {
+                outcome?.failure = failure
+                return failure
+            }
+        }
+        if (!fatal && !persistenceCloseComplete) {
             try {
                 persistenceController.onClose(ref)
+                persistenceCloseComplete = true
             } catch (persistenceFailure: Throwable) {
                 failure = appendFailure(failure, persistenceFailure)
             }
+        } else if (fatal) {
+            persistenceCloseComplete = true
         }
-        try {
-            wrapAndroidxSqliteCall { ref.close() }
-        } catch (rawCloseFailure: Throwable) {
-            failure = appendFailure(failure, rawCloseFailure)
+        if (!rawDriverCloseComplete) {
+            try {
+                wrapAndroidxSqliteCall { closeRawDriverForTest?.invoke() ?: ref.close() }
+                rawDriverCloseComplete = true
+            } catch (rawCloseFailure: Throwable) {
+                failure = appendFailure(failure, rawCloseFailure)
+            }
+            if (!rawDriverCloseComplete) {
+                outcome?.failure = failure
+                return failure
+            }
         }
-        try {
-            (ref as? SuspendSQLiteConnectionCleanup)?.awaitCleanup()
-        } catch (cleanupFailure: Throwable) {
-            failure = appendFailure(failure, cleanupFailure)
-        } finally {
+        if (!providerCleanupComplete) {
+            try {
+                (ref as? SuspendSQLiteConnectionCleanup)?.awaitCleanup()
+                providerCleanupComplete = true
+            } catch (cleanupFailure: Throwable) {
+                failure = appendFailure(failure, cleanupFailure)
+                providerCleanupComplete = (ref as? SuspendSQLiteConnectionCleanup)?.physicalCleanupComplete == true
+            }
+        }
+        if (
+            statementsCloseComplete && persistenceCloseComplete && rawDriverCloseComplete &&
+            providerCleanupComplete
+        ) {
             state = ConnectionState.CLOSED
             fatalFailure = null
             clearLiveStatementObservers()
-            outcome?.failure = failure
         }
+        outcome?.failure = failure
         return failure
     }
 
     private suspend fun disposeFatalConnection(primary: Throwable?): Throwable? {
         if (state == ConnectionState.CLOSED) return primary
-        state = ConnectionState.CLOSING
-        var failure = appendFailure(primary, fatalFailure)
-        failure = closeLiveStatements(failure)
-        try {
-            wrapAndroidxSqliteCall { ref.close() }
-        } catch (rawCloseFailure: Throwable) {
-            failure = appendFailure(failure, rawCloseFailure)
-        }
-        try {
-            (ref as? SuspendSQLiteConnectionCleanup)?.awaitCleanup()
-        } catch (cleanupFailure: Throwable) {
-            failure = appendFailure(failure, cleanupFailure)
-        } finally {
-            state = ConnectionState.CLOSED
-            fatalFailure = null
-            clearLiveStatementObservers()
+        val retainedFatalFailure = fatalFailure
+        fatalFailure = null
+        var failure = appendFailure(primary, retainedFatalFailure)
+        state = ConnectionState.FATAL
+        failure = appendFailure(failure, closeOwnedResources())
+        if (state == ConnectionState.CLOSED) {
             try {
                 closeExecutionContextOnce()
             } catch (executionFailure: Throwable) {
+                state = ConnectionState.CLOSING
                 failure = appendFailure(failure, executionFailure)
             }
         }
@@ -810,7 +955,6 @@ class SafeSQLiteConnection internal constructor(
     private class LiveStatement(
         val statement: SQLiteStatement,
         val transactionToken: Any?,
-        var closeAttempted: Boolean = false,
     )
 
     private class CloseAttempt {
@@ -853,6 +997,7 @@ class SafeSQLiteConnection internal constructor(
      * legitimately mutate tables outside generated helpers.
      */
     fun reportExternalTableChanges(affectedTables: Set<String>) {
+        if (publicAccessRevoked || state != ConnectionState.OPEN) throw closedConnectionFailure()
         if (affectedTables.isEmpty()) return
         val normalized = affectedTables.mapTo(linkedSetOf()) { it.lowercase() }
         if (normalized.isEmpty()) return
@@ -860,6 +1005,7 @@ class SafeSQLiteConnection internal constructor(
     }
 
     internal fun setTableInvalidationListener(listener: ((Set<String>) -> Unit)?) {
+        if (listener != null && publicAccessRevoked) throw closedConnectionFailure()
         tableInvalidationListener = listener
     }
 
@@ -886,8 +1032,14 @@ class SafeSQLiteConnection internal constructor(
 private class ConnectionOwnerContext(
     val connection: SafeSQLiteConnection,
     val token: Any,
+    val capability: ConnectionOwnerCapability = ConnectionOwnerCapability.APPLICATION,
 ) : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<ConnectionOwnerContext>
+}
+
+private enum class ConnectionOwnerCapability {
+    APPLICATION,
+    PRIVATE_CLEANUP,
 }
 
 internal class MigrationOwnerAccess internal constructor(

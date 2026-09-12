@@ -17,6 +17,7 @@ const MAX_ENCODED_PAGE_BYTES = 1024 * 1024 + 2;
 const SOURCE_CLIENT_MODULE_URL = import.meta.url;
 const isNodeRuntime = Boolean(globalThis.process?.versions?.node);
 const BROWSER_POLICY_STARTUP_TEST_MODE = "missing-browser-policy";
+const NODE_CUSTOM_IMPORT_STARTUP_TEST_MODE = "node-custom-import";
 const DIRECT_CAPABILITY_STARTUP_TEST_MODES = new Map([
   ["missing-web-crypto", "web-crypto"],
   ["missing-opfs", "opfs"],
@@ -292,6 +293,7 @@ function validateWorkerError(error, label) {
       "cancelled",
       "suppressed",
       "inTransaction",
+      "lifecycleBusy",
     ]),
     label,
   );
@@ -306,6 +308,8 @@ function validateWorkerError(error, label) {
     (hasOwn(error, "sqliteCode") && !Number.isInteger(error.sqliteCode)) ||
     (hasOwn(error, "cancelled") && typeof error.cancelled !== "boolean") ||
     (hasOwn(error, "inTransaction") && typeof error.inTransaction !== "boolean") ||
+    !hasOwn(error, "lifecycleBusy") ||
+    typeof error.lifecycleBusy !== "boolean" ||
     (
       hasOwn(error, "suppressed") &&
       (
@@ -327,6 +331,10 @@ const RESPONSE_COMMON_KEYS = new Set([
   "inTransaction",
 ]);
 const RESPONSE_COMMAND_KEYS = new Map([
+  [
+    "inspect",
+    new Set(["databaseId", "openState", "runtimeKind", "sqliteVersion"]),
+  ],
   [
     "open",
     new Set(["databaseId", "openState", "openId", "runtimeKind", "sqliteVersion"]),
@@ -546,6 +554,29 @@ function validateSuccessResponse(data, request) {
     }
   }
   switch (request.command) {
+    case "inspect":
+      if (
+        !hasOwn(data, "openState") ||
+        typeof data.runtimeKind !== "string" ||
+        data.runtimeKind === "" ||
+        typeof data.sqliteVersion !== "string" ||
+        data.sqliteVersion === "" ||
+        data.inTransaction
+      ) {
+        throw new TypeError("Invalid inspect response.");
+      }
+      if (data.openState === "inspection-ready") {
+        if (!positiveInt(data.databaseId)) {
+          throw new TypeError("Invalid inspection-ready response.");
+        }
+      } else if (data.openState === "preparation-required") {
+        if (hasOwn(data, "databaseId")) {
+          throw new TypeError("Invalid preparation-required response.");
+        }
+      } else {
+        throw new TypeError("Invalid SQLite worker inspection state.");
+      }
+      break;
     case "open":
     case "completeOpen":
       if (
@@ -895,6 +926,7 @@ function validateStartupMode(mode) {
       "delay-ready",
       "hold-ready",
       BROWSER_POLICY_STARTUP_TEST_MODE,
+      NODE_CUSTOM_IMPORT_STARTUP_TEST_MODE,
       ...DIRECT_CAPABILITY_STARTUP_TEST_MODES.keys(),
     ].includes(parts.mode)
   ) {
@@ -1133,6 +1165,12 @@ export function createSqliteWorkerClient(
               postMessage(client.worker, {
                 kind: "test-control",
                 directCapabilityMissing: missingDirectCapability,
+              });
+            }
+            if (startupTest.mode === NODE_CUSTOM_IMPORT_STARTUP_TEST_MODE) {
+              postMessage(client.worker, {
+                kind: "test-control",
+                allowNodeCustomImport: true,
               });
             }
             if (startupTest.mode !== "hold-ready") readyResolve(message);
@@ -1604,6 +1642,10 @@ export function waitForSqliteWorkerCleanupDeadline(client) {
   return new Promise((resolve) => {
     setTimeout(resolve, client.cleanupTimeoutMillis);
   });
+}
+
+export function isSqliteWorkerTerminationConfirmed(client) {
+  return client.terminationConfirmed === true;
 }
 
 export function sqliteWorkerRuntimeKind(client) {

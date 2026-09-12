@@ -1,0 +1,162 @@
+{
+  "format": "sqlitenow-schema-evolution-compatibility/v1",
+  "profile_version": "schema-evolution-compatibility-v1",
+  "cases": [
+    {
+      "id": "M01",
+      "disposition": "supported",
+      "classifier": "require_old_table_subset"
+    },
+    {
+      "id": "M02",
+      "disposition": "conditionally_supported",
+      "classifier": "allow_added_table_after_namespace_census"
+    },
+    {
+      "id": "M03",
+      "disposition": "rejected",
+      "classifier": "reject_table_omission"
+    },
+    {
+      "id": "M04",
+      "disposition": "rejected",
+      "classifier": "reject_table_omission"
+    },
+    {
+      "id": "M05",
+      "disposition": "conditionally_supported",
+      "classifier": "allow_target_non_key_non_fk_column"
+    },
+    {
+      "id": "M06",
+      "disposition": "conditionally_supported",
+      "classifier": "allow_target_non_key_non_fk_column"
+    },
+    {
+      "id": "M07",
+      "disposition": "conditionally_supported",
+      "classifier": "allow_old_non_key_non_fk_column"
+    },
+    {
+      "id": "M08",
+      "disposition": "conditionally_supported",
+      "classifier": "allow_replacement_columns"
+    },
+    {
+      "id": "M09",
+      "disposition": "rejected",
+      "classifier": "reject_shared_wire_type"
+    },
+    {
+      "id": "M10",
+      "disposition": "rejected",
+      "classifier": "reject_shared_nullability"
+    },
+    {
+      "id": "M11",
+      "disposition": "not_a_sync_compatibility_mechanism",
+      "classifier": "outside_descriptor_profile"
+    },
+    {
+      "id": "M12",
+      "disposition": "server_application_authority",
+      "classifier": "outside_descriptor_profile"
+    },
+    {
+      "id": "M13",
+      "disposition": "supported",
+      "classifier": "require_exact_sync_key"
+    },
+    {
+      "id": "M14",
+      "disposition": "rejected",
+      "classifier": "reject_sync_key"
+    },
+    {
+      "id": "M15",
+      "disposition": "conditionally_supported",
+      "classifier": "outside_generation_descriptor_profile"
+    },
+    {
+      "id": "M16",
+      "disposition": "supported",
+      "classifier": "require_old_foreign_key_subset"
+    },
+    {
+      "id": "M17",
+      "disposition": "conditionally_supported",
+      "classifier": "allow_nullable_foreign_key_on_new_child_column"
+    },
+    {
+      "id": "M18",
+      "disposition": "conditionally_supported",
+      "classifier": "outside_generation_descriptor_profile"
+    },
+    {
+      "id": "M19",
+      "disposition": "conditionally_supported",
+      "classifier": "validated_by_target_schema"
+    },
+    {
+      "id": "M20",
+      "disposition": "rejected",
+      "classifier": "validated_by_pre_u0_census"
+    },
+    {
+      "id": "M21",
+      "disposition": "supported",
+      "classifier": "existing_runtime_owned_objects"
+    },
+    {
+      "id": "M22",
+      "disposition": "supported",
+      "classifier": "existing_local_only_preservation"
+    },
+    {
+      "id": "M23",
+      "disposition": "conditionally_supported",
+      "classifier": "existing_same_generation_local_only_mode"
+    },
+    {
+      "id": "M24",
+      "disposition": "rejected",
+      "classifier": "existing_preservation_admission"
+    },
+    {
+      "id": "M25",
+      "disposition": "supported",
+      "classifier": "existing_restricted_migration_transaction"
+    },
+    {
+      "id": "M26",
+      "disposition": "supported",
+      "classifier": "existing_local_version_runner"
+    },
+    {
+      "id": "M27",
+      "disposition": "conditionally_supported",
+      "classifier": "existing_exact_direct_edge"
+    },
+    {
+      "id": "M28",
+      "disposition": "rejected",
+      "classifier": "existing_plan_precondition"
+    },
+    {
+      "id": "M29",
+      "disposition": "supported",
+      "classifier": "existing_target_unavailable_outcome"
+    },
+    {
+      "id": "M30",
+      "disposition": "rejected",
+      "classifier": "existing_retired_generation_outcome"
+    }
+  ],
+  "adapters": {
+    "kmp": {
+      "source": "library-oversqlite/src/jvmTest/kotlin/dev/goquick/sqlitenow/oversqlite/SchemaEvolutionCompatibilityTest.kt",
+      "test": "schema evolution compatibility accepts additive tables columns and nullable foreign keys"
+    }
+  }
+}

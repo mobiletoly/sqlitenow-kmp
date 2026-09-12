@@ -1,9 +1,7 @@
 package dev.goquick.sqlitenow.oversqlite
 
+import kotlinx.serialization.json.Json
 import io.ktor.client.HttpClient
-import io.ktor.client.call.body
-import io.ktor.client.request.get
-import io.ktor.client.request.header
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
@@ -18,8 +16,8 @@ import kotlin.test.assertTrue
 
 internal class RealServerBundleChangeWatchTest : RealServerSupport() {
     @Test
-    fun watchEnabledCapabilityProbe_reportsBundleChangeWatch() = runOwnedWebDatabaseTest {
-        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
+    fun admittedDiscovery_reportsBundleChangeWatch() = runRealServerTest {
+        val config = requireRealServerConfig() ?: return@runRealServerTest
 
         val db = newDb()
         var http: HttpClient? = null
@@ -29,13 +27,12 @@ internal class RealServerBundleChangeWatchTest : RealServerSupport() {
             val token = issueDummySigninToken(config.baseUrl, randomRealServerId("watch-cap-user"), sourceId)
             http = newRealServerHttpClient(config.baseUrl, token)
 
-            val capabilities = http.get("/sync/capabilities") {
-                header("Oversync-Source-ID", sourceId)
-            }.body<CapabilitiesResponse>()
+            val api = OversqliteRemoteApi(http, Json, log = {})
+            val contract = api.fetchGeneration(sourceId, 1)
 
             assertTrue(
-                capabilities.bundleChangeWatchSupported,
-                "realserver at ${config.baseUrl} must advertise features.bundle_change_watch=true",
+                contract.watchEnabled,
+                "realserver at ${config.baseUrl} must advertise watch_enabled=true",
             )
         } finally {
             http?.close()
@@ -44,8 +41,8 @@ internal class RealServerBundleChangeWatchTest : RealServerSupport() {
     }
 
     @Test
-    fun watchTriggeredTwoClientConvergence_usesSseWakeup() = runOwnedWebDatabaseTest {
-        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
+    fun watchTriggeredTwoClientConvergence_usesSseWakeup() = runRealServerTest {
+        val config = requireRealServerConfig() ?: return@runRealServerTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("watch-user")
@@ -139,8 +136,8 @@ internal class RealServerBundleChangeWatchTest : RealServerSupport() {
     }
 
     @Test
-    fun watchCancellation_stopsIdleWorkerPromptly() = runOwnedWebDatabaseTest {
-        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
+    fun watchCancellation_stopsIdleWorkerPromptly() = runRealServerTest {
+        val config = requireRealServerConfig() ?: return@runRealServerTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("watch-cancel-user")

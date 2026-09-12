@@ -11,6 +11,10 @@ import dev.goquick.sqlitenow.core.sqlite.trackSQLiteStatement
 import dev.goquick.sqlitenow.core.sqlite.use
 import java.nio.file.Files
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import dev.goquick.sqlitenow.core.sqlite.OwnedStatementClose
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import kotlin.coroutines.ContinuationInterceptor
@@ -113,6 +117,91 @@ class SafeSQLiteConnectionIsolationTest {
     }
 
     @Test
+    fun databaseFacadeCloseFromOwner_isRejectedWithoutRevocationOrCleanup() = runBlocking {
+        val scenarios = listOf(
+            DatabaseOwnerCloseScenario("transaction") { database ->
+                database.transaction(TransactionMode.IMMEDIATE) {
+                    val error = assertFailsWith<IllegalStateException> { database.close() }
+                    assertEquals(
+                        "Cannot close SQLite connection from its active owner context",
+                        error.message,
+                    )
+                    assertTrue(database.isOpen())
+                    database.connection().execSQL("INSERT transaction-owner-still-open")
+                }
+            },
+            DatabaseOwnerCloseScenario("exclusive access") { database ->
+                database.connection().withExclusiveAccess {
+                    val error = assertFailsWith<IllegalStateException> { database.close() }
+                    assertEquals(
+                        "Cannot close SQLite connection from its active owner context",
+                        error.message,
+                    )
+                    assertTrue(database.isOpen())
+                    database.connection().execSQL("INSERT exclusive-owner-still-open")
+                }
+            },
+        )
+
+        for (scenario in scenarios) {
+            val fixture = recordingConnection()
+            val database = SqliteNowDatabase(
+                dbName = ":memory:",
+                migration = NoopMigration(),
+                connectionProvider = SqliteConnectionProvider { _, _, _ -> fixture.connection },
+            )
+            database.open()
+            fixture.raw.executedSql.clear()
+
+            scenario.run(database)
+
+            assertTrue(database.isOpen(), scenario.name)
+            assertEquals(0, fixture.persistence.closeCalls, scenario.name)
+            assertEquals(0, fixture.raw.closeCalls, scenario.name)
+            assertEquals(0, fixture.execution.closeCalls, scenario.name)
+            if (scenario.name == "transaction") {
+                assertTrue("COMMIT" in fixture.raw.executedSql, scenario.name)
+                assertFalse("ROLLBACK" in fixture.raw.executedSql, scenario.name)
+            }
+
+            database.close()
+            assertEquals(1, fixture.persistence.closeCalls, scenario.name)
+            assertEquals(1, fixture.raw.closeCalls, scenario.name)
+            assertEquals(1, fixture.execution.closeCalls, scenario.name)
+        }
+    }
+
+    @Test
+    fun directCloseRevokesActiveOwnerBeforeNestedSqlAndStillRollsBack() = runBlocking {
+        val fixture = recordingConnection()
+        val transactionEntered = CompletableDeferred<Unit>()
+        val continueTransaction = CompletableDeferred<Unit>()
+
+        val transaction = async(start = CoroutineStart.UNDISPATCHED) {
+            assertFailsWith<IllegalStateException> {
+                fixture.connection.transaction(TransactionMode.IMMEDIATE) {
+                    fixture.connection.execSQL("INSERT admitted-before-revocation")
+                    transactionEntered.complete(Unit)
+                    continueTransaction.await()
+                    fixture.connection.execSQL("INSERT forbidden-after-revocation")
+                }
+            }
+        }
+        transactionEntered.await()
+        val closing = async(start = CoroutineStart.UNDISPATCHED) { fixture.connection.close() }
+        assertTrue(fixture.connection.isPublicAccessRevoked)
+        continueTransaction.complete(Unit)
+        transaction.await()
+
+        assertEquals(
+            listOf("BEGIN IMMEDIATE", "INSERT admitted-before-revocation", "ROLLBACK"),
+            fixture.raw.executedSql,
+        )
+        closing.await()
+        assertTrue(fixture.connection.ownedCloseComplete)
+    }
+
+    @Test
     fun successfulCommit_isNeverRolledBackForNonForcedPersistenceFailure() = runBlocking {
         val failure = IllegalStateException("POST_COMMIT_PERSISTENCE_SENTINEL")
         val fixture = recordingConnection(
@@ -154,7 +243,7 @@ class SafeSQLiteConnectionIsolationTest {
 
     @Test
     fun cancellationDeliveredDuringPreCommitCleanupRollsBackInsteadOfCommitting() = runBlocking {
-        lateinit var fixture: RecordingFixture
+        lateinit var fixture: RecordingFixture<RecordingRawConnection>
         val cancellation = CancellationException("PRE_COMMIT_CLEANUP_CANCELLATION_SENTINEL")
         supervisorScope {
             val child = launch {
@@ -201,7 +290,109 @@ class SafeSQLiteConnectionIsolationTest {
     }
 
     @Test
-    fun close_attemptsPersistenceRawAndExecutionIndependentlyInOrder() = runBlocking {
+    fun closeRetriesCallerStatementCloseFailureBeforeLaterOwnedResources() = runBlocking {
+        val statementCloseFailure = IllegalStateException("STATEMENT_CLOSE_RETRY_SENTINEL")
+        var statementCloseCalls = 0
+        val fixture = recordingConnection(
+            statements = ArrayDeque(
+                listOf(
+                    RecordingRawStatement(
+                        closeAction = {
+                            statementCloseCalls++
+                            if (statementCloseCalls == 1) throw statementCloseFailure
+                        },
+                    ),
+                ),
+            ),
+        )
+        val statement = fixture.connection.prepare("SELECT retry-close")
+
+        assertSame(statementCloseFailure, assertFailsWith<IllegalStateException> { statement.close() })
+        assertEquals(1, statementCloseCalls)
+        assertEquals(0, fixture.persistence.closeCalls)
+        assertEquals(0, fixture.raw.closeCalls)
+
+        val closeFailure = assertFailsWith<IllegalStateException> { fixture.connection.close() }
+
+        assertSame(statementCloseFailure, closeFailure)
+        assertEquals(2, statementCloseCalls)
+        assertEquals(0, fixture.persistence.closeCalls)
+        assertEquals(1, fixture.raw.closeCalls)
+        assertEquals(1, fixture.raw.cleanupCalls)
+        assertEquals(1, fixture.execution.closeCalls)
+        fixture.connection.close()
+        assertEquals(2, statementCloseCalls)
+        assertEquals(1, fixture.raw.closeCalls)
+    }
+
+    @Test
+    fun callerStatementCloseAndOwnerJoinTheSamePhysicalAttempt() = runBlocking {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val calls = AtomicInteger()
+        val executor = Executors.newSingleThreadExecutor()
+        val fixture = recordingConnection(statements = ArrayDeque(listOf(RecordingRawStatement(
+            closeAction = {
+                calls.incrementAndGet()
+                entered.countDown()
+                check(release.await(10, TimeUnit.SECONDS))
+            },
+        ))))
+        val statement = fixture.connection.prepare("SELECT overlapping-close")
+        try {
+            val caller = executor.submit { statement.close() }
+            assertTrue(entered.await(10, TimeUnit.SECONDS))
+            // UNDISTPATCHED runs the owner through its first suspension: joining this attempt.
+            val owner = async(start = CoroutineStart.UNDISPATCHED) { fixture.connection.close() }
+            assertFalse(owner.isCompleted)
+            assertEquals(1, calls.get())
+            assertEquals(0, fixture.raw.closeCalls)
+            assertEquals(0, fixture.execution.closeCalls)
+            release.countDown()
+            caller.get(10, TimeUnit.SECONDS)
+            owner.await()
+            assertEquals(1, calls.get())
+            assertEquals(1, fixture.raw.closeCalls)
+            assertEquals(1, fixture.raw.cleanupCalls)
+            assertEquals(1, fixture.execution.closeCalls)
+            assertTrue(fixture.connection.ownedCloseComplete)
+        } finally {
+            release.countDown()
+            executor.shutdown()
+            assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS))
+            fixture.connection.close()
+        }
+    }
+
+    @Test
+    fun repeatedStatementFailuresRetainDriverWhileIndependentStatementsFinish() = runBlocking {
+        val failure = IllegalStateException("repeated statement close")
+        var calls = 0
+        val order = mutableListOf<String>()
+        val fixture = recordingConnection(statements = ArrayDeque(listOf(
+            RecordingRawStatement(name = "independent", closeOrder = order),
+            RecordingRawStatement(name = "retry", closeOrder = order, closeAction = {
+                calls++
+                if (calls <= 3) throw failure
+            }),
+        )))
+        fixture.connection.prepare("SELECT independent")
+        val statement = fixture.connection.prepare("SELECT retry")
+        assertSame(failure, assertFailsWith<IllegalStateException> { statement.close() })
+        repeat(2) {
+            assertSame(failure, assertFailsWith<IllegalStateException> { fixture.connection.close() })
+            assertEquals(0, fixture.raw.closeCalls)
+            assertEquals(0, fixture.execution.closeCalls)
+        }
+        assertEquals(1, order.count { it == "independent" })
+        fixture.connection.close()
+        assertEquals(4, calls)
+        assertEquals(1, fixture.raw.closeCalls)
+        assertTrue(fixture.connection.ownedCloseComplete)
+    }
+
+    @Test
+    fun close_retriesFailedStagesAndDefersExecutionShutdownUntilDriverClose() = runBlocking {
         val persistenceFailure = IllegalStateException("CLOSE_PERSISTENCE_SENTINEL")
         val rawFailure = IllegalStateException("RAW_CLOSE_SENTINEL")
         val executionFailure = IllegalStateException("EXECUTION_CLOSE_SENTINEL")
@@ -214,14 +405,18 @@ class SafeSQLiteConnectionIsolationTest {
         val thrown = assertFailsWith<IllegalStateException> { fixture.connection.close() }
 
         assertSame(persistenceFailure, thrown)
-        assertEquals(listOf(rawFailure, executionFailure), thrown.suppressed.toList())
+        assertEquals(listOf(rawFailure), thrown.suppressed.toList())
         assertEquals(1, fixture.persistence.closeCalls)
         assertEquals(1, fixture.raw.closeCalls)
-        assertEquals(1, fixture.execution.closeCalls)
-        fixture.connection.close()
-        assertEquals(1, fixture.persistence.closeCalls)
-        assertEquals(1, fixture.raw.closeCalls)
-        assertEquals(1, fixture.execution.closeCalls)
+        assertEquals(0, fixture.execution.closeCalls)
+
+        val retry = assertFailsWith<IllegalStateException> { fixture.connection.close() }
+
+        assertSame(persistenceFailure, retry)
+        assertEquals(listOf(rawFailure), retry.suppressed.toList())
+        assertEquals(2, fixture.persistence.closeCalls)
+        assertEquals(2, fixture.raw.closeCalls)
+        assertEquals(0, fixture.execution.closeCalls)
     }
 
     @Test
@@ -266,6 +461,73 @@ class SafeSQLiteConnectionIsolationTest {
         }
 
         assertEquals(1, fixture.persistence.closeCalls)
+        assertEquals(1, fixture.raw.closeCalls)
+        assertEquals(1, fixture.execution.closeCalls)
+    }
+
+    @Test
+    fun closeRevokesOperationsAlreadyQueuedForConnectionOwnership() = runBlocking {
+        val fixture = recordingOrdinaryConnection(executionDispatcher = Dispatchers.Default)
+        val ownerEntered = CompletableDeferred<Unit>()
+        val releaseOwner = CompletableDeferred<Unit>()
+        val holder = async(start = CoroutineStart.UNDISPATCHED) {
+            fixture.connection.withExclusiveAccess {
+                ownerEntered.complete(Unit)
+                releaseOwner.await()
+            }
+        }
+        ownerEntered.await()
+
+        val queued = async(start = CoroutineStart.UNDISPATCHED) {
+            runCatching { fixture.connection.execSQL("SELECT queued-before-close") }.exceptionOrNull()
+        }
+        val closing = async(start = CoroutineStart.UNDISPATCHED) { fixture.connection.close() }
+        assertTrue(fixture.connection.isPublicAccessRevoked)
+
+        releaseOwner.complete(Unit)
+        holder.await()
+        assertTrue(queued.await() is IllegalStateException)
+        closing.await()
+    }
+
+    @Test
+    fun overlappingOrdinaryCloseCallersShareFailureUntilAnExplicitRetry() = runBlocking {
+        val fixture = recordingOrdinaryConnection(executionDispatcher = Dispatchers.Default)
+        val entered = CountDownLatch(1)
+        val joined = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val rawCalls = AtomicInteger()
+        val failure = IllegalStateException("ORDINARY_SHARED_CLOSE_SENTINEL")
+        fixture.connection.closeRawDriverForTest = {
+            val call = rawCalls.incrementAndGet()
+            if (call == 1) {
+                entered.countDown()
+                check(release.await(10, TimeUnit.SECONDS))
+                throw failure
+            }
+            fixture.raw.close()
+        }
+        fixture.connection.closeAttemptJoinedForTest = { joined.countDown() }
+
+        val first = async(Dispatchers.Default) {
+            runCatching { fixture.connection.close() }.exceptionOrNull()
+        }
+        assertTrue(entered.await(10, TimeUnit.SECONDS))
+        val second = async(Dispatchers.Default) {
+            runCatching { fixture.connection.close() }.exceptionOrNull()
+        }
+        assertTrue(joined.await(10, TimeUnit.SECONDS))
+        assertEquals(1, rawCalls.get())
+        assertEquals(0, fixture.execution.closeCalls)
+
+        release.countDown()
+        assertSame(failure, first.await())
+        assertSame(failure, second.await())
+        assertEquals(1, rawCalls.get())
+        assertEquals(0, fixture.execution.closeCalls)
+
+        fixture.connection.close()
+        assertEquals(2, rawCalls.get())
         assertEquals(1, fixture.raw.closeCalls)
         assertEquals(1, fixture.execution.closeCalls)
     }
@@ -343,21 +605,23 @@ class SafeSQLiteConnectionIsolationTest {
             val cancellation = observed.await()
             assertTrue(cancellation is CancellationException, scenario.name)
             assertEquals(scenario.cancellationMessage, cancellation.message, scenario.name)
-            assertEquals(
-                scenario.expectedSuppressedFailures,
-                cancellation.suppressedExceptions.toList(),
-                scenario.name,
-            )
+            assertEquals(listOfNotNull(scenario.rawCloseFailure), cancellation.suppressedExceptions.toList(), scenario.name)
             assertEquals(1, fixture.raw.closeCalls, scenario.name)
-            assertEquals(1, fixture.execution.closeCalls, scenario.name)
+            assertEquals(if (scenario.rawCloseFailure == null) 1 else 0, fixture.execution.closeCalls, scenario.name)
             assertTrue(
                 runCatching { fixture.connection.withExclusiveAccess { Unit } }.isFailure,
                 scenario.name,
             )
 
-            fixture.connection.close()
-            assertEquals(1, fixture.raw.closeCalls, scenario.name)
-            assertEquals(1, fixture.execution.closeCalls, scenario.name)
+            if (scenario.rawCloseFailure == null) {
+                fixture.connection.close()
+                assertEquals(1, fixture.raw.closeCalls, scenario.name)
+                assertEquals(1, fixture.execution.closeCalls, scenario.name)
+            } else {
+                assertFailsWith<IllegalStateException> { fixture.connection.close() }
+                assertEquals(2, fixture.raw.closeCalls, scenario.name)
+                assertEquals(0, fixture.execution.closeCalls, scenario.name)
+            }
         }
     }
 
@@ -397,12 +661,12 @@ class SafeSQLiteConnectionIsolationTest {
         val cancellation = observed.await()
         assertTrue(cancellation is CancellationException)
         assertEquals(
-            listOf(rawCloseFailure, executionCloseFailure),
+            listOf(rawCloseFailure),
             cancellation.suppressedExceptions.toList(),
         )
         assertEquals(1, fixture.persistence.closeCalls)
         assertEquals(1, fixture.raw.closeCalls)
-        assertEquals(1, fixture.execution.closeCalls)
+        assertEquals(0, fixture.execution.closeCalls)
     }
 
     @Test
@@ -445,12 +709,12 @@ class SafeSQLiteConnectionIsolationTest {
         assertTrue(deadlineFailure.cause is TimeoutCancellationException)
         assertEquals(1, fixture.persistence.closeCalls)
         assertEquals(1, fixture.raw.closeCalls)
-        assertEquals(1, fixture.execution.closeCalls)
+        assertEquals(0, fixture.execution.closeCalls)
 
-        fixture.connection.close()
-        assertEquals(1, fixture.persistence.closeCalls)
+        assertFailsWith<SqliteException> { fixture.connection.close() }
+        assertEquals(2, fixture.persistence.closeCalls)
         assertEquals(1, fixture.raw.closeCalls)
-        assertEquals(1, fixture.execution.closeCalls)
+        assertEquals(0, fixture.execution.closeCalls)
     }
 
     @Test
@@ -485,7 +749,7 @@ class SafeSQLiteConnectionIsolationTest {
         runBlocking {
             val cancellation = CancellationException("CANCELLED_CLOSE_SENTINEL")
             val cleanupFailure = IllegalStateException("SUSPEND_CLEANUP_SENTINEL")
-            lateinit var fixture: RecordingFixture
+            lateinit var fixture: RecordingFixture<RecordingRawConnection>
             val observed = CompletableDeferred<Throwable>()
 
             supervisorScope {
@@ -512,7 +776,7 @@ class SafeSQLiteConnectionIsolationTest {
             assertEquals(listOf(cleanupFailure), thrown.suppressed.toList())
             assertEquals(1, fixture.raw.closeCalls)
             assertEquals(1, fixture.raw.cleanupCalls)
-            assertEquals(1, fixture.execution.closeCalls)
+            assertEquals(0, fixture.execution.closeCalls)
         }
 
     @Test
@@ -709,7 +973,7 @@ class SafeSQLiteConnectionIsolationTest {
 
         assertSame(driverFailure, thrown.cause)
         assertEquals(1, fixture.raw.closeCalls)
-        assertEquals(1, fixture.execution.closeCalls)
+        assertEquals(0, fixture.execution.closeCalls)
     }
 
     @Test
@@ -730,7 +994,7 @@ class SafeSQLiteConnectionIsolationTest {
         assertTrue(suppressed is SqliteException)
         assertSame(driverFailure, suppressed.cause)
         assertEquals(1, fixture.raw.closeCalls)
-        assertEquals(1, fixture.execution.closeCalls)
+        assertEquals(0, fixture.execution.closeCalls)
     }
 
     @Test
@@ -804,7 +1068,7 @@ class SafeSQLiteConnectionIsolationTest {
         assertEquals(1, observed.countIdentity(resetFailure))
         assertEquals(1, observed.countIdentity(rawCloseFailure))
         assertEquals(1, fixture.raw.closeCalls)
-        assertEquals(1, fixture.execution.closeCalls)
+        assertEquals(0, fixture.execution.closeCalls)
     }
 
     @Test
@@ -834,7 +1098,7 @@ class SafeSQLiteConnectionIsolationTest {
         assertTrue(observed.suppressed[1] is SqliteException)
         assertSame(rawCloseDriverFailure, observed.suppressed[1].cause)
         assertEquals(1, fixture.raw.closeCalls)
-        assertEquals(1, fixture.execution.closeCalls)
+        assertEquals(0, fixture.execution.closeCalls)
     }
 
     @Test
@@ -1257,10 +1521,12 @@ class SafeSQLiteConnectionIsolationTest {
         val cancellationMessage: String,
         val rawCloseFailure: Throwable? = null,
         val executionCloseFailure: Throwable? = null,
-    ) {
-        val expectedSuppressedFailures: List<Throwable>
-            get() = listOfNotNull(rawCloseFailure, executionCloseFailure)
-    }
+    )
+
+    private data class DatabaseOwnerCloseScenario(
+        val name: String,
+        val run: suspend (SqliteNowDatabase) -> Unit,
+    )
 
     private data class CapturedContext(
         val sequence: Int,
@@ -1274,25 +1540,12 @@ class SafeSQLiteConnectionIsolationTest {
         statements: ArrayDeque<RecordingRawStatement> = ArrayDeque(),
         cleanupAction: (suspend () -> Unit)? = null,
         executionContextHook: SqliteNowContextHook? = null,
-    ): RecordingFixture {
-        val raw = RecordingRawConnection(
-            closeFailure = rawCloseFailure,
-            statements = statements,
-            cleanupAction = cleanupAction,
-        )
-        val execution = RecordingExecutionContext(executionCloseFailure)
-        return RecordingFixture(
-            connection = SafeSQLiteConnection(
-                ref = raw,
-                persistenceController = persistence,
-                executionContextHook = executionContextHook,
-                executionContext = execution,
-            ),
-            raw = raw,
-            persistence = persistence,
-            execution = execution,
-        )
-    }
+    ) = RecordingFixture(
+        raw = RecordingRawConnection(rawCloseFailure, statements, cleanupAction),
+        persistence = persistence,
+        executionCloseFailure = executionCloseFailure,
+        executionContextHook = executionContextHook,
+    )
 
     private fun recordingOrdinaryConnection(
         executionContextHook: SqliteNowContextHook? = null,
@@ -1301,39 +1554,33 @@ class SafeSQLiteConnectionIsolationTest {
         executionCloseFailure: Throwable? = null,
         executionDispatcher: CoroutineDispatcher = Dispatchers.Unconfined,
         ordinaryCloseCleanupTimeoutMillis: Long = 5_000,
-    ): RecordingOrdinaryFixture {
-        val raw = RecordingOrdinaryRawConnection(closeFailure = rawCloseFailure)
-        val execution = RecordingExecutionContext(
-            closeFailure = executionCloseFailure,
-            dispatcher = executionDispatcher,
-        )
-        return RecordingOrdinaryFixture(
-            connection = SafeSQLiteConnection(
-                ref = raw,
-                persistenceController = persistence,
-                executionContextHook = executionContextHook,
-                executionContext = execution,
-                ordinaryCloseCleanupTimeoutMillis = ordinaryCloseCleanupTimeoutMillis,
-            ),
-            raw = raw,
-            persistence = persistence,
-            execution = execution,
+    ) = RecordingFixture(
+        raw = RecordingOrdinaryRawConnection(rawCloseFailure),
+        persistence = persistence,
+        executionCloseFailure = executionCloseFailure,
+        executionContextHook = executionContextHook,
+        executionDispatcher = executionDispatcher,
+        ordinaryCloseCleanupTimeoutMillis = ordinaryCloseCleanupTimeoutMillis,
+    )
+
+    // Share connection ownership setup; the raw type still determines whether suspend cleanup exists.
+    private class RecordingFixture<R : SQLiteConnection>(
+        val raw: R,
+        val persistence: RecordingPersistenceController,
+        executionCloseFailure: Throwable?,
+        executionContextHook: SqliteNowContextHook?,
+        executionDispatcher: CoroutineDispatcher = Dispatchers.Unconfined,
+        ordinaryCloseCleanupTimeoutMillis: Long = 5_000,
+    ) {
+        val execution = RecordingExecutionContext(executionCloseFailure, executionDispatcher)
+        val connection = SafeSQLiteConnection(
+            ref = raw,
+            persistenceController = persistence,
+            executionContextHook = executionContextHook,
+            executionContext = execution,
+            ordinaryCloseCleanupTimeoutMillis = ordinaryCloseCleanupTimeoutMillis,
         )
     }
-
-    private data class RecordingFixture(
-        val connection: SafeSQLiteConnection,
-        val raw: RecordingRawConnection,
-        val persistence: RecordingPersistenceController,
-        val execution: RecordingExecutionContext,
-    )
-
-    private data class RecordingOrdinaryFixture(
-        val connection: SafeSQLiteConnection,
-        val raw: RecordingOrdinaryRawConnection,
-        val persistence: RecordingPersistenceController,
-        val execution: RecordingExecutionContext,
-    )
 
     private class ErrorOnlyRecordingLogger : SqliteNowLogger {
         val messages = mutableListOf<String>()

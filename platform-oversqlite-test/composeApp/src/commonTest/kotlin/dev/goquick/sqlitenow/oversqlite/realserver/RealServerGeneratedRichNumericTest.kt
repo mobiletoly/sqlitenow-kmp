@@ -3,8 +3,9 @@ package dev.goquick.sqlitenow.oversqlite.realserver
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.oversqlite.AttachOutcome
 import dev.goquick.sqlitenow.oversqlite.AuthorityStatus
-import dev.goquick.sqlitenow.oversqlite.OversqliteClient
-import dev.goquick.sqlitenow.oversqlite.Phase6OwnedStorage
+import dev.goquick.sqlitenow.oversqlite.OversqliteOpening
+import dev.goquick.sqlitenow.oversqlite.OversqliteTransferTargets
+import dev.goquick.sqlitenow.oversqlite.OwnedWorkerStorage
 import dev.goquick.sqlitenow.oversqlite.PushOutcome
 import dev.goquick.sqlitenow.oversqlite.RemoteSyncOutcome
 import dev.goquick.sqlitenow.oversqlite.platform.generated.RealServerGeneratedDatabase
@@ -24,12 +25,17 @@ import kotlin.test.assertTrue
 internal class RealServerGeneratedRichNumericTest : RealServerHarnessSupport() {
     @Test
     fun generatedDatabaseFixturesAreIndependent() = runTest {
-        val storage = Phase6OwnedStorage()
+        val storage = OwnedWorkerStorage()
         val firstDb = newRealServerGeneratedDb(storage.newDatabaseName())
         val secondDb = newRealServerGeneratedDb(storage.newDatabaseName())
+        val server = MockSyncServer()
+        val firstHttp = server.newHttpClient()
+        val secondHttp = server.newHttpClient()
+        var firstOpening: OversqliteOpening<RealServerGeneratedDatabase>? = null
+        var secondOpening: OversqliteOpening<RealServerGeneratedDatabase>? = null
         try {
-            firstDb.open()
-            secondDb.open()
+            firstOpening = openRealServerGeneratedDatabase(firstDb, firstHttp)
+            secondOpening = openRealServerGeneratedDatabase(secondDb, secondHttp)
             firstDb.connection().execSQL(
                 "CREATE TABLE IF NOT EXISTS regular_fixture_isolation_probe(value INTEGER NOT NULL)",
             )
@@ -48,8 +54,10 @@ internal class RealServerGeneratedRichNumericTest : RealServerHarnessSupport() {
                 ),
             )
         } finally {
-            firstDb.close()
-            secondDb.close()
+            firstOpening?.close() ?: firstDb.close()
+            secondOpening?.close() ?: secondDb.close()
+            firstHttp.close()
+            secondHttp.close()
             storage.cleanup()
         }
     }
@@ -64,27 +72,26 @@ internal class RealServerGeneratedRichNumericTest : RealServerHarnessSupport() {
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("generated-rich-numeric-user")
-        val storage = Phase6OwnedStorage()
+        val storage = OwnedWorkerStorage()
         val seedDb = newRealServerGeneratedDb(storage.newDatabaseName())
         val pullDb = newRealServerGeneratedDb(storage.newDatabaseName())
         val rebuildDb = newRealServerGeneratedDb(storage.newDatabaseName())
         var seedHttp: HttpClient? = null
         var pullHttp: HttpClient? = null
         var rebuildHttp: HttpClient? = null
+        var seedOpening: OversqliteOpening<RealServerGeneratedDatabase>? = null
+        var pullOpening: OversqliteOpening<RealServerGeneratedDatabase>? = null
+        var rebuildOpening: OversqliteOpening<RealServerGeneratedDatabase>? = null
+        var seedToken: String? = null
+        var pullToken: String? = null
+        var rebuildToken: String? = null
         var frozenLargeIntegerPayload: String? = null
         try {
-            seedDb.open()
-            pullDb.open()
-            rebuildDb.open()
-
-            val seedSource = bootstrapSourceId(config.baseUrl) { http -> newRealServerGeneratedClient(seedDb, http) }
-            val pullSource = bootstrapSourceId(config.baseUrl) { http -> newRealServerGeneratedClient(pullDb, http) }
-            val rebuildSource = bootstrapSourceId(config.baseUrl) { http -> newRealServerGeneratedClient(rebuildDb, http) }
             seedHttp = newRealServerHttpClient(
                 baseUrl = config.baseUrl,
-                token = issueDummySigninToken(config.baseUrl, userId, seedSource),
+                tokenProvider = { seedToken },
                 beforeRequest = { path ->
-                    if (path == "/sync/push-sessions" && frozenLargeIntegerPayload == null) {
+                    if (path == "/sync/push" && frozenLargeIntegerPayload == null) {
                         frozenLargeIntegerPayload = scalarText(
                             seedDb.connection(),
                             """
@@ -98,30 +105,43 @@ internal class RealServerGeneratedRichNumericTest : RealServerHarnessSupport() {
                 },
             )
             pullHttp = newRealServerHttpClient(
-                config.baseUrl,
-                issueDummySigninToken(config.baseUrl, userId, pullSource),
+                baseUrl = config.baseUrl,
+                tokenProvider = { pullToken },
             )
             rebuildHttp = newRealServerHttpClient(
-                config.baseUrl,
-                issueDummySigninToken(config.baseUrl, userId, rebuildSource),
+                baseUrl = config.baseUrl,
+                tokenProvider = { rebuildToken },
             )
-
-            val seed = newRealServerGeneratedClient(seedDb, seedHttp)
-            val pull = newRealServerGeneratedClient(pullDb, pullHttp)
-            val rebuild = newRealServerGeneratedClient(rebuildDb, rebuildHttp)
-
-            seed.open().getOrThrow()
+            seedOpening = openRealServerGeneratedDatabase(seedDb, seedHttp)
+            pullOpening = openRealServerGeneratedDatabase(pullDb, pullHttp)
+            rebuildOpening = openRealServerGeneratedDatabase(rebuildDb, rebuildHttp)
+            val seed = checkNotNull(seedOpening.readyOrNull()).client
+            val pull = checkNotNull(pullOpening.readyOrNull()).client
+            val rebuild = checkNotNull(rebuildOpening.readyOrNull()).client
+            seedToken = issueDummySigninToken(
+                config.baseUrl,
+                userId,
+                seed.sourceInfo().getOrThrow().currentSourceId,
+            )
+            pullToken = issueDummySigninToken(
+                config.baseUrl,
+                userId,
+                pull.sourceInfo().getOrThrow().currentSourceId,
+            )
+            rebuildToken = issueDummySigninToken(
+                config.baseUrl,
+                userId,
+                rebuild.sourceInfo().getOrThrow().currentSourceId,
+            )
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.STARTED_EMPTY,
                 actual = seed.attach(userId).getOrThrow(),
                 expectedAuthority = AuthorityStatus.AUTHORITATIVE_EMPTY,
             )
-            pull.open().getOrThrow()
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
                 actual = pull.attach(userId).getOrThrow(),
             )
-            rebuild.open().getOrThrow()
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
                 actual = rebuild.attach(userId).getOrThrow(),
@@ -133,9 +153,14 @@ internal class RealServerGeneratedRichNumericTest : RealServerHarnessSupport() {
                 seedDb.connection(),
                 "SELECT payload FROM _sync_dirty_rows WHERE table_name = 'typed_rows' AND key_json LIKE '%${largeFixture.id}%'",
             )
-            assertLargeIntegerIsJsonString(dirtyLargeIntegerPayload)
+            val captured = json.parseToJsonElement(dirtyLargeIntegerPayload).jsonObject.getValue("count_value").jsonObject
+            assertEquals("integer", captured.getValue("storage").jsonPrimitive.content)
+            assertEquals("9007199254740993", captured.getValue("value").jsonPrimitive.content)
 
             assertEquals(PushOutcome.COMMITTED, seed.pushPending().getOrThrow().outcome)
+            assertTrue(seed.syncStatus().getOrThrow().pending.hasPendingSyncData)
+            assertEquals(PushOutcome.COMMITTED, seed.pushPending().getOrThrow().outcome)
+            assertFalse(seed.syncStatus().getOrThrow().pending.hasPendingSyncData)
             assertLargeIntegerIsJsonString(assertNotNull(frozenLargeIntegerPayload))
             assertEquals(RemoteSyncOutcome.APPLIED_INCREMENTAL, pull.pullToStable().getOrThrow().outcome)
             assertEquals(RemoteSyncOutcome.APPLIED_SNAPSHOT, rebuild.rebuild().getOrThrow().outcome)
@@ -147,12 +172,12 @@ internal class RealServerGeneratedRichNumericTest : RealServerHarnessSupport() {
             assertFalse(pull.syncStatus().getOrThrow().pending.hasPendingSyncData)
             assertFalse(rebuild.syncStatus().getOrThrow().pending.hasPendingSyncData)
         } finally {
+            seedOpening?.close() ?: seedDb.close()
+            pullOpening?.close() ?: pullDb.close()
+            rebuildOpening?.close() ?: rebuildDb.close()
             seedHttp?.close()
             pullHttp?.close()
             rebuildHttp?.close()
-            seedDb.close()
-            pullDb.close()
-            rebuildDb.close()
             storage.cleanup()
         }
     }
@@ -224,17 +249,26 @@ internal fun newRealServerGeneratedDb(dbName: String): RealServerGeneratedDataba
         debug = true,
     )
 
-internal fun newRealServerGeneratedClient(
+internal suspend fun openRealServerGeneratedDatabase(
     db: RealServerGeneratedDatabase,
     http: HttpClient,
-): OversqliteClient =
-    db.newOversqliteClient(
-        schema = "business",
+): OversqliteOpening<RealServerGeneratedDatabase> {
+    val opening = db.openForSync(
+        config = db.buildOversqliteConfig(
+            generationId = 1L,
+            databaseId = "platform-sync",
+            serviceId = "nethttp-server-example",
+            transferTargets = OversqliteTransferTargets(
+                maxPushRows = 8,
+                maxPullBundles = 8,
+            ),
+        ),
         httpClient = http,
-        uploadLimit = 8,
-        downloadLimit = 8,
-        syncTables = RealServerGeneratedDatabase.syncTables,
     )
+    opening.advance()
+    checkNotNull(opening.readyOrNull()) { "fresh generated coordinated opening did not publish ready" }
+    return opening
+}
 
 internal data class RichNumericScenario(
     val name: String,
@@ -260,7 +294,7 @@ internal val richNumericScenarios = listOf(
             "count_value" to "-9223372036854775808",
             "small_count" to "-32768",
             "medium_count" to "-2147483648",
-            "exact_amount" to "-1234567890.1234567890",
+            "exact_amount" to "-1234567890.123456789",
         ),
     ),
     RichNumericScenario(
@@ -275,7 +309,7 @@ internal val richNumericScenarios = listOf(
             "count_value" to "9223372036854775807",
             "small_count" to "32767",
             "medium_count" to "2147483647",
-            "exact_amount" to "1234567890.1234567890",
+            "exact_amount" to "1234567890.123456789",
         ),
     ),
     RichNumericScenario(

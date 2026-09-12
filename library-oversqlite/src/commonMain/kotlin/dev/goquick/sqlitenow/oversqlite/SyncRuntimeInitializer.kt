@@ -29,10 +29,14 @@ internal class SyncRuntimeInitializer(
         db: SafeSQLiteConnection,
         managedTableStore: OversqliteManagedTableStore,
     ): ValidatedConfig {
-        require(config.schema.isNotBlank()) { "config.schema must be provided" }
-        val validated = validateConfig(db)
-        initializeOversqliteControlTables(db)
+        tableInfoCache.clear()
+        val physical = validateConfig(db)
+        val identity = physical.contractIdentity(config, db)
+        val generation = OversqliteContractStore(db).open(identity)
+        val validated = physical.withGeneration(generation)
+        tableInfoCache.install(validated.tableInfoByName)
         managedTableStore.registerManagedTables(validated)
+        ensureOrdinaryReadyOpeningRecord(db, identity, generation?.fingerprint.orEmpty())
         installOversqliteTriggers(db, validated, tableInfoCache)
         return validated
     }
@@ -45,8 +49,7 @@ internal class SyncRuntimeInitializer(
         adoptExistingManagedRows(db, validated)
     }
 
-    private suspend fun validateConfig(db: SafeSQLiteConnection): ValidatedConfig {
-        val schema = config.schema.trim()
+    suspend fun validateConfig(db: SafeSQLiteConnection): ValidatedConfig {
         val pkByTable = linkedMapOf<String, String>()
         val keyByTable = linkedMapOf<String, List<String>>()
         val tableInfoByName = linkedMapOf<String, TableInfo>()
@@ -54,11 +57,12 @@ internal class SyncRuntimeInitializer(
         val managedTables = linkedSetOf<String>()
 
         for (syncTable in config.syncTables) {
-            val tableName = syncTable.tableName.trim().lowercase()
+            val tableName = syncTable.tableName
             require(tableName.isNotBlank()) { "sync table name must be provided" }
             require(!tableName.contains(".")) {
-                "table ${syncTable.tableName} must not include a schema qualifier; oversqlite supports exactly one config.schema per local database"
+                "table ${syncTable.tableName} must not include a schema qualifier; server schemas are obtained from the selected generation"
             }
+            require(tableName.matches(Regex("[a-z0-9_]{1,63}"))) { "sync table must use its exact canonical identifier" }
             require(tableName !in managedTables) { "duplicate sync table registration for ${syncTable.tableName}" }
             managedTables += tableName
 
@@ -81,7 +85,7 @@ internal class SyncRuntimeInitializer(
         validateManagedForeignKeyClosure(tableInfoByName, managedTables)
         val tableOrder = computeManagedTableOrder(tableInfoByName, validatedTables)
         return ValidatedConfig(
-            schema = schema,
+            generation = null,
             tables = validatedTables,
             pkByTable = pkByTable,
             keyByTable = keyByTable,
@@ -91,19 +95,13 @@ internal class SyncRuntimeInitializer(
     }
 
     private fun normalizedSyncKeyColumns(syncTable: SyncTable): List<String> {
-        val explicit = syncTable.syncKeyColumns
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .distinctBy { it.lowercase() }
-        if (explicit.isNotEmpty()) {
-            return explicit
+        val columns = syncTable.syncKeyColumns.ifEmpty {
+            listOf(requireNotNull(syncTable.syncKeyColumnName) {
+                "table ${syncTable.tableName} must declare syncKeyColumnName or syncKeyColumns explicitly"
+            })
         }
-
-        val single = syncTable.syncKeyColumnName?.trim().orEmpty()
-        require(single.isNotEmpty()) {
-            "table ${syncTable.tableName} must declare syncKeyColumnName or syncKeyColumns explicitly"
-        }
-        return listOf(single)
+        require(columns.all { it.matches(Regex("[a-z0-9_]{1,63}")) }) { "sync key must use its exact canonical identifier" }
+        return columns
     }
 
     private fun configuredPrimaryKeyColumn(
@@ -118,13 +116,13 @@ internal class SyncRuntimeInitializer(
 
         val primaryKeyColumn = primaryKeyColumns.single()
         for (column in tableInfo.columns) {
-            if (!column.name.equals(configuredKeyColumn, ignoreCase = true)) {
+            if (column.name != configuredKeyColumn) {
                 continue
             }
             require(column.isPrimaryKey) {
                 "configured primary key column ${column.name} for table ${syncTable.tableName} is not declared as PRIMARY KEY"
             }
-            require(primaryKeyColumn.name.equals(column.name, ignoreCase = true)) {
+            require(primaryKeyColumn.name == column.name) {
                 "table ${syncTable.tableName} must use its only local SQLite PRIMARY KEY column as the visible sync key"
             }
             require(column.kind == ColumnKind.TEXT || column.kind.isBlobKind()) {
@@ -280,9 +278,9 @@ internal class SyncRuntimeInitializer(
         """.trimIndent()
         val insertSql = """
             INSERT INTO _sync_dirty_rows(
-              schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at
+              schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at,base_kind,base_payload,base_provenance
             )
-            VALUES(?, ?, ?, 'INSERT', 0, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+            VALUES(?, ?, ?, 'INSERT', 0, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'),'absent',NULL,${baselineProvenanceSql("'never_published'","0","NULL")})
         """.trimIndent()
         var nextDirtyOrdinal = startingDirtyOrdinal
         db.withExclusiveAccess {
@@ -302,8 +300,9 @@ internal class SyncRuntimeInitializer(
                             insertUsed = true
                         }
                         nextDirtyOrdinal++
+                        OversqliteSyncStateStore(db) { OversqliteLocalStore(db, kotlinx.serialization.json.Json) { validated } }.installAuthoritativeBaseline(validated.schemaForTable(table.tableName),table.tableName,current.keyJson,"unpublished",0,null,"never_published",null)
                         insertDirtyRow(
-                            schemaName = validated.schema,
+                            schemaName = validated.schemaForTable(table.tableName),
                             tableName = table.tableName,
                             keyJson = current.keyJson,
                             payload = current.payload,
@@ -374,7 +373,7 @@ internal class SyncRuntimeInitializer(
                 db.prepare(
                     "DELETE FROM _sync_row_state WHERE schema_name = ? AND table_name = ?"
                 ).use { st ->
-                    st.bindText(1, validated.schema)
+                    st.bindText(1, validated.schemaForTable(table.tableName))
                     st.bindText(2, table.tableName)
                     st.step()
                 }
@@ -390,9 +389,7 @@ internal class SyncRuntimeInitializer(
                 source_bundle_id = 0,
                 initialization_id = '',
                 canonical_request_hash = '',
-                row_count = 0,
-                remote_bundle_hash = '',
-                remote_bundle_seq = 0
+                row_count = 0
             WHERE singleton_key = 1
             """.trimIndent()
         )

@@ -8,6 +8,7 @@
 
 const PROTOCOL = "sqlitenow-sqlite-worker-v1";
 const COMMANDS = new Set([
+  "inspect",
   "open",
   "completeOpen",
   "prepare",
@@ -34,6 +35,7 @@ const REQUEST_KEYS = new Set([
   "legacySourceStatus",
 ]);
 const COMMAND_KEYS = new Map([
+  ["inspect", new Set(["protocol", "command", "fileName", "legacySourceMode"])],
   [
     "open",
     new Set(["protocol", "command", "fileName", "legacySourceMode"]),
@@ -121,7 +123,7 @@ const sqlite3 = await sqlite3InitModule({
   print: () => {},
   printErr: () => {},
 });
-const { capi, oo1 } = sqlite3;
+const { capi, oo1, wasm } = sqlite3;
 
 const databases = new Map();
 const statements = new Map();
@@ -140,11 +142,13 @@ let negativeReconciliationForTest = false;
 let shutdownCleanupFailuresForTest = null;
 let holdNextActivePageForTest = false;
 let directCapabilityMissingForTest = null;
+let allowNodeCustomImportForTest = false;
 const migrationInterruptionsForTest = new Map();
 let nextMigrationHeapSamplesForTest = null;
 const migrationCancellationHoldsForTest = new Map();
 let nextCompleteOpenCancellationHoldForTest = null;
 const usedCancellationHoldIdsForTest = new Set();
+let lifecycleOwner = null;
 
 const metrics = {
   runtimeKind: isNodeRuntime ? "js-node-worker" : "browser-worker",
@@ -224,6 +228,7 @@ function errorEnvelope(id, operation, error, request, cancelled = false) {
     message: String(error?.message ?? error),
     cancelled,
     suppressed: error?.workerSuppressed ?? [],
+    lifecycleBusy: error?.sqliteNowLifecycleBusy === true,
   };
   if (request?.sql != null) workerError.sql = request.sql;
   if (Number.isInteger(error?.resultCode)) workerError.sqliteCode = error.resultCode;
@@ -395,12 +400,13 @@ function validateRequest(request) {
     validateValue(value);
   }
   switch (request.command) {
+    case "inspect":
     case "open":
       if (typeof request.fileName !== "string" || request.fileName.trim() === "") {
         throw new TypeError("SQLite worker database name must be non-empty.");
       }
       if (!["built-in", "custom", "none"].includes(request.legacySourceMode)) {
-        throw new TypeError("SQLite worker open requires a supported legacySourceMode.");
+        throw new TypeError(`SQLite worker ${request.command} requires a supported legacySourceMode.`);
       }
       break;
     case "completeOpen":
@@ -468,7 +474,67 @@ async function databaseIdentity(databaseName) {
     databaseNameSha256,
     targetFileName: `sqlitenow-worker-v1-${databaseNameSha256}.sqlite3`,
     lockName: `sqlitenow-worker-v1-migrate-${databaseNameSha256}`,
+    lifecycleLockName: `sqlitenow-worker-v1-lifecycle-${databaseNameSha256}`,
   };
+}
+
+async function acquireLifecycleOwnership(databaseName, identity) {
+  if (isNodeRuntime) return;
+  requireDirectOpfs();
+  if (lifecycleOwner != null) {
+    if (lifecycleOwner.databaseName !== databaseName) {
+      throw new Error("A SQLite worker cannot own two lifecycle database identities.");
+    }
+    return;
+  }
+  let resolveAcquired;
+  let rejectAcquired;
+  let release;
+  const acquired = new Promise((resolve, reject) => {
+    resolveAcquired = resolve;
+    rejectAcquired = reject;
+  });
+  const completion = globalThis.navigator.locks.request(
+    identity.lifecycleLockName,
+    { mode: "exclusive", ifAvailable: true },
+    async (lock) => {
+      if (lock == null) {
+        const busy = new Error(
+          `SQLite worker lifecycle lock is busy: ${identity.lifecycleLockName}`,
+        );
+        busy.sqliteNowLifecycleBusy = true;
+        rejectAcquired(busy);
+        return;
+      }
+      const held = new Promise((resolve) => { release = resolve; });
+      lifecycleOwner = {
+        databaseName,
+        lockName: identity.lifecycleLockName,
+        release,
+        completion: null,
+      };
+      resolveAcquired();
+      await held;
+    },
+  ).catch((error) => {
+    rejectAcquired(error);
+    throw error;
+  });
+  try {
+    await acquired;
+    lifecycleOwner.completion = completion;
+  } catch (error) {
+    await completion.catch(() => {});
+    throw error;
+  }
+}
+
+async function releaseLifecycleOwnership() {
+  const owner = lifecycleOwner;
+  if (owner == null) return;
+  lifecycleOwner = null;
+  owner.release();
+  await owner.completion;
 }
 
 async function rootDirectory() {
@@ -889,7 +955,7 @@ function takeMigrationHeapSampler() {
 function interruptMigrationForTest(databaseName, stage) {
   if (migrationInterruptionsForTest.get(databaseName) !== stage) return;
   migrationInterruptionsForTest.delete(databaseName);
-  throw new Error(`controlled Phase 5B interruption at ${stage}`);
+  throw new Error(`controlled legacy migration interruption at ${stage}`);
 }
 
 async function awaitCancellationHoldForTest(control, cancelView) {
@@ -1213,6 +1279,7 @@ async function openBrowserDatabase(request, cancelView) {
     throw new Error("Browser worker opens require built-in or custom legacy-source mode.");
   }
   const identity = await databaseIdentity(request.fileName);
+  await acquireLifecycleOwnership(request.fileName, identity);
   return globalThis.navigator.locks.request(
     identity.lockName,
     { mode: "exclusive" },
@@ -1257,6 +1324,50 @@ async function openBrowserDatabase(request, cancelView) {
       );
     },
   );
+}
+
+async function inspectBrowserDatabase(request) {
+  requireDirectOpfs();
+  const identity = await databaseIdentity(request.fileName);
+  await acquireLifecycleOwnership(request.fileName, identity);
+  const state = await globalThis.navigator.locks.request(
+    identity.lockName,
+    { mode: "exclusive" },
+    () => inspectMigrationState(request.fileName, identity),
+  );
+  if (!state.targetExists) {
+    if (request.legacySourceMode === "built-in") {
+      await resolveBuiltInSource(request.fileName, state.intent);
+    } else if (
+      state.intent != null &&
+      !migrationModeAcceptsSource(request.legacySourceMode, state.intent.sourceKind)
+    ) {
+      throw new Error(
+        `Interrupted migration for ${request.fileName} requires ` +
+          `${state.intent.sourceKind} source kind.`,
+      );
+    }
+    return response({
+      openState: "preparation-required",
+      runtimeKind: metrics.runtimeKind,
+      sqliteVersion: metrics.sqliteVersion,
+    });
+  }
+  if (state.intent != null && state.health == null) {
+    return response({
+      openState: "preparation-required",
+      runtimeKind: metrics.runtimeKind,
+      sqliteVersion: metrics.sqliteVersion,
+    });
+  }
+  const registered = registerDatabase(
+    new oo1.OpfsDb(identity.targetFileName, "r"),
+    "direct-opfs-inspection",
+  );
+  return {
+    ...registered,
+    openState: "inspection-ready",
+  };
 }
 
 async function completeBrowserOpen(request, legacy, cancelView) {
@@ -1871,12 +1982,35 @@ async function page(requestId, request, cancelView) {
 async function handleRequest(requestId, request, cancelView, legacy) {
   if (isCancelled(cancelView)) throw cancelledError();
   switch (request.command) {
+    case "inspect": {
+      if (isNodeRuntime) {
+        return response({
+          openState: "preparation-required",
+          runtimeKind: metrics.runtimeKind,
+          sqliteVersion: metrics.sqliteVersion,
+        });
+      }
+      return inspectBrowserDatabase(request);
+    }
     case "open": {
       if (isNodeRuntime) {
         if (request.legacySourceMode === "custom") {
-          throw new Error(
-            "Explicit custom legacy persistence is browser-only and was not invoked.",
-          );
+          if (!allowNodeCustomImportForTest) {
+            throw new Error(
+              "Explicit custom legacy persistence is browser-only and was not invoked.",
+            );
+          }
+          const openId = allocateHandle("open");
+          pendingOpens.set(openId, {
+            databaseName: request.fileName,
+            nodeCustomImportForTest: true,
+          });
+          return response({
+            openState: "legacy-source-required",
+            openId,
+            runtimeKind: metrics.runtimeKind,
+            sqliteVersion: metrics.sqliteVersion,
+          });
         }
         return registerDatabase(new oo1.DB(":memory:", "c"), "memory");
       }
@@ -1884,7 +2018,44 @@ async function handleRequest(requestId, request, cancelView, legacy) {
     }
     case "completeOpen":
       if (isNodeRuntime) {
-        throw new Error("Node worker cannot complete a browser legacy-source open.");
+        const pending = pendingOpens.get(request.openId);
+        if (!allowNodeCustomImportForTest || pending?.nodeCustomImportForTest !== true) {
+          throw new Error("Node worker cannot complete a browser legacy-source open.");
+        }
+        pendingOpens.delete(request.openId);
+        if (request.legacySourceStatus !== "present" || legacy == null) {
+          throw new Error("Node custom-import test open requires legacy bytes.");
+        }
+        validateSqliteSnapshot(legacy.bytes);
+        const capacity = Math.max(
+          legacy.bytes.byteLength * 2,
+          legacy.bytes.byteLength + 1024 * 1024,
+        );
+        const allocation = wasm.alloc(capacity);
+        wasm.heap8u().set(legacy.bytes, allocation);
+        const database = new oo1.DB(":memory:", "c");
+        const flags = capi.SQLITE_DESERIALIZE_FREEONCLOSE |
+          capi.SQLITE_DESERIALIZE_RESIZEABLE;
+        const rc = capi.sqlite3_deserialize(
+          database.pointer,
+          "main",
+          allocation,
+          legacy.bytes.byteLength,
+          capacity,
+          flags,
+        );
+        if (rc !== capi.SQLITE_OK) {
+          wasm.dealloc(allocation);
+          database.close();
+          throw new Error(`Node custom-import test open failed with SQLite code ${rc}.`);
+        }
+        try {
+          inspectSchemaAndVersion(database, true, true);
+          return registerDatabase(database, "memory");
+        } catch (error) {
+          database.close();
+          throw error;
+        }
       }
       return completeBrowserOpen(request, legacy, cancelView);
     case "prepare": {
@@ -1959,6 +2130,9 @@ async function handleRequest(requestId, request, cancelView, legacy) {
         }
       }
       pendingOpens.clear();
+      // The browser lifecycle lock is intentionally retained until the host terminates this
+      // worker after acknowledging shutdown. Releasing it here would allow a second owner to
+      // acquire the same database while this execution context is still alive.
       metrics.workerStops++;
       if (failures.length > 0) {
         const primary = failures[0];
@@ -2267,12 +2441,25 @@ listen((message) => {
         "cancellationHold",
         "pendingOpenCountId",
         "directCapabilityMissing",
+        "allowNodeCustomImport",
         "crash",
       ]),
       "test control",
     );
     if (typeof message.crash === "string") {
       throw new Error(message.crash);
+    }
+    if (message.allowNodeCustomImport !== undefined) {
+      validateExactKeys(
+        message,
+        new Set(["kind", "allowNodeCustomImport"]),
+        "node custom-import test control envelope",
+      );
+      if (!isNodeRuntime || message.allowNodeCustomImport !== true) {
+        throw new TypeError("Invalid node custom-import test control.");
+      }
+      allowNodeCustomImportForTest = true;
+      return;
     }
     if (message.directCapabilityMissing !== undefined) {
       validateExactKeys(

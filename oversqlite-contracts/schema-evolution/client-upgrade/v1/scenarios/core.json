@@ -1,0 +1,668 @@
+{
+  "format": "client-upgrade-conformance/v1",
+  "scenarios": [
+    {
+      "id": "CU-N01",
+      "family": "negotiation-plan",
+      "initial_state": {
+        "phase": "ready",
+        "old_generation": "1"
+      },
+      "actions": [
+        {
+          "kind": "preview",
+          "target_generation": "3"
+        }
+      ],
+      "protocol_exchanges": [
+        {
+          "request": "wire/capabilities-target.request.json",
+          "response": "wire/capabilities-target.response.json"
+        }
+      ],
+      "faults": [],
+      "expected": {
+        "outcome": "ready",
+        "sparse_upgrade": true
+      },
+      "preserved": [
+        "old_identity_until_U8"
+      ],
+      "invariants": [
+        "I01"
+      ]
+    },
+    {
+      "id": "CU-N02",
+      "family": "negotiation-plan",
+      "initial_state": {
+        "phase": "ready"
+      },
+      "actions": [
+        {
+          "kind": "preview",
+          "target_generation": "2"
+        }
+      ],
+      "protocol_exchanges": [],
+      "faults": [],
+      "expected": {
+        "outcome": "target_generation_unavailable",
+        "mutation": false,
+        "downgrade": "rejected",
+        "plan_change": "rejected"
+      },
+      "preserved": [
+        "installed_identity"
+      ],
+      "invariants": [
+        "I01"
+      ]
+    },
+    {
+      "id": "CU-N03",
+      "family": "negotiation-plan",
+      "initial_state": {
+        "phase": "ready",
+        "old_generation": "1"
+      },
+      "actions": [
+        {
+          "kind": "preview_unknown_generation",
+          "target_generation": "99"
+        }
+      ],
+      "protocol_exchanges": [
+        {
+          "request": "wire/capabilities-unknown.request.json",
+          "response": "wire/capabilities-unknown.response.json"
+        }
+      ],
+      "faults": [],
+      "expected": {
+        "outcome": "target_generation_unavailable",
+        "mutation": false
+      },
+      "preserved": [
+        "installed_identity"
+      ],
+      "invariants": [
+        "I01",
+        "I10",
+        "I12"
+      ]
+    },
+    {
+      "id": "CU-N04",
+      "family": "negotiation-plan",
+      "initial_state": {
+        "phase": "ready",
+        "old_generation": "1"
+      },
+      "actions": [
+        {
+          "kind": "preview_mismatched_fingerprint",
+          "target_generation": "3"
+        }
+      ],
+      "protocol_exchanges": [
+        {
+          "request": "wire/capabilities-mismatch.request.json",
+          "response": "wire/capabilities-mismatch.response.json"
+        }
+      ],
+      "faults": [],
+      "expected": {
+        "outcome": "target_generation_unavailable",
+        "mutation": false
+      },
+      "preserved": [
+        "installed_identity"
+      ],
+      "invariants": [
+        "I01",
+        "I10",
+        "I12"
+      ]
+    },
+    {
+      "id": "CU-D01",
+      "family": "old-intent",
+      "initial_state": {
+        "phase": "upgrade_started",
+        "intent": [
+          "dirty_insert",
+          "dirty_update",
+          "dirty_delete",
+          "prepared",
+          "staged",
+          "committed"
+        ]
+      },
+      "actions": [
+        {
+          "kind": "resolve_old_intent"
+        }
+      ],
+      "protocol_exchanges": [],
+      "faults": [
+        {
+          "at": "commit_reply",
+          "effect": "lost"
+        }
+      ],
+      "expected": {
+        "outcome": "waiting_for_network",
+        "retry": "same_q39_request",
+        "newer_intent": "preserved"
+      },
+      "preserved": [
+        "outbox",
+        "receipt",
+        "source_sequence"
+      ],
+      "invariants": [
+        "I02",
+        "I03"
+      ]
+    },
+    {
+      "id": "CU-D02",
+      "family": "explicit-resolution",
+      "initial_state": {
+        "phase": "resolving_old_intent",
+        "permanent_rejection": true
+      },
+      "actions": [
+        {
+          "kind": "pause"
+        },
+        {
+          "kind": "discard_recreated_session"
+        }
+      ],
+      "protocol_exchanges": [],
+      "faults": [],
+      "expected": {
+        "outcome": "needs_resolution",
+        "normalization_and_extra_effects": "verified",
+        "empty_progress": "contiguous"
+      },
+      "preserved": [
+        "frozen_request_until_decision"
+      ],
+      "invariants": [
+        "I03"
+      ]
+    },
+    {
+      "id": "CU-D03",
+      "family": "explicit-conflict-resolution",
+      "initial_state": {
+        "phase": "resolving_old_intent",
+        "source_sequence": "1",
+        "conflict": "structured"
+      },
+      "actions": [
+        {
+          "kind": "resolve_conflict_retry",
+          "resolution": "keep_local"
+        }
+      ],
+      "protocol_exchanges": [
+        {
+          "request": "wire/push-conflict.request.json",
+          "response": "wire/push-conflict.response.json"
+        }
+      ],
+      "faults": [],
+      "expected": {
+        "outcome": "committed",
+        "requeued_intent": "exact",
+        "source_sequence": "advanced_once"
+      },
+      "preserved": [
+        "resolved_request_binding"
+      ],
+      "invariants": [
+        "I03",
+        "I04",
+        "I10",
+        "I12"
+      ]
+    },
+    {
+      "id": "CU-C01",
+      "family": "cancellation-matrix",
+      "initial_state": {
+        "phase": "ready"
+      },
+      "actions": [
+        {
+          "kind": "cancel_each_boundary"
+        }
+      ],
+      "protocol_exchanges": [],
+      "faults": [
+        {
+          "at": "before_U0_commit",
+          "effect": "cancelled"
+        },
+        {
+          "at": "after_U0_commit",
+          "effect": "cancelled"
+        },
+        {
+          "at": "before_U1_commit",
+          "effect": "cancelled"
+        },
+        {
+          "at": "after_U1_commit",
+          "effect": "cancelled"
+        },
+        {
+          "at": "before_U2_commit",
+          "effect": "cancelled"
+        },
+        {
+          "at": "after_U2_commit",
+          "effect": "cancelled"
+        },
+        {
+          "at": "before_U3_commit",
+          "effect": "cancelled"
+        },
+        {
+          "at": "after_U3_commit",
+          "effect": "cancelled"
+        },
+        {
+          "at": "before_U4_commit",
+          "effect": "cancelled"
+        },
+        {
+          "at": "after_U4_commit",
+          "effect": "cancelled"
+        },
+        {
+          "at": "before_U5_commit",
+          "effect": "cancelled"
+        },
+        {
+          "at": "after_U5_commit",
+          "effect": "cancelled"
+        },
+        {
+          "at": "before_U6_commit",
+          "effect": "cancelled"
+        },
+        {
+          "at": "after_U6_commit",
+          "effect": "cancelled"
+        },
+        {
+          "at": "before_U7_commit",
+          "effect": "cancelled"
+        },
+        {
+          "at": "after_U7_commit",
+          "effect": "cancelled"
+        },
+        {
+          "at": "before_U8_commit",
+          "effect": "cancelled"
+        },
+        {
+          "at": "after_U8_commit",
+          "effect": "cancelled"
+        }
+      ],
+      "expected": {
+        "outcome": "boundary_specific",
+        "matrix": {
+          "before_U0_commit": {
+            "phase": "ready",
+            "outcome": "cancelled"
+          },
+          "after_U0_commit": {
+            "phase": "upgrade_started",
+            "outcome": "cancelled"
+          },
+          "before_U1_commit": {
+            "phase": "upgrade_started",
+            "outcome": "cancelled"
+          },
+          "after_U1_commit": {
+            "phase": "resolving_old_intent",
+            "outcome": "cancelled"
+          },
+          "before_U2_commit": {
+            "phase": "resolving_old_intent",
+            "outcome": "cancelled"
+          },
+          "after_U2_commit": {
+            "phase": "resolving_old_intent",
+            "outcome": "cancelled"
+          },
+          "before_U3_commit": {
+            "phase": "resolving_old_intent",
+            "outcome": "cancelled"
+          },
+          "after_U3_commit": {
+            "phase": "migrating_local",
+            "outcome": "cancelled"
+          },
+          "before_U4_commit": {
+            "phase": "migrating_local",
+            "outcome": "cancelled"
+          },
+          "after_U4_commit": {
+            "phase": "local_migrated",
+            "outcome": "cancelled"
+          },
+          "before_U5_commit": {
+            "phase": "local_migrated",
+            "outcome": "cancelled"
+          },
+          "after_U5_commit": {
+            "phase": "reattach_pending",
+            "outcome": "cancelled"
+          },
+          "before_U6_commit": {
+            "phase": "reattach_pending",
+            "outcome": "cancelled"
+          },
+          "after_U6_commit": {
+            "phase": "rebuild_running",
+            "outcome": "cancelled"
+          },
+          "before_U7_commit": {
+            "phase": "rebuild_running",
+            "outcome": "cancelled"
+          },
+          "after_U7_commit": {
+            "phase": "rebuild_running",
+            "outcome": "cancelled"
+          },
+          "before_U8_commit": {
+            "phase": "rebuild_running",
+            "outcome": "cancelled"
+          },
+        "after_U8_commit": {
+          "phase": "ready",
+          "outcome": "cancelled"
+        }
+        },
+        "preservation": "verified"
+      },
+      "preserved": [
+        "durable_phase",
+        "installed_identity",
+        "local_only",
+        "intent_or_snapshot_evidence"
+      ],
+      "invariants": [
+        "I02",
+        "I03",
+        "I05",
+        "I08",
+        "I09",
+        "I10",
+        "I12"
+      ]
+    },
+    {
+      "id": "CU-P01",
+      "family": "pruned-recovery",
+      "initial_state": {
+        "phase": "resolving_old_intent",
+        "committed_receipt": true
+      },
+      "actions": [
+        {
+          "kind": "old_keep_source_snapshot"
+        }
+      ],
+      "protocol_exchanges": [],
+      "faults": [],
+      "expected": {
+        "outcome": "ready_to_migrate",
+        "missing_receipt": "reject",
+        "newer_intent": "reject",
+        "corrupt_evidence": "reject"
+      },
+      "preserved": [
+        "old_source",
+        "old_proof"
+      ],
+      "invariants": [
+        "I04"
+      ]
+    },
+    {
+      "id": "CU-M01",
+      "family": "local-migration",
+      "initial_state": {
+        "phase": "migrating_local",
+        "version": "1"
+      },
+      "actions": [
+        {
+          "kind": "migrate",
+          "to": "2"
+        }
+      ],
+      "protocol_exchanges": [],
+      "faults": [
+        {
+          "at": "before_U4_commit",
+          "effect": "process_death"
+        },
+        {
+          "at": "after_U4_commit",
+          "effect": "process_death"
+        }
+      ],
+      "expected": {
+        "success": "local_migrated",
+        "failure": "local_migration_failed",
+        "false_version": "local_migration_failed",
+        "remote_io": "forbidden",
+        "schema_mismatch": "local_contract_mismatch"
+      },
+      "preserved": [
+        "atomic_old_or_target_schema",
+        "local_only"
+      ],
+      "invariants": [
+        "I05",
+        "I06",
+        "I07",
+        "I10"
+      ]
+    },
+    {
+      "id": "CU-R01",
+      "family": "replacement",
+      "initial_state": {
+        "phase": "reattach_pending",
+        "tuple": {
+          "old": "source-old",
+          "new": "source-new",
+          "reason": "schema_generation_upgrade"
+        }
+      },
+      "actions": [
+        {
+          "kind": "create_replacement_snapshot"
+        }
+      ],
+      "protocol_exchanges": [
+        {
+          "request": "wire/replacement.request.json",
+          "response": "wire/replacement.response.json"
+        }
+      ],
+      "faults": [
+        {
+          "at": "reply",
+          "effect": "lost"
+        }
+      ],
+      "expected": {
+        "retry": "exact_tuple",
+        "divergence": "replacement_diverged"
+      },
+      "preserved": [
+        "tuple",
+        "old_source_evidence"
+      ],
+      "invariants": [
+        "I08",
+        "I10"
+      ]
+    },
+    {
+      "id": "CU-S01",
+      "family": "target-rebuild",
+      "initial_state": {
+        "phase": "rebuild_running",
+        "rows_staged": "0"
+      },
+      "actions": [
+        {
+          "kind": "stage_snapshot"
+        },
+        {
+          "kind": "apply_and_publish"
+        }
+      ],
+      "protocol_exchanges": [],
+      "faults": [
+        {
+          "at": "session",
+          "effect": "expired"
+        },
+        {
+          "at": "before_U8_commit",
+          "effect": "process_death"
+        },
+        {
+          "at": "after_U8_commit",
+          "effect": "process_death"
+        }
+      ],
+      "expected": {
+        "outcome": "ready",
+        "expired": "fresh_target_snapshot",
+        "trigger_side_effects": "reject",
+        "checkpoint": "snapshot_bundle_seq"
+      },
+      "preserved": [
+        "local_only"
+      ],
+      "invariants": [
+        "I07",
+        "I09",
+        "I10"
+      ]
+    },
+    {
+      "id": "CU-F01",
+      "family": "fresh",
+      "initial_state": {
+        "database": "empty",
+        "user": "absent"
+      },
+      "actions": [
+        {
+          "kind": "create_final_schema"
+        }
+      ],
+      "protocol_exchanges": [],
+      "faults": [],
+      "expected": {
+        "outcome": "ready",
+        "remote_calls": "0"
+      },
+      "preserved": [
+        "anonymous_identity"
+      ],
+      "invariants": [
+        "I11"
+      ]
+    },
+    {
+      "id": "CU-L01",
+      "family": "same-proof",
+      "initial_state": {
+        "phase": "ready",
+        "proof": "unchanged",
+        "pending_intent": true
+      },
+      "actions": [
+        {
+          "kind": "offline_local_only_migration"
+        }
+      ],
+      "protocol_exchanges": [],
+      "faults": [
+        {
+          "at": "first_attempt",
+          "effect": "rollback"
+        }
+      ],
+      "expected": {
+        "outcome": "ready",
+        "source": "unchanged",
+        "checkpoint": "unchanged",
+        "pending_intent": "unchanged"
+      },
+      "preserved": [
+        "synchronized_state",
+        "local_only"
+      ],
+      "invariants": [
+        "I11"
+      ]
+    },
+    {
+      "id": "CU-X01",
+      "family": "same-file-two-device",
+      "initial_state": {
+        "device_a": "old",
+        "device_b": "old"
+      },
+      "actions": [
+        {
+          "kind": "upgrade_device_a_same_file"
+        },
+        {
+          "kind": "sync_device_b_old"
+        }
+      ],
+      "protocol_exchanges": [],
+      "faults": [
+        {
+          "at": "after_U6_remote_reply_before_local_receipt",
+          "effect": "process_death"
+        }
+      ],
+      "expected": {
+        "device_a": "new_ready",
+        "device_b": "old_ready",
+        "independent_sources": true
+      },
+      "preserved": [
+        "same_file_identity",
+        "local_only_sentinel"
+      ],
+      "invariants": [
+        "I02",
+        "I09",
+        "I10",
+        "I12"
+      ]
+    }
+  ]
+}

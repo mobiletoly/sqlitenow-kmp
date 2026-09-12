@@ -1,6 +1,0 @@
--- @@{enableSync=true}
-CREATE TABLE file_reviews (
-  id BLOB PRIMARY KEY NOT NULL,
-  review TEXT NOT NULL,
-  file_id BLOB NOT NULL REFERENCES files(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED
-);

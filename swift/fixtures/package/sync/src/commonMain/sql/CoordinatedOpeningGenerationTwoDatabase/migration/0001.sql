@@ -1,0 +1,9 @@
+CREATE TABLE notes (
+    id TEXT PRIMARY KEY NOT NULL,
+    title TEXT NOT NULL
+);
+
+CREATE TABLE drafts (
+    id TEXT PRIMARY KEY NOT NULL,
+    body BLOB NOT NULL
+);

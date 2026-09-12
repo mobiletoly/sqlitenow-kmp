@@ -45,7 +45,7 @@ class SqliteWorkerApiContractTest {
     fun acceptedL16InternalProviderCompilesAndKeepsTheDefaultShapeUnchanged() = runTest {
         val provider: SqliteConnectionProvider = SqliteWorkerConnectionProvider()
         val connection = provider.openConnection(
-            dbName = "phase3-api-contract",
+            dbName = "mapping-api-contract",
             debug = false,
             config = SqliteConnectionConfig(),
         )
@@ -63,8 +63,8 @@ class SqliteWorkerApiContractTest {
 
     @Test
     fun ordinaryDefaultConstructionSelectsObservedWorkerRuntimeAndStorage() = runTest {
-        val dbName = ":memory:phase7-default-${Random.nextInt().toUInt()}"
-        val tableName = "phase7_default_${Random.nextInt().toUInt()}"
+        val dbName = ":memory:default_persistence-default-${Random.nextInt().toUInt()}"
+        val tableName = "default_persistence_default_${Random.nextInt().toUInt()}"
         try {
             val first = ExistingDefaultDatabase(dbName, NoopMigrations)
             first.open()
@@ -156,7 +156,7 @@ class SqliteWorkerApiContractTest {
 
         scenarios.forEach { scenario ->
             val dbName =
-                "phase7-capability-${scenario.name}-${Random.nextInt().toUInt()}"
+                "default_persistence-capability-${scenario.name}-${Random.nextInt().toUInt()}"
             assertNoWorkerOrLegacyStorage(dbName, scenario.name)
             var driver: SqliteWorkerSQLiteDriver? = null
             try {
@@ -200,7 +200,7 @@ class SqliteWorkerApiContractTest {
 
     @Test
     fun ordinaryDefaultCustomPersistenceIsMigrationLoadOnlyAndRejectedByNode() = runTest {
-        val dbName = "phase7-default-custom-${Random.nextInt().toUInt()}"
+        val dbName = "default_persistence-default-custom-${Random.nextInt().toUInt()}"
         val persistence = CountingPersistence()
         val runtimeProbe = SqliteWorkerSQLiteDriver.create()
         val runtimeKind = try {
@@ -233,10 +233,10 @@ class SqliteWorkerApiContractTest {
                 assertEquals("direct-opfs", worker.metricsForTest().storageMode)
                 assertEquals(1, persistence.loadCalls)
                 database.connection().execSQL(
-                    "CREATE TABLE phase7_custom(value TEXT NOT NULL)",
+                    "CREATE TABLE default_persistence_custom(value TEXT NOT NULL)",
                 )
                 database.connection().execSQL(
-                    "INSERT INTO phase7_custom VALUES ('ordinary-write')",
+                    "INSERT INTO default_persistence_custom VALUES ('ordinary-write')",
                 )
                 database.persistSnapshotNow()
                 assertEquals(0, worker.metricsForTest().snapshotExports)
@@ -268,7 +268,7 @@ class SqliteWorkerApiContractTest {
             val provider: SqliteConnectionProvider =
                 sqliteWorkerConnectionProvider(scenario.workerModuleUrl)
             val connection = provider.openConnection(
-                dbName = "phase4-api-contract-${scenario.name}",
+                dbName = "worker_protocol-api-contract-${scenario.name}",
                 debug = false,
                 config = SqliteConnectionConfig(),
             )
@@ -291,7 +291,7 @@ class SqliteWorkerApiContractTest {
     @Test
     fun optInProviderPersistsOnlyThroughBrowserDirectVfs() = runTest {
         val dbName = ":memory:"
-        val tableName = "phase5a_direct_${Random.nextInt().toUInt()}"
+        val tableName = "snapshot_profilea_direct_${Random.nextInt().toUInt()}"
         val provider = sqliteWorkerConnectionProvider()
         val first = provider.openConnection(
             dbName = dbName,
@@ -353,7 +353,7 @@ class SqliteWorkerApiContractTest {
             val provider = sqliteWorkerConnectionProvider(workerModuleUrl)
             val failure = assertFailsWith<SqliteException>(workerModuleUrl) {
                 provider.openConnection(
-                    dbName = "phase4-forbidden-worker-scheme",
+                    dbName = "worker_protocol-forbidden-worker-scheme",
                     debug = false,
                     config = SqliteConnectionConfig(),
                 )

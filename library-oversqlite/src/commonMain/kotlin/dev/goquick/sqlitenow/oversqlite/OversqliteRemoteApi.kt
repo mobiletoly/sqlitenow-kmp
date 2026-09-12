@@ -16,13 +16,8 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import io.ktor.client.HttpClient
-import io.ktor.client.call.body
 import io.ktor.client.plugins.HttpTimeoutConfig
 import io.ktor.client.plugins.timeout
-import io.ktor.client.plugins.compression.UnsupportedContentEncodingException
-import io.ktor.client.request.get
-import io.ktor.client.request.header
-import io.ktor.client.request.post
 import io.ktor.client.request.prepareDelete
 import io.ktor.client.request.prepareGet
 import io.ktor.client.request.preparePost
@@ -31,6 +26,7 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.HttpStatement
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.ContentType
+import io.ktor.http.HeadersBuilder
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
@@ -43,6 +39,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -51,17 +48,22 @@ import kotlinx.io.IOException
 import kotlinx.io.readByteArray
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import io.ktor.client.request.HttpRequestBuilder
+import io.ktor.client.request.HttpRequestPipeline
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlin.text.CharacterCodingException
 
 @Serializable
 private data class SnapshotSessionWire(
     @SerialName("snapshot_id") val snapshotId: String,
     @SerialName("snapshot_bundle_seq") val snapshotBundleSeq: Long,
     @SerialName("row_count") val rowCount: Long,
-    @SerialName("byte_count") val byteCount: Long? = null,
+    @SerialName("logical_byte_count") val logicalByteCount: Long? = null,
     @SerialName("expires_at") val expiresAt: String,
 )
 
@@ -74,16 +76,96 @@ private data class SnapshotSessionLimitResponseWire(
     val limit: Long,
 )
 
+@Serializable
+private data class CompactBundleWire(
+    @SerialName("bundle_seq") val bundleSeq: Long,
+    @SerialName("source_id") val sourceId: String,
+    @SerialName("source_bundle_id") val sourceBundleId: Long,
+    @SerialName("bundle_hash") val bundleHash: String,
+    val rows: JsonElement,
+)
+
+@Serializable
+private data class CompactPullResponseWire(
+    @SerialName("stable_bundle_seq") val stableBundleSeq: Long,
+    val bundles: List<CompactBundleWire>,
+    @SerialName("has_more") val hasMore: Boolean,
+)
+
+@Serializable
+private data class CompactSnapshotChunkWire(
+    val rows: JsonElement,
+    @SerialName("next_row_ordinal") val nextRowOrdinal: Long,
+    @SerialName("has_more") val hasMore: Boolean,
+    @SerialName("logical_byte_count") val logicalByteCount: Long,
+)
+
 private data class BoundedJsonBody(
     val raw: String,
     val byteCount: Long,
 )
+
+private fun ByteArray.isWellFormedUtf8(): Boolean {
+    var index = 0
+    while (index < size) {
+        val first = this[index].toInt() and 0xff
+        if (first < 0x80) {
+            index++
+            continue
+        }
+        val count = when (first) {
+            in 0xc2..0xdf -> 2
+            in 0xe0..0xef -> 3
+            in 0xf0..0xf4 -> 4
+            else -> return false
+        }
+        if (index > size - count) return false
+        val second = this[index + 1].toInt() and 0xff
+        if (second !in 0x80..0xbf) return false
+        if (first == 0xe0 && second < 0xa0) return false
+        if (first == 0xed && second > 0x9f) return false
+        if (first == 0xf0 && second < 0x90) return false
+        if (first == 0xf4 && second > 0x8f) return false
+        if (count >= 3 && (this[index + 2].toInt() and 0xff) !in 0x80..0xbf) return false
+        if (count == 4 && (this[index + 3].toInt() and 0xff) !in 0x80..0xbf) return false
+        index += count
+    }
+    return true
+}
+
+private data class SyncRequestIdentity(val sourceId: String, val generation: SyncGeneration?)
+private val syncRequestIdentityKey = AttributeKey<SyncRequestIdentity>("OversqliteRequestIdentity")
+private val syncHeadersInstalledKey = AttributeKey<Unit>("OversqliteIdentityHeadersInstalled")
 
 private val responseBodyAbandonedCancellation =
     CancellationException("Oversqlite response body is no longer needed")
 
 private val streamingCallOwnerKey =
     AttributeKey<StreamingCallOwner>("OversqliteStreamingCallOwner")
+private class PushBufferGrowth(val grow: suspend (Long,Long) -> Unit)
+private val pushBufferGrowthKey = AttributeKey<PushBufferGrowth>("OversqlitePushBufferGrowth")
+
+// Count compact row arrays and recursion depth without creating a JSON tree.
+// This is allocation admission, not validation; the exact codec still validates
+// the complete response, fields, ordering, values and hash before settlement.
+private suspend fun compactResponseAllocationShape(raw: String): Long {
+    var quoted=false; var escaped=false; var depth=0L; var maximum=0L; var containers=0L
+    for(index in raw.indices) {
+        if(index%256==0) currentCoroutineContext().ensureActive()
+        val ch=raw[index]
+        if(quoted) {
+            if(escaped) escaped=false else if(ch=='\\') escaped=true else if(ch=='"') quoted=false
+            continue
+        }
+        when(ch) {
+            '"' -> quoted=true
+            '[' -> { containers++; depth++; maximum=maxOf(maximum,depth) }
+            '{' -> { containers++; depth++; maximum=maxOf(maximum,depth) }
+            ']', '}' -> depth--
+        }
+    }
+    return containers*32+maximum+64
+}
 
 private class StreamingCallOwner(private val callerJob: Job) {
     var abandoned: Boolean = false
@@ -98,6 +180,21 @@ private class StreamingCallOwner(private val callerJob: Job) {
 
 private fun HttpResponse.cancelWithoutDraining() {
     call.attributes[streamingCallOwnerKey].cancelWithoutDraining(this)
+}
+
+private fun redirectException(path: String, status: HttpStatusCode): Throwable = when {
+    path.startsWith("/sync/snapshot") -> SnapshotHttpException(status, "redirect_refused")
+    path == "/sync/push" -> UploadHttpException(status, "")
+    else -> DownloadHttpException(status, "")
+}
+
+private fun HttpResponse.rejectRedirect(operation: String, method: String, path: String, log: ((() -> String) -> Unit)) {
+    if (status.value !in 300..399) return
+    cancelWithoutDraining()
+    log {
+        "oversqlite http redirect refused op=$operation method=$method path=$path status=${status.value}"
+    }
+    throw redirectException(path, status)
 }
 
 private suspend fun <T> executeStreamingCall(
@@ -135,6 +232,31 @@ private suspend fun <T> executeStreamingCall(
 }
 
 internal const val defaultSnapshotRetirementTimeoutMillis = 5_000L
+internal const val oversqlitePullResponseBodyHardLimit = 154_701_824L
+internal const val oversqlitePushResponseBodyHardLimit = 67_112_960L
+
+internal fun oversqliteResponseBodyHardLimit(path: String, status: Int): Long = when {
+    status == HttpStatusCode.OK.value && (path == "/sync/pull" || path.startsWith("/sync/pull?")) ->
+        oversqlitePullResponseBodyHardLimit
+    status == HttpStatusCode.OK.value && path == "/sync/push" ->
+        oversqlitePushResponseBodyHardLimit
+    status in setOf(HttpStatusCode.Conflict.value, HttpStatusCode.UnprocessableEntity.value) && path == "/sync/push" ->
+        oversqlitePushResponseBodyHardLimit
+    else -> generationControlBodyLimit
+}
+
+private fun HeadersBuilder.requireExactSdkHeader(name: String, expected: String?) {
+    val effective = getAll(name).orEmpty()
+    if (expected == null) {
+        if (effective.isNotEmpty()) throw OversqliteRequestIdentityHeaderException(name)
+        return
+    }
+    when {
+        effective.isEmpty() -> append(name, expected)
+        effective.size == 1 && effective.single() == expected -> Unit
+        else -> throw OversqliteRequestIdentityHeaderException(name)
+    }
+}
 
 internal fun parseSnapshotRetryAfterMillis(value: String?): Long? {
     val seconds = value?.trim()?.toLongOrNull() ?: return null
@@ -147,14 +269,36 @@ internal class OversqliteRemoteApi(
     private val json: Json,
     private val snapshotDiagnostics: () -> SnapshotDiagnosticsRecorder? = { null },
     private val snapshotRetirementTimeoutMillis: Long = defaultSnapshotRetirementTimeoutMillis,
+    private val generation: () -> SyncGeneration = { error("generation contract is unconfirmed") },
+    private val requestGzipEngine: OversqliteRequestGzipEngine = OversqliteRequestGzipEngine(::compressOversqliteRequestGzip),
     private val log: ((() -> String)) -> Unit,
 ) {
+    private val strictJson = Json(json) { ignoreUnknownKeys = false }
+
+    init {
+        // DefaultRequest merges headers in Before. Apply the exact request identity afterward.
+        // Production passes the SDK-owned derived client; unrelated requests carry no attribute.
+        http.attributes.computeIfAbsent(syncHeadersInstalledKey) {
+            http.requestPipeline.intercept(HttpRequestPipeline.State) {
+                context.attributes.getOrNull(syncRequestIdentityKey)?.let { identity ->
+                    context.headers.requireExactSdkHeader(sourceIdHeaderName, identity.sourceId)
+                    context.headers.requireExactSdkHeader(
+                        "Oversync-Schema-Generation-ID",
+                        identity.generation?.id,
+                    )
+                    context.headers.requireExactSdkHeader(
+                        "Oversync-Schema-Generation-Fingerprint",
+                        identity.generation?.fingerprint,
+                    )
+                }
+            }
+        }
+    }
+
     private companion object {
         const val sourceIdHeaderName = "Oversync-Source-ID"
-        const val snapshotCapabilitiesBodyLimit = 4L * 1024L * 1024L
         const val snapshotControlBodyLimit = 64L * 1024L
-        const val snapshotBodyEnvelopeBytes = 64L * 1024L
-        val snapshotSessionLimitDimensions = setOf("row_count", "byte_count", "row_byte_count")
+        val snapshotSessionLimitDimensions = setOf("row_count", "logical_byte_count", "row_decoded_body_bytes")
         val snapshotCapacityErrorCodes = setOf("snapshot_build_capacity", "snapshot_chunk_capacity")
         val knownSnapshotErrorCodes = setOf(
             "history_pruned",
@@ -163,7 +307,9 @@ internal class OversqliteRemoteApi(
             "snapshot_build_capacity",
             "snapshot_chunk_capacity",
             "snapshot_chunk_too_small",
+            "snapshot_session_expired",
             "snapshot_session_limit_exceeded",
+            "snapshot_session_not_found",
             "source_replacement_invalid",
             "source_retired",
             "source_sequence_changed",
@@ -171,27 +317,64 @@ internal class OversqliteRemoteApi(
         )
     }
 
-    suspend fun fetchCapabilities(sourceId: String): CapabilitiesResponse {
+    private fun HttpRequestBuilder.generationHeaders(sourceId: String, proof: SyncGeneration? = null) {
+        val source = requireValidOversqliteSourceId(sourceId)
+        val selected = proof ?: generation()
+        attributes.put(syncRequestIdentityKey, SyncRequestIdentity(source, selected))
+    }
+
+    private fun HttpRequestBuilder.acceptBoundedJsonResponse() {
+        if (!oversqliteFetchManagesResponseCompression) {
+            headers.append(HttpHeaders.AcceptEncoding, "gzip")
+        }
+    }
+
+    private fun HttpRequestBuilder.acceptIdentityEventStream() {
+        if (!oversqliteFetchManagesResponseCompression) {
+            headers.append(HttpHeaders.AcceptEncoding, "identity")
+        }
+    }
+
+    private suspend fun prepareBoundedJsonBody(raw: String, decodedLimit: Long): OversqliteEncodedBody =
+        encodeOversqliteRequestBody(raw.encodeToByteArray(), decodedLimit, decodedLimit, requestGzipEngine)
+
+    internal suspend fun prepareConnectBody(raw: String): OversqliteEncodedBody =
+        prepareBoundedJsonBody(raw, snapshotControlBodyLimit)
+
+    private fun HttpRequestBuilder.setSelectedJsonBody(selected: OversqliteEncodedBody) {
+        contentType(ContentType.Application.Json)
+        selected.contentEncoding?.let { headers.append(HttpHeaders.ContentEncoding, it) }
+        setBody(selected.bytes)
+    }
+
+    suspend fun fetchGeneration(sourceId: String, generationId: Long): AdmittedOversqliteContract {
+        require(generationId in 1L..Int.MAX_VALUE.toLong()) { "generationId must be in 1..2147483647" }
+        val source = requireValidOversqliteSourceId(sourceId)
+        val path = "sync/generations/$generationId"
         return executeLoggedStreamingCall(
-            operation = "capabilities request",
+            operation = "generation discovery",
             method = "GET",
-            path = "/sync/capabilities",
+            path = "/$path",
             prepareCall = {
-                http.prepareGet("sync/capabilities") {
-                    header(sourceIdHeaderName, requireValidOversqliteSourceId(sourceId))
+                http.prepareGet(path) {
+                    attributes.put(syncRequestIdentityKey, SyncRequestIdentity(source, null))
+                    acceptBoundedJsonResponse()
                 }
             },
             consume = { response ->
-                requireOkBoundedJson<CapabilitiesResponse>(
-                    operation = "capabilities request",
+                requireOkBoundedJson<AdmittedOversqliteContract>(
+                    operation = "generation discovery",
                     method = "GET",
-                    path = "/sync/capabilities",
+                    path = "/$path",
                     call = response,
-                    successLimit = snapshotCapabilitiesBodyLimit,
-                    errorLimit = snapshotControlBodyLimit,
+                    successLimit = generationControlBodyLimit,
+                    errorLimit = generationControlBodyLimit,
+                    scanAllObjectMembers = false,
+                    successDecoder = { decodeGenerationDiscovery(it, generationId) },
+                    customError = { status, raw -> decodeGenerationDiscoveryError(status.value, raw, generationId) },
                 )
             },
-        ).requireSupportedProtocol()
+        )
     }
 
     suspend fun watchBundleChanges(
@@ -206,7 +389,8 @@ internal class OversqliteRemoteApi(
             executeStreamingCall(
                 prepareCall = {
                     http.prepareGet("sync/watch") {
-                        header(sourceIdHeaderName, requireValidOversqliteSourceId(sourceId))
+                        generationHeaders(sourceId)
+                        acceptIdentityEventStream()
                         timeout {
                             requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
                         }
@@ -220,18 +404,29 @@ internal class OversqliteRemoteApi(
                         "oversqlite http response op=bundle change watch method=GET path=$path " +
                             "status=${response.status.value}"
                     }
+                    response.rejectRedirect("bundle change watch", "GET", path, log)
                     if (response.status != HttpStatusCode.OK) {
-                        readBoundedJsonBody(
+                        val raw = readBoundedJsonBody(
                             operation = "bundle change watch",
                             response = response,
                             limit = snapshotControlBodyLimit,
                             invalidUtf8 = { RemoteResponseDecodeException("bundle change watch") },
-                        )
+                        ).raw
                         log {
                             "oversqlite http non-ok op=bundle change watch method=GET path=$path " +
                                 "status=${response.status.value}"
                         }
+                        decodeRemoteContractErrorOrNull(
+                            status = response.status.value,
+                            raw = raw,
+                            operation = "bundle change watch",
+                        )?.let { throw it }
                         throw DownloadHttpException(response.status, "")
+                    }
+                    val eventEncoding = response.headers.getAll(HttpHeaders.ContentEncoding).orEmpty()
+                    if (eventEncoding.size > 1 || eventEncoding.singleOrNull()?.trim()?.lowercase() !in setOf(null, "identity")) {
+                        response.cancelWithoutDraining()
+                        throw SnapshotUnsupportedContentEncodingException("bundle change watch", "unsupported")
                     }
                     val parser = BundleChangeWatchSseParser(json)
                     val channel = response.bodyAsChannel()
@@ -258,6 +453,9 @@ internal class OversqliteRemoteApi(
             }
             throw when (error) {
                 is DownloadHttpException,
+                is OversqliteRemoteContractException,
+                is OversqliteRequestIdentityHeaderException,
+                is RemoteResponseSemanticException,
                 is SnapshotResponseBodyTooLargeException,
                 is SnapshotUnsupportedContentEncodingException,
                 is IOException,
@@ -274,25 +472,21 @@ internal class OversqliteRemoteApi(
         log {
             "oversqlite connect hasLocalPendingRows=$hasLocalPendingRows"
         }
-        val response = requireOkJson<ConnectResponse>(
+        val selectedBody = prepareConnectBody(
+            json.encodeToString(ConnectRequest(hasLocalPendingRows = hasLocalPendingRows)),
+        )
+        val response = requestJson<ConnectResponse>(
             operation = "connect request",
             method = "POST",
             path = "/sync/connect",
-            call = executeLoggedCall(
-                operation = "connect request",
-                method = "POST",
-                path = "/sync/connect",
-            ) {
-                http.post("sync/connect") {
-                    header(sourceIdHeaderName, requireValidOversqliteSourceId(sourceId))
-                    contentType(ContentType.Application.Json)
-                    setBody(
-                        ConnectRequest(
-                            hasLocalPendingRows = hasLocalPendingRows,
-                        ),
-                    )
+            prepareCall = {
+                http.preparePost("sync/connect") {
+                    generationHeaders(sourceId)
+                    acceptBoundedJsonResponse()
+                    setSelectedJsonBody(selectedBody)
                 }
             },
+            successValidator = ::validateConnectResponseWire,
         )
         try {
             validateConnectResponse(response)
@@ -302,178 +496,64 @@ internal class OversqliteRemoteApi(
         return response
     }
 
-    suspend fun createPushSession(
+    suspend fun push(
+        sourceId: String,
         sourceBundleId: Long,
-        plannedRowCount: Long,
         canonicalRequestHash: String,
-        sourceId: String,
-        initializationId: String? = null,
-    ): PushSessionCreateResponse {
-        log {
-            "oversqlite createPushSession sourceBundleId=$sourceBundleId plannedRowCount=$plannedRowCount"
-        }
-        val validatedInitializationId = initializationId?.let(::requireValidOversqliteSessionToken)
-        val response = requireOkJson<PushSessionCreateResponse>(
-            operation = "push session request",
+        initializationId: String?,
+        rows: List<PushRequestRow>,
+        maxRequestDecodedBytes: Long,
+        maxResponseDecodedBytes: Long,
+        onBufferGrowth: (suspend (Long,Long) -> Unit)? = null,
+    ): CompletePushResult {
+        require(sourceBundleId > 0L) { "source_bundle_id must be positive" }
+        require(isCanonicalSha256(canonicalRequestHash)) { "canonical_request_hash must be canonical SHA-256" }
+        val selectedGeneration = generation()
+        val body = canonicalizeJsonElement(buildJsonObject {
+            put("source_bundle_id", JsonPrimitive(sourceBundleId))
+            put("canonical_request_hash", JsonPrimitive(canonicalRequestHash))
+            initializationId?.let { put("initialization_id", JsonPrimitive(requireValidOversqliteSessionToken(it))) }
+            put("rows", OversqliteCompactCodec.encodePushRows(selectedGeneration, rows))
+        })
+        val selectedBody = prepareBoundedJsonBody(body, maxRequestDecodedBytes)
+        val response = executeLoggedStreamingCall(
+            operation = "push",
             method = "POST",
-            path = "/sync/push-sessions",
-            call = executeLoggedCall(
-                operation = "push session request",
-                method = "POST",
-                path = "/sync/push-sessions",
-            ) {
-                http.post("sync/push-sessions") {
-                    header(sourceIdHeaderName, requireValidOversqliteSourceId(sourceId))
-                    contentType(ContentType.Application.Json)
-                    setBody(
-                        PushSessionCreateRequest(
-                            sourceBundleId = sourceBundleId,
-                            plannedRowCount = plannedRowCount,
-                            canonicalRequestHash = canonicalRequestHash,
-                            initializationId = validatedInitializationId,
-                        ),
-                    )
+            path = "/sync/push",
+            prepareCall = {
+                http.preparePost("sync/push") {
+                    generationHeaders(sourceId)
+                    acceptBoundedJsonResponse()
+                    setSelectedJsonBody(selectedBody)
                 }
             },
-        ) { status, raw ->
-            decodeSourceRecoveryRequiredExceptionOrNull(status, raw, sourceId)
-                ?: decodeInitializationLeaseExceptionOrNull(status, raw)
-        }
-        try {
-            validatePushSessionCreateResponse(response, sourceBundleId, plannedRowCount, sourceId, canonicalRequestHash)
-        } catch (error: SourceSequenceMismatchException) {
-            throw error
-        } catch (_: RuntimeException) {
-            throw RemoteResponseSemanticException("push session request")
-        }
-        log {
-            "oversqlite createPushSession response nextExpected=${response.nextExpectedRowOrdinal} " +
-                "bundleSeq=${response.bundleSeq}"
-        }
-        return response
-    }
-
-    suspend fun uploadPushChunk(
-        pushId: String,
-        sourceId: String,
-        request: PushSessionChunkRequest,
-    ): PushSessionChunkResponse {
-        val validatedPushId = requireValidOversqliteSessionToken(pushId)
-        val encodedPushId = encodeOversqliteSessionIdPathSegment(validatedPushId)
-        log {
-            "oversqlite uploadPushChunk start=${request.startRowOrdinal} rows=${request.rows.size}"
-        }
-        val response = requireOkJson<PushSessionChunkResponse>(
-            operation = "push chunk request",
-            method = "POST",
-            path = "/sync/push-sessions/{push_id}/chunks",
-            call = executeLoggedCall(
-                operation = "push chunk request",
-                method = "POST",
-                path = "/sync/push-sessions/{push_id}/chunks",
-            ) {
-                http.post("sync/push-sessions/$encodedPushId/chunks") {
-                    header(sourceIdHeaderName, requireValidOversqliteSourceId(sourceId))
-                    contentType(ContentType.Application.Json)
-                    setBody(request)
-                }
-            },
-        ) { status, raw ->
-            decodeInitializationLeaseExceptionOrNull(status, raw)
-        }
-        try {
-            validatePushSessionChunkResponse(response, validatedPushId)
-        } catch (_: RuntimeException) {
-            throw RemoteResponseSemanticException("push chunk request")
-        }
-        log {
-            "oversqlite uploadPushChunk response nextExpected=${response.nextExpectedRowOrdinal}"
-        }
-        return response
-    }
-
-    suspend fun commitPushSession(
-        pushId: String,
-        sourceId: String,
-    ): PushSessionCommitResponse {
-        val encodedPushId = encodeOversqliteSessionIdPathSegment(requireValidOversqliteSessionToken(pushId))
-        log { "oversqlite commitPushSession" }
-        val response = requireOkJson<PushSessionCommitResponse>(
-            operation = "push commit request",
-            method = "POST",
-            path = "/sync/push-sessions/{push_id}/commit",
-            call = executeLoggedCall(
-                operation = "push commit request",
-                method = "POST",
-                path = "/sync/push-sessions/{push_id}/commit",
-            ) {
-                http.post("sync/push-sessions/$encodedPushId/commit") {
-                    header(sourceIdHeaderName, requireValidOversqliteSourceId(sourceId))
-                }
-            },
-        ) { status, raw ->
-            decodePushConflictExceptionOrNull(status, raw)
-                ?: decodeSourceRecoveryRequiredExceptionOrNull(status, raw, sourceId)
-                ?: decodeInitializationLeaseExceptionOrNull(status, raw)
-        }
-        log {
-            "oversqlite commitPushSession response bundleSeq=${response.bundleSeq} rowCount=${response.rowCount} " +
-                "sourceBundleId=${response.sourceBundleId}"
-        }
-        return response
-    }
-
-    suspend fun fetchCommittedBundleChunk(
-        bundleSeq: Long,
-        sourceId: String,
-        afterRowOrdinal: Long?,
-        maxRows: Int,
-    ): CommittedBundleRowsResponse {
-        val path = buildString {
-            append("/sync/committed-bundles/")
-            append(bundleSeq)
-            append("/rows?after_row_ordinal=")
-            append(afterRowOrdinal?.toString() ?: "<none>")
-            append("&max_rows=")
-            append(maxRows)
-        }
-        return requireOkJson(
-            operation = "committed bundle chunk request",
-            method = "GET",
-            path = path,
-            call = executeLoggedCall(
-                operation = "committed bundle chunk request",
-                method = "GET",
-                path = path,
-            ) {
-                http.get("sync/committed-bundles/$bundleSeq/rows") {
-                    header(sourceIdHeaderName, requireValidOversqliteSourceId(sourceId))
-                    url {
-                        if (afterRowOrdinal != null) {
-                            parameters.append("after_row_ordinal", afterRowOrdinal.toString())
+            consume = { call ->
+                onBufferGrowth?.let { call.call.attributes.put(pushBufferGrowthKey,PushBufferGrowth(it)) }
+                decodeJsonResponse<CompletePushResponseWire>(
+                    operation = "push",
+                    method = "POST",
+                    path = "/sync/push",
+                    call = call,
+                    successLimit = maxResponseDecodedBytes,
+                    successValidator = { raw ->
+                        require(json.parseToJsonElement(raw).jsonObject.keys == setOf("bundle_seq", "bundle_hash", "rows")) {
+                            "push response fields are invalid"
                         }
-                        parameters.append("max_rows", maxRows.toString())
-                    }
-                }
+                    },
+                    customError = { status, raw ->
+                        decodePushConflictExceptionOrNull(status, raw)
+                            ?: decodePushReplayHistoryPrunedExceptionOrNull(status, raw)
+                            ?: decodeSourceRecoveryRequiredExceptionOrNull(status, raw, sourceId)
+                            ?: decodeInitializationLeaseExceptionOrNull(status, raw)
+                    },
+                )
             },
-        ) { status, raw ->
-            decodeCommittedBundleNotFoundExceptionOrNull(status, raw)
-                ?: decodeCommittedReplayPrunedExceptionOrNull(status, raw)
-        }
-    }
-
-    suspend fun deletePushSessionBestEffort(pushId: String, sourceId: String) {
-        val validatedPushId = try {
-            requireValidOversqliteSessionToken(pushId)
-        } catch (_: IllegalArgumentException) {
-            return
-        }
-        deleteSessionBestEffort(
-            sessionId = validatedPushId,
-            sourceId = sourceId,
-            operation = "delete push session",
-            pathPrefix = "sync/push-sessions",
         )
+        val expanded = OversqliteCompactCodec.decodeBundleRows(selectedGeneration, response.rows)
+        require(response.bundleSeq > 0L) { "push response bundle_seq must be positive" }
+        require(isCanonicalSha256(response.bundleHash)) { "push response bundle_hash is invalid" }
+        expanded.forEach(::validateBundleRow)
+        return CompletePushResult(response.bundleSeq, response.bundleHash, expanded)
     }
 
     suspend fun createSnapshotSession(
@@ -484,6 +564,10 @@ internal class OversqliteRemoteApi(
             requireValidOversqliteSourceId(replacement.previousSourceId)
             requireValidOversqliteSourceId(replacement.newSourceId)
         }
+        val snapshotSourceId = request?.sourceReplacement?.newSourceId ?: sourceId
+        val selectedBody = request?.let {
+            prepareBoundedJsonBody(json.encodeToString(it), snapshotControlBodyLimit)
+        }
         var createdSnapshotId: String? = null
         val wire = try {
             executeLoggedStreamingCall(
@@ -492,10 +576,14 @@ internal class OversqliteRemoteApi(
                 path = "/sync/snapshot-sessions",
                 prepareCall = {
                     http.preparePost("sync/snapshot-sessions") {
-                    header(sourceIdHeaderName, requireValidOversqliteSourceId(sourceId))
-                        if (request != null) {
+                        // Replacement is reserved by the old authenticated source. The new
+                        // source owns the resulting snapshot only after creation succeeds.
+                        generationHeaders(sourceId)
+                        acceptBoundedJsonResponse()
+                        if (selectedBody == null) {
                             contentType(ContentType.Application.Json)
-                            setBody(request)
+                        } else {
+                            setSelectedJsonBody(selectedBody)
                         }
                     }
                 },
@@ -524,25 +612,25 @@ internal class OversqliteRemoteApi(
                 },
             )
         } catch (error: Throwable) {
-            createdSnapshotId?.let { deleteSnapshotSessionBestEffort(it, sourceId) }
+            createdSnapshotId?.let { deleteSnapshotSessionBestEffort(it, snapshotSourceId) }
             throw error
         }
-        val requiredByteCount = wire.byteCount
-        if (requiredByteCount == null) {
-            deleteSnapshotSessionBestEffort(wire.snapshotId, sourceId)
+        val requiredLogicalByteCount = wire.logicalByteCount
+        if (requiredLogicalByteCount == null) {
+            deleteSnapshotSessionBestEffort(wire.snapshotId, snapshotSourceId)
             throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_SESSION)
         }
         val session = SnapshotSession(
             snapshotId = wire.snapshotId,
             snapshotBundleSeq = wire.snapshotBundleSeq,
             rowCount = wire.rowCount,
-            byteCount = requiredByteCount,
+            logicalByteCount = requiredLogicalByteCount,
             expiresAt = wire.expiresAt,
         )
         try {
             validateSnapshotSession(session)
         } catch (error: Throwable) {
-            deleteSnapshotSessionBestEffort(session.snapshotId, sourceId)
+            deleteSnapshotSessionBestEffort(session.snapshotId, snapshotSourceId)
             throw error
         }
         snapshotDiagnostics()?.recordSession()
@@ -556,6 +644,7 @@ internal class OversqliteRemoteApi(
         afterRowOrdinal: Long,
         maxRows: Int,
         maxBytes: Long,
+        admittedMaxBytes: Long,
     ): SnapshotChunkResponse {
         val encodedSnapshotId = encodeOversqliteSessionIdPathSegment(snapshotId)
         val path = buildString {
@@ -567,14 +656,16 @@ internal class OversqliteRemoteApi(
             append("&max_bytes=")
             append(maxBytes)
         }
-        val bodyLimit = checkedSnapshotChunkBodyLimit(maxBytes, maxRows)
-        val chunk = executeLoggedStreamingCall(
+        require(maxBytes > 0L && admittedMaxBytes > 0L)
+        val bodyLimit = minOf(maxBytes, admittedMaxBytes, oversqlitePullResponseBodyHardLimit)
+        val wire = executeLoggedStreamingCall(
             operation = "snapshot chunk request",
             method = "GET",
             path = path,
             prepareCall = {
                 http.prepareGet("sync/snapshot-sessions/$encodedSnapshotId") {
-                    header(sourceIdHeaderName, requireValidOversqliteSourceId(sourceId))
+                    generationHeaders(sourceId)
+                    acceptBoundedJsonResponse()
                     url {
                         parameters.append("after_row_ordinal", afterRowOrdinal.toString())
                         parameters.append("max_rows", maxRows.toString())
@@ -583,15 +674,19 @@ internal class OversqliteRemoteApi(
                 }
             },
             consume = { response ->
-                requireOkBoundedJson<SnapshotChunkResponse>(
+                requireOkBoundedJson<CompactSnapshotChunkWire>(
                     operation = "snapshot chunk request",
                     method = "GET",
                     path = path,
                     call = response,
                     successLimit = bodyLimit,
                     errorLimit = snapshotControlBodyLimit,
-                    scanAllObjectMembers = false,
-                    successDecoder = ::decodeSnapshotChunkResponse,
+                    onSuccessRawBody = { raw ->
+                        require(json.parseToJsonElement(raw).jsonObject.keys ==
+                            setOf("rows", "next_row_ordinal", "has_more", "logical_byte_count")) {
+                            "snapshot chunk fields are invalid"
+                        }
+                    },
                     onCompleteBody = { decodedBytes ->
                         snapshotDiagnostics()?.recordCompletelyDecodedChunkBody(decodedBytes)
                     },
@@ -601,8 +696,28 @@ internal class OversqliteRemoteApi(
                 )
             },
         )
+        val rows = OversqliteCompactCodec.decodeBundleRows(
+            generation = generation(),
+            encoded = wire.rows,
+            expectedFirstOrdinal = afterRowOrdinal + 1L,
+            allowEmpty = true,
+            snapshot = true,
+        ).map { row ->
+            SnapshotRow(row.schema, row.table, row.key, row.rowVersion, checkNotNull(row.payload))
+        }
+        val logicalByteCount = OversqliteCompactCodec.snapshotLogicalByteCount(
+            generation(),
+            rows.map { BundleRow(it.schema, it.table, it.key, "INSERT", it.rowVersion, it.payload) },
+        )
+        require(logicalByteCount == wire.logicalByteCount) { "snapshot logical_byte_count mismatch" }
+        val chunk = SnapshotChunkResponse(
+            rows = rows,
+            nextRowOrdinal = wire.nextRowOrdinal,
+            hasMore = wire.hasMore,
+            logicalByteCount = wire.logicalByteCount,
+        )
         validateSnapshotChunkResponse(chunk, snapshotId, snapshotBundleSeq, afterRowOrdinal, maxRows, maxBytes)
-        snapshotDiagnostics()?.recordValidatedChunk(chunk.rows.size, chunk.byteCount)
+        snapshotDiagnostics()?.recordValidatedChunk(chunk.rows.size, chunk.logicalByteCount)
         return chunk
     }
 
@@ -633,12 +748,18 @@ internal class OversqliteRemoteApi(
                         path = loggedPath,
                         prepareCall = {
                             http.prepareDelete(relativePath) {
-                    header(sourceIdHeaderName, requireValidOversqliteSourceId(sourceId))
+                                generationHeaders(sourceId)
+                                acceptBoundedJsonResponse()
                             }
                         },
                         consume = { response ->
+                            response.rejectRedirect(operation, "DELETE", loggedPath, log)
+                            if (response.status.value !in 200..299) {
+                                response.cancelWithoutDraining()
+                                throw SnapshotHttpException(response.status, "invalid_error_response")
+                            }
                             val channel = response.bodyAsChannel()
-                            channel.readBuffer((snapshotControlBodyLimit + 1L).toInt())
+                            channel.readBuffer(snapshotControlBodyLimit + 1L)
                             if (!channel.isClosedForRead) {
                                 response.cancelWithoutDraining()
                             }
@@ -667,6 +788,7 @@ internal class OversqliteRemoteApi(
         noinline successDecoder: ((String) -> T)? = null,
         noinline customError: ((HttpStatusCode, String) -> Throwable?)? = null,
     ): T {
+        call.rejectRedirect(operation, method, path, log)
         val limit = if (call.status == HttpStatusCode.OK) successLimit else errorLimit
         val body = readBoundedJsonBody(
             operation = operation,
@@ -676,6 +798,7 @@ internal class OversqliteRemoteApi(
         )
         val raw = body.raw
         if (call.status != HttpStatusCode.OK) {
+            requireUniqueSnapshotJsonObjectMembers(raw)
             val error = runCatching { json.decodeFromString<ErrorResponse>(raw) }.getOrNull()
             if (error != null) {
                 onCompleteBody?.invoke(body.byteCount)
@@ -688,6 +811,16 @@ internal class OversqliteRemoteApi(
                     "status=${call.status.value} error=$safeErrorCode"
             }
             customError?.invoke(call.status, raw)?.let { throw it }
+            decodeRemoteContractErrorOrNull(
+                status = call.status.value,
+                raw = raw,
+                operation = operation,
+            )?.let { throw it }
+            decodeRemoteOperationErrorOrNull(
+                status = call.status.value,
+                raw = raw,
+                operation = operation,
+            )?.let { throw it }
             when {
                 call.status == HttpStatusCode.TooManyRequests &&
                     safeErrorCode in snapshotCapacityErrorCodes ->
@@ -708,8 +841,9 @@ internal class OversqliteRemoteApi(
                 onCompleteBody?.invoke(body.byteCount)
             }
         } catch (error: Throwable) {
+            if (error is Error) throw error
             if (error is CancellationException) throw error
-            if (error is SnapshotSemanticException) throw error
+            if (error is SnapshotSemanticException || error.isTerminalSyncCompatibilityFailure()) throw error
             log {
                 "oversqlite http decode failure op=$operation method=$method path=$path " +
                     "status=${call.status.value} error=${error::class.simpleName ?: "Throwable"}"
@@ -725,10 +859,13 @@ internal class OversqliteRemoteApi(
         invalidUtf8: () -> Throwable,
     ): BoundedJsonBody {
         val body = readDecodedBodyBounded(operation, response, limit)
-        val raw = try {
-            body.decodeToString(throwOnInvalidSequence = true)
-        } catch (_: CharacterCodingException) {
+        if (!body.isWellFormedUtf8()) {
             throw invalidUtf8()
+        }
+        val raw = body.decodeToString()
+        response.call.attributes.getOrNull(pushBufferGrowthKey)?.grow?.let { growth ->
+            val shape=compactResponseAllocationShape(raw)
+            growth(body.size.toLong()*2+65536,shape)
         }
         return BoundedJsonBody(raw = raw, byteCount = body.size.toLong())
     }
@@ -741,38 +878,65 @@ internal class OversqliteRemoteApi(
         require(limit >= 0L && limit < Int.MAX_VALUE.toLong()) {
             "$operation response body limit is invalid"
         }
-        val encoding = response.headers[HttpHeaders.ContentEncoding]
-            ?.trim()
-            ?.lowercase()
-            .orEmpty()
-        if (encoding !in setOf("", "identity", "gzip")) {
+        val encodingValues = response.headers.getAll(HttpHeaders.ContentEncoding).orEmpty()
+        if (encodingValues.size > 1) {
+            response.cancelWithoutDraining()
+            throw SnapshotUnsupportedContentEncodingException(operation, "multiple")
+        }
+        val encoding = encodingValues.singleOrNull()?.trim()?.lowercase()
+        if (encoding != null && (encoding.isEmpty() || ',' in encoding || encoding !in setOf("identity", "gzip"))) {
             response.cancelWithoutDraining()
             throw SnapshotUnsupportedContentEncodingException(operation, "unsupported")
         }
         val channel = response.bodyAsChannel()
         return try {
-            val body = channel.readBuffer((limit + 1L).toInt()).readByteArray()
+            val growth=response.call.attributes.getOrNull(pushBufferGrowthKey)?.grow
+            val encoded = if(growth==null) channel.readBuffer(limit + 1L).readByteArray() else {
+                var size=0L
+                val pages=ArrayList<ByteArray>()
+                while(!channel.isClosedForRead && size<=limit) {
+                    val next=minOf(65536L,limit+1-size)
+                    growth(size+next+65536,0)
+                    val page=channel.readBuffer(next).readByteArray()
+                    size+=page.size
+                    if(page.isNotEmpty()) pages+=page
+                }
+                growth(size*2+65536,0)
+                ByteArray(size.toInt()).also { bytes ->
+                    var offset=0
+                    for(page in pages) {page.copyInto(bytes,offset);offset+=page.size}
+                }
+            }
             channel.closedCause?.let { throw it }
-            if (body.size.toLong() > limit) {
+            if (encoded.size.toLong() > limit) {
                 throw SnapshotResponseBodyTooLargeException(operation, limit)
             }
-            body
+            when {
+                oversqliteFetchManagesResponseCompression -> encoded
+                encoding == "gzip" -> try {
+                    var decodedBound=limit
+                    if(growth!=null && encoded.size>=4) {
+                        var declared=0L
+                        for(i in 0..3) declared=declared or ((encoded[encoded.size-4+i].toLong() and 255) shl (8*i))
+                        if(declared>limit) throw OversqliteDecodedGzipTooLargeException()
+                        growth(encoded.size.toLong()+declared+65536,0)
+                        decodedBound=minOf(limit,declared+1)
+                    }
+                    decodeOversqliteSingleMemberGzip(encoded, decodedBound)
+                } catch (error: Throwable) {
+                    if (error is CancellationException) throw error
+                    if (error is SyncWorkspaceLimitException || error is SyncWorkLimitException) throw error
+                    if (error is OversqliteDecodedGzipTooLargeException) {
+                        throw SnapshotResponseBodyTooLargeException(operation, limit)
+                    }
+                    throw RemoteResponseDecodeException(operation)
+                }
+                else -> encoded
+            }
         } finally {
             if (!channel.isClosedForRead) {
                 response.cancelWithoutDraining()
             }
-        }
-    }
-
-    private fun checkedSnapshotChunkBodyLimit(maxBytes: Long, maxRows: Int): Long {
-        require(maxBytes > 0L && maxRows > 0) {
-            "snapshot chunk body budget requires positive row and byte limits"
-        }
-        val withRows = checkedAddSnapshotLong(maxBytes, maxRows.toLong()) {
-            "snapshot chunk body budget overflow"
-        }
-        return checkedAddSnapshotLong(withRows, snapshotBodyEnvelopeBytes) {
-            "snapshot chunk body budget overflow"
         }
     }
 
@@ -784,7 +948,7 @@ internal class OversqliteRemoteApi(
         if (status != HttpStatusCode.BadRequest) return null
         val error = runCatching { json.decodeFromString<ErrorResponse>(raw) }.getOrNull() ?: return null
         if (error.error != "snapshot_chunk_too_small") return null
-        val required = error.requiredByteCount
+        val required = error.requiredDecodedBodyBytes
         if (required == null || required <= configuredBytes) {
             return SnapshotHttpException(status, "snapshot_chunk_too_small_invalid")
         }
@@ -855,6 +1019,7 @@ internal class OversqliteRemoteApi(
         maxBundles: Int,
         targetBundleSeq: Long,
         sourceId: String,
+        maxResponseDecodedBytes: Long,
     ): PullResponse {
         val path = buildString {
             append("/sync/pull?after_bundle_seq=")
@@ -866,17 +1031,15 @@ internal class OversqliteRemoteApi(
                 append(targetBundleSeq)
             }
         }
-        return requireOkJson(
+        val wire = requestJson<CompactPullResponseWire>(
             operation = "pull",
             method = "GET",
             path = path,
-            call = executeLoggedCall(
-                operation = "pull",
-                method = "GET",
-                path = path,
-            ) {
-                http.get("sync/pull") {
-                    header(sourceIdHeaderName, requireValidOversqliteSourceId(sourceId))
+            successLimit = maxResponseDecodedBytes,
+            prepareCall = {
+                http.prepareGet("sync/pull") {
+                    generationHeaders(sourceId)
+                    acceptBoundedJsonResponse()
                     url {
                         parameters.append("after_bundle_seq", afterBundleSeq.toString())
                         parameters.append("max_bundles", maxBundles.toString())
@@ -886,9 +1049,10 @@ internal class OversqliteRemoteApi(
                     }
                 }
             },
+            successDecoder = { raw -> strictJson.decodeFromString<CompactPullResponseWire>(raw) },
         ) { status, raw ->
             if (status != HttpStatusCode.Conflict) {
-                return@requireOkJson null
+                return@requestJson null
             }
             val error = runCatching { json.decodeFromString(ErrorResponse.serializer(), raw) }.getOrNull()
             when (error?.error) {
@@ -897,25 +1061,79 @@ internal class OversqliteRemoteApi(
                 else -> null
             }
         }
+        val selectedGeneration = generation()
+        return PullResponse(
+            stableBundleSeq = wire.stableBundleSeq,
+            bundles = wire.bundles.map { compact ->
+                Bundle(
+                    bundleSeq = compact.bundleSeq,
+                    sourceId = compact.sourceId,
+                    sourceBundleId = compact.sourceBundleId,
+                    bundleHash = compact.bundleHash,
+                    rows = OversqliteCompactCodec.decodeBundleRows(
+                        generation = selectedGeneration,
+                        encoded = compact.rows,
+                        allowEmpty = true,
+                    ),
+                )
+            },
+            hasMore = wire.hasMore,
+        )
     }
 
-    private suspend inline fun <reified T> requireOkJson(
+    private suspend inline fun <reified T> requestJson(
+        operation: String,
+        method: String,
+        path: String,
+        noinline prepareCall: suspend () -> HttpStatement,
+        successLimit: Long? = null,
+        noinline successValidator: ((String) -> Unit)? = null,
+        noinline successDecoder: ((String) -> T)? = null,
+        noinline customError: ((HttpStatusCode, String) -> Throwable?)? = null,
+    ): T = executeLoggedStreamingCall(operation, method, path, prepareCall) { response ->
+        decodeJsonResponse(operation, method, path, response, successLimit, successValidator, successDecoder, customError)
+    }
+
+    private suspend inline fun <reified T> decodeJsonResponse(
         operation: String,
         method: String,
         path: String,
         call: HttpResponse,
+        successLimit: Long? = null,
+        noinline successValidator: ((String) -> Unit)? = null,
+        noinline successDecoder: ((String) -> T)? = null,
         noinline customError: ((HttpStatusCode, String) -> Throwable?)? = null,
     ): T {
+        call.rejectRedirect(operation, method, path, log)
         if (call.status != HttpStatusCode.OK) {
             val raw = readBoundedJsonBody(
                 operation = operation,
                 response = call,
-                limit = snapshotControlBodyLimit,
+                limit = oversqliteResponseBodyHardLimit(path, call.status.value),
                 invalidUtf8 = { RemoteResponseDecodeException(operation) },
             ).raw
             log {
                 "oversqlite http non-ok op=$operation method=$method path=$path " +
                     "status=${call.status.value}"
+            }
+            val trimmed = raw.trim()
+            val first = trimmed.firstOrNull()
+            val jsonShaped = first == '{' || first == '[' || first == '"' || first == '-' ||
+                (first != null && first in '0'..'9') || trimmed == "true" || trimmed == "false" || trimmed == "null"
+            if (jsonShaped) {
+                try {
+                    requireUniqueSnapshotJsonObjectMembers(raw)
+                    json.parseToJsonElement(raw).jsonObject
+                } catch (error: SnapshotSemanticException) {
+                    throw error
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: RuntimeException) {
+                    throw RemoteResponseDecodeException(operation)
+                }
+            } else {
+                if (path == "/sync/push") throw UploadHttpException(call.status, "")
+                throw DownloadHttpException(call.status, "")
             }
             val typed = try {
                 customError?.invoke(call.status, raw)
@@ -923,60 +1141,42 @@ internal class OversqliteRemoteApi(
                 throw RemoteResponseSemanticException(operation)
             }
             typed?.let { throw it.withRedactedRemotePayload() }
-            if (path.startsWith("/sync/push-sessions")) {
+            decodeRemoteContractErrorOrNull(
+                status = call.status.value,
+                raw = raw,
+                operation = operation,
+            )?.let { throw it }
+            decodeRemoteOperationErrorOrNull(
+                status = call.status.value,
+                raw = raw,
+                operation = operation,
+            )?.let { throw it }
+            if (path == "/sync/push") {
                 throw UploadHttpException(call.status, "")
             }
             throw DownloadHttpException(call.status, "")
         }
         return try {
-            call.body()
+            val raw = readBoundedJsonBody(
+                operation,
+                call,
+                minOf(successLimit ?: Long.MAX_VALUE, oversqliteResponseBodyHardLimit(path, call.status.value)),
+            ) { RemoteResponseDecodeException(operation) }.raw
+            requireUniqueSnapshotJsonObjectMembers(raw)
+            successValidator?.invoke(raw)
+            successDecoder?.invoke(raw) ?: json.decodeFromString<T>(raw)
         } catch (error: Throwable) {
+            if (error is Error) throw error
+            if (error is SyncWorkspaceLimitException || error is SyncWorkLimitException) throw error
+            if (error is SnapshotResponseBodyTooLargeException || error is SnapshotSemanticException || error is RemoteResponseSemanticException) throw error
             if (error is CancellationException) {
                 throw error
-            }
-            if (
-                error is UnsupportedContentEncodingException &&
-                (operation == "capabilities request" || operation.startsWith("snapshot"))
-            ) {
-                throw SnapshotUnsupportedContentEncodingException(operation, "unsupported")
             }
             log {
                 "oversqlite http decode failure op=$operation method=$method path=$path " +
                     "status=${call.status.value} error=${error.logSummary()}"
             }
             throw RemoteResponseDecodeException(operation)
-        }
-    }
-
-    private suspend inline fun executeLoggedCall(
-        operation: String,
-        method: String,
-        path: String,
-        crossinline block: suspend () -> HttpResponse,
-    ): HttpResponse {
-        log { "oversqlite http start op=$operation method=$method path=$path" }
-        return try {
-            val response = block()
-            log {
-                "oversqlite http response op=$operation method=$method path=$path " +
-                    "status=${response.status.value}"
-            }
-            response
-        } catch (error: Throwable) {
-            if (error is CancellationException) {
-                throw error
-            }
-            if (
-                error is UnsupportedContentEncodingException &&
-                (operation == "capabilities request" || operation.startsWith("snapshot"))
-            ) {
-                throw SnapshotUnsupportedContentEncodingException(operation, "unsupported")
-            }
-            log {
-                "oversqlite http failure op=$operation method=$method path=$path " +
-                    "error=${error.logSummary()}"
-            }
-            throw error
         }
     }
 
@@ -1002,9 +1202,6 @@ internal class OversqliteRemoteApi(
         } catch (error: Throwable) {
             if (error is CancellationException) {
                 throw error
-            }
-            if (error is UnsupportedContentEncodingException) {
-                throw SnapshotUnsupportedContentEncodingException(operation, "unsupported")
             }
             log {
                 "oversqlite http failure op=$operation method=$method path=$path " +
@@ -1057,8 +1254,7 @@ private fun Throwable.withRedactedRemotePayload(): Throwable = when (this) {
         replacementSourceId = replacementSourceId?.let(::requireValidOversqliteSourceId),
     )
     is SourceReplacementInvalidHttpException -> SourceReplacementInvalidHttpException(status)
-    is CommittedReplayPrunedException -> CommittedReplayPrunedException(rawBody = "")
-    is CommittedBundleNotFoundException -> CommittedBundleNotFoundException(rawBody = "")
+    is PushReplayHistoryPrunedException -> PushReplayHistoryPrunedException(rawBody = "")
     else -> this
 }
 

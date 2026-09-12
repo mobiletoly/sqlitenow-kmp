@@ -3,13 +3,11 @@ package dev.goquick.sqlitenow.oversqlite.realserver
 import dev.goquick.sqlitenow.oversqlite.AttachOutcome
 import dev.goquick.sqlitenow.oversqlite.AuthorityStatus
 import dev.goquick.sqlitenow.oversqlite.BundleChangeWatchMode
-import dev.goquick.sqlitenow.oversqlite.CapabilitiesResponse
 import dev.goquick.sqlitenow.oversqlite.OversqliteAutomaticDownloadConfig
-import dev.goquick.sqlitenow.oversqlite.bundleChangeWatchSupported
-import dev.goquick.sqlitenow.oversqlite.runAutomaticDownloads
 import dev.goquick.sqlitenow.oversqlite.platformsupport.assertConnectedOutcome
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import kotlinx.serialization.json.*
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import kotlinx.coroutines.CompletableDeferred
@@ -27,7 +25,7 @@ import kotlin.test.assertTrue
 
 internal class RealServerHarnessBundleChangeWatchTest : RealServerHarnessSupport() {
     @Test
-    fun watchEnabledCapabilityProbe_reportsBundleChangeWatch() = runTest {
+    fun admittedDiscoveryReportsBundleChangeWatch() = runTest {
         val config = requireRealServerConfig() ?: return@runTest
 
         val db = newDb()
@@ -38,13 +36,13 @@ internal class RealServerHarnessBundleChangeWatchTest : RealServerHarnessSupport
             val token = issueDummySigninToken(config.baseUrl, randomRealServerId("watch-cap-user"), sourceId)
             http = newRealServerHttpClient(config.baseUrl, token)
 
-            val capabilities = http.get("/sync/capabilities") {
+            val discovery = http.get("/sync/generations/1") {
                 header("Oversync-Source-ID", sourceId)
-            }.body<CapabilitiesResponse>()
+            }.body<JsonObject>()
 
             assertTrue(
-                capabilities.bundleChangeWatchSupported,
-                "realserver at ${config.baseUrl} must advertise features.bundle_change_watch=true",
+                discovery.getValue("watch_enabled").jsonPrimitive.boolean,
+                "realserver at ${config.baseUrl} must advertise watch_enabled=true",
             )
         } finally {
             http?.close()
@@ -96,7 +94,7 @@ internal class RealServerHarnessBundleChangeWatchTest : RealServerHarnessSupport
             )
 
             val worker = launch(Dispatchers.Default) {
-                observer.runAutomaticDownloads(
+                runRealServerAutomaticDownloads(observer,
                     OversqliteAutomaticDownloadConfig(
                         automaticDownloadIntervalMillis = 60_000,
                         bundleChangeWatchMode = BundleChangeWatchMode.AUTO,
@@ -163,7 +161,7 @@ internal class RealServerHarnessBundleChangeWatchTest : RealServerHarnessSupport
             )
 
             val worker = launch(Dispatchers.Default) {
-                client.runAutomaticDownloads(
+                runRealServerAutomaticDownloads(client,
                     OversqliteAutomaticDownloadConfig(
                         automaticDownloadIntervalMillis = 60_000,
                         bundleChangeWatchMode = BundleChangeWatchMode.AUTO,

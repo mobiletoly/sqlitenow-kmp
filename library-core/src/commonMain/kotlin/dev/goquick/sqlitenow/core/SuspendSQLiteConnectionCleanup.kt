@@ -20,6 +20,9 @@ package dev.goquick.sqlitenow.core
  * asynchronous cleanup work.
  */
 internal interface SuspendSQLiteConnectionCleanup {
+    /** Physical completion can be true even when cleanup reports a sticky diagnostic. */
+    val physicalCleanupComplete: Boolean get() = false
+
     val cleanupTimeoutMillis: Int
 
     suspend fun awaitCleanup()

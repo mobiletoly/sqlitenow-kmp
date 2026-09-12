@@ -1,14 +1,12 @@
 package dev.goquick.sqlitenow.oversqlite.realserver
 
-import androidx.sqlite.SQLiteStatement
-import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.oversqlite.*
 import dev.goquick.sqlitenow.oversqlite.platform.createSqliteNowTestConnectionConfig
 import dev.goquick.sqlitenow.oversqlite.platform.createTempSqliteNowTestDbPath
 import dev.goquick.sqlitenow.oversqlite.platform.deleteTempSqliteNowTestDbArtifacts
 import dev.goquick.sqlitenow.common.PlatformType
 import dev.goquick.sqlitenow.common.platform
-import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import dev.goquick.sqlitenow.oversqlite.platform.PlatformTestDatabase
 import dev.goquick.sqlitenow.core.TransactionMode
 import dev.goquick.sqlitenow.core.sqlite.use
 import io.ktor.client.HttpClient
@@ -51,8 +49,8 @@ internal class RealServerHarnessSharedConnectionStressTest : RealServerHarnessSu
             val userId = randomRealServerId("shared-connection")
             val seedDbPath = createTempSqliteNowTestDbPath("sqlitenow-shared-stress-seed")
             val activeDbPath = createTempSqliteNowTestDbPath("sqlitenow-shared-stress-active")
-            val seedDb = newFileBackedDb(seedDbPath)
-            val activeDb = newFileBackedDb(activeDbPath)
+            val seedDb = newCoordinatedFileBackedDb(seedDbPath)
+            val activeDb = newCoordinatedFileBackedDb(activeDbPath)
             var seedHttp: HttpClient? = null
             var activeHttp: HttpClient? = null
             try {
@@ -76,12 +74,12 @@ internal class RealServerHarnessSharedConnectionStressTest : RealServerHarnessSu
                     },
                 )
 
-                val seedClient = newRealServerClient(seedDb, seedHttp, uploadLimit = 4, downloadLimit = 1)
-                val activeClient = newRealServerClient(activeDb, activeHttp, uploadLimit = 4, downloadLimit = 1)
+                val seedClient = newRealServerClient(seedDb, seedHttp, maxPushRows = 4, maxPullBundles = 1)
+                val activeClient = newRealServerClient(activeDb, activeHttp, maxPushRows = 4, maxPullBundles = 1)
 
                 seedClient.awaitConnected(userId)
                 seedClient.pullToStableUnlessDirty()
-                seedClient.pushPending().getOrThrow()
+                drainPendingLocalChanges(seedClient, seedDb)
                 activeClient.awaitConnected(userId)
                 activeClient.pullToStable().getOrThrow()
                 assertEquals(TotalRowCount.toLong(), queryUsersWithAliasStar(activeDb))
@@ -169,54 +167,38 @@ internal class RealServerHarnessSharedConnectionStressTest : RealServerHarnessSu
     }
 
     private suspend fun seedUserRows(
-        db: SafeSQLiteConnection,
-    ) = db.withExclusiveAccess {
-        db.prepare(
-            """
+        db: PlatformTestDatabase,
+    ) {
+        repeat(LocalRowCount) { index ->
+            db.execSQL(
+                """
             INSERT INTO users (
                 id,
                 name,
                 email,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ) VALUES ('${localRowId(index)}', 'Local Seed $index', 'local-seed-$index@example.com', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """.trimIndent(),
-        ).use { statement ->
-            repeat(LocalRowCount) { index ->
-                bindSeedUser(
-                    statement = statement,
-                    id = localRowId(index),
-                    name = "Local Seed $index",
-                    email = "local-seed-$index@example.com",
-                )
-            }
-            repeat(RemoteRowCount) { index ->
-                bindSeedUser(
-                    statement = statement,
-                    id = remoteRowId(index),
-                    name = "Remote Seed $index",
-                    email = "remote-seed-$index@example.com",
-                )
-            }
+            )
+        }
+        repeat(RemoteRowCount) { index ->
+            db.execSQL(
+                """
+            INSERT INTO users (
+                id,
+                name,
+                email,
+                created_at,
+                updated_at
+            ) VALUES ('${remoteRowId(index)}', 'Remote Seed $index', 'remote-seed-$index@example.com', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """.trimIndent(),
+            )
         }
     }
 
-    private suspend fun bindSeedUser(
-        statement: SQLiteStatement,
-        id: String,
-        name: String,
-        email: String,
-    ) {
-        statement.bindText(1, id)
-        statement.bindText(2, name)
-        statement.bindText(3, email)
-        statement.step()
-        statement.reset()
-        statement.clearBindings()
-    }
-
     private suspend fun incrementLocalOwnedRow(
-        db: SafeSQLiteConnection,
+        db: PlatformTestDatabase,
         rowIndex: Int,
         iteration: Int,
         transactionPauseMillis: Long,
@@ -224,7 +206,7 @@ internal class RealServerHarnessSharedConnectionStressTest : RealServerHarnessSu
         expectedRowCount: Long,
     ) {
         db.transaction(TransactionMode.IMMEDIATE) {
-            db.prepare(
+            db.connection().prepare(
                 """
                 UPDATE users
                 SET name = ?,
@@ -246,7 +228,7 @@ internal class RealServerHarnessSharedConnectionStressTest : RealServerHarnessSu
     }
 
     private suspend fun incrementRemoteOwnedRow(
-        db: SafeSQLiteConnection,
+        db: PlatformTestDatabase,
         rowIndex: Int,
         round: Int,
     ) {
@@ -262,9 +244,9 @@ internal class RealServerHarnessSharedConnectionStressTest : RealServerHarnessSu
     }
 
     private suspend fun queryUsersWithAliasStar(
-        db: SafeSQLiteConnection,
-    ): Long = db.withExclusiveAccess {
-        db.prepare("SELECT u.* FROM users u ORDER BY u.id").use { statement ->
+        db: PlatformTestDatabase,
+    ): Long = db.withExclusiveAccess { connection ->
+        connection.prepare("SELECT u.* FROM users u ORDER BY u.id").use { statement ->
             var rowCount = 0L
             while (statement.step()) {
                 statement.getText(0)
@@ -283,10 +265,10 @@ internal class RealServerHarnessSharedConnectionStressTest : RealServerHarnessSu
     }
 
     private suspend fun readUserById(
-        db: SafeSQLiteConnection,
+        db: PlatformTestDatabase,
         id: String,
-    ) = db.withExclusiveAccess {
-        db.prepare("SELECT * FROM users WHERE id = ?").use { statement ->
+    ) = db.withExclusiveAccess { connection ->
+        connection.prepare("SELECT * FROM users WHERE id = ?").use { statement ->
             statement.bindText(1, id)
             if (statement.step()) {
                 statement.getText(0)
@@ -303,7 +285,7 @@ internal class RealServerHarnessSharedConnectionStressTest : RealServerHarnessSu
     }
 
     private suspend fun assertExpectedUserStates(
-        db: SafeSQLiteConnection,
+        db: PlatformTestDatabase,
         localUpdateIterations: Int,
         remoteUpdateRounds: Int,
     ) {
@@ -355,7 +337,7 @@ internal class RealServerHarnessSharedConnectionStressTest : RealServerHarnessSu
 
     private suspend fun drainPendingLocalChanges(
         client: OversqliteClient,
-        db: SafeSQLiteConnection,
+        db: PlatformTestDatabase,
     ) {
         repeat(64) {
             client.pushPending().getOrThrow()
@@ -368,7 +350,7 @@ internal class RealServerHarnessSharedConnectionStressTest : RealServerHarnessSu
     }
 
     private suspend fun pendingLocalChangeCount(
-        db: SafeSQLiteConnection,
+        db: PlatformTestDatabase,
     ): Long {
         return scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows") +
             scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows")

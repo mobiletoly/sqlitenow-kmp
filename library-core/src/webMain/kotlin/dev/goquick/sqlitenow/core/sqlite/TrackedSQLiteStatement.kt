@@ -38,7 +38,8 @@ private class TrackedSQLiteStatement(
     private var cleanupFailureObserver: ((Throwable) -> Unit)?,
     private var beforeCloseObserver: (() -> Unit)?,
     private var closeSuccessObserver: (() -> Unit)?,
-) : SQLiteStatement {
+) : SQLiteStatement, OwnedStatementClose {
+    override val closeProgress = StatementCloseProgress()
     override fun bindBlob(index: Int, value: ByteArray) =
         wrapAndroidxSqliteCall { delegate.bindBlob(index, value) }
 
@@ -92,7 +93,11 @@ private class TrackedSQLiteStatement(
         wrapAndroidxSqliteCall { delegate.clearBindings() }
     }
 
-    override fun close() {
+    override fun close() = closeProgress.close(::closeDelegate)
+
+    override suspend fun closeFromOwner() = closeProgress.closeFromOwner(::closeDelegate)
+
+    private fun closeDelegate() {
         beforeCloseObserver?.invoke()
         try {
             wrapAndroidxSqliteCall { delegate.close() }

@@ -35,7 +35,7 @@ Coverage groups:
   - `RealServerTypedRowsTest`
 - recovery and transport:
   - `RealServerRecoveryTest`
-  - `RealServerChunkedPushTransportTest`
+  - `RealServerDirectPushSelectionTest`
 - heavier scenarios:
   - `RealServerStressTest`
   - `RealServerRichSchemaStressTest`

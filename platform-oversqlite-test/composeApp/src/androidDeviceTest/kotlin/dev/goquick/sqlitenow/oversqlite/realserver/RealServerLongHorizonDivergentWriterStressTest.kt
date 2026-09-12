@@ -38,22 +38,22 @@ class RealServerLongHorizonDivergentWriterStressTest {
                 db = leaderDb,
                 config = config,
                 http = leaderHttp,
-                uploadLimit = 8,
-                downloadLimit = 2,
+                maxPushRows = 8,
+                maxPullBundles = 2,
             )
             val writer = newRealServerClient(
                 db = writerDb,
                 config = config,
                 http = writerHttp,
-                uploadLimit = 8,
-                downloadLimit = 2,
+                maxPushRows = 8,
+                maxPullBundles = 2,
             )
             val observer = newRealServerClient(
                 db = observerDb,
                 config = config,
                 http = observerHttp,
-                uploadLimit = 8,
-                downloadLimit = 2,
+                maxPushRows = 8,
+                maxPullBundles = 2,
             )
 
             leader.openAndAttach(userId).getOrThrow()
@@ -64,7 +64,7 @@ class RealServerLongHorizonDivergentWriterStressTest {
             observer.rebuild().getOrThrow()
 
             val hotGraph = insertHotGraph(leaderDb)
-            leader.pushPending().getOrThrow()
+            drainPendingRealServerPushes(leader, leaderDb)
             writer.pullToStable().getOrThrow()
             observer.pullToStable().getOrThrow()
 
@@ -73,7 +73,7 @@ class RealServerLongHorizonDivergentWriterStressTest {
             for (round in 1..rounds) {
                 mutateHotGraph(leaderDb, hotGraph, round)
                 insertRichSchemaBatch(leaderDb, "divergent-leader-$round")
-                leader.pushPending().getOrThrow()
+                drainPendingRealServerPushes(leader, leaderDb)
 
                 if (round in writerConflictRounds) {
                     mutateHotGraph(writerDb, hotGraph, 100 + round)
@@ -103,26 +103,29 @@ class RealServerLongHorizonDivergentWriterStressTest {
 
             writer.pullToStable().getOrThrow()
             observer.pullToStable().getOrThrow()
-            assertEquals(7L, observer.syncStatus().getOrThrow().lastBundleSeqSeen)
+            val leaderBundleSeq = leader.syncStatus().getOrThrow().lastBundleSeqSeen
+            assertTrue(leaderBundleSeq > 7L)
+            assertEquals(leaderBundleSeq, observer.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertHotGraphDrivenCounts(observerDb, rounds)
             assertHotGraphState(observerDb, hotGraph, rounds)
             assertRoundPresence(observerDb, "divergent-leader-6")
             assertForeignKeyIntegrity(observerDb)
             assertEquals(0L, scalarLong(observerDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
-            assertEquals(7L, writer.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(leaderBundleSeq, writer.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals(0L, scalarLong(writerDb, "SELECT rebuild_required FROM _sync_attachment_state"))
             assertHotGraphDrivenCounts(writerDb, rounds)
             assertHotGraphState(writerDb, hotGraph, rounds)
             assertForeignKeyIntegrity(writerDb)
 
             insertRichSchemaBatch(writerDb, "divergent-writer-recovered")
-            writer.pushPending().getOrThrow()
+            drainPendingRealServerPushes(writer, writerDb)
             leader.pullToStable().getOrThrow()
             observer.pullToStable().getOrThrow()
 
-            assertEquals(8L, leader.syncStatus().getOrThrow().lastBundleSeqSeen)
-            assertEquals(8L, writer.syncStatus().getOrThrow().lastBundleSeqSeen)
-            assertEquals(8L, observer.syncStatus().getOrThrow().lastBundleSeqSeen)
+            val recoveredBundleSeq = writer.syncStatus().getOrThrow().lastBundleSeqSeen
+            assertTrue(recoveredBundleSeq > leaderBundleSeq)
+            assertEquals(recoveredBundleSeq, leader.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(recoveredBundleSeq, observer.syncStatus().getOrThrow().lastBundleSeqSeen)
 
             assertHotGraphDrivenCounts(leaderDb, rounds, extraRichBatches = 1)
             assertHotGraphDrivenCounts(writerDb, rounds, extraRichBatches = 1)

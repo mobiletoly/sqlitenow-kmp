@@ -10,13 +10,13 @@ parent_url: /kmp/sync/
 
 These three concepts do different jobs:
 
-- `open()`: prepare local runtime state and restore or create the current internal source identity
+- `openForSync(...).advance()`: inspect, migrate, and publish the coordinated database/client pair
 - `attach(userId)`: attach or resume an authenticated account scope
 - `rebuild()`: explicitly recover local managed state from the authoritative remote snapshot
 
-## `open()`
+## Coordinated opening
 
-`open()` is local-only. It:
+Fresh and unchanged coordinated opening is local-only. It:
 
 - validates sync-managed table metadata
 - installs local triggers and guards
@@ -24,13 +24,20 @@ These three concepts do different jobs:
 - restores or creates the current internal source identity
 - captures pre-existing managed rows once when bootstrap policy allows it
 
-It never talks to the server.
+Generation-change advancement can use the server for old-intent drain, discovery, replacement,
+and rebuild. Inspection before the first `advance()` has no target-storage effects.
+
+Generation changes require an explicit directed upgrade plan. The [synchronized schema evolution guide]({{ site.baseurl }}/sync/schema-evolution/) defines the supported additive table/column/FK profile and the application-owned migration work.
 
 ```kotlin
-client.open().getOrThrow()
+val opening = db.openForSync(config, httpClient, resolver)
+opening.advance()
+val ready = checkNotNull(opening.readyOrNull())
+val database = ready.database
+val client = ready.client
 ```
 
-The current source identity is oversqlite-managed. App code does not pass it to `open()`.
+The current source identity is oversqlite-managed. App code does not pass it to coordinated opening.
 
 ## `attach(userId)`
 
@@ -53,7 +60,7 @@ when (val result = client.attach(userId).getOrThrow()) {
 Important points:
 
 - call it whenever an authenticated session exists
-- `open()` success is not a substitute for `attach(userId)`
+- coordinated ready publication is not a substitute for `attach(userId)`
 - `RetryLater` is a normal lifecycle response, not an auth error
 - successful destructive logout later rotates to a fresh internal source before the next attach
 
@@ -86,7 +93,11 @@ retires the current local sync incarnation because managed local account data wa
 ## Typical App Flow
 
 ```kotlin
-client.open().getOrThrow()
+val opening = db.openForSync(config, httpClient, resolver)
+opening.advance()
+val ready = checkNotNull(opening.readyOrNull())
+val database = ready.database
+val client = ready.client
 
 if (currentUserId != null) {
     when (val attach = client.attach(currentUserId).getOrThrow()) {

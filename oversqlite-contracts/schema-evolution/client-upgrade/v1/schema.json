@@ -1,0 +1,476 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mobiletoly.github.io/go-oversync/conformance/client-upgrade/v1/schema.json",
+  "title": "Oversqlite client upgrade conformance artifact",
+  "$defs": {
+    "decimalInteger": {
+      "type": "string",
+      "pattern": "^-?(0|[1-9][0-9]*)$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "hexBytes": {
+      "type": "string",
+      "pattern": "^([0-9a-f][0-9a-f])*$"
+    },
+    "phase": {
+      "enum": [
+        "ready",
+        "upgrade_started",
+        "resolving_old_intent",
+        "migrating_local",
+        "local_migrated",
+        "reattach_pending",
+        "rebuild_running"
+      ]
+    },
+    "outcome": {
+      "enum": [
+        "ready",
+        "waiting_for_network",
+        "needs_resolution",
+        "cancelled",
+        "upgrade_busy",
+        "upgrade_precondition_failed",
+        "upgrade_plan_mismatch",
+        "old_generation_unavailable",
+        "target_generation_unavailable",
+        "local_migration_failed",
+        "local_contract_mismatch",
+        "local_preservation_failed",
+        "upgrade_integrity_failed",
+        "replacement_diverged"
+      ]
+    },
+    "typedValue": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "absent",
+            "sql_null",
+            "json_null",
+            "boolean",
+            "integer",
+            "float32",
+            "float64",
+            "decimal",
+            "text",
+            "bytes",
+            "uuid",
+            "json",
+            "timestamp"
+          ]
+        },
+        "value": true,
+        "encoding": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "semanticState": {
+      "type": "object",
+      "properties": {
+        "phase": {
+          "$ref": "#/$defs/phase"
+        }
+      },
+      "additionalProperties": true
+    },
+    "event": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "fault": {
+      "type": "object",
+      "required": [
+        "at",
+        "effect"
+      ],
+      "properties": {
+        "at": {
+          "type": "string",
+          "minLength": 1
+        },
+        "effect": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "scenario": {
+      "type": "object",
+      "required": [
+        "id",
+        "family",
+        "initial_state",
+        "actions",
+        "protocol_exchanges",
+        "faults",
+        "expected",
+        "preserved",
+        "invariants"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^CU-[A-Z0-9]+$"
+        },
+        "family": {
+          "type": "string",
+          "minLength": 1
+        },
+        "initial_state": {
+          "$ref": "#/$defs/semanticState"
+        },
+        "actions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/event"
+          }
+        },
+        "protocol_exchanges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "faults": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fault"
+          }
+        },
+        "expected": {
+          "type": "object",
+          "minProperties": 1
+        },
+        "preserved": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "invariants": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^I(0[1-9]|1[0-2])$"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "vector": {
+      "type": "object",
+      "required": [
+        "id",
+        "expected_sha256"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "semantic": {
+          "$ref": "#/$defs/typedValue"
+        },
+        "codec": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sqlite_type": {
+          "enum": [
+            "NULL",
+            "INTEGER",
+            "REAL",
+            "TEXT",
+            "BLOB"
+          ]
+        },
+        "sqlite_value": true,
+        "expected": {
+          "enum": [
+            "accepted",
+            "rejected"
+          ]
+        },
+        "limit_kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "limit_decimal": {
+          "$ref": "#/$defs/decimalInteger"
+        },
+        "actual_decimal": {
+          "$ref": "#/$defs/decimalInteger"
+        },
+        "wire_hex": {
+          "$ref": "#/$defs/hexBytes"
+        },
+        "repeat_byte_hex": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{2}$"
+        },
+        "repeat_length": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expected_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "wire_hex"
+          ]
+        },
+        {
+          "required": [
+            "repeat_byte_hex",
+            "repeat_length"
+          ]
+        }
+      ],
+      "additionalProperties": false
+    },
+    "transition": {
+      "type": "object",
+      "required": [
+        "id",
+        "from",
+        "to",
+        "requires",
+        "transaction",
+        "remote",
+        "idempotent",
+        "recovery"
+      ],
+      "properties": {
+        "id": {
+          "enum": [
+            "U0",
+            "U1",
+            "U2",
+            "U3",
+            "U4",
+            "U5",
+            "U6",
+            "U7",
+            "U8",
+            "FRESH",
+            "LOCAL_ONLY"
+          ]
+        },
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "requires": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "transaction": {
+          "type": "string",
+          "minLength": 1
+        },
+        "remote": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "idempotent": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recovery": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "invariant": {
+      "type": "object",
+      "required": [
+        "id",
+        "portable_scenarios",
+        "go_tests",
+        "kmp",
+        "swift"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^I(0[1-9]|1[0-2])$"
+        },
+        "portable_scenarios": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "go_tests": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^Test"
+          }
+        },
+        "kmp": {
+          "const": "pending_non_go"
+        },
+        "swift": {
+          "const": "pending_non_go"
+        }
+      },
+      "additionalProperties": false
+    },
+    "goScenarioAdapter": {
+      "type": "object",
+      "required": [
+        "id",
+        "go_tests",
+        "executor_package",
+        "executor_test"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^CU-[A-Z0-9]+$"
+        },
+        "go_tests": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^Test"
+          }
+        },
+        "executor_package": {
+          "type": "string",
+          "pattern": "^\\./"
+        },
+        "executor_test": {
+          "type": "string",
+          "pattern": "^Test"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "required": [
+    "format"
+  ],
+  "properties": {
+    "format": {
+      "const": "client-upgrade-conformance/v1"
+    }
+  },
+  "oneOf": [
+    {
+      "required": [
+        "scenarios"
+      ],
+      "properties": {
+        "scenarios": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/scenario"
+          }
+        }
+      }
+    },
+    {
+      "required": [
+        "vectors"
+      ],
+      "properties": {
+        "vectors": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/vector"
+          }
+        }
+      }
+    },
+    {
+      "required": [
+        "transitions"
+      ],
+      "properties": {
+        "transitions": {
+          "type": "array",
+          "minItems": 11,
+          "items": {
+            "$ref": "#/$defs/transition"
+          }
+        }
+      }
+    },
+    {
+      "required": [
+        "invariants"
+      ],
+      "properties": {
+        "invariants": {
+          "type": "array",
+          "minItems": 12,
+          "maxItems": 12,
+          "items": {
+            "$ref": "#/$defs/invariant"
+          }
+        }
+      }
+    },
+    {
+      "required": [
+        "go_scenarios"
+      ],
+      "properties": {
+        "go_scenarios": {
+          "type": "array",
+          "minItems": 24,
+          "maxItems": 24,
+          "items": {
+            "$ref": "#/$defs/goScenarioAdapter"
+          }
+        }
+      }
+    }
+  ]
+}

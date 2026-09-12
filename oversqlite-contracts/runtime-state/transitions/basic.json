@@ -61,7 +61,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -70,7 +72,7 @@
               "snapshot_stage": [],
               "managed_tables": [
                 {
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "table_name": "users"
                 }
               ]
@@ -139,7 +141,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -148,7 +152,7 @@
               "snapshot_stage": [],
               "managed_tables": [
                 {
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "table_name": "users"
                 }
               ]
@@ -172,7 +176,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -211,7 +215,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -292,7 +298,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -301,7 +309,7 @@
               "snapshot_stage": [],
               "managed_tables": [
                 {
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "table_name": "users"
                 }
               ]
@@ -325,7 +333,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -364,7 +372,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -400,7 +410,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -439,7 +449,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -450,7 +462,7 @@
                   "key_json": "{\"id\":\"user-1\"}",
                   "op": "INSERT",
                   "base_row_version": 0,
-                  "payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}",
+                  "payload": "{\"id\":{\"storage\":\"text\",\"value\":\"user-1\"},\"name\":{\"storage\":\"text\",\"value\":\"Ada\"}}",
                   "dirty_ordinal": 1,
                   "updated_at": "<timestamp>"
                 }
@@ -484,7 +496,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -523,7 +535,9 @@
                   "canonical_request_hash": "<hash>",
                   "row_count": 1,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [
@@ -536,7 +550,7 @@
                   "wire_key_json": "{\"id\":\"user-1\"}",
                   "op": "INSERT",
                   "base_row_version": 0,
-                  "local_payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}",
+                  "local_payload": "{\"id\":{\"storage\":\"text\",\"value\":\"user-1\"},\"name\":{\"storage\":\"text\",\"value\":\"Ada\"}}",
                   "wire_payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}"
                 }
               ],
@@ -617,7 +631,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -626,7 +642,7 @@
               "snapshot_stage": [],
               "managed_tables": [
                 {
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "table_name": "users"
                 }
               ]
@@ -650,7 +666,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -689,7 +705,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -725,7 +743,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -764,7 +782,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -775,7 +795,7 @@
                   "key_json": "{\"id\":\"user-1\"}",
                   "op": "INSERT",
                   "base_row_version": 0,
-                  "payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}",
+                  "payload": "{\"id\":{\"storage\":\"text\",\"value\":\"user-1\"},\"name\":{\"storage\":\"text\",\"value\":\"Ada\"}}",
                   "dirty_ordinal": 1,
                   "updated_at": "<timestamp>"
                 }
@@ -809,7 +829,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -848,7 +868,9 @@
                   "canonical_request_hash": "<hash>",
                   "row_count": 1,
                   "remote_bundle_hash": "<hash>",
-                  "remote_bundle_seq": 1
+                  "remote_bundle_seq": 1,
+                  "remote_row_count": 1,
+                  "remote_byte_count": 146
                 }
               ],
               "outbox_rows": [
@@ -861,7 +883,7 @@
                   "wire_key_json": "{\"id\":\"user-1\"}",
                   "op": "INSERT",
                   "base_row_version": 0,
-                  "local_payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}",
+                  "local_payload": "{\"id\":{\"storage\":\"text\",\"value\":\"user-1\"},\"name\":{\"storage\":\"text\",\"value\":\"Ada\"}}",
                   "wire_payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}"
                 }
               ],
@@ -939,7 +961,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -948,7 +972,7 @@
               "snapshot_stage": [],
               "managed_tables": [
                 {
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "table_name": "users"
                 }
               ]
@@ -972,7 +996,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -1011,7 +1035,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -1047,7 +1073,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -1086,7 +1112,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -1097,7 +1125,7 @@
                   "key_json": "{\"id\":\"user-1\"}",
                   "op": "INSERT",
                   "base_row_version": 0,
-                  "payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}",
+                  "payload": "{\"id\":{\"storage\":\"text\",\"value\":\"user-1\"},\"name\":{\"storage\":\"text\",\"value\":\"Ada\"}}",
                   "dirty_ordinal": 1,
                   "updated_at": "<timestamp>"
                 }
@@ -1130,7 +1158,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 1,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -1169,7 +1197,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -1259,7 +1289,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -1268,7 +1300,7 @@
               "snapshot_stage": [],
               "managed_tables": [
                 {
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "table_name": "users"
                 }
               ]
@@ -1292,7 +1324,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -1331,7 +1363,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -1367,7 +1401,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -1406,7 +1440,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -1417,7 +1453,7 @@
                   "key_json": "{\"id\":\"user-1\"}",
                   "op": "INSERT",
                   "base_row_version": 0,
-                  "payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}",
+                  "payload": "{\"id\":{\"storage\":\"text\",\"value\":\"user-1\"},\"name\":{\"storage\":\"text\",\"value\":\"Ada\"}}",
                   "dirty_ordinal": 1,
                   "updated_at": "<timestamp>"
                 }
@@ -1451,7 +1487,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -1490,7 +1526,9 @@
                   "canonical_request_hash": "<hash>",
                   "row_count": 1,
                   "remote_bundle_hash": "<hash>",
-                  "remote_bundle_seq": 1
+                  "remote_bundle_seq": 1,
+                  "remote_row_count": 1,
+                  "remote_byte_count": 146
                 }
               ],
               "outbox_rows": [
@@ -1503,7 +1541,7 @@
                   "wire_key_json": "{\"id\":\"user-1\"}",
                   "op": "INSERT",
                   "base_row_version": 0,
-                  "local_payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}",
+                  "local_payload": "{\"id\":{\"storage\":\"text\",\"value\":\"user-1\"},\"name\":{\"storage\":\"text\",\"value\":\"Ada\"}}",
                   "wire_payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}"
                 }
               ],
@@ -1539,7 +1577,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -1578,7 +1616,9 @@
                   "canonical_request_hash": "<hash>",
                   "row_count": 1,
                   "remote_bundle_hash": "<hash>",
-                  "remote_bundle_seq": 1
+                  "remote_bundle_seq": 1,
+                  "remote_row_count": 1,
+                  "remote_byte_count": 146
                 }
               ],
               "outbox_rows": [
@@ -1591,7 +1631,7 @@
                   "wire_key_json": "{\"id\":\"user-1\"}",
                   "op": "INSERT",
                   "base_row_version": 0,
-                  "local_payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}",
+                  "local_payload": "{\"id\":{\"storage\":\"text\",\"value\":\"user-1\"},\"name\":{\"storage\":\"text\",\"value\":\"Ada\"}}",
                   "wire_payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}"
                 }
               ],
@@ -1635,7 +1675,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 1,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -1674,7 +1714,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -1727,7 +1769,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 2,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -1766,7 +1808,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -1882,7 +1926,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -1891,7 +1937,7 @@
               "snapshot_stage": [],
               "managed_tables": [
                 {
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "table_name": "users"
                 }
               ]
@@ -1915,7 +1961,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -1954,7 +2000,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -1987,7 +2035,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 1,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -2026,7 +2074,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -2117,7 +2167,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -2126,7 +2178,7 @@
               "snapshot_stage": [],
               "managed_tables": [
                 {
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "table_name": "users"
                 }
               ]
@@ -2150,7 +2202,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -2189,7 +2241,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -2225,7 +2279,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -2264,7 +2318,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -2275,7 +2331,7 @@
                   "key_json": "{\"id\":\"user-1\"}",
                   "op": "INSERT",
                   "base_row_version": 0,
-                  "payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}",
+                  "payload": "{\"id\":{\"storage\":\"text\",\"value\":\"user-1\"},\"name\":{\"storage\":\"text\",\"value\":\"Ada\"}}",
                   "dirty_ordinal": 1,
                   "updated_at": "<timestamp>"
                 }
@@ -2309,7 +2365,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 1,
                   "pending_initialization_id": ""
@@ -2354,7 +2410,9 @@
                   "canonical_request_hash": "<hash>",
                   "row_count": 1,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [
@@ -2367,7 +2425,7 @@
                   "wire_key_json": "{\"id\":\"user-1\"}",
                   "op": "INSERT",
                   "base_row_version": 0,
-                  "local_payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}",
+                  "local_payload": "{\"id\":{\"storage\":\"text\",\"value\":\"user-1\"},\"name\":{\"storage\":\"text\",\"value\":\"Ada\"}}",
                   "wire_payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}"
                 }
               ],
@@ -2400,7 +2458,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 1,
                   "pending_initialization_id": ""
@@ -2445,7 +2503,9 @@
                   "canonical_request_hash": "<hash>",
                   "row_count": 1,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [
@@ -2458,7 +2518,7 @@
                   "wire_key_json": "{\"id\":\"user-1\"}",
                   "op": "INSERT",
                   "base_row_version": 0,
-                  "local_payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}",
+                  "local_payload": "{\"id\":{\"storage\":\"text\",\"value\":\"user-1\"},\"name\":{\"storage\":\"text\",\"value\":\"Ada\"}}",
                   "wire_payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}"
                 }
               ],
@@ -2491,7 +2551,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 1,
                   "pending_initialization_id": ""
@@ -2536,7 +2596,9 @@
                   "canonical_request_hash": "<hash>",
                   "row_count": 1,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [
@@ -2549,7 +2611,7 @@
                   "wire_key_json": "{\"id\":\"user-1\"}",
                   "op": "INSERT",
                   "base_row_version": 0,
-                  "local_payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}",
+                  "local_payload": "{\"id\":{\"storage\":\"text\",\"value\":\"user-1\"},\"name\":{\"storage\":\"text\",\"value\":\"Ada\"}}",
                   "wire_payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}"
                 }
               ],
@@ -2583,7 +2645,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 1,
                   "pending_initialization_id": ""
@@ -2628,7 +2690,9 @@
                   "canonical_request_hash": "<hash>",
                   "row_count": 1,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [
@@ -2641,7 +2705,7 @@
                   "wire_key_json": "{\"id\":\"user-1\"}",
                   "op": "INSERT",
                   "base_row_version": 0,
-                  "local_payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}",
+                  "local_payload": "{\"id\":{\"storage\":\"text\",\"value\":\"user-1\"},\"name\":{\"storage\":\"text\",\"value\":\"Ada\"}}",
                   "wire_payload": "{\"id\":\"user-1\",\"name\":\"Ada\"}"
                 }
               ],

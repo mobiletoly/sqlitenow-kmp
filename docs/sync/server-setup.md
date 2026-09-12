@@ -62,21 +62,16 @@ specification.
 The sync protocol uses standard HTTP/JSON and is designed to be simple to implement while remaining
 powerful and scalable.
 
-## Capabilities Table Contract
+## Generation Discovery
 
-Every successful `GET /sync/capabilities` response must include `registered_table_specs`. Each item
-must contain a non-blank `schema`, a non-blank `table`, and `sync_key_columns` with exactly one
-non-blank entry. Duplicate table specs are invalid. `registered_tables` may remain as an optional
-legacy summary, but clients use `registered_table_specs` as canonical.
+Expose `GET /sync/generations/{id}` with authentication and a valid `Oversync-Source-ID` header.
+It returns `protocol_version: "v1"`, one immutable `schema_generation`, all hard wire limits, and
+`watch_enabled`, without creating a binding. Discovery omits generation proof headers; connect and
+all ordinary sync routes require the exact admitted generation ID and fingerprint headers.
 
-KMP and Dart clients compare this metadata with their validated generated configuration on every
-capabilities request. Ordering of table specs is irrelevant; schema/table identifiers and ordered
-key-column lists are exact. A mismatch fails before connect, outbox freezing, data download, or
-snapshot creation. This contract is table/key compatibility checking only—it is not wire-profile
-or projection negotiation.
-
-Deploy server support for the required metadata before rolling out strict clients if older server
-versions may still be live.
+The discovery response must fit the 65,536-byte decoded control-response limit. Unknown generations
+return HTTP 409; retired generations return HTTP 426. There is no capabilities endpoint or
+per-operation contract preflight. This revision replaces the previous contract in place as v1.
 
 ## Bundle-Change Watch
 
@@ -85,7 +80,7 @@ replace the normal pull/download endpoints.
 
 A compatible server should:
 
-- advertise support from `GET /sync/capabilities` with `features.bundle_change_watch = true`
+- advertise support with `watch_enabled: true` in generation discovery
 - accept `GET /sync/watch?after_bundle_seq=...` for an authenticated, connected source
 - keep the watch response open as a server-sent events stream
 - emit bundle metadata events when newer committed bundles are available for the client

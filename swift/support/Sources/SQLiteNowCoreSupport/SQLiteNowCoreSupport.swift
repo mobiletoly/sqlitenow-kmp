@@ -167,6 +167,8 @@ public enum SQLiteNowError: Error, CustomStringConvertible, Equatable {
     case observation(message: String)
     case adapter(message: String)
     case sync(message: String)
+    case conflictNeedsResolution(message: String)
+    case staleConflictResolution(message: String)
     case `protocol`(message: String)
     case unknown(message: String)
 
@@ -179,6 +181,8 @@ public enum SQLiteNowError: Error, CustomStringConvertible, Equatable {
         case let .observation(message): return message
         case let .adapter(message): return message
         case let .sync(message): return message
+        case let .conflictNeedsResolution(message): return message
+        case let .staleConflictResolution(message): return message
         case let .protocol(message): return message
         case let .unknown(message): return message
         }

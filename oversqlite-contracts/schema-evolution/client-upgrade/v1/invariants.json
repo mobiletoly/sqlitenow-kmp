@@ -1,0 +1,309 @@
+{
+  "format": "client-upgrade-conformance/v1",
+  "invariants": [
+    {
+      "id": "I01",
+      "portable_scenarios": [
+        "CU-N01",
+        "CU-N02",
+        "CU-N03",
+        "CU-N04"
+      ],
+      "go_tests": [
+        "TestClientUpgradeConformance_I12SparseUpgradePreviewUsesProductionCapabilities",
+        "TestNewClient_I01I02ClaimsOwnershipBeforeMutableReadyValidation",
+        "TestInitializeDatabase_I01RejectsPrototypeOutboxLayoutWithoutMigration",
+        "TestUpgradeCoordinator_I01ExactIdentityPlanContract",
+        "TestUpgradeCoordinator_I01PlanIsImmutableAfterConstruction",
+        "TestUpgradeCoordinator_I01ResumeRevalidatesVersionAndPhysicalContract",
+        "TestUpgradeCoordinator_I01CompletedPlanRevalidatesVersionAndPhysicalContract",
+        "TestUpgradeCoordinator_I01GenerationUnavailableResponsesRemainTyped",
+        "TestUpgradeRegression_ManagedReadyClientRequiresCompleteContractAndIdentity",
+        "TestUpgradeRegression_PhysicalContractRejectsGeneratedAndAsyncTables",
+        "TestUpgradeRegression_FreshRejectsLiteralSqlitePrefixLookalikeBeforeBootstrap",
+        "TestUpgradeRegression_GenerationErrorsAreTypedAtEveryReader",
+        "TestUpgradeRegression_UpgradePlansRejectLocalOnlySynchronizedOverlap",
+        "TestUpgradeRegression_JournalCorruptionFailsBeforeRemoteDispatch",
+        "TestUpgradeRegression_ResignedJournalCannotContradictImmutablePlan",
+        "TestUpgradeRegression_NewClientDeepClonesReadyConfiguration"
+      ],
+      "kmp": "pending_non_go",
+      "swift": "pending_non_go"
+    },
+    {
+      "id": "I02",
+      "portable_scenarios": [
+        "CU-D01",
+        "CU-X01",
+        "CU-C01"
+      ],
+      "go_tests": [
+        "TestNewClient_I01I02ClaimsOwnershipBeforeMutableReadyValidation",
+        "TestUpgradeCoordinator_I02DurableExclusiveFreeze",
+        "TestUpgradeCoordinator_I02CancellationKeepsDurableFreeze",
+        "TestUpgradeCoordinator_I02ExclusiveProcessOwnershipAndDeathRelease",
+        "TestUpgradeCoordinator_I02CloseRetainsOwnershipUntilActiveMigrationStops",
+        "TestUpgradeCoordinator_I02ProgressCallbackCanCloseAtSafeBoundary",
+        "TestUpgradeCoordinator_I02ReadAvailabilityCoversCompletePhaseMatrix"
+      ],
+      "kmp": "pending_non_go",
+      "swift": "pending_non_go"
+    },
+    {
+      "id": "I03",
+      "portable_scenarios": [
+        "CU-D01",
+        "CU-D02",
+        "CU-D03",
+        "CU-C01"
+      ],
+      "go_tests": [
+        "TestUpgrade_ProductionRemoteCommitProcessDeath",
+        "TestPushSessions_CreateResumesPartialStagingUntilExpiry",
+        "TestPushPending_AcceptServerPreservesLiveSessionEvidenceUntilDeletion",
+        "TestPushPending_UnsyncedInsertDeleteCommitsNoOpPruning",
+        "TestUpgradeCoordinator_I03DiscardResolvesLivePushSessionBeforeDrain",
+        "TestUpgradeCoordinator_I03PermanentRejectionRequiresBoundResolution",
+        "TestUpgradeCoordinator_I03ResolutionDecisionSurvivesProcessDeath",
+        "TestUpgradeCoordinator_I04HistoryPrunedRecoveryCompletesUnderFrozenCoordinator",
+        "TestUpgradeCoordinator_I09GenerationRebuildReady",
+        "TestUpgradeRegression_AuthoritativePullRejectsApplicationTriggerFKViolationBeforeAcknowledgement",
+        "TestUpgradeRegression_CoordinatorPhysicalClientLogsCheckpointRecovery",
+        "TestClientUpgradeConformance_I12ProtocolHashFixturesUseProductionFraming",
+        "TestMobileFlow_UpgradeControlledFailureRestartJourney",
+        "TestUpgradeRegression_OldGenerationLossRetainsFrozenIntentAndActiveSession",
+        "TestUpgradeRegression_DeleteOnlyClearsStructuredMissingOrExpiredSession",
+        "TestUpgradeRegression_U2DrainWitnessResumesWithoutOldGenerationIO"
+      ],
+      "kmp": "pending_non_go",
+      "swift": "pending_non_go"
+    },
+    {
+      "id": "I04",
+      "portable_scenarios": [
+        "CU-P01"
+      ],
+      "go_tests": [
+        "TestPushPending_CreateHistoryPrunedRequiresSourceRecoveryAndRotatePreservesOutbox",
+        "TestPushPending_PrunedRecoveryRejectsSnapshotCorruptedByCrossRowTrigger",
+        "TestPushPending_SettlesBooleanExtraEffectAfterSQLiteRoundTrip",
+        "TestUpgradeCoordinator_I04HistoryPrunedRecoveryCompletesUnderFrozenCoordinator",
+        "TestUpgradeCodec_I04StoredLocalPayloadRestoresBooleanAndBytesWithoutWireReinterpretation",
+        "TestUpgradeRegression_CoordinatorPhysicalClientLogsCheckpointRecovery",
+        "TestClientUpgradeConformance_I12ProtocolHashFixturesUseProductionFraming"
+      ],
+      "kmp": "pending_non_go",
+      "swift": "pending_non_go"
+    },
+    {
+      "id": "I05",
+      "portable_scenarios": [
+        "CU-M01",
+        "CU-C01"
+      ],
+      "go_tests": [
+        "TestUpgradeCoordinator_FreshMigrationFailureRollsBackBusinessState",
+        "TestUpgradeCoordinator_I05AtomicMigrationFailureMatrix",
+        "TestUpgradeCoordinator_I06MigrationCanTransformExistingSynchronizedRows",
+        "TestUpgradeCoordinator_I07ReopenedWriterEnforcesForeignKeysBeforeReady",
+        "TestUpgradeCoordinator_I10FreshBootstrapProcessRecovery",
+        "TestUpgradeCoordinator_I10FreshProcessRecovery",
+        "TestUpgradeMigrationCapabilityRejectsEscapesAndExpires",
+        "TestUpgradeRegression_MigrationCleanupErrorsPreservePrimaryCause"
+      ],
+      "kmp": "pending_non_go",
+      "swift": "pending_non_go"
+    },
+    {
+      "id": "I06",
+      "portable_scenarios": [
+        "CU-M01"
+      ],
+      "go_tests": [
+        "TestUpgradeMigrationCapabilityRejectsEscapesAndExpires",
+        "TestUpgradeCoordinator_I06PostMigrationVersionReaderIsReadOnly",
+        "TestUpgradeCoordinator_I06MigrationCanTransformExistingSynchronizedRows",
+        "TestUpgradeCoordinator_I09GenerationRebuildReady",
+        "TestUpgradeRegression_ReadOnlyVersionReaderRejectsNoArgumentMutatingPragmas",
+        "TestUpgradeRegression_MigrationCleanupErrorsPreservePrimaryCause"
+      ],
+      "kmp": "pending_non_go",
+      "swift": "pending_non_go"
+    },
+    {
+      "id": "I07",
+      "portable_scenarios": [
+        "CU-M01",
+        "CU-S01",
+        "CU-C01"
+      ],
+      "go_tests": [
+        "TestUpgradeCoordinator_I07ContractAndPreservation",
+        "TestUpgradeCoordinator_I07ValidatesForeignKeysWithoutDeclarationTiming",
+        "TestUpgradeCoordinator_I07RejectsForeignKeyCodecRepresentationMismatch",
+        "TestUpgradeCoordinator_I07ReopenedWriterEnforcesForeignKeysBeforeReady",
+        "TestUpgradeCodec_I07TypedValueRoundTripAndBounds",
+        "TestUpgradeCodec_I07RealLocalWritePreservesBinary64ThroughUpload",
+        "TestUpgradeCodec_I07WireToSQLiteUsesDeclaredCodec",
+        "TestUpgradeCodec_I09UUIDBlobSnapshotTotalsUseWireKeyBytes",
+        "TestSnapshotFinalGate_PreserveCommittedRemoteRejectsCrossRowTriggerCorruption",
+        "TestUpgradeRegression_AuthoritativePullRejectsApplicationTriggerFKViolationBeforeAcknowledgement",
+        "TestUpgradeRegression_ManagedReadyClientRequiresCompleteContractAndIdentity",
+        "TestUpgradeRegression_ApplicationTriggerCollisionRollsBackFreshMigration",
+        "TestUpgradeRegression_LocalOnlyDigestIncludesImplicitRowIdentity",
+        "TestUpgradeRegression_PhysicalContractRejectsGeneratedAndAsyncTables",
+        "TestUpgradeRegression_PreU0GuardCollisionLeavesReadyStateUntouched",
+        "TestUpgradeRegression_LocalOnlyGuardsResumeAndPreserveApplicationObjects",
+        "TestUpgradeRegression_AlteredOrMissingGuardRefusesCompletion",
+        "TestUpgradeRegression_RowIDDetectionUsesTableListMetadata",
+        "TestUpgradeRegression_ReadOnlyVersionReaderRejectsNoArgumentMutatingPragmas",
+        "TestUpgradeRegression_UpgradePlansRejectLocalOnlySynchronizedOverlap"
+      ],
+      "kmp": "pending_non_go",
+      "swift": "pending_non_go"
+    },
+    {
+      "id": "I08",
+      "portable_scenarios": [
+        "CU-R01",
+        "CU-C01"
+      ],
+      "go_tests": [
+        "TestUpgrade_ProductionRemoteCommitProcessDeath",
+        "TestUpgradeCoordinator_I08StableReplacementTupleAfterProcessReplyLoss",
+        "TestUpgradeCoordinator_I09GenerationRebuildReady",
+        "TestClientUpgradeConformance_I12ProtocolHashFixturesUseProductionFraming",
+        "TestUpgradeRegression_JournalCorruptionFailsBeforeRemoteDispatch",
+        "TestUpgradeRegression_ResignedJournalCannotContradictImmutablePlan"
+      ],
+      "kmp": "pending_non_go",
+      "swift": "pending_non_go"
+    },
+    {
+      "id": "I09",
+      "portable_scenarios": [
+        "CU-S01",
+        "CU-X01",
+        "CU-C01"
+      ],
+      "go_tests": [
+        "TestUpgradeCoordinator_I09GenerationRebuildReady",
+        "TestUpgradeCoordinator_I09ProductionSnapshotNotFoundIsRestartable",
+        "TestUpgradeCoordinator_I09SnapshotCleanupStartsFreshTargetSession",
+        "TestUpgradeCodec_I09SnapshotTotalsPageWithoutWholeSnapshotMaterialization",
+        "TestRebuildKeepSource_SnapshotSessionExpiredRetryRestoresData",
+        "TestSnapshotFinalGate_LocalWriteDuringDownloadPreservesEverything",
+        "TestUpgradeRegression_LocalOnlyDigestIncludesImplicitRowIdentity",
+        "TestUpgradeRegression_DelayedGenerationLossRemainsTyped",
+        "TestClientUpgradeConformance_I12ProtocolHashFixturesUseProductionFraming",
+        "TestMobileFlow_UpgradeControlledFailureRestartJourney",
+        "TestClientUpgradeConformance_I12SnapshotRowByteVectorsUsePostgresMaterializer"
+      ],
+      "kmp": "pending_non_go",
+      "swift": "pending_non_go"
+    },
+    {
+      "id": "I10",
+      "portable_scenarios": [
+        "CU-U0",
+        "CU-U1",
+        "CU-U2",
+        "CU-U3",
+        "CU-U4",
+        "CU-U5",
+        "CU-U6",
+        "CU-U7",
+        "CU-U8",
+        "CU-M01",
+        "CU-R01",
+        "CU-S01",
+        "CU-X01",
+        "CU-N03",
+        "CU-N04",
+        "CU-D03",
+        "CU-C01"
+      ],
+      "go_tests": [
+        "TestUpgrade_ProductionRemoteCommitProcessDeath",
+        "TestMobileFlow_UpgradeProductionServerSameFileProcessDeathJourney",
+        "TestMobileFlow_UpgradeControlledFailureRestartJourney",
+        "TestUpgradeCoordinator_I10EveryLocalBoundaryProcessDeath",
+        "TestUpgradeCoordinator_I10FreshBootstrapProcessRecovery",
+        "TestUpgradeCoordinator_I10FreshProcessRecovery",
+        "TestUpgradeCoordinator_I10FinalReadyProcessDeath",
+        "TestUpgradeCoordinator_I08StableReplacementTupleAfterProcessReplyLoss",
+        "TestUpgradeCoordinator_I03OldCommitBeforeLocalReceiptProcessDeath",
+        "TestUpgradeCoordinator_I04HistoryPrunedRecoveryCompletesUnderFrozenCoordinator",
+        "TestUpgradeCoordinator_I10CompletedAnonymousPlanReopensAfterNormalAttachment",
+        "TestUpgradeRegression_AuthoritativePullRejectsApplicationTriggerFKViolationBeforeAcknowledgement",
+        "TestUpgradeRegression_CoordinatorPhysicalClientLogsCheckpointRecovery",
+        "TestUpgradeRegression_DelayedGenerationLossRemainsTyped",
+        "TestUpgradeRegression_GenerationErrorsAreTypedAtEveryReader",
+        "TestUpgradeRegression_OldGenerationLossRetainsFrozenIntentAndActiveSession",
+        "TestUpgradeRegression_UpgradePlansRejectLocalOnlySynchronizedOverlap",
+        "TestUpgradeRegression_JournalCorruptionFailsBeforeRemoteDispatch",
+        "TestUpgradeRegression_ResignedJournalCannotContradictImmutablePlan",
+        "TestUpgradeMigrationCapabilityRejectsEscapesAndExpires",
+        "TestUpgradeRegression_U2DrainWitnessResumesWithoutOldGenerationIO"
+      ],
+      "kmp": "pending_non_go",
+      "swift": "pending_non_go"
+    },
+    {
+      "id": "I11",
+      "portable_scenarios": [
+        "CU-F01",
+        "CU-L01"
+      ],
+      "go_tests": [
+        "TestUpgradeCoordinator_FreshCreationPublishesReadyAtomically",
+        "TestUpgradeCoordinator_LocalOnlyPreservesSyncStateAndAdvancesVersion",
+        "TestUpgradeCoordinator_I11AnonymousDatabaseAllowsOfflineLocalOnlyMigration",
+        "TestUpgradeCoordinator_I10CompletedAnonymousPlanReopensAfterNormalAttachment",
+        "TestUpgradeCoordinator_I07ReopenedWriterEnforcesForeignKeysBeforeReady",
+        "TestUpgradeRegression_LocalOnlyGuardsResumeAndPreserveApplicationObjects",
+        "TestUpgradeRegression_AlteredOrMissingGuardRefusesCompletion",
+        "TestUpgradeRegression_UpgradePlansRejectLocalOnlySynchronizedOverlap",
+        "TestUpgradeMigrationCapabilityRejectsEscapesAndExpires"
+      ],
+      "kmp": "pending_non_go",
+      "swift": "pending_non_go"
+    },
+    {
+      "id": "I12",
+      "portable_scenarios": [
+        "CU-X01",
+        "CU-N03",
+        "CU-N04",
+        "CU-D03",
+        "CU-C01"
+      ],
+      "go_tests": [
+        "TestClientUpgradeConformance_I12PortableEvidence",
+        "TestClientUpgradeConformance_ExecutePortableScenario",
+        "TestClientUpgradeConformance_I12TypedVectorsUseProductionCodecs",
+        "TestClientUpgradeConformance_I12ProtocolHashFixturesUseProductionFraming",
+        "TestClientUpgradeConformance_I12LimitVectorsUseProductionReaders",
+        "TestClientUpgradeConformance_I12GenerationProofLimitVectorsUseProductionReader",
+        "TestClientUpgradeConformance_I12WireRequestsUseProductionReaders",
+        "TestClientUpgradeConformance_I12WireResponsesUseProductionReaders",
+        "TestMobileFlow_UpgradeProductionServerSameFileProcessDeathJourney",
+        "TestMobileFlow_UpgradeControlledFailureRestartJourney",
+        "TestUpgradeCoordinator_I12MalformedReplacementResponseIsIntegrityFailure",
+        "TestGenerationDataPlaneReaders_ProtocolHardCeilingsAndCeilingPlusOne",
+        "TestSnapshotDecodedBodyLimit_ExactExtraCompressedAndEncoding",
+        "TestClientUpgradeConformance_TrackerRejectsDeclaredButUnconsumedItems",
+        "TestClientUpgradeConformance_I12SnapshotRowByteVectorsUsePostgresMaterializer",
+        "TestUpgradeRegression_UpgradePlansRejectLocalOnlySynchronizedOverlap",
+        "TestUpgradeRegression_JournalCorruptionFailsBeforeRemoteDispatch",
+        "TestUpgradeRegression_ResignedJournalCannotContradictImmutablePlan",
+        "TestUpgradeMigrationCapabilityRejectsEscapesAndExpires",
+        "TestUpgradeRegression_U2DrainWitnessResumesWithoutOldGenerationIO",
+        "TestUpgradeRegression_MigrationCleanupErrorsPreservePrimaryCause",
+        "TestUpgradeRegression_NewClientDeepClonesReadyConfiguration"
+      ],
+      "kmp": "pending_non_go",
+      "swift": "pending_non_go"
+    }
+  ]
+}

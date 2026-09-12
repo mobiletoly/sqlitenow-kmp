@@ -50,3 +50,11 @@ config.proxies = Object.assign(config.proxies || {}, {
   '/sqlitenow-worker-v1/':
     `/absolute${path.resolve(resourceRoot, 'sqlitenow-worker-v1')}/`,
 });
+
+// Test-only fixture namespace; served independently from publication assets.
+config.files.push({
+  pattern: path.resolve(resourceRoot, 'bound-write-test-fixtures/**'),
+  included: false, served: true, watched: false,
+});
+config.proxies['/bound-write-test-fixtures/'] =
+  `/absolute${path.resolve(resourceRoot, 'bound-write-test-fixtures')}/`;

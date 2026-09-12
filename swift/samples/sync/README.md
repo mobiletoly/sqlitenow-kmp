@@ -78,8 +78,9 @@ curl -sS http://127.0.0.1:8080/syncx/status
 The response should include `app_name: nethttp-server-example` and the
 `business.person`, `business.person_address`, and `business.comment` tables.
 
-The sign-in sheet posts to `/dummy-signin` with the current local source id and
-uses schema `business` for sync client creation.
+The sign-in sheet posts the current local source ID to `/dummy-signin`. Startup coordinated
+opening owns creation of the exact ready database/client pair; schema is discovered by that client
+and is not an input to client construction.
 
 `SQLiteNowGenerated/` is disposable generated output. Swift app code depends on
 the generated Swift package, not on `build/` or a Gradle database module.

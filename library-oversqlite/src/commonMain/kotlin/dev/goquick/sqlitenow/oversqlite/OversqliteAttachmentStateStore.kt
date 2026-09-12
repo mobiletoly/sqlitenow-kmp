@@ -23,6 +23,7 @@ internal const val attachmentBindingAttached = "attached"
 
 internal data class OversqliteAttachmentState(
     val currentSourceId: String = "",
+    val attachmentEpoch: Long = 1,
     val bindingState: String = attachmentBindingAnonymous,
     val attachedUserId: String = "",
     val schemaName: String = "",
@@ -38,7 +39,7 @@ internal class OversqliteAttachmentStateStore(
         return db.queryRequiredSingle(
             sql = """
                 SELECT current_source_id, binding_state, attached_user_id, schema_name,
-                       last_bundle_seq_seen, rebuild_required, pending_initialization_id
+                       last_bundle_seq_seen, rebuild_required, pending_initialization_id, attachment_epoch
                 FROM _sync_attachment_state
                 WHERE singleton_key = 1
             """.trimIndent(),
@@ -46,6 +47,7 @@ internal class OversqliteAttachmentStateStore(
         ) { st ->
             OversqliteAttachmentState(
                 currentSourceId = requireValidOptionalOversqliteSourceId(st.getText(0)),
+                attachmentEpoch = st.getLong(7),
                 bindingState = st.getText(1),
                 attachedUserId = st.getText(2),
                 schemaName = st.getText(3),
@@ -59,6 +61,7 @@ internal class OversqliteAttachmentStateStore(
     suspend fun persistState(
         state: OversqliteAttachmentState,
         statementCache: StatementCache? = null,
+        epochAlreadyAdvanced: Boolean = false,
     ) {
         requireValidOptionalOversqliteSourceId(state.currentSourceId)
         requireValidOptionalOversqliteSessionToken(state.pendingInitializationId)
@@ -71,7 +74,8 @@ internal class OversqliteAttachmentStateStore(
                     schema_name = ?,
                     last_bundle_seq_seen = ?,
                     rebuild_required = ?,
-                    pending_initialization_id = ?
+                    pending_initialization_id = ?,
+                    attachment_epoch = attachment_epoch + CASE WHEN ? = 0 AND (current_source_id <> ? OR binding_state <> ? OR attached_user_id <> ?) THEN 1 ELSE 0 END
                 WHERE singleton_key = 1
             """.trimIndent(),
             statementCache = statementCache,
@@ -83,13 +87,23 @@ internal class OversqliteAttachmentStateStore(
             st.bindLong(5, state.lastBundleSeqSeen)
             st.bindLong(6, if (state.rebuildRequired) 1 else 0)
             st.bindText(7, state.pendingInitializationId)
+            st.bindLong(8, if (epochAlreadyAdvanced) 1 else 0)
+            st.bindText(9, state.currentSourceId)
+            st.bindText(10, state.bindingState)
+            st.bindText(11, state.attachedUserId)
             st.step()
         }
+        bindLocalBaselineContext(db)
+    }
+
+    suspend fun advanceAttachmentEpoch() {
+        db.execSQL("UPDATE _sync_attachment_state SET attachment_epoch=attachment_epoch+1 WHERE singleton_key=1")
     }
 
     suspend fun persistAnonymousState(
         sourceId: String,
         statementCache: StatementCache? = null,
+        epochAlreadyAdvanced: Boolean = false,
     ) {
         persistState(
             state = OversqliteAttachmentState(
@@ -97,6 +111,7 @@ internal class OversqliteAttachmentStateStore(
                 bindingState = attachmentBindingAnonymous,
             ),
             statementCache = statementCache,
+            epochAlreadyAdvanced = epochAlreadyAdvanced,
         )
     }
 
@@ -108,6 +123,7 @@ internal class OversqliteAttachmentStateStore(
         rebuildRequired: Boolean,
         pendingInitializationId: String,
         statementCache: StatementCache? = null,
+        epochAlreadyAdvanced: Boolean = false,
     ) {
         persistState(
             state = OversqliteAttachmentState(
@@ -120,6 +136,7 @@ internal class OversqliteAttachmentStateStore(
                 pendingInitializationId = pendingInitializationId,
             ),
             statementCache = statementCache,
+            epochAlreadyAdvanced = epochAlreadyAdvanced,
         )
     }
 

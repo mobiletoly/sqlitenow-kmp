@@ -16,6 +16,12 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import androidx.sqlite.SQLiteStatement
+import androidx.sqlite.SQLITE_DATA_BLOB
+import androidx.sqlite.SQLITE_DATA_FLOAT
+import androidx.sqlite.SQLITE_DATA_INTEGER
+import androidx.sqlite.SQLITE_DATA_NULL
+import androidx.sqlite.SQLITE_DATA_TEXT
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -161,39 +167,48 @@ private fun requireSignedInt64(value: String): String {
 	return value
 }
 
-private fun decodeIntegerPayloadValue(
-    column: ColumnInfo,
-    value: JsonElement,
-): String {
-	val primitive = value.jsonPrimitive
-	return when {
-		!primitive.isString && primitive.content == "true" -> "1"
-		!primitive.isString && primitive.content == "false" -> "0"
-		else -> {
-			require(primitive.isString) { "INTEGER requires a canonical signed-64 JSON string for ${column.name}" }
-			requireSignedInt64(primitive.content)
-		}
-	}
+private fun capturedPayloadValue(column: ColumnInfo, value: JsonElement): JsonElement {
+    val capture = value as? JsonObject ?: error("${column.name}: expected typed SQLite capture")
+    require(capture.keys == setOf("storage", "value")) { "invalid typed SQLite capture" }
+    val storage = capture.getValue("storage").jsonPrimitive
+    require(storage.isString) { "invalid SQLite storage tag" }
+    val captured = capture.getValue("value")
+    if (storage.content == "null") {
+        require(captured == JsonNull) { "null capture must have a null value" }
+        return JsonNull
+    }
+    require(storage.content in setOf("text", "integer", "real", "blob") && captured.jsonPrimitive.isString) { "invalid captured SQLite value" }
+    require(storage.content.uppercase() == sqliteAffinity(column.declaredType)) { "${column.name}: actual SQLite storage ${storage.content} does not match its declared affinity" }
+    return captured
 }
 
-private fun decodeRealPayloadValue(
-	column: ColumnInfo,
-	value: JsonElement,
-	payloadSource: PayloadSource,
-): String {
-	val primitive = value.jsonPrimitive
-	return when (payloadSource) {
-		PayloadSource.LOCAL_STATE -> {
-			canonicalizeFiniteJsonNumber(primitive.content)
-		}
-		PayloadSource.AUTHORITATIVE_WIRE -> {
-			require(primitive.isString) { "authoritative REAL requires a canonical binary64 JSON string for ${column.name}" }
-			val parsed = primitive.content.toDoubleOrNull()
-			require(parsed != null && parsed.isFinite()) { "REAL requires finite binary64 text for ${column.name}" }
-			require(canonicalizeFiniteJsonNumber(parsed.toString()) == primitive.content) { "REAL requires canonical binary64 text for ${column.name}" }
-			primitive.content
-		}
-	}
+private fun requirePermittedText(value: String): String {
+    require('\u0000' !in value) { "U+0000 is not permitted in synced text" }
+    requireUnicodeScalarString(value)
+    return value
+}
+
+private fun requireDecimal(value: String): String {
+    require(Regex("-?(0|[1-9][0-9]*)(\\.[0-9]+)?").matches(value)) { "invalid exact decimal" }
+    require(value.count { it in '0'..'9' } <= 1000) { "decimal exceeds 1000 coefficient digits" }
+    require(!value.startsWith('-') || value.any { it in '1'..'9' }) { "negative decimal zero is not canonical" }
+    return value
+}
+
+private fun canonicalGenerationJson(raw: String): String {
+    requireUniqueSnapshotJsonObjectMembers(raw)
+    val value = payloadJson.parseToJsonElement(raw)
+    requireJsonTextDomain(value)
+    return canonicalizeJsonElement(value)
+}
+
+private fun requireJsonTextDomain(value: JsonElement, parentDepth: Int = 0) {
+    if (value is JsonObject || value is JsonArray) require(parentDepth <= 64) { "JSON nesting exceeds 64" }
+    when (value) {
+        is JsonObject -> value.forEach { (key, child) -> requirePermittedText(key); requireJsonTextDomain(child, parentDepth + 1) }
+        is JsonArray -> value.forEach { requireJsonTextDomain(it, parentDepth + 1) }
+        is JsonPrimitive -> if (value.isString) requirePermittedText(value.content)
+    }
 }
 
 internal object OversqliteValueCodec {
@@ -202,15 +217,15 @@ internal object OversqliteValueCodec {
         index: Int,
         column: ColumnInfo,
     ): JsonElement {
-        if (statement.isNull(index)) {
-            return JsonNull
+        val (storage, value) = when (statement.getColumnType(index)) {
+            SQLITE_DATA_NULL -> "null" to JsonNull
+            SQLITE_DATA_INTEGER -> "integer" to JsonPrimitive(statement.getLong(index).toString())
+            SQLITE_DATA_FLOAT -> "real" to JsonPrimitive(statement.getDouble(index).toString())
+            SQLITE_DATA_TEXT -> "text" to JsonPrimitive(statement.getText(index))
+            SQLITE_DATA_BLOB -> "blob" to JsonPrimitive(bytesToHexLower(statement.getBlob(index)))
+            else -> error("unknown SQLite storage for ${column.name}")
         }
-		return when (column.kind) {
-			ColumnKind.TEXT -> JsonPrimitive(statement.getText(index))
-			ColumnKind.INTEGER -> JsonPrimitive(requireSignedInt64(statement.getText(index)))
-			ColumnKind.REAL -> JsonPrimitive(statement.getText(index))
-			ColumnKind.BLOB, ColumnKind.UUID_BLOB -> JsonPrimitive(bytesToHexLower(statement.getBlob(index)))
-        }
+        return buildJsonObject { put("storage", JsonPrimitive(storage)); put("value", value) }
     }
 
     @OptIn(ExperimentalUuidApi::class, ExperimentalEncodingApi::class)
@@ -221,10 +236,14 @@ internal object OversqliteValueCodec {
         return when (val typed = decodePayloadValue(column, value, PayloadSource.LOCAL_STATE)) {
             TypedValue.Null -> JsonNull
             is TypedValue.Text -> JsonPrimitive(typed.value)
-			is TypedValue.Integer -> JsonPrimitive(typed.canonicalText)
-			is TypedValue.Real -> JsonPrimitive(typed.canonicalText)
+            is TypedValue.Integer -> if (column.wireType == "boolean") {
+                JsonPrimitive(typed.canonicalText == "1")
+            } else {
+                JsonPrimitive(typed.canonicalText)
+            }
+            is TypedValue.Real -> JsonPrimitive(typed.canonicalText)
             is TypedValue.Blob -> {
-                if (column.kind == ColumnKind.UUID_BLOB) {
+                if (column.wireType == "uuid") {
                     JsonPrimitive(Uuid.parseHex(bytesToHexLower(typed.bytes)).toString())
                 } else {
                     JsonPrimitive(Base64.encode(typed.bytes))
@@ -238,30 +257,78 @@ internal object OversqliteValueCodec {
         value: JsonElement,
         payloadSource: PayloadSource,
     ): TypedValue {
-        if (value is JsonNull) {
+        val wireType = checkNotNull(column.wireType) { "contract is unconfirmed for ${column.name}" }
+        val scalar = if (payloadSource == PayloadSource.LOCAL_STATE) capturedPayloadValue(column, value) else value
+        if (scalar == JsonNull) {
+            require(!column.notNull && !column.isPrimaryKey) { "${column.name} must not be null" }
             return TypedValue.Null
         }
-        val primitive = value.jsonPrimitive
-        return when (column.kind) {
-			ColumnKind.TEXT -> {
-				require(primitive.isString) { "TEXT requires a JSON string for ${column.name}" }
-				TypedValue.Text(primitive.content)
-			}
-			ColumnKind.INTEGER -> TypedValue.Integer(decodeIntegerPayloadValue(column, value))
-			ColumnKind.REAL -> TypedValue.Real(decodeRealPayloadValue(column, value, payloadSource))
-            ColumnKind.BLOB -> TypedValue.Blob(
-                when (payloadSource) {
-                    PayloadSource.LOCAL_STATE -> decodeLocalBlobBytes(primitive.content)
-                    PayloadSource.AUTHORITATIVE_WIRE -> decodeWireBlobBytes(primitive.content)
+        val primitive = scalar.jsonPrimitive
+        return when (wireType) {
+            "boolean" -> {
+                if (payloadSource == PayloadSource.AUTHORITATIVE_WIRE) {
+                    require(!primitive.isString && primitive.content in setOf("true", "false")) {
+                        "Boolean wire value required"
+                    }
+                    TypedValue.Integer(if (primitive.content == "true") "1" else "0")
+                } else {
+                    require(primitive.isString && primitive.content in setOf("0", "1")) {
+                        "Boolean SQLite value must be 0 or 1"
+                    }
+                    TypedValue.Integer(primitive.content)
+                }
+            }
+            "int64" -> {
+                require(primitive.isString) {
+                    "int64 ${if (payloadSource == PayloadSource.LOCAL_STATE) "SQLite value must be a JSON string" else "wire value must be a canonical JSON string"}"
+                }
+                TypedValue.Integer(requireSignedInt64(primitive.content))
+            }
+            "float64" -> {
+                require(primitive.isString) {
+                    "float64 ${if (payloadSource == PayloadSource.LOCAL_STATE) "SQLite value must be a JSON string" else "wire value must be a canonical JSON string"}"
+                }
+                val parsed = primitive.content.toDoubleOrNull()
+                require(parsed != null && parsed.isFinite()) { "finite binary64 value required" }
+                val canonical = canonicalizeFiniteJsonNumber(parsed.toString())
+                require(payloadSource == PayloadSource.LOCAL_STATE || canonical == primitive.content) {
+                    "canonical binary64 wire value required"
+                }
+                TypedValue.Real(canonical)
+            }
+            "decimal" -> TypedValue.Text(requireDecimal(requireCanonicalString(primitive, column.name)))
+            "text" -> TypedValue.Text(requirePermittedText(requireCanonicalString(primitive, column.name)))
+            "json" -> {
+                val text = requireCanonicalString(primitive, column.name)
+                val canonical = canonicalGenerationJson(text)
+                require(payloadSource == PayloadSource.LOCAL_STATE || canonical == text) { "canonical JSON wire document required" }
+                TypedValue.Text(canonical)
+            }
+            "bytes" -> TypedValue.Blob(
+                if (payloadSource == PayloadSource.LOCAL_STATE) {
+                    decodeHexBytes(requireCanonicalString(primitive, column.name))
+                } else {
+                    decodeWireBlobBytes(requireCanonicalString(primitive, column.name))
                 },
             )
-            ColumnKind.UUID_BLOB -> TypedValue.Blob(
-                when (payloadSource) {
-                    PayloadSource.LOCAL_STATE -> decodeLocalUuidBytes(primitive.content)
-                    PayloadSource.AUTHORITATIVE_WIRE -> decodeWireUuidBytes(primitive.content)
-                },
-            )
+            "uuid" -> {
+                val text = requireCanonicalString(primitive, column.name)
+                if (column.kind.isBlobKind()) {
+                    val bytes = if (payloadSource == PayloadSource.LOCAL_STATE) decodeHexBytes(text) else decodeWireUuidBytes(text)
+                    require(bytes.size == 16) { "UUID BLOB must contain 16 bytes" }
+                    TypedValue.Blob(bytes)
+                } else {
+                    decodeWireUuidBytes(text)
+                    TypedValue.Text(text)
+                }
+            }
+            else -> error("unsupported wire type $wireType")
         }
+    }
+
+    private fun requireCanonicalString(primitive: JsonPrimitive, columnName: String): String {
+        require(primitive.isString) { "canonical JSON string required for $columnName" }
+        return primitive.content
     }
 
     fun bindPayloadValue(

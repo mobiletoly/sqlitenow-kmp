@@ -1,0 +1,33 @@
+{
+  "format":"client-upgrade-conformance/v1",
+  "vectors":[
+    {
+      "id":"q39-generation-pinned-request",
+      "algorithm":"generation_pinned_push_request_v1",
+      "generation_id":"3",
+      "generation_fingerprint":"f10284bef4b513eac96fc2aecd4146591799a3e2a9b4d53cc06ebc0e7900736c",
+      "rows":[{"schema":"app","table":"people","key":{"id":"550e8400-e29b-41d4-a716-446655440000"},"op":"UPDATE","version":"7","payload":{"id":"550e8400-e29b-41d4-a716-446655440000","name":"Ada"}}],
+      "canonical_utf8":"{\"generation_fingerprint\":\"f10284bef4b513eac96fc2aecd4146591799a3e2a9b4d53cc06ebc0e7900736c\",\"generation_id\":\"3\",\"rows\":[{\"base_row_version\":\"7\",\"key\":{\"id\":\"550e8400-e29b-41d4-a716-446655440000\"},\"op\":\"UPDATE\",\"payload\":{\"id\":\"550e8400-e29b-41d4-a716-446655440000\",\"name\":\"Ada\"},\"row_ordinal\":\"0\",\"schema\":\"app\",\"table\":\"people\"}],\"type\":\"oversync.generation-pinned-push-request.v1\"}",
+      "expected_byte_count":"384",
+      "expected_sha256":"a3a5d3800639139bd45ee0b55bea1de5ce38ed14109259d85430729f468d4eab"
+    },
+    {
+      "id":"generation-projected-effects",
+      "algorithm":"committed_bundle_v1",
+      "rows":[
+        {"schema":"app","table":"people","key":{"id":"550e8400-e29b-41d4-a716-446655440000"},"op":"UPDATE","version":"11","payload":{"id":"550e8400-e29b-41d4-a716-446655440000","name":"Ada"}},
+        {"schema":"app","table":"people","key":{"id":"00000000-0000-4000-8000-000000000099"},"op":"DELETE","version":"12","payload":null}
+      ],
+      "canonical_utf8":"[{\"key\":{\"id\":\"550e8400-e29b-41d4-a716-446655440000\"},\"op\":\"UPDATE\",\"payload\":{\"id\":\"550e8400-e29b-41d4-a716-446655440000\",\"name\":\"Ada\"},\"row_ordinal\":\"0\",\"row_version\":\"11\",\"schema\":\"app\",\"table\":\"people\"},{\"key\":{\"id\":\"00000000-0000-4000-8000-000000000099\"},\"op\":\"DELETE\",\"payload\":null,\"row_ordinal\":\"1\",\"row_version\":\"12\",\"schema\":\"app\",\"table\":\"people\"}]",
+      "expected_byte_count":"359",
+      "expected_sha256":"6cb933237bff2d0168e55de532425f5790d8fa1759142d206bcd6a59f8daa8ff"
+    },
+    {
+      "id":"complete-snapshot-chunk-frame",
+      "algorithm":"snapshot_chunk_wire_json_v1",
+      "canonical_utf8":"{\"snapshot_id\":\"snapshot-hash-vector\",\"snapshot_bundle_seq\":12,\"rows\":[{\"schema\":\"app\",\"table\":\"people\",\"key\":{\"id\":\"550e8400-e29b-41d4-a716-446655440000\"},\"row_version\":11,\"payload\":{\"id\":\"550e8400-e29b-41d4-a716-446655440000\",\"name\":\"Ada\"}},{\"schema\":\"app\",\"table\":\"people\",\"key\":{\"id\":\"00000000-0000-4000-8000-000000000100\"},\"row_version\":12,\"payload\":{\"id\":\"00000000-0000-4000-8000-000000000100\",\"name\":\"Grace\"}}],\"next_row_ordinal\":2,\"has_more\":false,\"byte_count\":344}",
+      "expected_byte_count":"473",
+      "expected_sha256":"bc217ba18f04de4a1c56e8ee4f9f3ab2f863379a94acc5773d659d1e019b2460"
+    }
+  ]
+}

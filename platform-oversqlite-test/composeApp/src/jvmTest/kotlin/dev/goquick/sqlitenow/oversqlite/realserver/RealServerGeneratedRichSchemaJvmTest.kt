@@ -3,8 +3,10 @@ package dev.goquick.sqlitenow.oversqlite.realserver
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.oversqlite.AttachOutcome
 import dev.goquick.sqlitenow.oversqlite.AuthorityStatus
+import dev.goquick.sqlitenow.oversqlite.OversqliteOpening
 import dev.goquick.sqlitenow.oversqlite.PushOutcome
 import dev.goquick.sqlitenow.oversqlite.RemoteSyncOutcome
+import dev.goquick.sqlitenow.oversqlite.platform.generated.RealServerGeneratedDatabase
 import dev.goquick.sqlitenow.oversqlite.platformsupport.assertConnectedOutcome
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.test.runTest
@@ -25,43 +27,55 @@ internal class RealServerGeneratedRichSchemaJvmTest : RealServerHarnessSupport()
         var seedHttp: HttpClient? = null
         var pullHttp: HttpClient? = null
         var hydrateHttp: HttpClient? = null
+        var seedOpening: OversqliteOpening<RealServerGeneratedDatabase>? = null
+        var pullOpening: OversqliteOpening<RealServerGeneratedDatabase>? = null
+        var hydrateOpening: OversqliteOpening<RealServerGeneratedDatabase>? = null
+        var seedToken: String? = null
+        var pullToken: String? = null
+        var hydrateToken: String? = null
         try {
-            seedDb.open()
-            pullDb.open()
-            hydrateDb.open()
-
-            val seedSource = bootstrapSourceId(config.baseUrl) { http -> newRealServerGeneratedClient(seedDb, http) }
-            val pullSource = bootstrapSourceId(config.baseUrl) { http -> newRealServerGeneratedClient(pullDb, http) }
-            val hydrateSource = bootstrapSourceId(config.baseUrl) { http -> newRealServerGeneratedClient(hydrateDb, http) }
             seedHttp = newRealServerHttpClient(
-                config.baseUrl,
-                issueDummySigninToken(config.baseUrl, userId, seedSource),
+                baseUrl = config.baseUrl,
+                tokenProvider = { seedToken },
             )
             pullHttp = newRealServerHttpClient(
-                config.baseUrl,
-                issueDummySigninToken(config.baseUrl, userId, pullSource),
+                baseUrl = config.baseUrl,
+                tokenProvider = { pullToken },
             )
             hydrateHttp = newRealServerHttpClient(
-                config.baseUrl,
-                issueDummySigninToken(config.baseUrl, userId, hydrateSource),
+                baseUrl = config.baseUrl,
+                tokenProvider = { hydrateToken },
             )
-
-            val seed = newRealServerGeneratedClient(seedDb, seedHttp)
-            val pull = newRealServerGeneratedClient(pullDb, pullHttp)
-            val hydrate = newRealServerGeneratedClient(hydrateDb, hydrateHttp)
-
-            seed.open().getOrThrow()
+            seedOpening = openRealServerGeneratedDatabase(seedDb, seedHttp)
+            pullOpening = openRealServerGeneratedDatabase(pullDb, pullHttp)
+            hydrateOpening = openRealServerGeneratedDatabase(hydrateDb, hydrateHttp)
+            val seed = checkNotNull(seedOpening.readyOrNull()).client
+            val pull = checkNotNull(pullOpening.readyOrNull()).client
+            val hydrate = checkNotNull(hydrateOpening.readyOrNull()).client
+            seedToken = issueDummySigninToken(
+                config.baseUrl,
+                userId,
+                seed.sourceInfo().getOrThrow().currentSourceId,
+            )
+            pullToken = issueDummySigninToken(
+                config.baseUrl,
+                userId,
+                pull.sourceInfo().getOrThrow().currentSourceId,
+            )
+            hydrateToken = issueDummySigninToken(
+                config.baseUrl,
+                userId,
+                hydrate.sourceInfo().getOrThrow().currentSourceId,
+            )
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.STARTED_EMPTY,
                 actual = seed.attach(userId).getOrThrow(),
                 expectedAuthority = AuthorityStatus.AUTHORITATIVE_EMPTY,
             )
-            pull.open().getOrThrow()
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
                 actual = pull.attach(userId).getOrThrow(),
             )
-            hydrate.open().getOrThrow()
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
                 actual = hydrate.attach(userId).getOrThrow(),
@@ -77,12 +91,12 @@ internal class RealServerGeneratedRichSchemaJvmTest : RealServerHarnessSupport()
             assertFalse(pull.syncStatus().getOrThrow().pending.hasPendingSyncData)
             assertFalse(hydrate.syncStatus().getOrThrow().pending.hasPendingSyncData)
         } finally {
+            seedOpening?.close() ?: seedDb.close()
+            pullOpening?.close() ?: pullDb.close()
+            hydrateOpening?.close() ?: hydrateDb.close()
             seedHttp?.close()
             pullHttp?.close()
             hydrateHttp?.close()
-            seedDb.close()
-            pullDb.close()
-            hydrateDb.close()
         }
     }
 

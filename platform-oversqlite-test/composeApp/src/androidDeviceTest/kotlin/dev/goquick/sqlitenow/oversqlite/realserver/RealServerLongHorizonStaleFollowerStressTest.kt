@@ -17,7 +17,7 @@ class RealServerLongHorizonStaleFollowerStressTest {
         val userId = randomUserId()
         val leaderDevice = randomSourceId("leader")
         val followerDevice = randomSourceId("follower")
-        val uploadLimit = 8
+        val maxPushRows = 8
 
         val leaderToken = issueDummySigninToken(config.baseUrl, userId, leaderDevice)
         val followerToken = issueDummySigninToken(config.baseUrl, userId, followerDevice)
@@ -33,15 +33,15 @@ class RealServerLongHorizonStaleFollowerStressTest {
                 db = leaderDb,
                 config = config,
                 http = leaderHttp,
-                uploadLimit = uploadLimit,
-                downloadLimit = 2,
+                maxPushRows = maxPushRows,
+                maxPullBundles = 2,
             )
             val follower = newRealServerClient(
                 db = followerDb,
                 config = config,
                 http = followerHttp,
-                uploadLimit = uploadLimit,
-                downloadLimit = 2,
+                maxPushRows = maxPushRows,
+                maxPullBundles = 2,
             )
 
             leader.openAndAttach(userId).getOrThrow()
@@ -50,7 +50,7 @@ class RealServerLongHorizonStaleFollowerStressTest {
             follower.rebuild().getOrThrow()
 
             val hotGraph = insertHotGraph(leaderDb)
-            leader.pushPending().getOrThrow()
+            drainPendingRealServerPushes(leader, leaderDb)
 
             val rounds = 12
             val followerCheckpoints = setOf(4, 8, 12)
@@ -59,20 +59,23 @@ class RealServerLongHorizonStaleFollowerStressTest {
                 insertRichSchemaBatch(leaderDb, "long-horizon-$round")
                 val pendingDirty = scalarLong(leaderDb, "SELECT COUNT(*) FROM _sync_dirty_rows")
                 assertTrue(
-                    "round $round should exceed one upload chunk; pendingDirty=$pendingDirty uploadLimit=$uploadLimit",
-                    pendingDirty > uploadLimit.toLong()
+                    "round $round should exceed one push request; pendingDirty=$pendingDirty maxPushRows=$maxPushRows",
+                    pendingDirty > maxPushRows.toLong()
                 )
-                leader.pushPending().getOrThrow()
+                val beforePushSeq = leader.syncStatus().getOrThrow().lastBundleSeqSeen
+                drainPendingRealServerPushes(leader, leaderDb)
+                assertTrue(leader.syncStatus().getOrThrow().lastBundleSeqSeen > beforePushSeq + 1L)
 
                 if (round in followerCheckpoints) {
                     follower.pullToStable().getOrThrow()
-                    assertEquals((round + 1).toLong(), follower.syncStatus().getOrThrow().lastBundleSeqSeen)
+                    assertEquals(leader.syncStatus().getOrThrow().lastBundleSeqSeen,
+                        follower.syncStatus().getOrThrow().lastBundleSeqSeen)
                     assertEquals(0L, scalarLong(followerDb, "SELECT COUNT(*) FROM _sync_dirty_rows"))
                 }
             }
 
-            assertEquals(13L, leader.syncStatus().getOrThrow().lastBundleSeqSeen)
-            assertEquals(13L, follower.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(leader.syncStatus().getOrThrow().lastBundleSeqSeen,
+                follower.syncStatus().getOrThrow().lastBundleSeqSeen)
 
             assertHotGraphDrivenCounts(leaderDb, rounds)
             assertHotGraphDrivenCounts(followerDb, rounds)

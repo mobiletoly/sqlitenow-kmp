@@ -5,11 +5,7 @@
       "name": "sync-then-detach-protocol-mismatch-preserves-dirty-state",
       "description": "syncThenDetach rejects an incompatible protocol before freezing, pushing, pulling, or detaching.",
       "serverScript": {
-        "kind": "chunked_sync",
-        "protocolVersions": [
-          "v1",
-          "v0"
-        ]
+        "kind": "chunked_sync"
       },
       "steps": [
         {
@@ -68,7 +64,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -77,7 +75,7 @@
               "snapshot_stage": [],
               "managed_tables": [
                 {
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "table_name": "users"
                 }
               ]
@@ -105,7 +103,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -144,7 +142,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -180,7 +180,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -219,7 +219,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -230,7 +232,7 @@
                   "key_json": "{\"id\":\"local-1\"}",
                   "op": "INSERT",
                   "base_row_version": 0,
-                  "payload": "{\"id\":\"local-1\",\"name\":\"Local\"}",
+                  "payload": "{\"id\":{\"storage\":\"text\",\"value\":\"local-1\"},\"name\":{\"storage\":\"text\",\"value\":\"Local\"}}",
                   "dirty_ordinal": 1,
                   "updated_at": "<timestamp>"
                 }
@@ -248,6 +250,7 @@
         },
         {
           "action": "syncThenDetach",
+          "capabilitiesProtocolVersion": "v0",
           "expectedException": "protocol_version_mismatch",
           "expectedServerState": {
             "createRequestCount": 0
@@ -267,7 +270,7 @@
                   "current_source_id": "<source-1>",
                   "binding_state": "attached",
                   "attached_user_id": "user-1",
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "last_bundle_seq_seen": 0,
                   "rebuild_required": 0,
                   "pending_initialization_id": ""
@@ -306,7 +309,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -317,7 +322,7 @@
                   "key_json": "{\"id\":\"local-1\"}",
                   "op": "INSERT",
                   "base_row_version": 0,
-                  "payload": "{\"id\":\"local-1\",\"name\":\"Local\"}",
+                  "payload": "{\"id\":{\"storage\":\"text\",\"value\":\"local-1\"},\"name\":{\"storage\":\"text\",\"value\":\"Local\"}}",
                   "dirty_ordinal": 1,
                   "updated_at": "<timestamp>"
                 }
@@ -341,11 +346,6 @@
       "serverScript": {
         "kind": "remote_authoritative_partial_snapshot",
         "connectResolution": "remote_authoritative",
-        "protocolVersions": [
-          "v1",
-          "v1",
-          "v0"
-        ],
         "snapshots": [
           {
             "id": "snapshot-a",
@@ -450,7 +450,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -459,7 +461,7 @@
               "snapshot_stage": [],
               "managed_tables": [
                 {
-                  "schema_name": "main",
+                  "schema_name": "local",
                   "table_name": "users"
                 }
               ]
@@ -526,7 +528,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -608,7 +612,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],
@@ -636,6 +642,7 @@
         },
         {
           "action": "attach",
+          "capabilitiesProtocolVersion": "v0",
           "expectedException": "protocol_version_mismatch",
           "expectedServerState": {
             "snapshotSessionCreateCount": 1
@@ -694,7 +701,9 @@
                   "canonical_request_hash": "",
                   "row_count": 0,
                   "remote_bundle_hash": "",
-                  "remote_bundle_seq": 0
+                  "remote_bundle_seq": 0,
+                  "remote_row_count": 0,
+                  "remote_byte_count": 0
                 }
               ],
               "outbox_rows": [],

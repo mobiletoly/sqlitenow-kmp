@@ -1,0 +1,1302 @@
+{
+  "formatVersion": 1,
+  "status": "contract-candidate-runtime-pending",
+  "httpChanged": false,
+  "executedContractChecks": [
+    "state-discriminators",
+    "full-base-copy-witnesses",
+    "hard-boundary-arithmetic",
+    "resume-guard-equality",
+    "scenario-ownership",
+    "rekey-relationship-ordering"
+  ],
+  "stateKinds": [
+    {
+      "kind": "live",
+      "relationshipKnowledge": "known",
+      "hasPayload": true,
+      "hasVersion": true
+    },
+    {
+      "kind": "deleted",
+      "relationshipKnowledge": "known",
+      "hasPayload": false,
+      "hasVersion": true
+    },
+    {
+      "kind": "absent",
+      "relationshipKnowledge": "known",
+      "hasPayload": false,
+      "hasVersion": false
+    },
+    {
+      "kind": "unpublished",
+      "relationshipKnowledge": "known",
+      "hasPayload": false,
+      "hasVersion": false
+    },
+    {
+      "kind": "unknown",
+      "relationshipKnowledge": "unknown",
+      "hasPayload": false,
+      "hasVersion": false
+    }
+  ],
+  "hardBoundaryCases": [
+    {
+      "id": "below",
+      "componentRows": 2,
+      "componentDecodedBytes": 499,
+      "maxRows": 3,
+      "maxBytes": 500,
+      "expected": "fits"
+    },
+    {
+      "id": "at-rows",
+      "componentRows": 3,
+      "componentDecodedBytes": 499,
+      "maxRows": 3,
+      "maxBytes": 500,
+      "expected": "fits"
+    },
+    {
+      "id": "above-rows",
+      "componentRows": 4,
+      "componentDecodedBytes": 499,
+      "maxRows": 3,
+      "maxBytes": 500,
+      "expected": "rows"
+    },
+    {
+      "id": "at-bytes",
+      "componentRows": 2,
+      "componentDecodedBytes": 500,
+      "maxRows": 3,
+      "maxBytes": 500,
+      "expected": "fits"
+    },
+    {
+      "id": "above-bytes",
+      "componentRows": 2,
+      "componentDecodedBytes": 501,
+      "maxRows": 3,
+      "maxBytes": 500,
+      "expected": "decoded_bytes"
+    },
+    {
+      "id": "both",
+      "componentRows": 4,
+      "componentDecodedBytes": 501,
+      "maxRows": 3,
+      "maxBytes": 500,
+      "expected": "rows"
+    }
+  ],
+  "resumeCases": [
+    {
+      "id": "same",
+      "saved": "guard-a",
+      "current": "guard-a",
+      "resume": true
+    },
+    {
+      "id": "dirty-revision",
+      "saved": "guard-a",
+      "current": "guard-b",
+      "resume": false
+    },
+    {
+      "id": "baseline-revision",
+      "saved": "guard-a",
+      "current": "guard-c",
+      "resume": false
+    },
+    {
+      "id": "source-generation-shape",
+      "saved": "guard-a",
+      "current": "guard-d",
+      "resume": false
+    }
+  ],
+  "runtimeScenarios": [
+    {
+      "id": "attach-unpublished",
+      "owner": "baseline-lifecycle",
+      "given": "Local existing row first adopted, before publication",
+      "expected": "A=unpublished; B=absent never_published; full L and desired edges only",
+      "executed": false
+    },
+    {
+      "id": "local-reparent",
+      "owner": "baseline-lifecycle",
+      "given": "A C->P; edit C->Q; delete C locally",
+      "expected": "A edge remains C->P; first full B unchanged; desired edges become empty",
+      "executed": false
+    },
+    {
+      "id": "typed-base",
+      "owner": "baseline-lifecycle",
+      "given": "Edit non-FK scalar with int64/blob/null/JSON/generated columns",
+      "expected": "B retains every typed column exactly; JSON atomic; local edits do not change A",
+      "executed": false
+    },
+    {
+      "id": "rekey",
+      "owner": "dependency-planning",
+      "given": "Rekey P to Q and reparent surviving C",
+      "expected": "Only actual FK edges: delete P requires reparent C, which requires insert Q; no synthetic P/Q link or whole-closure grouping",
+      "executed": false
+    },
+    {
+      "id": "noop",
+      "owner": "baseline-lifecycle",
+      "given": "Never-published insert then delete without outbox",
+      "expected": "Clear matching dirty B/desired edges only; no push or source ID advance",
+      "executed": false
+    },
+    {
+      "id": "freeze-reopen",
+      "owner": "baseline-lifecycle",
+      "given": "Freeze then lose response and reopen",
+      "expected": "Outbox contains original B/L/wire/hash; replay first; no new identity",
+      "executed": false
+    },
+    {
+      "id": "edit-during-outbox",
+      "owner": "baseline-lifecycle",
+      "given": "Edit same key while immutable outbox waits",
+      "expected": "Frozen B unchanged; newer dirty B copied from current A; both survive restart",
+      "executed": false
+    },
+    {
+      "id": "settlement-rebase",
+      "owner": "baseline-lifecycle",
+      "given": "Committed normalized S while newer local L must survive",
+      "expected": "A=S; remaining affected B=S; L retained; source/checkpoint atomic; no double advance",
+      "executed": false
+    },
+    {
+      "id": "extra-effect",
+      "owner": "baseline-lifecycle",
+      "given": "Committed extra child effect plus trigger disturbs unrelated dirty row",
+      "expected": "Affected A from wire; full B rebase only for affected intent; unrelated B/L preserved",
+      "executed": false
+    },
+    {
+      "id": "requeue-newer",
+      "owner": "baseline-lifecycle",
+      "given": "Definitive rejection then requeue with newer dirty L",
+      "expected": "Original historical B preserved; newer L wins; no A update absent explicit rebase",
+      "executed": false
+    },
+    {
+      "id": "pull-version-skip",
+      "owner": "baseline-lifecycle",
+      "given": "Older bundle for row with newer installed A",
+      "expected": "A/B/server edges never regress; original hash validated; checkpoint sequential",
+      "executed": false
+    },
+    {
+      "id": "tombstone",
+      "owner": "baseline-lifecycle",
+      "given": "Confirmed delete and later reinsertion",
+      "expected": "A tombstone version retained; no fabricated absent version; retry B retains deletion provenance",
+      "executed": false
+    },
+    {
+      "id": "snapshot-clean",
+      "owner": "baseline-lifecycle",
+      "given": "Clean validated full snapshot includes C and excludes referenced pending identity",
+      "expected": "Full typed A/edges installed before ready; only complete exclusion proves absence",
+      "executed": false
+    },
+    {
+      "id": "snapshot-outbox",
+      "owner": "baseline-lifecycle",
+      "given": "Source-recovery snapshot has S newer than frozen B",
+      "expected": "A=S; outbox B and wire remain original; replay L without replacing A; authorized retarget only",
+      "executed": false
+    },
+    {
+      "id": "generation-publication",
+      "owner": "baseline-lifecycle",
+      "given": "Target generation installed through existing ready workflow",
+      "expected": "Old intent resolved/drained; target A complete before ready; no old-layout migration",
+      "executed": false
+    },
+    {
+      "id": "conflict-pending",
+      "owner": "baseline-lifecycle",
+      "given": "Defer or dependency/base evidence unavailable",
+      "expected": "Preserve A/B/L/outbox/checkpoint; typed pending/base result; no receipt-only rebase",
+      "executed": false
+    },
+    {
+      "id": "conflict-rebase",
+      "owner": "baseline-lifecycle",
+      "given": "Explicit KeepLocal or KeepMerged with validated S",
+      "expected": "A=S and remaining B=S atomically; unrelated B preserved; no new default policy",
+      "executed": false
+    },
+    {
+      "id": "resume-cleanup",
+      "owner": "dependency-planning",
+      "given": "Work stop, reopen, then dirty/A/registration guard changes",
+      "expected": "Exact match resumes; mismatch performs charged paged cleanup then restarts; no bad freeze",
+      "executed": false
+    },
+    {
+      "id": "diagnostics",
+      "owner": "dependency-planning",
+      "given": "Proven oversized SCC, page/release/reopen/stale cursor",
+      "expected": "Exact counts; bounded sample/pages; charged membership; stale context rejected; no intent cleanup",
+      "executed": false
+    },
+    {
+      "id": "detach-cleanup",
+      "owner": "baseline-lifecycle",
+      "given": "Detach/source/account transition and explicit uninstall",
+      "expected": "Existing guards retained; derived plans cleaned; no cross-account reuse; referenced B retained",
+      "executed": false
+    },
+    {
+      "id": "format-rejection",
+      "owner": "dependency-planning",
+      "given": "Version-only baseline, partial or tampered layout opened",
+      "expected": "Reject before config/DDL/data/journal/callback mutations; valid new-layout crash resumes",
+      "executed": false
+    },
+    {
+      "id": "beyond-hard-lookahead",
+      "owner": "dependency-planning",
+      "given": "Hard rows=2; P delete ordinal1, independent filler ordinals2..5, C->Q surviving update ordinal6",
+      "expected": "Find C beyond initial 3 rows; C before/with P; C and clean D survive; no bad request",
+      "executed": false
+    },
+    {
+      "id": "independent-pairs",
+      "owner": "public-sync-live",
+      "given": "Three independent parent-child delete pairs, hard rows=2",
+      "expected": "Separate valid batches in one public sync; no table-wide group",
+      "executed": false
+    },
+    {
+      "id": "oversized-plus-independent",
+      "owner": "dependency-planning",
+      "given": "Three-row cycle exceeds hard rows=2; independent U update",
+      "expected": "U remains sendable; later SCC error reports committed prefix and preserves cycle intent",
+      "executed": false
+    },
+    {
+      "id": "new-parent-chain",
+      "owner": "dependency-planning",
+      "given": "Acyclic new parent chain longer than hard rows",
+      "expected": "Prerequisite DAG splits into valid batches; never claims whole closure indivisible",
+      "executed": false
+    },
+    {
+      "id": "self-cycle",
+      "owner": "dependency-planning",
+      "given": "One self-reference then mutual two-row insertion cycle",
+      "expected": "Self fits one row; mutual SCC indivisible; server deferrability retained",
+      "executed": false
+    },
+    {
+      "id": "aggregate-pressure",
+      "owner": "dependency-planning",
+      "given": "Survivor workspace retained while planner reaches entry/byte/work boundary",
+      "expected": "Combined charges and preallocation bounds; intrinsic capacity stable; no infinite retry",
+      "executed": false
+    },
+    {
+      "id": "one-call-live",
+      "owner": "public-sync-live",
+      "given": "Surviving-child reparent beyond lookahead plus independent dependency groups against real server",
+      "expected": "One public call drains valid batches; assert server and client complete state vector",
+      "executed": false
+    },
+    {
+      "id": "rekey-without-dependents",
+      "owner": "dependency-planning",
+      "given": "Local key update P to Q, known live P, no FK dependents, one-row hard limit",
+      "expected": "Independent intents; earliest delete P may freeze first; no rename prerequisite or remote atomicity",
+      "executed": false
+    },
+    {
+      "id": "rekey-unrelated-insert",
+      "owner": "dependency-planning",
+      "given": "Unrelated DELETE P and INSERT Q have the same persisted facts as a no-dependent rekey",
+      "expected": "Identical selection; do not infer pairing from payload, ordinal adjacency or transaction history",
+      "executed": false
+    },
+    {
+      "id": "rekey-chain-coalescing",
+      "owner": "baseline-lifecycle",
+      "given": "P to Q to R with unpublished Q; also repeat with Q published or frozen ambiguously",
+      "expected": "Prune only proven unpublished no-op Q; retain published Q deletion or exact frozen replay; preserve each identity B without transferring bases",
+      "executed": false
+    },
+    {
+      "id": "rekey-restart",
+      "owner": "baseline-lifecycle",
+      "given": "Reopen before freeze, after an independent old-delete freeze/commit and during requeue, including chained rekey",
+      "expected": "Reconstruct actual FK graph from persisted facts only; exact outbox replay first; remaining intent and B survive without pairing state",
+      "executed": false
+    },
+    {
+      "id": "rekey-partial-failure",
+      "owner": "public-sync-live",
+      "given": "One-row batches: no-dependent delete P commits and insertion Q then conflicts or fails validation",
+      "expected": "Keep Q intent, report committed prefix, neither automatically recreate P nor claim remote atomic rename or rollback",
+      "executed": false
+    }
+  ],
+  "baseWitnesses": [
+    {
+      "event": "local_edit",
+      "beforeA": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "P"
+        },
+        "name": {
+          "storage": "text",
+          "value": "old"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      },
+      "beforeB": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "P"
+        },
+        "name": {
+          "storage": "text",
+          "value": "old"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      },
+      "local": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "Q"
+        },
+        "name": {
+          "storage": "text",
+          "value": "local"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      },
+      "server": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "R"
+        },
+        "name": {
+          "storage": "text",
+          "value": "normalized"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      },
+      "afterA": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "P"
+        },
+        "name": {
+          "storage": "text",
+          "value": "old"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      },
+      "afterB": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "P"
+        },
+        "name": {
+          "storage": "text",
+          "value": "old"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      }
+    },
+    {
+      "event": "settlement_rebase",
+      "beforeA": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "P"
+        },
+        "name": {
+          "storage": "text",
+          "value": "old"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      },
+      "beforeB": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "P"
+        },
+        "name": {
+          "storage": "text",
+          "value": "old"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      },
+      "local": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "Q"
+        },
+        "name": {
+          "storage": "text",
+          "value": "local"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      },
+      "server": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "R"
+        },
+        "name": {
+          "storage": "text",
+          "value": "normalized"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      },
+      "afterA": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "R"
+        },
+        "name": {
+          "storage": "text",
+          "value": "normalized"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      },
+      "afterB": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "R"
+        },
+        "name": {
+          "storage": "text",
+          "value": "normalized"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      }
+    },
+    {
+      "event": "snapshot_preserve_outbox",
+      "beforeA": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "P"
+        },
+        "name": {
+          "storage": "text",
+          "value": "old"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      },
+      "beforeB": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "P"
+        },
+        "name": {
+          "storage": "text",
+          "value": "old"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      },
+      "local": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "Q"
+        },
+        "name": {
+          "storage": "text",
+          "value": "local"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      },
+      "server": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "R"
+        },
+        "name": {
+          "storage": "text",
+          "value": "normalized"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      },
+      "afterA": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "R"
+        },
+        "name": {
+          "storage": "text",
+          "value": "normalized"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      },
+      "afterB": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "P"
+        },
+        "name": {
+          "storage": "text",
+          "value": "old"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      }
+    },
+    {
+      "event": "requeue",
+      "beforeA": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "P"
+        },
+        "name": {
+          "storage": "text",
+          "value": "old"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      },
+      "beforeB": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "P"
+        },
+        "name": {
+          "storage": "text",
+          "value": "old"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      },
+      "local": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "Q"
+        },
+        "name": {
+          "storage": "text",
+          "value": "local"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      },
+      "server": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "R"
+        },
+        "name": {
+          "storage": "text",
+          "value": "normalized"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      },
+      "afterA": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "P"
+        },
+        "name": {
+          "storage": "text",
+          "value": "old"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      },
+      "afterB": {
+        "id": {
+          "storage": "text",
+          "value": "C"
+        },
+        "parent_id": {
+          "storage": "text",
+          "value": "P"
+        },
+        "name": {
+          "storage": "text",
+          "value": "old"
+        },
+        "large": {
+          "storage": "integer",
+          "value": "9223372036854775807"
+        },
+        "binary": {
+          "storage": "blob",
+          "value": "00ff"
+        },
+        "optional": {
+          "storage": "null",
+          "value": null
+        },
+        "document": {
+          "storage": "text",
+          "value": "{\"flag\":true}"
+        }
+      }
+    }
+  ],
+  "rekeyWitnesses": [
+    {
+      "id": "rekey-without-dependents",
+      "history": "Local UPDATE changes P to Q, with no FK relationships",
+      "serverLive": [
+        "P"
+      ],
+      "rows": [
+        {
+          "key": "P",
+          "op": "delete",
+          "ordinal": 1,
+          "serverParent": "",
+          "desiredParent": ""
+        },
+        {
+          "key": "Q",
+          "op": "upsert",
+          "ordinal": 2,
+          "serverParent": "",
+          "desiredParent": ""
+        }
+      ],
+      "expectedEdges": [],
+      "expectedBatches": [
+        [
+          "P"
+        ],
+        [
+          "Q"
+        ]
+      ],
+      "lifecycleNotes": ""
+    },
+    {
+      "id": "unrelated-delete-insert",
+      "history": "Unrelated DELETE P and INSERT Q produce the same durable facts",
+      "serverLive": [
+        "P"
+      ],
+      "rows": [
+        {
+          "key": "P",
+          "op": "delete",
+          "ordinal": 1,
+          "serverParent": "",
+          "desiredParent": ""
+        },
+        {
+          "key": "Q",
+          "op": "upsert",
+          "ordinal": 2,
+          "serverParent": "",
+          "desiredParent": ""
+        }
+      ],
+      "expectedEdges": [],
+      "expectedBatches": [
+        [
+          "P"
+        ],
+        [
+          "Q"
+        ]
+      ],
+      "lifecycleNotes": ""
+    },
+    {
+      "id": "rekey-after-restart",
+      "history": "Reopen after capturing P to Q and before any freeze",
+      "serverLive": [
+        "P"
+      ],
+      "rows": [
+        {
+          "key": "P",
+          "op": "delete",
+          "ordinal": 1,
+          "serverParent": "",
+          "desiredParent": ""
+        },
+        {
+          "key": "Q",
+          "op": "upsert",
+          "ordinal": 2,
+          "serverParent": "",
+          "desiredParent": ""
+        }
+      ],
+      "expectedEdges": [],
+      "expectedBatches": [
+        [
+          "P"
+        ],
+        [
+          "Q"
+        ]
+      ],
+      "lifecycleNotes": ""
+    },
+    {
+      "id": "chained-rekey",
+      "history": "Local P to Q to R before publication",
+      "serverLive": [
+        "P"
+      ],
+      "rows": [
+        {
+          "key": "P",
+          "op": "delete",
+          "ordinal": 1,
+          "serverParent": "",
+          "desiredParent": ""
+        },
+        {
+          "key": "R",
+          "op": "upsert",
+          "ordinal": 3,
+          "serverParent": "",
+          "desiredParent": ""
+        }
+      ],
+      "expectedEdges": [],
+      "expectedBatches": [
+        [
+          "P"
+        ],
+        [
+          "R"
+        ]
+      ],
+      "lifecycleNotes": "Input is after safe per-key pruning of unpublished Q; pure ordering checks do not execute pruning."
+    },
+    {
+      "id": "chained-rekey-after-restart",
+      "history": "Reopen after coalescing P to Q to R",
+      "serverLive": [
+        "P"
+      ],
+      "rows": [
+        {
+          "key": "P",
+          "op": "delete",
+          "ordinal": 1,
+          "serverParent": "",
+          "desiredParent": ""
+        },
+        {
+          "key": "R",
+          "op": "upsert",
+          "ordinal": 3,
+          "serverParent": "",
+          "desiredParent": ""
+        }
+      ],
+      "expectedEdges": [],
+      "expectedBatches": [
+        [
+          "P"
+        ],
+        [
+          "R"
+        ]
+      ],
+      "lifecycleNotes": "Q had absent B and no frozen ambiguity; actual SQLite crash/reopen is pending runtime evidence."
+    },
+    {
+      "id": "rekey-with-dependent",
+      "history": "Server C references P; desired C references unpublished Q",
+      "serverLive": [
+        "P",
+        "C"
+      ],
+      "rows": [
+        {
+          "key": "P",
+          "op": "delete",
+          "ordinal": 1,
+          "serverParent": "",
+          "desiredParent": ""
+        },
+        {
+          "key": "Q",
+          "op": "upsert",
+          "ordinal": 2,
+          "serverParent": "",
+          "desiredParent": ""
+        },
+        {
+          "key": "C",
+          "op": "upsert",
+          "ordinal": 3,
+          "serverParent": "P",
+          "desiredParent": "Q"
+        }
+      ],
+      "expectedEdges": [
+        "C>Q",
+        "P>C"
+      ],
+      "expectedBatches": [
+        [
+          "Q"
+        ],
+        [
+          "C"
+        ],
+        [
+          "P"
+        ]
+      ],
+      "lifecycleNotes": ""
+    }
+  ]
+}

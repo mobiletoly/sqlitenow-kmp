@@ -4,12 +4,7 @@ SQLiteNow schema files contain the current database shape. Put `CREATE TABLE`,
 `CREATE INDEX`, and `CREATE VIEW` statements under the database `schema/`
 directory.
 
-{% if include.platform == "dart" %}
-```text
-lib/db/sql/AppDatabase/schema/
-  task.sql
-```
-{% elsif include.platform == "kmp" %}
+{% if include.platform == "kmp" %}
 ```text
 src/commonMain/sql/AppDatabase/schema/
   task.sql
@@ -76,20 +71,7 @@ database package. Use the fully qualified type name, for example
 `propertyType=org.library.sqlite.TaskStatus`, when the type lives in another
 package.
 
-{% if include.platform == "dart" %}
-Generated Dart code expects an adapter that converts between the SQLite column
-value and your Dart type:
-
-```dart
-final db = AppDatabase(
-  path: path,
-  adapters: AppDatabaseAdapters(
-    taskStatusToSql: (status) => status.name,
-    sqlValueToTaskStatus: (value) => TaskStatus.parse(value as String),
-  ),
-);
-```
-{% elsif include.platform == "kmp" %}
+{% if include.platform == "kmp" %}
 Generated KMP code expects an adapter that converts between the SQLite column
 value and your Kotlin type:
 

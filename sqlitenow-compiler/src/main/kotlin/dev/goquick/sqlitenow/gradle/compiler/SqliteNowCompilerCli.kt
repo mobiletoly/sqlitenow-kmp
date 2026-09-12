@@ -58,7 +58,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
-private const val LEGACY_CONTRACT_VERSION = 1
+private const val KOTLIN_CONTRACT_VERSION = 1
 private const val SWIFT_PRODUCT_CONTRACT_VERSION = 2
 private const val LATEST_CONTRACT_VERSION = SWIFT_PRODUCT_CONTRACT_VERSION
 private const val SWIFT_PRODUCT_GENERATION_MODE = "swiftProductSource"
@@ -89,7 +89,7 @@ object SqliteNowCompilerCli {
         out: PrintStream = System.out,
         err: PrintStream = System.err,
     ): Int {
-        var responseContractVersion = LEGACY_CONTRACT_VERSION
+        var responseContractVersion = KOTLIN_CONTRACT_VERSION
         return try {
             val javaMajorVersion = currentJavaMajorVersion()
             if (args.size == 1 && args[0] == "--contract") {
@@ -158,20 +158,22 @@ object SqliteNowCompilerCli {
         runCatching {
             val request = Json.parseToJsonElement(requestFile.readText()).jsonObject
             when (request.optionalInt("contractVersion")) {
-                LEGACY_CONTRACT_VERSION -> LEGACY_CONTRACT_VERSION
+                KOTLIN_CONTRACT_VERSION -> KOTLIN_CONTRACT_VERSION
                 SWIFT_PRODUCT_CONTRACT_VERSION -> SWIFT_PRODUCT_CONTRACT_VERSION
                 else -> when (request.optionalString("generationMode")) {
                     SWIFT_PRODUCT_GENERATION_MODE -> SWIFT_PRODUCT_CONTRACT_VERSION
                     SWIFT_PRODUCT_PACKAGE_GENERATION_MODE -> SWIFT_PRODUCT_CONTRACT_VERSION
-                    else -> LEGACY_CONTRACT_VERSION
+                    else -> KOTLIN_CONTRACT_VERSION
                 }
             }
-        }.getOrDefault(LEGACY_CONTRACT_VERSION)
+        }.getOrDefault(KOTLIN_CONTRACT_VERSION)
 
     private fun parseCompilerRequest(requestFile: File): ParsedCompilerRequest {
         val request = Json.parseToJsonElement(requestFile.readText()).jsonObject
+        rejectRetiredSwiftFields(request)
+        rejectBackendField(request)
         return when (val generationMode = request.optionalString("generationMode")) {
-            null -> parseLegacyCompilerRequest(request)
+            null -> parseKotlinCompilerRequest(request)
             SWIFT_PRODUCT_GENERATION_MODE -> parseSwiftProductSourceRequest(request)
             SWIFT_PRODUCT_PACKAGE_GENERATION_MODE -> parseSwiftProductPackageRequest(request, requestFile)
             else -> error(
@@ -181,10 +183,10 @@ object SqliteNowCompilerCli {
         }
     }
 
-    private fun parseLegacyCompilerRequest(request: JsonObject): ParsedCompilerRequest {
-        val contractVersion = request.optionalInt("contractVersion") ?: LEGACY_CONTRACT_VERSION
-        require(contractVersion == LEGACY_CONTRACT_VERSION) {
-            "Legacy Kotlin/Dart requests require contractVersion=$LEGACY_CONTRACT_VERSION, " +
+    private fun parseKotlinCompilerRequest(request: JsonObject): ParsedCompilerRequest {
+        val contractVersion = request.optionalInt("contractVersion") ?: KOTLIN_CONTRACT_VERSION
+        require(contractVersion == KOTLIN_CONTRACT_VERSION) {
+            "Kotlin requests require contractVersion=$KOTLIN_CONTRACT_VERSION, " +
                 "but request specified $contractVersion."
         }
 
@@ -197,14 +199,52 @@ object SqliteNowCompilerCli {
                 schemaDatabaseFile = request.optionalString("schemaDatabaseFile")?.let(::File),
                 debug = request.optionalBoolean("debug") ?: false,
                 oversqlite = request.optionalBoolean("oversqlite") ?: false,
-                backend = request.optionalBackend("backend") ?: SqliteNowCompilerBackend.KOTLIN,
             ),
-            responseContractVersion = LEGACY_CONTRACT_VERSION,
+            responseContractVersion = KOTLIN_CONTRACT_VERSION,
         )
     }
 
+    private fun rejectBackendField(request: JsonObject) {
+        require(!request.containsKey("backend")) {
+            "Unsupported field 'backend'. Kotlin contractVersion=1 accepts databaseName, sqlDirectory, " +
+                "packageName, outputDirectory, schemaDatabaseFile, debug, and oversqlite."
+        }
+    }
+
+    private fun rejectRetiredSwiftFields(request: JsonObject) {
+        val retiredFields = listOf(
+            "swiftExport",
+            "swiftOverlayOutputDir",
+            "swiftOverlayModuleName",
+            "swiftFrameworkModuleName",
+            "swiftBridgePackageName",
+            "frameworkModuleName",
+            "bridgePackageName",
+        ).filter(request::containsKey)
+        require(retiredFields.isEmpty()) {
+            "Retired Swift overlay/bridge field(s) are unsupported: ${retiredFields.joinToString(", ")}. " +
+                "Use contractVersion=2 with generationMode '$SWIFT_PRODUCT_GENERATION_MODE' or " +
+                "'$SWIFT_PRODUCT_PACKAGE_GENERATION_MODE'. See docs/swift/generator-migration.md."
+        }
+        val mode = request.optionalString("generationMode")
+        if (mode == null) {
+            val productFields = listOf(
+                "swiftOutputDirectory",
+                "swiftModuleName",
+                "swiftProductExport",
+                "swiftPackageOutputDirectory",
+                "swiftPackageName",
+                "swiftTargetName",
+            ).filter(request::containsKey)
+            require(productFields.isEmpty()) {
+                "Swift product field(s) require contractVersion=2 and an explicit product generationMode: " +
+                    productFields.joinToString(", ")
+            }
+        }
+    }
+
     private fun parseSwiftProductSourceRequest(request: JsonObject): ParsedCompilerRequest {
-        val contractVersion = request.optionalInt("contractVersion") ?: LEGACY_CONTRACT_VERSION
+        val contractVersion = request.optionalInt("contractVersion") ?: KOTLIN_CONTRACT_VERSION
         require(contractVersion == SWIFT_PRODUCT_CONTRACT_VERSION) {
             "generationMode '$SWIFT_PRODUCT_GENERATION_MODE' requires " +
                 "contractVersion=$SWIFT_PRODUCT_CONTRACT_VERSION, but request specified $contractVersion."
@@ -229,7 +269,6 @@ object SqliteNowCompilerCli {
                 outputDirectory = File(request.requiredString("compilerOutputDirectory")),
                 schemaDatabaseFile = request.optionalString("schemaDatabaseFile")?.let(::File),
                 debug = request.optionalBoolean("debug") ?: false,
-                backend = SqliteNowCompilerBackend.KOTLIN,
                 swiftProductExport = SqliteNowSwiftProductExportConfig(
                     swiftOutputDirectory = swiftOutputDirectory,
                     swiftModuleName = swiftModuleName,
@@ -247,7 +286,7 @@ object SqliteNowCompilerCli {
         request: JsonObject,
         requestFile: File,
     ): ParsedCompilerRequest {
-        val contractVersion = request.optionalInt("contractVersion") ?: LEGACY_CONTRACT_VERSION
+        val contractVersion = request.optionalInt("contractVersion") ?: KOTLIN_CONTRACT_VERSION
         require(contractVersion == SWIFT_PRODUCT_CONTRACT_VERSION) {
             "generationMode '$SWIFT_PRODUCT_PACKAGE_GENERATION_MODE' requires " +
                 "contractVersion=$SWIFT_PRODUCT_CONTRACT_VERSION, but request specified $contractVersion."
@@ -309,7 +348,6 @@ object SqliteNowCompilerCli {
                 outputDirectory = compilerOutputDirectory,
                 schemaDatabaseFile = request.optionalString("schemaDatabaseFile")?.let(::File),
                 debug = request.optionalBoolean("debug") ?: false,
-                backend = SqliteNowCompilerBackend.KOTLIN,
                 swiftProductExport = SqliteNowSwiftProductExportConfig(
                     swiftOutputDirectory = swiftOutputDirectory,
                     swiftModuleName = swiftTargetName,
@@ -356,7 +394,7 @@ object SqliteNowCompilerCli {
         val conflictingFields = listOf("backend", "packageName", "outputDirectory", "oversqlite")
             .filter { field -> request.containsKey(field) }
         require(conflictingFields.isEmpty()) {
-            "generationMode '$generationMode' cannot be combined with legacy request field(s): " +
+            "generationMode '$generationMode' cannot be combined with Kotlin request field(s): " +
                 conflictingFields.joinToString(", ")
         }
     }
@@ -510,13 +548,13 @@ object SqliteNowCompilerCli {
         put(
             "supportedContractVersions",
             buildJsonArray {
-                add(JsonPrimitive(LEGACY_CONTRACT_VERSION))
+                add(JsonPrimitive(KOTLIN_CONTRACT_VERSION))
                 add(JsonPrimitive(SWIFT_PRODUCT_CONTRACT_VERSION))
             }
         )
         put("generatorVersion", generatorVersion())
         put("java", javaResponse(javaMajorVersion))
-        val legacyRequest = buildJsonObject {
+        val kotlinRequest = buildJsonObject {
             put("contractVersion", "optional-integer-1")
             put("databaseName", "string")
             put("sqlDirectory", "absolute-or-relative-path")
@@ -525,7 +563,6 @@ object SqliteNowCompilerCli {
             put("schemaDatabaseFile", "optional-path-or-null")
             put("debug", "optional-boolean")
             put("oversqlite", "optional-boolean")
-            put("backend", "optional-string-kotlin-or-dart")
         }
         val swiftProductSourceRequest = buildJsonObject {
             put("contractVersion", SWIFT_PRODUCT_CONTRACT_VERSION)
@@ -579,11 +616,11 @@ object SqliteNowCompilerCli {
             put("schemaDatabaseFile", "optional-path-or-null")
             put("debug", "optional-boolean")
         }
-        put("request", legacyRequest)
+        put("request", kotlinRequest)
         put(
             "requests",
             buildJsonObject {
-                put("legacyKotlinOrDart", legacyRequest)
+                put("kotlinV1", kotlinRequest)
                 put(SWIFT_PRODUCT_GENERATION_MODE, swiftProductSourceRequest)
                 put(SWIFT_PRODUCT_PACKAGE_GENERATION_MODE, swiftProductPackageRequest)
             }
@@ -689,12 +726,4 @@ object SqliteNowCompilerCli {
             ?.takeUnless { it is JsonNull }
             ?.jsonObject
 
-    private fun JsonObject.optionalBackend(name: String): SqliteNowCompilerBackend? =
-        optionalString(name)?.let { raw ->
-            when (raw.lowercase()) {
-                "kotlin" -> SqliteNowCompilerBackend.KOTLIN
-                "dart" -> SqliteNowCompilerBackend.DART
-                else -> error("Unsupported compiler backend '$raw'. Expected 'kotlin' or 'dart'.")
-            }
-        }
 }

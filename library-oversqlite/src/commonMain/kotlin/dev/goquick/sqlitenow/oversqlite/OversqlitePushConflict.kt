@@ -22,6 +22,9 @@ internal class OversqliteConflictExecutor(
     private val localStore: OversqliteLocalStore,
     private val syncStateStore: OversqliteSyncStateStore,
     private val outboxStateStore: OversqliteOutboxStateStore,
+    private val survivors: OversqliteApplySurvivors,
+    private val lifecycle: OversqliteApplyLifecycle,
+    private val workspace: OversqliteWorkspace,
 ) {
     suspend fun applyConflictResolutionPlan(
         state: RuntimeState,
@@ -30,44 +33,83 @@ internal class OversqliteConflictExecutor(
         tableName: String,
         plan: ConflictResolutionPlan,
         statementCache: StatementCache,
+        reservationToken: String,
     ): Set<String> {
         val updatedTables = linkedSetOf(tableName.lowercase())
 
-        when (val action = plan.localRowAction) {
+        // Freezing removes these dirty rows. Any row present now represents a later
+        // application write and must survive resolution of the rejected snapshot.
+        val hasNewerIntent = syncStateStore.loadDirtyUploadState(
+            conflictingRow.schemaName, conflictingRow.tableName, conflictingRow.keyJson, statementCache,
+        ).exists
+        val upsert = plan.localRowAction as? LocalRowAction.Upsert
+        val observed = plan.rowStateAction as? RowStateAction.Upsert
+        val unitInput = "${snapshot.canonicalRequestHash}/${conflictingRow.keyJson}/${observed?.rowVersion}/${observed?.deleted}/${plan.requeueIntent}"
+        val size = upsert?.payload?.let(::encodedJsonSize) ?: 0
+        val unit = applyUnit("conflict", snapshot.sourceBundleId, unitInput)
+        workspace.resizeInWriter(state, reservationToken, workspace.add(unit, workspace.reserved(reservationToken), WorkspaceCharge(32, workspace.scale(unit, size, 16))))
+        val desiredText = upsert?.payload?.toString()
+        val selectedUnit = applyUnit("conflict", snapshot.sourceBundleId, "$unitInput/$desiredText/$hasNewerIntent")
+        survivors.prepare(state, selectedUnit, 1, "conflict", observed?.rowVersion) {
+            if (hasNewerIntent) survivors.capture(state, tableName, conflictingRow.localPk)
+            else ApplySurvivor(tableName, conflictingRow.localPk, desiredText,
+                wire = upsert?.payloadSource == PayloadSource.AUTHORITATIVE_WIRE, role = "intended")
+        }
+        if (!hasNewerIntent) when (val action = plan.localRowAction) {
             is LocalRowAction.Upsert -> localStore.upsertRow(tableName, action.payload, action.payloadSource, statementCache)
             LocalRowAction.Delete -> localStore.deleteLocalRow(state, tableName, conflictingRow.localPk, statementCache)
         }
 
         when (val action = plan.rowStateAction) {
             RowStateAction.Delete -> syncStateStore.deleteStructuredRowState(
-                state.validated.schema,
+                state.validated.schemaForTable(tableName),
                 tableName,
                 conflictingRow.keyJson,
                 statementCache,
             )
-            is RowStateAction.Upsert -> syncStateStore.updateStructuredRowState(
-                schemaName = state.validated.schema,
+            is RowStateAction.Upsert -> syncStateStore.installAuthoritativeBaseline(
+                schemaName = state.validated.schemaForTable(tableName),
                 tableName = tableName,
                 keyJson = conflictingRow.keyJson,
                 rowVersion = action.rowVersion,
-                deleted = action.deleted,
+                kind = if(action.deleted) "deleted" else "live",
+                payload = action.payload?.let { localStore.captureAuthoritativePayload(tableName,it,statementCache) },
+                origin = "explicit_conflict", bundleSeq = null,
                 statementCache = statementCache,
             )
         }
 
-        val normalizedLocalPayload = when (plan.localRowAction) {
-            is LocalRowAction.Upsert -> localStore.serializeExistingRow(tableName, conflictingRow.localPk, statementCache)
-            LocalRowAction.Delete -> null
+        val normalizedLocalPayload = when {
+            hasNewerIntent -> localStore.serializeExistingRow(tableName, conflictingRow.localPk, statementCache)
+            upsert == null -> null
+            upsert.payloadSource == PayloadSource.LOCAL_STATE -> desiredText
+            else -> localStore.captureAuthoritativePayload(tableName, upsert.payload, statementCache)
         }
+        val retryIntent = if (hasNewerIntent) {
+            val serverState = plan.rowStateAction as? RowStateAction.Upsert
+            val serverHasRow = serverState != null && !serverState.deleted
+            when {
+                normalizedLocalPayload != null -> ResolvedDirtyIntent(
+                    if (serverHasRow) "UPDATE" else "INSERT",
+                    serverState?.rowVersion ?: 0L,
+                    RetryPayloadSource.LocalRow,
+                )
+                serverHasRow -> ResolvedDirtyIntent("DELETE", serverState.rowVersion, RetryPayloadSource.None)
+                else -> null
+            }
+        } else plan.requeueIntent
 
         syncStateStore.requeueSnapshotRows(snapshot, skipRow = conflictingRow, statementCache = statementCache)
-        plan.requeueIntent?.let { intent ->
+        if (hasNewerIntent && retryIntent == null) syncStateStore.deleteDirtyRow(
+            conflictingRow.schemaName, conflictingRow.tableName, conflictingRow.keyJson, statementCache,
+        )
+        retryIntent?.let { intent ->
             val payload = when (intent.payloadSource) {
                 RetryPayloadSource.LocalRow ->
                     normalizedLocalPayload ?: error("resolved payload for $tableName must exist before requeue")
                 RetryPayloadSource.None -> null
             }
-            syncStateStore.requeueDirtyIntent(
+            syncStateStore.rebaseDirtyIntent(
                 schemaName = conflictingRow.schemaName,
                 tableName = conflictingRow.tableName,
                 keyJson = conflictingRow.keyJson,
@@ -77,6 +119,8 @@ internal class OversqliteConflictExecutor(
                 statementCache = statementCache,
             )
         }
+        updatedTables += lifecycle.restoreAndVerify(state, statementCache)
+        survivors.finish()
         outboxStateStore.clearBundleAndRows(statementCache)
         return updatedTables
     }
@@ -115,6 +159,7 @@ internal sealed class RowStateAction {
     data class Upsert(
         val rowVersion: Long,
         val deleted: Boolean,
+        val payload: JsonObject? = null,
     ) : RowStateAction()
 
     data object Delete : RowStateAction()
@@ -149,7 +194,10 @@ internal fun buildConflictPlanDecision(
     expectedColumns: Set<String>,
 ): ConflictPlanDecision {
     val authoritative = context.authoritativeConflictState()
-    return when (result) {
+    val decision = when (result) {
+        MergeResult.DeferConflict -> ConflictPlanDecision.Invalid(
+            "deferred conflicts must be resolved through the durable conflict API"
+        )
         MergeResult.AcceptServer -> ConflictPlanDecision.Apply(
             when (authoritative) {
                 AuthoritativeConflictState.Missing -> ConflictResolutionPlan(
@@ -181,6 +229,10 @@ internal fun buildConflictPlanDecision(
         MergeResult.KeepLocal -> buildKeepLocalConflictPlan(context, authoritative, localPayload)
         is MergeResult.KeepMerged -> buildKeepMergedConflictPlan(context, authoritative, result.mergedPayload, expectedColumns)
     }
+    if(decision is ConflictPlanDecision.Apply && decision.plan.rowStateAction is RowStateAction.Upsert) {
+        return ConflictPlanDecision.Apply(decision.plan.copy(rowStateAction=decision.plan.rowStateAction.copy(payload=(authoritative as? AuthoritativeConflictState.Present)?.payload)))
+    }
+    return decision
 }
 
 private fun buildKeepLocalConflictPlan(
@@ -223,7 +275,7 @@ private fun buildKeepMergedConflictPlan(
         )
     }
 
-    return when (context.localOp) {
+    val decision = when (context.localOp) {
         "INSERT" -> buildInsertConflictPlan(mergedObject, authoritative)
         "UPDATE" -> buildUpdateConflictPlan(
             context = context,
@@ -233,6 +285,12 @@ private fun buildKeepMergedConflictPlan(
         )
         else -> error("unsupported local conflict op ${context.localOp}")
     }
+    // Resolver payloads use the same wire values exposed by ConflictContext.
+    return if (decision is ConflictPlanDecision.Apply) {
+        val action = decision.plan.localRowAction as LocalRowAction.Upsert
+        ConflictPlanDecision.Apply(decision.plan.copy(localRowAction = action.copy(payloadSource = PayloadSource.AUTHORITATIVE_WIRE)))
+    } else decision
+
 }
 
 private fun buildInsertConflictPlan(

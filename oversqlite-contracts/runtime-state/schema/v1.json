@@ -6,6 +6,39 @@
   },
   "tables": [
     {
+      "name": "_sync_admitted_contracts",
+      "columns": [
+        {
+          "name": "generation_id",
+          "type": "INTEGER",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "name": "fingerprint",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "descriptor",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "descriptor_hash",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        }
+      ]
+    },
+    {
       "name": "_sync_apply_state",
       "columns": [
         {
@@ -78,6 +111,135 @@
         },
         {
           "name": "pending_initialization_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        }
+      ]
+    },
+    {
+      "name": "_sync_conflict_state",
+      "columns": [
+        {
+          "name": "singleton_key",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "name": "dirty_revision",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "decision_state",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "'none'",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "source_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "source_bundle_id",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "canonical_request_hash",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "generation_id",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "generation_fingerprint",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "conflict_json",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "local_payload_json",
+          "type": "TEXT",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        }
+      ]
+    },
+    {
+      "name": "_sync_contract_identity",
+      "columns": [
+        {
+          "name": "singleton_key",
+          "type": "INTEGER",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "name": "database_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "service_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "generation_id",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "local_version",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "physical_shape",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "fingerprint",
           "type": "TEXT",
           "notNull": true,
           "defaultValue": "''",
@@ -162,6 +324,326 @@
           "notNull": true,
           "defaultValue": null,
           "primaryKeyPosition": 2
+        }
+      ]
+    },
+    {
+      "name": "_sync_opening_state",
+      "columns": [
+        {
+          "name": "singleton_key",
+          "type": "INTEGER",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKeyPosition": 1
+        },
+        {
+          "name": "format_version",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "mode",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "phase",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "outcome",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "revision",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "plan_digest",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "migration_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "database_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "service_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "attached_user_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "old_source_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "new_source_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "replacement_reason",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "from_generation_id",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "to_generation_id",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "from_local_version",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "to_local_version",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "preserved_tables",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "old_fingerprint",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "target_fingerprint",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "preservation_digest",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "migration_complete",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "contract_confirmed",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "pending_dirty_count",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "pending_frozen_count",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "pending_conflict_count",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "drain_complete",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "replacement_state",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "snapshot_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "snapshot_bundle_seq",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "snapshot_row_count",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "snapshot_byte_count",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "staged_row_count",
+          "type": "INTEGER",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "staged_byte_count",
+          "type": "INTEGER",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "target_reads_available",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "writes_available",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "next_action",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "pending_request_hash",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "pending_intent_revision",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "failure_code",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "failure_message",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "initial_old_source_id",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "old_source_recovery_receipt",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "integrity_hash",
+          "type": "TEXT",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKeyPosition": 0
         }
       ]
     },
@@ -308,6 +790,20 @@
         },
         {
           "name": "remote_bundle_seq",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "remote_row_count",
+          "type": "INTEGER",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKeyPosition": 0
+        },
+        {
+          "name": "remote_byte_count",
           "type": "INTEGER",
           "notNull": true,
           "defaultValue": "0",
@@ -537,34 +1033,49 @@
   ],
   "triggers": [
     {
+      "name": "_sync_conflict_revision_delete",
+      "table": "_sync_dirty_rows",
+      "sql": "CREATE TRIGGER _sync_conflict_revision_delete AFTER DELETE ON _sync_dirty_rows BEGIN UPDATE _sync_conflict_state SET dirty_revision = dirty_revision + 1 WHERE singleton_key = 1; END"
+    },
+    {
+      "name": "_sync_conflict_revision_insert",
+      "table": "_sync_dirty_rows",
+      "sql": "CREATE TRIGGER _sync_conflict_revision_insert AFTER INSERT ON _sync_dirty_rows BEGIN UPDATE _sync_conflict_state SET dirty_revision = dirty_revision + 1 WHERE singleton_key = 1; END"
+    },
+    {
+      "name": "_sync_conflict_revision_update",
+      "table": "_sync_dirty_rows",
+      "sql": "CREATE TRIGGER _sync_conflict_revision_update AFTER UPDATE ON _sync_dirty_rows BEGIN UPDATE _sync_conflict_state SET dirty_revision = dirty_revision + 1 WHERE singleton_key = 1; END"
+    },
+    {
       "name": "trg_users_ad",
       "table": "users",
-      "sql": "CREATE TRIGGER trg_users_ad AFTER DELETE ON \"users\" WHEN COALESCE((SELECT apply_mode FROM _sync_apply_state WHERE singleton_key = 1), 0) = 0 BEGIN INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at) VALUES ( 'main', 'users', json_object('id', OLD.\"id\"), 'DELETE', COALESCE( (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', OLD.\"id\")), (SELECT row_version FROM _sync_row_state WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', OLD.\"id\")), 0 ), NULL, COALESCE( (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', OLD.\"id\")), (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows) ), strftime('%Y-%m-%dT%H:%M:%fZ','now') ) ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET op='DELETE', payload=NULL, updated_at=excluded.updated_at; END"
+      "sql": "CREATE TRIGGER trg_users_ad AFTER DELETE ON \"users\" WHEN COALESCE((SELECT apply_mode FROM _sync_apply_state WHERE singleton_key = 1), 0) = 0 BEGIN INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at) VALUES ( 'local', 'users', json_object('id', OLD.\"id\"), 'DELETE', COALESCE( (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='local' AND table_name='users' AND key_json=json_object('id', OLD.\"id\")), (SELECT row_version FROM _sync_row_state WHERE schema_name='local' AND table_name='users' AND key_json=json_object('id', OLD.\"id\")), 0 ), NULL, COALESCE( (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='local' AND table_name='users' AND key_json=json_object('id', OLD.\"id\")), (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows) ), strftime('%Y-%m-%dT%H:%M:%fZ','now') ) ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET op='DELETE', payload=NULL, updated_at=excluded.updated_at; END"
     },
     {
       "name": "trg_users_ai",
       "table": "users",
-      "sql": "CREATE TRIGGER trg_users_ai AFTER INSERT ON \"users\" WHEN COALESCE((SELECT apply_mode FROM _sync_apply_state WHERE singleton_key = 1), 0) = 0 BEGIN INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at) VALUES ( 'main', 'users', json_object('id', NEW.\"id\"), CASE WHEN EXISTS ( SELECT 1 FROM _sync_row_state WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', NEW.\"id\") AND deleted=0 ) THEN 'UPDATE' ELSE 'INSERT' END, COALESCE( (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', NEW.\"id\")), (SELECT row_version FROM _sync_row_state WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', NEW.\"id\")), 0 ), json_object('id', NEW.\"id\", 'name', NEW.\"name\"), COALESCE( (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', NEW.\"id\")), (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows) ), strftime('%Y-%m-%dT%H:%M:%fZ','now') ) ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET op=excluded.op, payload=excluded.payload, updated_at=excluded.updated_at; END"
+      "sql": "CREATE TRIGGER trg_users_ai AFTER INSERT ON \"users\" WHEN COALESCE((SELECT apply_mode FROM _sync_apply_state WHERE singleton_key = 1), 0) = 0 BEGIN INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at) VALUES ( 'local', 'users', json_object('id', NEW.\"id\"), CASE WHEN EXISTS ( SELECT 1 FROM _sync_row_state WHERE schema_name='local' AND table_name='users' AND key_json=json_object('id', NEW.\"id\") AND deleted=0 ) THEN 'UPDATE' ELSE 'INSERT' END, COALESCE( (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='local' AND table_name='users' AND key_json=json_object('id', NEW.\"id\")), (SELECT row_version FROM _sync_row_state WHERE schema_name='local' AND table_name='users' AND key_json=json_object('id', NEW.\"id\")), 0 ), json_object('id', json_object('storage', typeof(NEW.\"id\"), 'value', CASE typeof(NEW.\"id\") WHEN 'blob' THEN lower(hex(NEW.\"id\")) WHEN 'real' THEN printf('%!.17g', NEW.\"id\") WHEN 'null' THEN NULL ELSE CAST(NEW.\"id\" AS TEXT) END), 'name', json_object('storage', typeof(NEW.\"name\"), 'value', CASE typeof(NEW.\"name\") WHEN 'blob' THEN lower(hex(NEW.\"name\")) WHEN 'real' THEN printf('%!.17g', NEW.\"name\") WHEN 'null' THEN NULL ELSE CAST(NEW.\"name\" AS TEXT) END)), COALESCE( (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='local' AND table_name='users' AND key_json=json_object('id', NEW.\"id\")), (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows) ), strftime('%Y-%m-%dT%H:%M:%fZ','now') ) ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET op=excluded.op, payload=excluded.payload, updated_at=excluded.updated_at; END"
     },
     {
       "name": "trg_users_au",
       "table": "users",
-      "sql": "CREATE TRIGGER trg_users_au AFTER UPDATE ON \"users\" WHEN COALESCE((SELECT apply_mode FROM _sync_apply_state WHERE singleton_key = 1), 0) = 0 BEGIN INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at) SELECT 'main', 'users', json_object('id', OLD.\"id\"), 'DELETE', COALESCE( (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', OLD.\"id\")), (SELECT row_version FROM _sync_row_state WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', OLD.\"id\")), 0 ), NULL, COALESCE( (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', OLD.\"id\")), (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows) ), strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE json_object('id', OLD.\"id\") != json_object('id', NEW.\"id\") ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET op='DELETE', payload=NULL, updated_at=excluded.updated_at; INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at) VALUES ( 'main', 'users', json_object('id', NEW.\"id\"), CASE WHEN EXISTS ( SELECT 1 FROM _sync_row_state WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', NEW.\"id\") AND deleted=0 ) THEN 'UPDATE' ELSE 'INSERT' END, COALESCE( (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', NEW.\"id\")), (SELECT row_version FROM _sync_row_state WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', NEW.\"id\")), 0 ), json_object('id', NEW.\"id\", 'name', NEW.\"name\"), COALESCE( (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='main' AND table_name='users' AND key_json=json_object('id', NEW.\"id\")), (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows) ), strftime('%Y-%m-%dT%H:%M:%fZ','now') ) ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET op=excluded.op, payload=excluded.payload, updated_at=excluded.updated_at; END"
+      "sql": "CREATE TRIGGER trg_users_au AFTER UPDATE ON \"users\" WHEN COALESCE((SELECT apply_mode FROM _sync_apply_state WHERE singleton_key = 1), 0) = 0 BEGIN INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at) SELECT 'local', 'users', json_object('id', OLD.\"id\"), 'DELETE', COALESCE( (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='local' AND table_name='users' AND key_json=json_object('id', OLD.\"id\")), (SELECT row_version FROM _sync_row_state WHERE schema_name='local' AND table_name='users' AND key_json=json_object('id', OLD.\"id\")), 0 ), NULL, COALESCE( (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='local' AND table_name='users' AND key_json=json_object('id', OLD.\"id\")), (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows) ), strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE json_object('id', OLD.\"id\") != json_object('id', NEW.\"id\") ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET op='DELETE', payload=NULL, updated_at=excluded.updated_at; INSERT INTO _sync_dirty_rows(schema_name, table_name, key_json, op, base_row_version, payload, dirty_ordinal, updated_at) VALUES ( 'local', 'users', json_object('id', NEW.\"id\"), CASE WHEN EXISTS ( SELECT 1 FROM _sync_row_state WHERE schema_name='local' AND table_name='users' AND key_json=json_object('id', NEW.\"id\") AND deleted=0 ) THEN 'UPDATE' ELSE 'INSERT' END, COALESCE( (SELECT base_row_version FROM _sync_dirty_rows WHERE schema_name='local' AND table_name='users' AND key_json=json_object('id', NEW.\"id\")), (SELECT row_version FROM _sync_row_state WHERE schema_name='local' AND table_name='users' AND key_json=json_object('id', NEW.\"id\")), 0 ), json_object('id', json_object('storage', typeof(NEW.\"id\"), 'value', CASE typeof(NEW.\"id\") WHEN 'blob' THEN lower(hex(NEW.\"id\")) WHEN 'real' THEN printf('%!.17g', NEW.\"id\") WHEN 'null' THEN NULL ELSE CAST(NEW.\"id\" AS TEXT) END), 'name', json_object('storage', typeof(NEW.\"name\"), 'value', CASE typeof(NEW.\"name\") WHEN 'blob' THEN lower(hex(NEW.\"name\")) WHEN 'real' THEN printf('%!.17g', NEW.\"name\") WHEN 'null' THEN NULL ELSE CAST(NEW.\"name\" AS TEXT) END)), COALESCE( (SELECT dirty_ordinal FROM _sync_dirty_rows WHERE schema_name='local' AND table_name='users' AND key_json=json_object('id', NEW.\"id\")), (SELECT COALESCE(MAX(dirty_ordinal), 0) + 1 FROM _sync_dirty_rows) ), strftime('%Y-%m-%dT%H:%M:%fZ','now') ) ON CONFLICT(schema_name, table_name, key_json) DO UPDATE SET op=excluded.op, payload=excluded.payload, updated_at=excluded.updated_at; END"
     },
     {
       "name": "trg_users_bd_guard",
       "table": "users",
-      "sql": "CREATE TRIGGER trg_users_bd_guard BEFORE DELETE ON \"users\" WHEN EXISTS ( SELECT 1 FROM _sync_operation_state WHERE singleton_key = 1 AND kind != 'none' ) AND NOT EXISTS ( SELECT 1 FROM _sync_apply_state WHERE singleton_key = 1 AND apply_mode = 1 ) BEGIN SELECT RAISE(ABORT, 'SYNC_TRANSITION_PENDING'); END"
+      "sql": "CREATE TRIGGER trg_users_bd_guard BEFORE DELETE ON \"users\" WHEN ( EXISTS ( SELECT 1 FROM _sync_operation_state WHERE singleton_key = 1 AND kind != 'none' ) OR NOT EXISTS ( SELECT 1 FROM _sync_opening_state WHERE singleton_key = 1 AND phase = 'ready' AND outcome = 'ready' AND writes_available = 1 ) ) AND NOT EXISTS ( SELECT 1 FROM _sync_apply_state WHERE singleton_key = 1 AND apply_mode = 1 ) BEGIN SELECT RAISE(ABORT, 'SYNC_TRANSITION_PENDING'); END"
     },
     {
       "name": "trg_users_bi_guard",
       "table": "users",
-      "sql": "CREATE TRIGGER trg_users_bi_guard BEFORE INSERT ON \"users\" WHEN EXISTS ( SELECT 1 FROM _sync_operation_state WHERE singleton_key = 1 AND kind != 'none' ) AND NOT EXISTS ( SELECT 1 FROM _sync_apply_state WHERE singleton_key = 1 AND apply_mode = 1 ) BEGIN SELECT RAISE(ABORT, 'SYNC_TRANSITION_PENDING'); END"
+      "sql": "CREATE TRIGGER trg_users_bi_guard BEFORE INSERT ON \"users\" WHEN ( EXISTS ( SELECT 1 FROM _sync_operation_state WHERE singleton_key = 1 AND kind != 'none' ) OR NOT EXISTS ( SELECT 1 FROM _sync_opening_state WHERE singleton_key = 1 AND phase = 'ready' AND outcome = 'ready' AND writes_available = 1 ) ) AND NOT EXISTS ( SELECT 1 FROM _sync_apply_state WHERE singleton_key = 1 AND apply_mode = 1 ) BEGIN SELECT RAISE(ABORT, 'SYNC_TRANSITION_PENDING'); END"
     },
     {
       "name": "trg_users_bu_guard",
       "table": "users",
-      "sql": "CREATE TRIGGER trg_users_bu_guard BEFORE UPDATE ON \"users\" WHEN EXISTS ( SELECT 1 FROM _sync_operation_state WHERE singleton_key = 1 AND kind != 'none' ) AND NOT EXISTS ( SELECT 1 FROM _sync_apply_state WHERE singleton_key = 1 AND apply_mode = 1 ) BEGIN SELECT RAISE(ABORT, 'SYNC_TRANSITION_PENDING'); END"
+      "sql": "CREATE TRIGGER trg_users_bu_guard BEFORE UPDATE ON \"users\" WHEN ( EXISTS ( SELECT 1 FROM _sync_operation_state WHERE singleton_key = 1 AND kind != 'none' ) OR NOT EXISTS ( SELECT 1 FROM _sync_opening_state WHERE singleton_key = 1 AND phase = 'ready' AND outcome = 'ready' AND writes_available = 1 ) ) AND NOT EXISTS ( SELECT 1 FROM _sync_apply_state WHERE singleton_key = 1 AND apply_mode = 1 ) BEGIN SELECT RAISE(ABORT, 'SYNC_TRANSITION_PENDING'); END"
     }
   ],
   "state": {
@@ -619,7 +1130,9 @@
         "canonical_request_hash": "",
         "row_count": 0,
         "remote_bundle_hash": "",
-        "remote_bundle_seq": 0
+        "remote_bundle_seq": 0,
+        "remote_row_count": 0,
+        "remote_byte_count": 0
       }
     ],
     "outbox_rows": [],
@@ -628,7 +1141,7 @@
     "snapshot_stage": [],
     "managed_tables": [
       {
-        "schema_name": "main",
+        "schema_name": "local",
         "table_name": "users"
       }
     ]

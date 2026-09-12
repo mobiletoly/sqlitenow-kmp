@@ -19,13 +19,18 @@ import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 
 internal suspend fun initializeOversqliteControlTables(db: SafeSQLiteConnection) {
     db.execSQL("PRAGMA foreign_keys = ON")
+    db.execSQL(pushPlanDdl)
+    db.execSQL(pushNodesDdl)
+    db.execSQL(pushEdgesDdl)
+    pushIndexDdl.values.forEach { db.execSQL(it) }
+    db.execSQL(applyPlanDdl)
+    db.execSQL(applyRowsDdl)
+    db.execSQL(applyEdgesDdl)
+    db.execSQL(applyPendingIndexDdl)
+    db.execSQL(applyRoleIndexDdl)
+    db.execSQL(createOversqliteOpeningTableSql)
     db.execSQL(
-        """
-        CREATE TABLE IF NOT EXISTS _sync_apply_state (
-          singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),
-          apply_mode INTEGER NOT NULL DEFAULT 0
-        )
-        """.trimIndent()
+        oversqliteRetainedTableDdl.getValue("_sync_apply_state")
     )
     db.execSQL(
         """
@@ -35,72 +40,35 @@ internal suspend fun initializeOversqliteControlTables(db: SafeSQLiteConnection)
         """.trimIndent(),
     )
     db.execSQL(
-        """
-        CREATE TABLE IF NOT EXISTS _sync_row_state (
-          schema_name TEXT NOT NULL,
-          table_name TEXT NOT NULL,
-          key_json TEXT NOT NULL,
-          row_version INTEGER NOT NULL DEFAULT 0,
-          deleted INTEGER NOT NULL DEFAULT 0,
-          updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-          PRIMARY KEY (schema_name, table_name, key_json)
-        )
-        """.trimIndent()
+        oversqliteRetainedTableDdl.getValue("_sync_row_state")
+    )
+    db.execSQL(
+        oversqliteRetainedTableDdl.getValue("_sync_dirty_rows")
+    )
+    db.execSQL(relationshipProjectionDdl)
+    baselineIndexDdl.values.forEach { db.execSQL(it) }
+    db.execSQL(
+        oversqliteRetainedTableDdl.getValue("_sync_conflict_state")
     )
     db.execSQL(
         """
-        CREATE TABLE IF NOT EXISTS _sync_dirty_rows (
-          schema_name TEXT NOT NULL,
-          table_name TEXT NOT NULL,
-          key_json TEXT NOT NULL,
-          op TEXT NOT NULL CHECK (op IN ('INSERT','UPDATE','DELETE')),
-          base_row_version INTEGER NOT NULL DEFAULT 0,
-          payload TEXT,
-          dirty_ordinal INTEGER NOT NULL DEFAULT 0,
-          updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-          PRIMARY KEY (schema_name, table_name, key_json)
-        )
+        INSERT INTO _sync_conflict_state(singleton_key)
+        VALUES(1)
+        ON CONFLICT(singleton_key) DO NOTHING
         """.trimIndent()
     )
-    db.execSQL("CREATE INDEX IF NOT EXISTS idx_sync_dirty_rows_dirty_ordinal ON _sync_dirty_rows(dirty_ordinal)")
+    for (operation in listOf("insert", "update", "delete")) {
+        db.execSQL(expectedConflictRevisionTriggerSql(operation))
+        db.execSQL(expectedBaselineRevisionTriggerSql(operation))
+    }
     db.execSQL(
-        """
-        CREATE TABLE IF NOT EXISTS _sync_snapshot_stage (
-          snapshot_id TEXT NOT NULL,
-          row_ordinal INTEGER NOT NULL,
-          schema_name TEXT NOT NULL,
-          table_name TEXT NOT NULL,
-          key_json TEXT NOT NULL,
-          row_version INTEGER NOT NULL,
-          payload TEXT NOT NULL,
-          PRIMARY KEY (snapshot_id, row_ordinal),
-          UNIQUE (snapshot_id, schema_name, table_name, key_json)
-        )
-        """.trimIndent()
+        oversqliteRetainedTableDdl.getValue("_sync_snapshot_stage")
     )
     db.execSQL(
-        """
-        CREATE TABLE IF NOT EXISTS _sync_source_state (
-          source_id TEXT NOT NULL PRIMARY KEY,
-          next_source_bundle_id INTEGER NOT NULL DEFAULT 1,
-          replaced_by_source_id TEXT NOT NULL DEFAULT '',
-          created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-        )
-        """.trimIndent()
+        oversqliteRetainedTableDdl.getValue("_sync_source_state")
     )
     db.execSQL(
-        """
-        CREATE TABLE IF NOT EXISTS _sync_attachment_state (
-          singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),
-          current_source_id TEXT NOT NULL DEFAULT '',
-          binding_state TEXT NOT NULL DEFAULT 'anonymous' CHECK (binding_state IN ('anonymous', 'attached')),
-          attached_user_id TEXT NOT NULL DEFAULT '',
-          schema_name TEXT NOT NULL DEFAULT '',
-          last_bundle_seq_seen INTEGER NOT NULL DEFAULT 0,
-          rebuild_required INTEGER NOT NULL DEFAULT 0,
-          pending_initialization_id TEXT NOT NULL DEFAULT ''
-        )
-        """.trimIndent()
+        oversqliteRetainedTableDdl.getValue("_sync_attachment_state")
     )
     db.execSQL(
         """
@@ -119,20 +87,7 @@ internal suspend fun initializeOversqliteControlTables(db: SafeSQLiteConnection)
         """.trimIndent()
     )
     db.execSQL(
-        """
-        CREATE TABLE IF NOT EXISTS _sync_operation_state (
-          singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),
-          kind TEXT NOT NULL DEFAULT 'none' CHECK (kind IN ('none', 'remote_replace', 'source_recovery')),
-          target_user_id TEXT NOT NULL DEFAULT '',
-          staged_snapshot_id TEXT NOT NULL DEFAULT '',
-          snapshot_bundle_seq INTEGER NOT NULL DEFAULT 0,
-          snapshot_row_count INTEGER NOT NULL DEFAULT 0,
-          snapshot_byte_count INTEGER NOT NULL DEFAULT 0,
-          snapshot_stage_complete INTEGER NOT NULL DEFAULT 0,
-          reason TEXT NOT NULL DEFAULT '',
-          replacement_source_id TEXT NOT NULL DEFAULT ''
-        )
-        """.trimIndent()
+        oversqliteRetainedTableDdl.getValue("_sync_operation_state")
     )
     db.execSQL(
         """
@@ -152,21 +107,9 @@ internal suspend fun initializeOversqliteControlTables(db: SafeSQLiteConnection)
         ON CONFLICT(singleton_key) DO NOTHING
         """.trimIndent()
     )
+    snapshotStageAccountingDdl.values.forEach { db.execSQL(it) }
     db.execSQL(
-        """
-        CREATE TABLE IF NOT EXISTS _sync_outbox_bundle (
-          singleton_key INTEGER NOT NULL PRIMARY KEY CHECK (singleton_key = 1),
-          canonical_json_contract TEXT NOT NULL CHECK (canonical_json_contract = 'jcs_uniform_numeric_strings_v1'),
-          state TEXT NOT NULL DEFAULT 'none' CHECK (state IN ('none', 'prepared', 'committed_remote')),
-          source_id TEXT NOT NULL DEFAULT '',
-          source_bundle_id INTEGER NOT NULL DEFAULT 0,
-          initialization_id TEXT NOT NULL DEFAULT '',
-          canonical_request_hash TEXT NOT NULL DEFAULT '',
-          row_count INTEGER NOT NULL DEFAULT 0,
-          remote_bundle_hash TEXT NOT NULL DEFAULT '',
-          remote_bundle_seq INTEGER NOT NULL DEFAULT 0
-        )
-        """.trimIndent()
+        oversqliteRetainedTableDdl.getValue("_sync_outbox_bundle")
     )
     db.execSQL(
         """
@@ -178,39 +121,17 @@ internal suspend fun initializeOversqliteControlTables(db: SafeSQLiteConnection)
           source_bundle_id,
           initialization_id,
           canonical_request_hash,
-          row_count,
-          remote_bundle_hash,
-          remote_bundle_seq
+          row_count
         )
-        VALUES(1, 'jcs_uniform_numeric_strings_v1', 'none', '', 0, '', '', 0, '', 0)
+        VALUES(1, 'jcs_uniform_numeric_strings_v1', 'none', '', 0, '', '', 0)
         ON CONFLICT(singleton_key) DO NOTHING
         """.trimIndent()
     )
     db.execSQL(
-        """
-        CREATE TABLE IF NOT EXISTS _sync_outbox_rows (
-          source_bundle_id INTEGER NOT NULL,
-          row_ordinal INTEGER NOT NULL,
-          schema_name TEXT NOT NULL,
-          table_name TEXT NOT NULL,
-          key_json TEXT NOT NULL,
-          wire_key_json TEXT NOT NULL,
-          op TEXT NOT NULL CHECK (op IN ('INSERT','UPDATE','DELETE')),
-          base_row_version INTEGER NOT NULL DEFAULT 0,
-          local_payload TEXT,
-          wire_payload TEXT,
-          PRIMARY KEY (source_bundle_id, row_ordinal)
-        )
-        """.trimIndent()
+        oversqliteRetainedTableDdl.getValue("_sync_outbox_rows")
     )
     db.execSQL(
-        """
-        CREATE TABLE IF NOT EXISTS _sync_managed_tables (
-          schema_name TEXT NOT NULL,
-          table_name TEXT NOT NULL,
-          PRIMARY KEY (schema_name, table_name)
-        )
-        """.trimIndent(),
+        oversqliteRetainedTableDdl.getValue("_sync_managed_tables"),
     )
     db.execSQL("UPDATE _sync_apply_state SET apply_mode = 0 WHERE singleton_key = 1")
 }

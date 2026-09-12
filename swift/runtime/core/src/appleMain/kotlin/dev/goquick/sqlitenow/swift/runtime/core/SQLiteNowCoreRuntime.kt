@@ -38,6 +38,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import platform.Foundation.NSData
@@ -120,6 +121,10 @@ class SQLiteNowCoreRuntimeBindValue private constructor(
         }
     }
 
+    fun blobBytes(): ByteArray = requireNotNull(dataValue) {
+        "SQLiteNow bind value is not a blob"
+    }.toByteArray()
+
     private companion object {
         const val KIND_NULL = "null"
         const val KIND_INT64 = "int64"
@@ -148,10 +153,13 @@ class SQLiteNowCoreRuntimeCell(
         const val KIND_TEXT = "text"
         const val KIND_BOOL = "bool"
         const val KIND_BLOB = "blob"
+
+        fun blob(value: ByteArray): SQLiteNowCoreRuntimeCell =
+            SQLiteNowCoreRuntimeCell(KIND_BLOB, 0L, 0.0, null, false, value.toNSData())
     }
 }
 
-class SQLiteNowCoreRuntimeRow internal constructor(
+class SQLiteNowCoreRuntimeRow(
     private val cells: List<SQLiteNowCoreRuntimeCell>,
 ) {
     val count: Int
@@ -160,7 +168,7 @@ class SQLiteNowCoreRuntimeRow internal constructor(
     fun cellAt(index: Int): SQLiteNowCoreRuntimeCell = cells[index]
 }
 
-class SQLiteNowCoreRuntimeRowSet internal constructor(
+class SQLiteNowCoreRuntimeRowSet(
     private val rows: List<SQLiteNowCoreRuntimeRow>,
 ) {
     val count: Int
@@ -327,12 +335,14 @@ class SQLiteNowCoreRuntimeDatabase(
     migrationPlan: SQLiteNowCoreRuntimeMigrationPlan,
     debug: Boolean,
     onMigrationStep: SQLiteNowCoreRuntimeMigrationCallback?,
+    syncManaged: Boolean,
 ) {
     private val database = RuntimeSqliteNowDatabase(
         dbName = path,
         migrationPlan = migrationPlan,
         debug = debug,
         onMigrationStep = onMigrationStep,
+        syncManaged = syncManaged,
     )
     private var observerScope = newObserverScope()
 
@@ -340,7 +350,14 @@ class SQLiteNowCoreRuntimeDatabase(
         path: String,
         migrationPlan: SQLiteNowCoreRuntimeMigrationPlan,
         debug: Boolean,
-    ) : this(path, migrationPlan, debug, null)
+    ) : this(path, migrationPlan, debug, null, false)
+
+    constructor(
+        path: String,
+        migrationPlan: SQLiteNowCoreRuntimeMigrationPlan,
+        debug: Boolean,
+        onMigrationStep: SQLiteNowCoreRuntimeMigrationCallback?,
+    ) : this(path, migrationPlan, debug, onMigrationStep, false)
 
     @Throws(SQLiteNowCoreRuntimeException::class, CancellationException::class)
     suspend fun open() = mapRuntimeErrors {
@@ -365,14 +382,25 @@ class SQLiteNowCoreRuntimeDatabase(
 
     @Throws(SQLiteNowCoreRuntimeException::class, CancellationException::class)
     suspend fun close() = mapRuntimeErrors {
+        closeTableObserversForSQLiteNowSyncRuntime()
+        database.close()
+    }
+
+    /** The coordinated sync owner closes the underlying database without calling this wrapper's close(). */
+    fun closeTableObserversForSQLiteNowSyncRuntime() {
         observerScope.cancel()
         observerScope = newObserverScope()
-        database.close()
     }
 
     fun isOpen(): Boolean = database.isOpen()
 
     fun connectionForSQLiteNowSyncRuntime(): SafeSQLiteConnection = database.connection()
+
+    /**
+     * Cross-module handoff used by the KMP-backed Swift sync runtime. The returned database is
+     * still unpublished; only the coordinated Oversqlite opening may reserve and publish it.
+     */
+    fun databaseForSQLiteNowSyncRuntime(): SqliteNowDatabase = database
 
     @Throws(SQLiteNowCoreRuntimeException::class, CancellationException::class)
     suspend fun execute(
@@ -432,7 +460,12 @@ class SQLiteNowCoreRuntimeDatabase(
         tableNames: List<String>,
         observer: SQLiteNowCoreRuntimeTableObserver,
     ): SQLiteNowCoreRuntimeCancelHandle {
-        database.enableTableChangeNotifications()
+        try {
+            database.enableTableChangeNotifications()
+        } catch (failure: Throwable) {
+            observer.onError(errorPayload(failure))
+            return SQLiteNowCoreRuntimeCancelHandle {}
+        }
         val scope = observerScope
         val job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
@@ -440,7 +473,9 @@ class SQLiteNowCoreRuntimeDatabase(
                     observer.onChanged()
                 }
             } catch (cancellation: CancellationException) {
-                return@launch
+                if (!scope.isActive) {
+                    observer.onError(errorPayload(IllegalStateException("Database closed while observing tables")))
+                }
             } catch (t: Throwable) {
                 observer.onError(errorPayload(t))
             }
@@ -476,10 +511,12 @@ private class RuntimeSqliteNowDatabase(
     migrationPlan: SQLiteNowCoreRuntimeMigrationPlan,
     debug: Boolean,
     onMigrationStep: SQLiteNowCoreRuntimeMigrationCallback?,
+    syncManaged: Boolean,
 ) : SqliteNowDatabase(
     dbName = dbName,
     migration = RuntimeMigrationPlan(migrationPlan, onMigrationStep),
     debug = debug,
+    syncManaged = syncManaged,
 ) {
     suspend fun tableChangeFlow(tableNames: Set<String>) = createTableChangeFlow(tableNames)
 }
@@ -488,6 +525,8 @@ private class RuntimeMigrationPlan(
     private val plan: SQLiteNowCoreRuntimeMigrationPlan,
     private val onMigrationStep: SQLiteNowCoreRuntimeMigrationCallback?,
 ) : DatabaseMigrations {
+    override val targetVersion: Int = plan.latestVersion.toInt()
+
     override suspend fun applyMigration(conn: SafeSQLiteConnection, currentVersion: Int): Int {
         try {
             return conn.withExclusiveAccess {

@@ -36,14 +36,13 @@ data class Bundle(
     @SerialName("bundle_seq") val bundleSeq: Long,
     @SerialName("source_id") val sourceId: String,
     @SerialName("source_bundle_id") val sourceBundleId: Long,
+    @SerialName("bundle_hash") val bundleHash: String,
     val rows: List<BundleRow>,
 )
 
 @Serializable
 data class BundleChangeEvent(
     @SerialName("bundle_seq") val bundleSeq: Long,
-    @SerialName("source_id") val sourceId: String = "",
-    @SerialName("source_bundle_id") val sourceBundleId: Long = 0,
 )
 
 @Serializable
@@ -57,25 +56,24 @@ data class PushRequestRow(
 )
 
 @Serializable
-data class PushSessionCreateRequest(
+internal data class CompletePushRequest(
     @SerialName("source_bundle_id") val sourceBundleId: Long,
-	@SerialName("planned_row_count") val plannedRowCount: Long,
-	@SerialName("canonical_request_hash") val canonicalRequestHash: String,
+    @SerialName("canonical_request_hash") val canonicalRequestHash: String,
     @SerialName("initialization_id") val initializationId: String? = null,
+    val rows: JsonElement,
 )
 
 @Serializable
-data class PushSessionCreateResponse(
-    @SerialName("push_id") val pushId: String = "",
-    val status: String,
-    @SerialName("planned_row_count") val plannedRowCount: Long = 0,
-    @SerialName("next_expected_row_ordinal") val nextExpectedRowOrdinal: Long = 0,
-    @SerialName("bundle_seq") val bundleSeq: Long = 0,
-    @SerialName("source_id") val sourceId: String = "",
-    @SerialName("source_bundle_id") val sourceBundleId: Long = 0,
-    @SerialName("row_count") val rowCount: Long = 0,
-	@SerialName("bundle_hash") val bundleHash: String = "",
-	@SerialName("canonical_request_hash") val canonicalRequestHash: String,
+internal data class CompletePushResponseWire(
+    @SerialName("bundle_seq") val bundleSeq: Long,
+    @SerialName("bundle_hash") val bundleHash: String,
+    val rows: JsonElement,
+)
+
+internal data class CompletePushResult(
+    val bundleSeq: Long,
+    val bundleHash: String,
+    val rows: List<BundleRow>,
 )
 
 @Serializable
@@ -92,41 +90,6 @@ data class ConnectResponse(
 )
 
 @Serializable
-data class PushSessionChunkRequest(
-    @SerialName("start_row_ordinal") val startRowOrdinal: Long,
-    val rows: List<PushRequestRow>,
-)
-
-@Serializable
-data class PushSessionChunkResponse(
-    @SerialName("push_id") val pushId: String,
-    @SerialName("next_expected_row_ordinal") val nextExpectedRowOrdinal: Long,
-)
-
-@Serializable
-data class PushSessionCommitResponse(
-    @SerialName("bundle_seq") val bundleSeq: Long,
-    @SerialName("source_id") val sourceId: String,
-    @SerialName("source_bundle_id") val sourceBundleId: Long,
-    @SerialName("row_count") val rowCount: Long,
-	@SerialName("bundle_hash") val bundleHash: String,
-	@SerialName("canonical_request_hash") val canonicalRequestHash: String,
-)
-
-@Serializable
-data class CommittedBundleRowsResponse(
-    @SerialName("bundle_seq") val bundleSeq: Long,
-    @SerialName("source_id") val sourceId: String,
-    @SerialName("source_bundle_id") val sourceBundleId: Long,
-    @SerialName("row_count") val rowCount: Long,
-	@SerialName("bundle_hash") val bundleHash: String,
-	@SerialName("canonical_request_hash") val canonicalRequestHash: String,
-    val rows: List<BundleRow>,
-    @SerialName("next_row_ordinal") val nextRowOrdinal: Long,
-    @SerialName("has_more") val hasMore: Boolean,
-)
-
-@Serializable
 data class PullResponse(
     @SerialName("stable_bundle_seq") val stableBundleSeq: Long,
     val bundles: List<Bundle>,
@@ -134,48 +97,32 @@ data class PullResponse(
 )
 
 @Serializable
-data class CapabilitiesResponse(
+internal data class AdmittedOversqliteContract(
     @SerialName("protocol_version") val protocolVersion: String,
-    @SerialName("schema_version") val schemaVersion: Int,
-    @SerialName("registered_table_specs") val registeredTableSpecs: List<RegisteredTableSpec>,
-    val features: Map<String, Boolean>,
-    @SerialName("bundle_limits") val bundleLimits: BundleCapabilitiesLimits,
+    @SerialName("schema_generation") val generation: SyncGeneration,
+    val limits: OversqliteWireLimits,
+    @SerialName("watch_enabled") val watchEnabled: Boolean,
 )
 
 /** One server-advertised sync table and its ordered wire key-column contract. */
 @Serializable
-data class RegisteredTableSpec(
+internal data class RegisteredTableSpec(
     val schema: String,
     val table: String,
     @SerialName("sync_key_columns") val syncKeyColumns: List<String>,
 )
 
-val CapabilitiesResponse.bundleChangeWatchSupported: Boolean
-    get() = features["bundle_change_watch"] == true
-
 @Serializable
-data class BundleCapabilitiesLimits(
-    @SerialName("max_rows_per_bundle") val maxRowsPerBundle: Int = 0,
-    @SerialName("max_bytes_per_bundle") val maxBytesPerBundle: Int = 0,
-    @SerialName("max_bundles_per_pull") val maxBundlesPerPull: Int = 0,
-    @SerialName("default_rows_per_push_chunk") val defaultRowsPerPushChunk: Int = 0,
-    @SerialName("max_rows_per_push_chunk") val maxRowsPerPushChunk: Int = 0,
-    @SerialName("push_session_ttl_seconds") val pushSessionTtlSeconds: Int = 0,
-    @SerialName("default_rows_per_committed_bundle_chunk") val defaultRowsPerCommittedBundleChunk: Int = 0,
-    @SerialName("max_rows_per_committed_bundle_chunk") val maxRowsPerCommittedBundleChunk: Int = 0,
-    @SerialName("default_rows_per_snapshot_chunk") val defaultRowsPerSnapshotChunk: Int,
-    @SerialName("max_rows_per_snapshot_chunk") val maxRowsPerSnapshotChunk: Int,
-    @SerialName("snapshot_session_ttl_seconds") val snapshotSessionTtlSeconds: Int = 0,
-    @SerialName("max_rows_per_snapshot_session") val maxRowsPerSnapshotSession: Long = 0,
-    @SerialName("max_bytes_per_snapshot_session") val maxBytesPerSnapshotSession: Long = 0,
-    @SerialName("default_bytes_per_snapshot_chunk") val defaultBytesPerSnapshotChunk: Long,
-    @SerialName("max_bytes_per_snapshot_chunk") val maxBytesPerSnapshotChunk: Long,
-    @SerialName("max_bytes_per_snapshot_row") val maxBytesPerSnapshotRow: Long,
-    @SerialName("snapshot_materialization_batch_rows") val snapshotMaterializationBatchRows: Int = 0,
-    @SerialName("snapshot_materialization_batch_bytes") val snapshotMaterializationBatchBytes: Long = 0,
-    @SerialName("max_concurrent_snapshot_builds") val maxConcurrentSnapshotBuilds: Int,
-    @SerialName("max_concurrent_snapshot_chunk_requests") val maxConcurrentSnapshotChunkRequests: Int,
-    @SerialName("initialization_lease_ttl_seconds") val initializationLeaseTtlSeconds: Int = 0,
+internal data class OversqliteWireLimits(
+    @SerialName("max_push_rows") val maxPushRows: Int,
+    @SerialName("max_push_decoded_bytes") val maxPushDecodedBytes: Long,
+    @SerialName("max_pull_bundles") val maxPullBundles: Int,
+    @SerialName("max_pull_decoded_bytes") val maxPullDecodedBytes: Long,
+    @SerialName("max_snapshot_rows_per_chunk") val maxSnapshotRowsPerChunk: Int,
+    @SerialName("max_snapshot_decoded_bytes_per_chunk") val maxSnapshotDecodedBytesPerChunk: Long,
+    @SerialName("max_snapshot_rows") val maxSnapshotRows: Long,
+    @SerialName("max_snapshot_logical_bytes") val maxSnapshotLogicalBytes: Long,
+    @SerialName("max_row_decoded_bytes") val maxRowDecodedBytes: Long,
 )
 
 @Serializable
@@ -192,7 +139,7 @@ data class SnapshotSession(
     @SerialName("snapshot_id") val snapshotId: String,
     @SerialName("snapshot_bundle_seq") val snapshotBundleSeq: Long,
     @SerialName("row_count") val rowCount: Long,
-    @SerialName("byte_count") val byteCount: Long,
+    @SerialName("logical_byte_count") val logicalByteCount: Long,
     @SerialName("expires_at") val expiresAt: String,
 )
 
@@ -210,19 +157,17 @@ data class SnapshotSourceReplacement(
 
 @Serializable
 data class SnapshotChunkResponse(
-    @SerialName("snapshot_id") val snapshotId: String,
-    @SerialName("snapshot_bundle_seq") val snapshotBundleSeq: Long,
     val rows: List<SnapshotRow>,
     @SerialName("next_row_ordinal") val nextRowOrdinal: Long,
     @SerialName("has_more") val hasMore: Boolean,
-    @SerialName("byte_count") val byteCount: Long,
+    @SerialName("logical_byte_count") val logicalByteCount: Long,
 )
 
 @Serializable
 data class ErrorResponse(
     val error: String,
     val message: String,
-    @SerialName("required_byte_count") val requiredByteCount: Long? = null,
+    @SerialName("required_decoded_body_bytes") val requiredDecodedBodyBytes: Long? = null,
 )
 
 @Serializable
@@ -252,6 +197,18 @@ data class PushConflictResponse(
     val conflict: PushConflictDetails? = null,
 )
 
+/** A durable conflict observation bound to one frozen outbound request. */
+data class PendingConflict(
+    val revision: Long,
+    val baselineRevision: Long = 0,
+    val sourceId: String,
+    val sourceBundleId: Long,
+    val canonicalRequestHash: String,
+    val generationId: Long,
+    val generationFingerprint: String,
+    val conflict: ConflictContext,
+)
+
 /**
  * Static oversqlite client configuration.
  *
@@ -259,12 +216,14 @@ data class PushConflictResponse(
  * does not bind a user or source identity up front.
  */
 data class OversqliteConfig(
-    val schema: String,
+    val generationId: Long,
     val syncTables: List<SyncTable>,
-    val uploadLimit: Int = 200,
-    val downloadLimit: Int = 1000,
-    val snapshotChunkRows: Int = 1000,
-    val snapshotChunkBytes: Long = 4L * 1024L * 1024L,
+    val databaseId: String,
+    val serviceId: String,
+    val maxSyncWorkspaceEntries: Long = 100_000,
+    val maxSyncWorkspaceBytes: Long = 256L * 1024 * 1024,
+    val maxSyncWorkUnitsPerInvocation: Long = 1_000_000,
+    val transferTargets: OversqliteTransferTargets = OversqliteTransferTargets(),
     val snapshotApplyBatchRows: Int = 256,
     val snapshotApplyBatchBytes: Long = 4L * 1024L * 1024L,
     val verboseLogs: Boolean = false,
@@ -273,10 +232,30 @@ data class OversqliteConfig(
         OversqliteSnapshotCapacityRetryPolicy(),
 ) {
     init {
-        require(snapshotChunkRows > 0) { "snapshotChunkRows must be positive" }
-        require(snapshotChunkBytes > 0) { "snapshotChunkBytes must be positive" }
+        require(maxSyncWorkspaceEntries > 0 && maxSyncWorkspaceBytes > 0 && maxSyncWorkUnitsPerInvocation > 0) {
+            "sync workspace limits must be positive"
+        }
+        require(generationId in 1L..Int.MAX_VALUE.toLong()) { "generationId must be in 1..2147483647" }
+        require(databaseId.isNotBlank() && serviceId.isNotBlank()) { "databaseId and serviceId must be provided" }
         require(snapshotApplyBatchRows > 0) { "snapshotApplyBatchRows must be positive" }
         require(snapshotApplyBatchBytes > 0) { "snapshotApplyBatchBytes must be positive" }
+    }
+}
+
+/** Local push row and byte targets are soft; complete FK groups may cross them within admitted hard limits. */
+data class OversqliteTransferTargets(
+    val maxPushRows: Int = 200,
+    val maxPushDecodedBytes: Long = 1L * 1024L * 1024L,
+    val maxPullBundles: Int = 1000,
+    val maxSnapshotChunkRows: Int = 1000,
+    val maxSnapshotChunkDecodedBytes: Long = 4L * 1024L * 1024L,
+) {
+    init {
+        require(maxPushRows > 0) { "maxPushRows must be positive" }
+        require(maxPushDecodedBytes > 0) { "maxPushDecodedBytes must be positive" }
+        require(maxPullBundles > 0) { "maxPullBundles must be positive" }
+        require(maxSnapshotChunkRows > 0) { "maxSnapshotChunkRows must be positive" }
+        require(maxSnapshotChunkDecodedBytes > 0) { "maxSnapshotChunkDecodedBytes must be positive" }
     }
 }
 

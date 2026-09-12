@@ -1,0 +1,129 @@
+{
+  "format": "client-upgrade-conformance/v1",
+  "exchanges": [
+    {
+      "id": "wire-capabilities-target",
+      "method": "GET",
+      "path": "/sync/capabilities",
+      "request_body": "capabilities-target.request.json",
+      "request_headers": {
+        "Authorization": "Bearer <token>",
+        "Oversync-Schema-Generation-ID": "3",
+        "Oversync-Schema-Generation-Fingerprint": "f10284bef4b513eac96fc2aecd4146591799a3e2a9b4d53cc06ebc0e7900736c"
+      },
+      "status": "200",
+      "response_headers": {
+        "Content-Type": "application/json"
+      },
+      "response_body": "capabilities-target.response.json"
+    },
+    {
+      "id": "wire-source-replacement",
+      "method": "POST",
+      "path": "/sync/snapshot-sessions",
+      "request_body": "replacement.request.json",
+      "request_headers": {
+        "Authorization": "Bearer <token>",
+        "Oversync-Source-ID": "source-old",
+        "Oversync-Schema-Generation-ID": "3",
+        "Oversync-Schema-Generation-Fingerprint": "f10284bef4b513eac96fc2aecd4146591799a3e2a9b4d53cc06ebc0e7900736c",
+        "Content-Type": "application/json"
+      },
+      "status": "200",
+      "response_headers": {
+        "Content-Type": "application/json"
+      },
+      "response_body": "replacement.response.json"
+    },
+    {
+      "id": "wire-capabilities-unknown",
+      "method": "GET",
+      "path": "/sync/capabilities",
+      "request_body": "capabilities-unknown.request.json",
+      "request_headers": {
+        "Authorization": "Bearer <token>",
+        "Oversync-Schema-Generation-ID": "99",
+        "Oversync-Schema-Generation-Fingerprint": "2329b56c21ececc5cbcda0f233ca03fdf485506b0ba25f21de75cd8474fd4732"
+      },
+      "status": "409",
+      "response_headers": {
+        "Content-Type": "application/json"
+      },
+      "response_body": "capabilities-unknown.response.json",
+      "expected": "target_generation_unavailable"
+    },
+    {
+      "id": "wire-capabilities-mismatch",
+      "method": "GET",
+      "path": "/sync/capabilities",
+      "request_body": "capabilities-mismatch.request.json",
+      "request_headers": {
+        "Authorization": "Bearer <token>",
+        "Oversync-Schema-Generation-ID": "3",
+        "Oversync-Schema-Generation-Fingerprint": "f10284bef4b513eac96fc2aecd4146591799a3e2a9b4d53cc06ebc0e7900736c"
+      },
+      "status": "409",
+      "response_headers": {
+        "Content-Type": "application/json"
+      },
+      "response_body": "capabilities-mismatch.response.json",
+      "expected": "target_generation_unavailable"
+    },
+    {
+      "id": "wire-push-conflict",
+      "method": "POST",
+      "path": "/sync/push-sessions/00000000-0000-4000-8000-000000000001/commit",
+      "request_body": "push-conflict.request.json",
+      "request_headers": {
+        "Authorization": "Bearer <token>",
+        "Oversync-Source-ID": "bundle-device",
+        "Oversync-Schema-Generation-ID": "1",
+        "Oversync-Schema-Generation-Fingerprint": "25b9d501ea067fd4c0c33c0bf660359ea8b66afcf9a9dd5555c2f3f954b8ec8d"
+      },
+      "status": "409",
+      "response_headers": {
+        "Content-Type": "application/json"
+      },
+      "response_body": "push-conflict.response.json",
+      "expected": "needs_resolution"
+    },
+    {
+      "id": "wire-malformed-missing-byte-count",
+      "method": "POST",
+      "path": "/sync/snapshot-sessions",
+      "request_body": "replacement.request.json",
+      "request_headers": {
+        "Oversync-Source-ID": "source-old",
+        "Oversync-Schema-Generation-ID": "3",
+        "Oversync-Schema-Generation-Fingerprint": "f10284bef4b513eac96fc2aecd4146591799a3e2a9b4d53cc06ebc0e7900736c"
+      },
+      "status": "200",
+      "response_headers": {
+        "Content-Type": "application/json"
+      },
+      "response_utf8": "{\"snapshot_id\":\"snapshot-1\",\"snapshot_bundle_seq\":42,\"row_count\":0,\"expires_at\":\"2030-01-01T00:00:00Z\"}",
+      "expected": "upgrade_integrity_failed"
+    },
+    {
+      "id": "wire-malformed-divergent-retirement",
+      "method": "POST",
+      "path": "/sync/snapshot-sessions",
+      "request_body": "replacement.request.json",
+      "request_headers": {
+        "Oversync-Source-ID": "source-old",
+        "Oversync-Schema-Generation-ID": "3",
+        "Oversync-Schema-Generation-Fingerprint": "f10284bef4b513eac96fc2aecd4146591799a3e2a9b4d53cc06ebc0e7900736c"
+      },
+      "status": "409",
+      "response_headers": {
+        "Content-Type": "application/json"
+      },
+      "response_utf8": "{\"error\":\"source_retired\",\"source_id\":\"source-old\",\"replaced_by_source_id\":\"different-source\"}",
+      "expected": "replacement_diverged"
+    }
+  ],
+  "reference_hashes": {
+    "empty_array_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "replacement_request_sha256": "0ebbe71bc7da14fde7051d179b97d03094501175a5eb6866134207c154787f42"
+  }
+}

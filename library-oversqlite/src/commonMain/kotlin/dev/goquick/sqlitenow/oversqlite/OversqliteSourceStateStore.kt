@@ -74,11 +74,15 @@ internal class OversqliteSourceStateStore(
         }
     }
 
-    suspend fun upsertNextSourceBundleIdFloor(sourceId: String, nextSourceBundleId: Long) {
+    suspend fun upsertNextSourceBundleIdFloor(
+        sourceId: String,
+        nextSourceBundleId: Long,
+        statementCache: StatementCache? = null,
+    ) {
         requireValidOversqliteSourceId(sourceId)
-        db.withExclusiveAccess {
-            db.prepare(
-                """
+        require(nextSourceBundleId > 0L) { "next source bundle id must be positive" }
+        db.withPreparedStatement(
+            sql = """
                 INSERT INTO _sync_source_state(source_id, next_source_bundle_id, replaced_by_source_id)
                 VALUES(?, ?, '')
                 ON CONFLICT(source_id) DO UPDATE SET
@@ -87,12 +91,12 @@ internal class OversqliteSourceStateStore(
                     THEN excluded.next_source_bundle_id
                     ELSE _sync_source_state.next_source_bundle_id
                   END
-                """.trimIndent(),
-            ).use { st ->
-                st.bindText(1, sourceId)
-                st.bindLong(2, nextSourceBundleId)
-                st.step()
-            }
+            """.trimIndent(),
+            statementCache = statementCache,
+        ) { st ->
+            st.bindText(1, sourceId)
+            st.bindLong(2, nextSourceBundleId)
+            st.step()
         }
     }
 
@@ -126,7 +130,14 @@ internal class OversqliteSourceStateStore(
     suspend fun advanceAfterCommittedPush(
         sourceId: String,
         sourceBundleId: Long,
+    ) = advancePastSourceBundle(sourceId, sourceBundleId)
+
+    suspend fun advancePastSourceBundle(
+        sourceId: String,
+        sourceBundleId: Long,
+        statementCache: StatementCache? = null,
     ) {
-        upsertNextSourceBundleIdFloor(sourceId, sourceBundleId + 1)
+        require(sourceBundleId < Long.MAX_VALUE) { "source bundle id cannot advance without overflow" }
+        upsertNextSourceBundleIdFloor(sourceId, sourceBundleId + 1L, statementCache)
     }
 }

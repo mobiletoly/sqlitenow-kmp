@@ -26,9 +26,19 @@ final class SQLiteNowCleanConsumerTests: XCTestCase {
         }
 
         let syncDb = SwiftOnlySyncDatabase(path: temporaryDatabaseURL(prefix: "sync"))
-        try await syncDb.open()
+        let opening = try await syncDb.openForSync(
+            baseURL: URL(string: "http://127.0.0.1:1")!,
+            auth: .bearer(token: "fixture-token"),
+            config: .init(
+                generationId: 1,
+                databaseId: "swift-sync-fixture",
+                serviceId: "nethttp-server-example"
+            )
+        )
+        let openingStatus = try await opening.advance()
+        XCTAssertEqual(openingStatus.outcome, .ready)
         try await withAsyncCleanup({
-            try await syncDb.close()
+            try await opening.close()
         }) {
             let emptyDocs = try await syncDb.docs.selectAll().list()
             XCTAssertEqual(emptyDocs, [])
@@ -52,14 +62,7 @@ final class SQLiteNowCleanConsumerTests: XCTestCase {
                 DocRow(docId: "doc-1", title: "Updated"),
             ])
 
-            let sync = try syncDb.makeSyncClient(
-                baseURL: URL(string: "http://127.0.0.1:1")!,
-                auth: .bearer(token: "fixture-token")
-            )
-            try await sync.open()
-            defer {
-                sync.close()
-            }
+            let sync = try XCTUnwrap(opening.readyOrNil()?.client)
 
             let sourceInfo = try await sync.sourceInfo()
             XCTAssertFalse(sourceInfo.currentSourceId.isEmpty)

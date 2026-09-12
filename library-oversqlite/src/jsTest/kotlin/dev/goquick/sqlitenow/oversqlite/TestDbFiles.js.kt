@@ -1,18 +1,26 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import dev.goquick.sqlitenow.core.SqliteConnectionConfig
-import dev.goquick.sqlitenow.core.SqlitePersistence
+import dev.goquick.sqlitenow.core.persistence.IndexedDbSqlitePersistence
 import kotlin.js.Promise
 import kotlinx.coroutines.await
 
+internal actual fun supportsDurableTestDatabaseRestart(): Boolean = !isNode()
+
 internal actual fun createTempSqliteNowTestDbPath(prefix: String): String =
-    nodeJoinPath(nodeTempDir(), "$prefix-${randomSuffix()}.db")
+    if (isNode()) nodeJoinPath(nodeTempDir(), "$prefix-${randomSuffix()}.db")
+    else "$prefix-${randomSuffix()}.db"
+
+private val browserTestPersistence = IndexedDbSqlitePersistence(
+    storageName = "SqliteNowOversqliteTest", storeName = "sqlite-tests",
+)
 
 internal actual fun createSqliteNowTestConnectionConfig(path: String): SqliteConnectionConfig =
-    SqliteConnectionConfig(persistence = NodeFileSqlitePersistence())
+    if (isNode()) SqliteConnectionConfig()
+    else SqliteConnectionConfig(persistence = browserTestPersistence)
 
 internal actual suspend fun deleteTempSqliteNowTestDbArtifacts(path: String) {
-    nodeDeleteIfExists(path)
+    if (isNode()) nodeDeleteIfExists(path) else browserTestPersistence.clear(path)
 }
 
 internal actual suspend fun cleanupDirectWorkerTestDatabase(dbName: String) {
@@ -45,56 +53,21 @@ private fun cleanupDirectWorkerTestDatabaseJs(dbName: String): Promise<dynamic> 
         """,
     ).unsafeCast<Promise<dynamic>>()
 
-private class NodeFileSqlitePersistence : SqlitePersistence {
-    override suspend fun load(dbName: String): ByteArray? {
-        if (!nodeExists(dbName)) return null
-        return nodeReadBytes(dbName)
-    }
-
-    override suspend fun persist(dbName: String, bytes: ByteArray) {
-        nodeWriteBytes(dbName, bytes)
-    }
-
-    override suspend fun clear(dbName: String) {
-        nodeDeleteIfExists(dbName)
-    }
-}
-
 private fun randomSuffix(): String =
     js("Math.random().toString(16).slice(2)").unsafeCast<String>()
 
-private fun nodeTempDir(): String =
-    js("require('node:os').tmpdir()").unsafeCast<String>()
+private fun isNode(): Boolean =
+    js("typeof process !== 'undefined' && process.versions != null && process.versions.node != null").unsafeCast<Boolean>()
+
+// Only executed in Node. Indirect lookup keeps Node built-ins out of browser bundles.
+private fun nodeModule(name: String): dynamic = js("eval('require')(name)")
+
+private fun nodeTempDir(): String = nodeModule("node:os").tmpdir().unsafeCast<String>()
 
 private fun nodeJoinPath(parent: String, child: String): String =
-    js("require('node:path').join(parent, child)").unsafeCast<String>()
-
-private fun nodeExists(path: String): Boolean =
-    js("require('node:fs').existsSync(path)").unsafeCast<Boolean>()
+    nodeModule("node:path").join(parent, child).unsafeCast<String>()
 
 private fun nodeDeleteIfExists(path: String) {
-    js(
-        """
-        (() => {
-          const fs = require('node:fs');
-          if (fs.existsSync(path)) {
-            fs.rmSync(path, { force: true });
-          }
-        })()
-        """,
-    )
-}
-
-private fun nodeReadBytes(path: String): ByteArray {
-    val values = js("Array.from(require('node:fs').readFileSync(path))").unsafeCast<Array<Int>>()
-    val result = ByteArray(values.size)
-    for (i in result.indices) {
-        result[i] = values[i].toByte()
-    }
-    return result
-}
-
-private fun nodeWriteBytes(path: String, bytes: ByteArray) {
-    val values = bytes.map { (it.toInt() and 0xFF).toDouble() }.toTypedArray()
-    js("require('node:fs').writeFileSync(path, Uint8Array.from(values))")
+    val fs = nodeModule("node:fs")
+    if (fs.existsSync(path).unsafeCast<Boolean>()) fs.rmSync(path, js("({force:true})"))
 }

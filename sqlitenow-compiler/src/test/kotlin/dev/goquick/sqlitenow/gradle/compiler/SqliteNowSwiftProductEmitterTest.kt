@@ -68,10 +68,6 @@ class SqliteNowSwiftProductEmitterTest {
             )
         )
 
-        assertFalse(
-            SqliteNowCompilerBackend.entries.any { it.name == "SWIFT" },
-            "Product Swift export must not add a public Swift compiler backend enum in Phase 9C."
-        )
         val generatedFileNames = result.generatedFiles.map { it.name }.sorted()
         assertEquals(
             listOf("HybridCoreProofDatabase.swift", "SQLiteNowSupport.swift", "TaskQueries.swift"),
@@ -218,10 +214,6 @@ class SqliteNowSwiftProductEmitterTest {
             )
         )
 
-        assertFalse(
-            SqliteNowCompilerBackend.entries.any { it.name == "SWIFT" },
-            "Product Swift sync export must not add a public Swift compiler backend enum in Phase 9D."
-        )
         val generatedFileNames = result.generatedFiles.map { it.name }.sorted()
         assertEquals(
             listOf(
@@ -245,32 +237,55 @@ class SqliteNowSwiftProductEmitterTest {
         assertTrue(swift.contains("@preconcurrency import SQLiteNowSyncRuntime"))
         assertFalse(swift.contains("@preconcurrency import SQLiteNowCoreRuntime"))
         assertTrue(swift.contains("public final class HybridSyncProofDatabase: @unchecked Sendable"))
+        assertTrue(swift.contains("public func openForSync("))
+        assertTrue(swift.contains(") async throws -> SQLiteNowSyncOpening<HybridSyncProofDatabase>"))
         assertTrue(swift.contains("public func makeSyncClient("))
         assertTrue(swift.contains(") throws -> SQLiteNowSyncClient"))
-        assertTrue(swift.contains("Call open() before makeSyncClient(...)."))
+        assertTrue(swift.contains("openForSync().advance() must reach ready before makeSyncClient(...)."))
         assertTrue(swift.contains("SQLiteNowSyncRuntimeTableSpec(tableName: \"docs\", syncKeyColumnName: \"doc_id\")"))
-        assertFalse(supportSwift.contains("public struct SQLiteNowSyncAuth: Sendable"))
-        assertTrue(syncSupportSwift.contains("public struct SQLiteNowSyncAuth: Sendable"))
+        assertFalse(supportSwift.contains("public struct SQLiteNowSyncAuth: @unchecked Sendable"))
+        assertTrue(syncSupportSwift.contains("public struct SQLiteNowSyncAuth: @unchecked Sendable"))
         assertTrue(syncSupportSwift.contains("refreshedAccessTokenProvider"))
         assertTrue(syncSupportSwift.contains("refreshedAccessToken: (@Sendable () -> String?)? = nil"))
         assertFalse(syncSupportSwift.contains("refreshTokenProvider"))
         assertFalse(syncSupportSwift.contains("refreshToken: (@Sendable () -> String?)? = nil"))
         assertTrue(syncSupportSwift.contains("public final class SQLiteNowSyncClient"))
+        assertTrue(syncSupportSwift.contains("public final class SQLiteNowSyncOpening<Database>: @unchecked Sendable"))
+        assertTrue(syncSupportSwift.contains("public func readyOrNil() -> SQLiteNowSyncReady<Database>?"))
+        assertTrue(syncSupportSwift.contains("guard runtime.readyClientOrNull() === runtimeClient else { return }"))
+        assertTrue(syncSupportSwift.contains("withTaskCancellationHandler"))
+        assertFalse(syncSupportSwift.contains("read" + "Old"))
+        assertFalse(syncSupportSwift.contains("SQLiteNowSync" + "OldValue"))
+        assertFalse(syncSupportSwift.contains("old" + "ReadsAvailable"))
+        assertTrue(databaseSwift.contains("if let readyClient = try syncClientLease.readyClient(matching: binding) { return readyClient }"))
         listOf(
             "sync config type" to "public struct SQLiteNowSyncConfig: Equatable, Sendable",
             "transient retry type" to "public struct SQLiteNowTransientRetryPolicy: Equatable, Sendable",
             "capacity retry type" to "public struct SQLiteNowSnapshotCapacityRetryPolicy: Equatable, Sendable",
-            "schema default" to "schema: String = \"main\"",
-            "upload default" to "uploadLimit: Int = 200",
-            "download default" to "downloadLimit: Int = 1_000",
-            "snapshot chunk row default" to "snapshotChunkRows: Int = 1_000",
-            "snapshot chunk byte default" to "snapshotChunkBytes: Int64 = 4 * 1_024 * 1_024",
+            "transfer targets type" to "public struct SQLiteNowTransferTargets: Equatable, Sendable",
+            "generation selection" to "generationId: Int64",
+            "push row target" to "maxPushRows: Int = 200",
+            "push byte target" to "maxPushDecodedBytes: Int64 = 1 * 1_024 * 1_024",
+            "pull bundle target" to "maxPullBundles: Int = 1_000",
+            "snapshot row target" to "maxSnapshotChunkRows: Int = 1_000",
+            "snapshot byte target" to "maxSnapshotChunkDecodedBytes: Int64 = 4 * 1_024 * 1_024",
+            "config transfer target" to "transferTargets: SQLiteNowTransferTargets = .init()",
             "snapshot apply row default" to "snapshotApplyBatchRows: Int = 256",
             "snapshot apply byte default" to "snapshotApplyBatchBytes: Int64 = 4 * 1_024 * 1_024",
-            "config factory argument" to "config: SQLiteNowSyncConfig = .init()",
+            "config factory argument" to "config: SQLiteNowSyncConfig",
             "resolver factory argument" to "resolver: SQLiteNowSyncResolver? = nil",
             "protocol error declaration" to "case `protocol`(message: String)",
             "protocol payload mapping" to "case \"protocol\": return .protocol(message: payload.message)",
+            "remote contract error declaration" to "case remote(",
+            "remote contract status field" to "httpStatus: Int,",
+            "remote contract payload guard" to "if payload.remoteContract {",
+            "remote contract payload code" to "code: payload.code,",
+            "remote contract payload status" to "httpStatus: Int(payload.httpStatus),",
+            "remote contract payload operation" to "operation: payload.operation,",
+            "remote contract payload remediation" to "remediation: payload.remediation,",
+            "remote contract payload retryability" to "retryable: payload.retryable,",
+            "remote contract generation ID" to "generationId: generationId,",
+            "remote contract generation ID validation" to "String(parsedGenerationId) == rawGenerationId",
             "pause uploads" to "public func pauseUploads() async throws",
             "resume uploads" to "public func resumeUploads() async throws",
             "pause downloads" to "public func pauseDownloads() async throws",
@@ -284,9 +299,12 @@ class SqliteNowSwiftProductEmitterTest {
         assertFalse(databaseSwift.contains("verboseLogs: Bool = false,"), "Old flat logging argument must be removed.")
         assertTrue(supportSwift.contains("catch let error as CancellationError"))
         assertTrue(syncSupportSwift.contains("public func progress() -> AsyncThrowingStream<SQLiteNowSyncProgress, Error>"))
+        assertTrue(syncSupportSwift.contains("case unknown(String)"))
+        assertTrue(syncSupportSwift.contains("self = .unknown(runtime.kind)"))
         assertTrue(syncSupportSwift.contains("public func startAutomaticDownloads("))
-        assertTrue(swift.contains("SQLiteNowSyncRuntimeClient("))
-        assertTrue(syncSupportSwift.contains("runtime.close()\n            throw SQLiteNowError.misuse"))
+        assertFalse(databaseSwift.contains("SQLiteNowSyncRuntimeClient("))
+        assertFalse(syncSupportSwift.contains("runtime.close()\n            throw SQLiteNowError.misuse"))
+        assertTrue(syncSupportSwift.contains("activeRuntime === runtime && sameBinding(activeBinding, binding)"))
         assertTrue(supportSwift.contains("if let runtimeError = error as? SQLiteNowCoreRuntimeException"))
         assertTrue(supportSwift.contains("userInfo[\"K\" + \"otlinException\"] as? SQLiteNowCoreRuntimeException"))
         assertTrue(supportSwift.contains("if let runtimeError = error as? SQLiteNowSyncRuntimeException"))

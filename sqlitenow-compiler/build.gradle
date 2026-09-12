@@ -57,15 +57,6 @@ def compilerJarTaskProvider = tasks.register("sqlitenowCompilerJar", Jar) {
     })
 }
 
-tasks.register("syncDartCliCompilerJar", Copy) {
-    group = "build"
-    description = "Copies the Gradle-free compiler jar into the Dart CLI package for embedded release packaging."
-    dependsOn(compilerJarTaskProvider)
-    from(compilerJarTaskProvider.flatMap { it.archiveFile })
-    into("../dart/packages/sqlitenow_cli/lib/src/compiler")
-    rename { "sqlitenow-compiler.jar" }
-}
-
 tasks.register("syncSwiftPmPluginCompilerJar", Copy) {
     group = "build"
     description = "Copies the Gradle-free compiler jar into the SwiftPM plugin package for local bundled-tool validation."
@@ -105,7 +96,7 @@ mavenPublishing {
 
     pom {
         name = "SQLiteNow Compiler"
-        description = "Gradle-free SQLiteNow compiler used by the Gradle plugin and Dart CLI"
+        description = "Gradle-free SQLiteNow compiler used by the Gradle plugin and Swift tooling"
         inceptionYear = "2025"
         url = "https://github.com/mobiletoly/sqlitenow-kmp/"
         licenses {

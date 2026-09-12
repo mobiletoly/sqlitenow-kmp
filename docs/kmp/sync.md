@@ -10,8 +10,9 @@ Oversqlite is the SQLiteNow sync runtime for Kotlin Multiplatform apps. The KMP
 docs cover generated bridge setup, local lifecycle, account attachment, sync
 operations, reactive updates, and recovery.
 
-On JS and Wasm, generated `newOversqliteClient(...)` construction uses the
-database's ordinary bundled provider, which is the packaged worker by default.
+On JS and Wasm, generated `openForSync(...)` uses the database's bundled provider, which is the
+packaged worker by default. After `advance()` reaches ready, consume the exact database and client
+pair returned by `readyOrNull()`.
 Browser state lives in the same deterministic direct OPFS database as Core;
 there is no separate provider injection or snapshot configuration. JS Node
 remains transient. The worker preserves all Oversqlite control tables and
@@ -49,8 +50,7 @@ changes:
 
 ## Shared Concepts And Server Setup
 
-The protocol concepts and server responsibilities are shared across KMP,
-Flutter/Dart, and Swift clients:
+The protocol concepts and server responsibilities are shared across KMP and Swift clients:
 
 - [Core Concepts]({{ site.baseurl }}/sync/core-concepts/)
 - [Server Setup]({{ site.baseurl }}/sync/server-setup/)

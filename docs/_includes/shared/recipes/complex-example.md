@@ -35,15 +35,7 @@ LEFT JOIN task_note n ON n.task_id = t.id
 ORDER BY t.id, n.id;
 ```
 
-{% if include.platform == "dart" %}
-```dart
-final tasks = await db.task.selectWithNotes().asList();
-
-for (final task in tasks) {
-  print('${task.title}: ${task.notes.length} notes');
-}
-```
-{% elsif include.platform == "kmp" %}
+{% if include.platform == "kmp" %}
 ```kotlin
 val tasks = db.task.selectWithNotes().asList()
 

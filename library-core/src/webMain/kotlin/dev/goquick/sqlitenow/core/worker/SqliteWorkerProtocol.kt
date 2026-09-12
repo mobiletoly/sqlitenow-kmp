@@ -55,6 +55,7 @@ internal val sqliteWorkerJson = Json {
 }
 
 internal val sqliteWorkerCommands = setOf(
+    "inspect",
     "open",
     "completeOpen",
     "prepare",
@@ -267,14 +268,16 @@ internal data class SqliteWorkerRequest(
             value.validate()
         }
         when (command) {
-            "open" -> {
+            "inspect", "open" -> {
                 require(!fileName.isNullOrBlank()) {
                     "SQLite worker database name must be non-empty."
                 }
                 require(databaseId == null && statementId == null && sql == null && bindings.isEmpty())
                 require(pageRows == null && pageBytes == null)
-                require(legacySourceMode in setOf("built-in", "custom", "none")) {
-                    "Worker open requires a supported legacySourceMode."
+                if (command == "open" || command == "inspect") {
+                    require(legacySourceMode in setOf("built-in", "custom", "none")) {
+                        "Worker inspection/open requires a supported legacySourceMode."
+                    }
                 }
                 require(openId == null && legacySourceStatus == null)
             }
@@ -343,6 +346,7 @@ internal data class SqliteWorkerError(
     val cancelled: Boolean = false,
     val suppressed: List<String> = emptyList(),
     val inTransaction: Boolean? = null,
+    val lifecycleBusy: Boolean = false,
 )
 
 internal object SqliteWorkerErrorSerializer : KSerializer<SqliteWorkerError> {
@@ -361,6 +365,7 @@ internal object SqliteWorkerErrorSerializer : KSerializer<SqliteWorkerError> {
         fields["cancelled"] = JsonPrimitive(value.cancelled)
         fields["suppressed"] = JsonArray(value.suppressed.map(::JsonPrimitive))
         value.inTransaction?.let { fields["inTransaction"] = JsonPrimitive(it) }
+        fields["lifecycleBusy"] = JsonPrimitive(value.lifecycleBusy)
         jsonEncoder.encodeJsonElement(JsonObject(fields))
     }
 
@@ -377,6 +382,7 @@ internal object SqliteWorkerErrorSerializer : KSerializer<SqliteWorkerError> {
             "cancelled",
             "suppressed",
             "inTransaction",
+            "lifecycleBusy",
         )
         if (!allowedKeys.containsAll(value.keys)) {
             throw SerializationException(
@@ -404,6 +410,7 @@ internal object SqliteWorkerErrorSerializer : KSerializer<SqliteWorkerError> {
                 primitive.content
             },
             inTransaction = value.optionalErrorBoolean("inTransaction"),
+            lifecycleBusy = value.requiredErrorBoolean("lifecycleBusy"),
         )
     }
 
@@ -529,6 +536,19 @@ internal data class SqliteWorkerResponse(
     fun validateFor(request: SqliteWorkerRequest) {
         validate()
         when (request.command) {
+            "inspect" -> {
+                require(statementId == null && openId == null)
+                require(runtimeKind?.isNotBlank() == true)
+                require(sqliteVersion?.isNotBlank() == true)
+                require(metrics == null && columnNames == null)
+                requireEmptyPagePayload()
+                require(!inTransaction)
+                when (openState) {
+                    "inspection-ready" -> requirePositive(databaseId, "databaseId")
+                    "preparation-required" -> require(databaseId == null)
+                    else -> error("Worker inspect response requires a supported openState.")
+                }
+            }
             "open" -> {
                 require(statementId == null)
                 require(runtimeKind?.isNotBlank() == true)

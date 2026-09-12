@@ -23,8 +23,10 @@ Reactive queries are invalidated when oversqlite changes managed tables through:
 
 ## What Does Not Produce Notifications
 
-`open()` is local runtime preparation. It does not attach an account and should not change managed
-rows in the normal path.
+Coordinated `openForSync(...).advance()` does not attach an account. Fresh and unchanged
+advancement should not change managed rows in the normal path; an explicit upgrade can migrate or
+rebuild them according to its opening plan. Ordinary `open()` does not prepare a sync-managed
+database.
 
 If `detach()` returns `BLOCKED_UNSYNCED_DATA`, no destructive cleanup runs, so reactive tables are
 not cleared.

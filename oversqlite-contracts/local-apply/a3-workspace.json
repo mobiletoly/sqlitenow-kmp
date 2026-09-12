@@ -1,0 +1,662 @@
+{
+  "formatVersion": 1,
+  "classification": "local-contract-runtime-pending",
+  "family": "a3-workspace",
+  "physicalInventory": {
+    "common": {
+      "_sync_operation_state": [
+        "workspace_context:TEXT:NOT_NULL:DEFAULT_EMPTY",
+        "reserved_entries:INTEGER:NONNEGATIVE:DEFAULT_ZERO",
+        "reserved_bytes:INTEGER:NONNEGATIVE:DEFAULT_ZERO",
+        "snapshot_stage_entries:INTEGER:NONNEGATIVE:DEFAULT_ZERO",
+        "snapshot_stage_bytes:INTEGER:NONNEGATIVE:DEFAULT_ZERO",
+        "snapshot_cleanup_ordinal:INTEGER:NONNEGATIVE:DEFAULT_ZERO"
+      ],
+      "_sync_apply_plan": [
+        "operation_kind:TEXT:pull|settlement|snapshot|conflict",
+        "preserve_schema:TEXT:NOT_NULL:DEFAULT_EMPTY",
+        "preserve_table:TEXT:NOT_NULL:DEFAULT_EMPTY",
+        "preserve_key:TEXT:NOT_NULL:DEFAULT_EMPTY",
+        "atomic_work:INTEGER:NONNEGATIVE:DEFAULT_ZERO",
+        "preservation_complete:INTEGER:BOOLEAN:DEFAULT_ZERO"
+      ],
+      "_sync_apply_rows": [
+        "role:TEXT:intended|survivor|exception",
+        "owner_revision:INTEGER:NONNEGATIVE:DEFAULT_ZERO"
+      ],
+      "_sync_snapshot_stage": [
+        "charge:INTEGER:NONNEGATIVE:DEFAULT_ZERO"
+      ]
+    },
+    "goOnly": {
+      "_sync_operation_state": [
+        "push_stage_entries:INTEGER:NONNEGATIVE:DEFAULT_ZERO",
+        "push_stage_bytes:INTEGER:NONNEGATIVE:DEFAULT_ZERO",
+        "push_cleanup_ordinal:INTEGER:NONNEGATIVE:DEFAULT_ZERO"
+      ],
+      "_sync_push_stage": [
+        "charge:INTEGER:NONNEGATIVE:DEFAULT_ZERO"
+      ]
+    },
+    "indexes": [
+      "_sync_apply_rows_role_ordinal_idx(role,ordinal)"
+    ],
+    "reservationOwner": "existing-lifetime-admission-and-operation-owner",
+    "reclamation": "only-new-lifetime-acquisition-after-prior-owner-ended",
+    "stageCharge": "64 + 6 * UTF8(identity_strings) + UTF8(payload)",
+    "stageMaintenance": {
+      "commonTriggers": [
+        "_sync_snapshot_stage_charge_insert",
+        "_sync_snapshot_stage_charge_update",
+        "_sync_snapshot_stage_charge_delete"
+      ],
+      "goOnlyTriggers": [
+        "_sync_push_stage_charge_insert",
+        "_sync_push_stage_charge_update",
+        "_sync_push_stage_charge_delete"
+      ],
+      "mutations": "writer-atomic exact stored charge and owner totals; checked INTEGER overflow rejects the statement"
+    },
+    "workspaceContextEncoding": {
+      "empty": "empty TEXT when no reservation",
+      "active": "JSON array in allocation order",
+      "recordFields": [
+        "token",
+        "unit",
+        "context",
+        "entries",
+        "bytes"
+      ],
+      "identity": "token, unit and context are exact lowercase 64-hex strings",
+      "counts": "nonnegative signed int64; totals equal reserved owner counters",
+      "reclamation": "fresh lifetime lease acquisition only; client or invocation open never reclaims"
+    },
+    "reservationBinding": [
+      "database",
+      "service",
+      "account",
+      "attachment_epoch",
+      "source",
+      "generation",
+      "fingerprint",
+      "physical_shape",
+      "registration_fk_order",
+      "dirty_revision",
+      "baseline_revision",
+      "checkpoint",
+      "next_source_bundle_id",
+      "outbox_identity",
+      "effective_limits"
+    ]
+  },
+  "cases": [
+    {
+      "id": "aggregate-exact",
+      "kind": "aggregate",
+      "input": {
+        "owners": [
+          {
+            "owner": "planner",
+            "entries": 2,
+            "bytes": 100
+          },
+          {
+            "owner": "apply",
+            "entries": 3,
+            "bytes": 200
+          },
+          {
+            "owner": "push-stage",
+            "entries": 1,
+            "bytes": 40
+          },
+          {
+            "owner": "snapshot-stage",
+            "entries": 2,
+            "bytes": 160
+          },
+          {
+            "owner": "transient",
+            "entries": 2,
+            "bytes": 80
+          }
+        ],
+        "requestedEntries": 1,
+        "requestedBytes": 20,
+        "maxEntries": 11,
+        "maxBytes": 600
+      },
+      "expected": {
+        "result": "fits",
+        "usedEntries": 10,
+        "usedBytes": 580,
+        "reservedEntries": 1,
+        "reservedBytes": 20,
+        "afterEntries": 11,
+        "afterBytes": 600
+      }
+    },
+    {
+      "id": "aggregate-entries-first",
+      "kind": "aggregate",
+      "input": {
+        "owners": [
+          {
+            "owner": "planner",
+            "entries": 2,
+            "bytes": 100
+          },
+          {
+            "owner": "apply",
+            "entries": 3,
+            "bytes": 200
+          },
+          {
+            "owner": "push-stage",
+            "entries": 1,
+            "bytes": 40
+          },
+          {
+            "owner": "snapshot-stage",
+            "entries": 2,
+            "bytes": 160
+          },
+          {
+            "owner": "transient",
+            "entries": 2,
+            "bytes": 80
+          }
+        ],
+        "requestedEntries": 1,
+        "requestedBytes": 20,
+        "maxEntries": 10,
+        "maxBytes": 579
+      },
+      "expected": {
+        "result": "entries",
+        "usedEntries": 10,
+        "usedBytes": 580,
+        "reservedEntries": 1,
+        "reservedBytes": 20,
+        "afterEntries": 10,
+        "afterBytes": 580
+      }
+    },
+    {
+      "id": "aggregate-bytes",
+      "kind": "aggregate",
+      "input": {
+        "owners": [
+          {
+            "owner": "planner",
+            "entries": 2,
+            "bytes": 100
+          },
+          {
+            "owner": "apply",
+            "entries": 3,
+            "bytes": 200
+          },
+          {
+            "owner": "push-stage",
+            "entries": 1,
+            "bytes": 40
+          },
+          {
+            "owner": "snapshot-stage",
+            "entries": 2,
+            "bytes": 160
+          },
+          {
+            "owner": "transient",
+            "entries": 2,
+            "bytes": 80
+          }
+        ],
+        "requestedEntries": 1,
+        "requestedBytes": 20,
+        "maxEntries": 11,
+        "maxBytes": 599
+      },
+      "expected": {
+        "result": "bytes",
+        "usedEntries": 10,
+        "usedBytes": 580,
+        "reservedEntries": 1,
+        "reservedBytes": 20,
+        "afterEntries": 10,
+        "afterBytes": 580
+      }
+    },
+    {
+      "id": "aggregate-below",
+      "kind": "aggregate",
+      "input": {
+        "owners": [
+          {
+            "owner": "planner",
+            "entries": 2,
+            "bytes": 100
+          },
+          {
+            "owner": "apply",
+            "entries": 3,
+            "bytes": 200
+          },
+          {
+            "owner": "push-stage",
+            "entries": 1,
+            "bytes": 40
+          },
+          {
+            "owner": "snapshot-stage",
+            "entries": 2,
+            "bytes": 160
+          },
+          {
+            "owner": "transient",
+            "entries": 2,
+            "bytes": 80
+          }
+        ],
+        "requestedEntries": 1,
+        "requestedBytes": 20,
+        "maxEntries": 12,
+        "maxBytes": 601
+      },
+      "expected": {
+        "result": "fits",
+        "usedEntries": 10,
+        "usedBytes": 580,
+        "reservedEntries": 1,
+        "reservedBytes": 20,
+        "afterEntries": 11,
+        "afterBytes": 600
+      }
+    },
+    {
+      "id": "aggregate-overflow",
+      "kind": "aggregate",
+      "input": {
+        "owners": [
+          {
+            "owner": "planner",
+            "entries": 9223372036854775807,
+            "bytes": 1
+          },
+          {
+            "owner": "transient",
+            "entries": 0,
+            "bytes": 1
+          }
+        ],
+        "requestedEntries": 1,
+        "requestedBytes": 0,
+        "maxEntries": 9223372036854775807,
+        "maxBytes": 10
+      },
+      "expected": {
+        "result": "entries",
+        "usedEntries": 9223372036854775807,
+        "usedBytes": 2,
+        "reservedEntries": 1,
+        "reservedBytes": 0,
+        "afterEntries": 9223372036854775807,
+        "afterBytes": 2
+      }
+    },
+    {
+      "id": "work-remaining",
+      "kind": "work",
+      "input": {
+        "limit": 100,
+        "used": 70,
+        "required": 40,
+        "cancelled": false
+      },
+      "expected": {
+        "result": "sync_work_limit",
+        "used": 70,
+        "reserved": 40,
+        "ready": true,
+        "businessChanged": false
+      }
+    },
+    {
+      "id": "work-intrinsic",
+      "kind": "work",
+      "input": {
+        "limit": 100,
+        "used": 0,
+        "required": 101,
+        "cancelled": false
+      },
+      "expected": {
+        "result": "atomic_apply_work",
+        "used": 0,
+        "reserved": 101,
+        "ready": false,
+        "businessChanged": false
+      }
+    },
+    {
+      "id": "work-exact",
+      "kind": "work",
+      "input": {
+        "limit": 100,
+        "used": 60,
+        "required": 40,
+        "cancelled": false
+      },
+      "expected": {
+        "result": "fits",
+        "used": 100,
+        "reserved": 40,
+        "ready": true,
+        "businessChanged": true
+      }
+    },
+    {
+      "id": "work-cancelled",
+      "kind": "work",
+      "input": {
+        "limit": 100,
+        "used": 70,
+        "required": 40,
+        "cancelled": true
+      },
+      "expected": {
+        "result": "cancelled",
+        "used": 70,
+        "reserved": 40,
+        "ready": true,
+        "businessChanged": false
+      }
+    },
+    {
+      "id": "transfer-release-once",
+      "kind": "reservation",
+      "input": {
+        "entries": 10,
+        "bytes": 580,
+        "reservedEntries": 2,
+        "reservedBytes": 80,
+        "actions": [
+          "transfer",
+          "release",
+          "release"
+        ]
+      },
+      "expected": {
+        "entries": 8,
+        "bytes": 500,
+        "reservedEntries": 0,
+        "reservedBytes": 0,
+        "error": "already_released"
+      }
+    },
+    {
+      "id": "page-row-cap",
+      "kind": "page",
+      "input": {
+        "rowBytes": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "maxRows": 128,
+        "softBytes": 65536
+      },
+      "expected": {
+        "rows": 128,
+        "bytes": 128
+      }
+    },
+    {
+      "id": "page-byte-cap",
+      "kind": "page",
+      "input": {
+        "rowBytes": [
+          32768,
+          32768,
+          1
+        ],
+        "maxRows": 128,
+        "softBytes": 65536
+      },
+      "expected": {
+        "rows": 2,
+        "bytes": 65536
+      }
+    },
+    {
+      "id": "page-large-one",
+      "kind": "page",
+      "input": {
+        "rowBytes": [
+          65537,
+          1
+        ],
+        "maxRows": 128,
+        "softBytes": 65536
+      },
+      "expected": {
+        "rows": 1,
+        "bytes": 65537
+      }
+    },
+    {
+      "id": "guard-exact",
+      "kind": "guard",
+      "input": {
+        "saved": "same",
+        "current": "same"
+      },
+      "expected": {
+        "resume": true,
+        "originalInputRetained": true,
+        "intentRetained": true
+      }
+    },
+    {
+      "id": "guard-changed-limits",
+      "kind": "guard",
+      "input": {
+        "saved": "same",
+        "current": "limits"
+      },
+      "expected": {
+        "resume": false,
+        "originalInputRetained": true,
+        "intentRetained": true
+      }
+    },
+    {
+      "id": "guard-changed-dirty",
+      "kind": "guard",
+      "input": {
+        "saved": "same",
+        "current": "dirty"
+      },
+      "expected": {
+        "resume": false,
+        "originalInputRetained": true,
+        "intentRetained": true
+      }
+    },
+    {
+      "id": "guard-changed-baseline",
+      "kind": "guard",
+      "input": {
+        "saved": "same",
+        "current": "baseline"
+      },
+      "expected": {
+        "resume": false,
+        "originalInputRetained": true,
+        "intentRetained": true
+      }
+    },
+    {
+      "id": "guard-changed-attachment",
+      "kind": "guard",
+      "input": {
+        "saved": "same",
+        "current": "attachment"
+      },
+      "expected": {
+        "resume": false,
+        "originalInputRetained": true,
+        "intentRetained": true
+      }
+    },
+    {
+      "id": "guard-changed-input",
+      "kind": "guard",
+      "input": {
+        "saved": "same",
+        "current": "input"
+      },
+      "expected": {
+        "resume": false,
+        "originalInputRetained": true,
+        "intentRetained": true
+      }
+    }
+  ],
+  "runtimeObligations": [
+    "second-supported-handle",
+    "live-buffer-cancellation",
+    "physical-owner-death-and-reacquisition",
+    "old-partial-tampered-format-rejection",
+    "paged-settlement-backlog",
+    "trigger-live-deviation-preservation"
+  ],
+  "runtimeExecuted": false
+}

@@ -89,8 +89,8 @@ class SqliteNowExtensionTest {
     }
 
     @Test
-    @DisplayName("runtimeArtifact helpers set the selected artifact kind")
-    fun runtimeArtifactHelpersSetSelectedArtifactKind() {
+    @DisplayName("runtime artifact helpers set the configured kind")
+    fun runtimeArtifactHelpersSetConfiguredKind() {
         val project = ProjectBuilder.builder().build()
         val config = DatabaseConfig("AppDatabase", project.objects)
         val localXcframework = File("runtime/SQLiteNowCoreRuntime.xcframework")

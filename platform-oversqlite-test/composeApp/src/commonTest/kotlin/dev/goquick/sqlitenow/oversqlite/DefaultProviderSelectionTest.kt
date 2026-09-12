@@ -13,18 +13,18 @@ import kotlinx.coroutines.test.runTest
 class DefaultProviderSelectionTest {
     @Test
     fun ordinaryDefaultProviderSelectsTheRuntimeAndCannotSelfSkip() = runTest {
-        val ownedStorage = Phase6OwnedStorage()
+        val ownedStorage = OwnedWorkerStorage()
         val dbName = ownedStorage.newDatabaseName()
         try {
             val provider = oversqliteTestConnectionProvider()
             val connection = provider.openConnection(dbName, debug = true)
             try {
                 connection.execSQL(
-                    "CREATE TABLE phase7_default_probe(id INTEGER PRIMARY KEY NOT NULL)",
+                    "CREATE TABLE default_persistence_default_probe(id INTEGER PRIMARY KEY NOT NULL)",
                 )
                 val failure = assertFailsWith<SqliteException> {
                     connection.execSQL(
-                        "CREATE TABLE phase7_default_probe(id INTEGER PRIMARY KEY NOT NULL)",
+                        "CREATE TABLE default_persistence_default_probe(id INTEGER PRIMARY KEY NOT NULL)",
                     )
                 }
                 if (webRuntimeKind() in setOf("js-node", "js-browser", "wasm-browser")) {
@@ -49,7 +49,7 @@ class DefaultProviderSelectionTest {
                         """
                         SELECT count(*)
                         FROM sqlite_master
-                        WHERE type = 'table' AND name = 'phase7_default_probe'
+                        WHERE type = 'table' AND name = 'default_persistence_default_probe'
                         """.trimIndent(),
                     )
                     val tableCount = statement.use {
@@ -68,7 +68,7 @@ class DefaultProviderSelectionTest {
             }
 
             println(
-                "phase7_oversqlite_default provider=BundledSqliteConnectionProvider " +
+                "default_persistence_oversqlite_default provider=BundledSqliteConnectionProvider " +
                     "runtime=${webRuntimeKind()} db=$dbName",
             )
         } finally {

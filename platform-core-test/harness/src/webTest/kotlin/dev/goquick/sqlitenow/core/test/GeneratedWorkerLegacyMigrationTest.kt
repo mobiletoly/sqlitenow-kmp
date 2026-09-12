@@ -21,7 +21,7 @@ class GeneratedWorkerLegacyMigrationTest {
     fun generatedUpgradeRunsAfterHealthyImportAndRetriesWithoutReloadingLegacy() = runTest {
         if (!generatedWorkerLegacyMigrationBrowserAvailable()) return@runTest
         val dbName =
-            "__sqlitenow_phase5b_generated_${Random.nextInt().toUInt()}"
+            "__sqlitenow_legacy_migration_generated_${Random.nextInt().toUInt()}"
         val source = GeneratedSnapshotPersistence()
         seedVersionOneSnapshot(dbName, source)
         val sourceBytes = assertNotNull(source.bytes).size

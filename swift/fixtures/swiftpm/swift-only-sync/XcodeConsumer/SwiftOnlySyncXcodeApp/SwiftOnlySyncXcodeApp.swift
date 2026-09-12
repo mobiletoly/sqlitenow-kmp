@@ -26,23 +26,30 @@ private struct ContentView: View {
     private func runDatabaseSmoke() async {
         do {
             let db = SwiftOnlySyncDatabase(path: temporaryDatabaseURL())
-            try await db.open()
+            let opening = try await db.openForSync(
+                baseURL: URL(string: "http://127.0.0.1:1")!,
+                auth: .bearer(token: "fixture-token"),
+                config: .init(
+                    generationId: 1,
+                    databaseId: "swift-sync-fixture",
+                    serviceId: "nethttp-server-example"
+                )
+            )
+            let openingStatus = try await opening.advance()
+            guard openingStatus.outcome == .ready,
+                  let sync = opening.readyOrNil()?.client else {
+                throw SQLiteNowError.sync(message: "Coordinated opening did not publish a ready database")
+            }
             defer {
                 Task {
-                    try? await db.close()
+                    try? await opening.close()
                 }
             }
 
             try await db.docs.insertOrReplace(DocsInsertOrReplaceParams(docId: "doc-1", title: "First"))
             let rows = try await db.docs.selectAll().list()
 
-            let sync = try db.makeSyncClient(
-                baseURL: URL(string: "http://127.0.0.1:1")!,
-                auth: .bearer(token: "fixture-token")
-            )
-            try await sync.open()
             let sourceInfo = try await sync.sourceInfo()
-            sync.close()
 
             status = "\(rows.map(\.title).joined(separator: ", ")) / \(sourceInfo.currentSourceId)"
         } catch {

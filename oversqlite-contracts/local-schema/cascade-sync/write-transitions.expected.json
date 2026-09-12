@@ -6,7 +6,7 @@
       "name": "cascade-delete",
       "dirtyRows": [
         {
-          "schemaName": "main",
+          "schemaName": "local",
           "tableName": "posts",
           "keyJson": "{\"id\":\"post-cascade\"}",
           "op": "DELETE",
@@ -15,7 +15,7 @@
           "dirtyOrdinal": 1
         },
         {
-          "schemaName": "main",
+          "schemaName": "local",
           "tableName": "users",
           "keyJson": "{\"id\":\"user-cascade\"}",
           "op": "DELETE",

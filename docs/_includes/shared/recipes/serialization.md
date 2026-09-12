@@ -13,17 +13,7 @@ CREATE TABLE task
 );
 ```
 
-{% if include.platform == "dart" %}
-```dart
-final db = AppDatabase(
-  path: path,
-  adapters: AppDatabaseAdapters(
-    taskTagsToSql: (tags) => jsonEncode(tags),
-    sqlValueToTaskTags: (value) => List<String>.from(jsonDecode(value as String)),
-  ),
-);
-```
-{% elsif include.platform == "kmp" %}
+{% if include.platform == "kmp" %}
 ```kotlin
 val db = AppDatabase(
     dbName = dbPath,

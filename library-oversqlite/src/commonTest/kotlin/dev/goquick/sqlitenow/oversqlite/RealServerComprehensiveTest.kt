@@ -2,6 +2,10 @@ package dev.goquick.sqlitenow.oversqlite
 
 import io.ktor.client.call.body
 import io.ktor.client.HttpClient
+import io.ktor.client.request.get
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -18,8 +22,8 @@ import kotlin.test.assertTrue
 
 internal class RealServerComprehensiveTest : RealServerSupport() {
     @Test
-    fun openConnectPushPullAndFreshAttach_workAgainstRealServer() = runOwnedWebDatabaseTest {
-        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
+    fun openConnectPushPullAndFreshAttach_workAgainstRealServer() = runRealServerTest {
+        val config = requireRealServerConfig() ?: return@runRealServerTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("realserver-user")
@@ -62,6 +66,8 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
             val rowUserId = "11111111-1111-1111-1111-111111111111"
             val rowPostId = "22222222-2222-2222-2222-222222222222"
             insertBusinessUserAndPost(dbA, rowUserId, rowPostId, "real-server-smoke")
+            val largeContent = "Payload real-server-smoke" + "x".repeat(4_096)
+            dbA.execSQL("UPDATE posts SET content = '$largeContent' WHERE id = '$rowPostId'")
 
             clientA.pushPending().getOrThrow()
             clientB.pullToStable().getOrThrow()
@@ -78,7 +84,7 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
             assertEquals("User real-server-smoke", scalarText(dbB, "SELECT name FROM users WHERE id = '$rowUserId'"))
             assertEquals("Title real-server-smoke", scalarText(dbB, "SELECT title FROM posts WHERE id = '$rowPostId'"))
             assertEquals("User real-server-smoke", scalarText(dbC, "SELECT name FROM users WHERE id = '$rowUserId'"))
-            assertEquals("Payload real-server-smoke", scalarText(dbC, "SELECT content FROM posts WHERE id = '$rowPostId'"))
+            assertEquals(largeContent, scalarText(dbC, "SELECT content FROM posts WHERE id = '$rowPostId'"))
             assertFalse(clientA.syncStatus().getOrThrow().pending.hasPendingSyncData)
             assertFalse(clientB.syncStatus().getOrThrow().pending.hasPendingSyncData)
             assertFalse(clientC.syncStatus().getOrThrow().pending.hasPendingSyncData)
@@ -94,8 +100,8 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
 
     @Test
     fun connectRetryLater_pendingSyncStatus_andDetachLifecycle_workAgainstRealServer() =
-        runOwnedWebDatabaseTest {
-        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
+        runRealServerTest {
+        val config = requireRealServerConfig() ?: return@runRealServerTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("lease-user")
@@ -161,8 +167,8 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
     }
 
     @Test
-    fun syncThenDetach_flushesAndDetaches_workAgainstRealServer() = runOwnedWebDatabaseTest {
-        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
+    fun syncThenDetach_flushesAndDetaches_workAgainstRealServer() = runRealServerTest {
+        val config = requireRealServerConfig() ?: return@runRealServerTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("sync-detach-user")
@@ -220,8 +226,8 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
 
     @Test
     fun syncThenDetach_returnsBlockedWhenFreshWritesKeepArriving_againstRealServer() =
-        runOwnedWebDatabaseTest {
-        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
+        runRealServerTest {
+        val config = requireRealServerConfig() ?: return@runRealServerTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("blocked-detach-user")
@@ -236,7 +242,7 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
             val token = issueDummySigninToken(config.baseUrl, userId, sourceId)
             var pullResponses = 0
             http = newRealServerHttpClient(config.baseUrl, token) { path ->
-                if (path == "/sync/pull" && pullResponses < 2) {
+                if (path == "/sync/pull") {
                     pullResponses += 1
                     insertBusinessUserAndPost(
                         db = db,
@@ -260,7 +266,10 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
 
             assertFalse(result.isSuccess())
             assertEquals(DetachOutcome.BLOCKED_UNSYNCED_DATA, result.detach)
-            assertEquals(2, result.syncRounds)
+            assertEquals(1, result.syncRounds)
+            assertEquals(SyncThenDetachBlockedReason.PUSH_ATTEMPT_LIMIT, result.blockedReason)
+            assertEquals(null, result.lastSync)
+            assertEquals(64, pullResponses)
             assertEquals(2L, result.remainingPendingRowCount)
             assertTrue(client.syncStatus().getOrThrow().pending.blocksDetach)
             assertEquals("attached", scalarText(db, "SELECT binding_state FROM _sync_attachment_state"))
@@ -278,8 +287,8 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
     }
 
     @Test
-    fun openIsLocalOnly_andSameUserOfflineResume_workAgainstRealServer() = runOwnedWebDatabaseTest {
-        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
+    fun openIsLocalOnly_andSameUserOfflineResumeRequiresDiscovery_workAgainstRealServer() = runRealServerTest {
+        val config = requireRealServerConfig() ?: return@runRealServerTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("resume-user")
@@ -312,7 +321,7 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
                     expectedAuthority = AuthorityStatus.AUTHORITATIVE_EMPTY,
                 )
             } finally {
-                onlineClient.close()
+                onlineClient.closeFromCoordinatedOwner()
                 onlineHttp.close()
             }
 
@@ -324,12 +333,9 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
             )
             try {
                 offlineResumeClient.open().getOrThrow()
-                assertConnectedOutcome(
-                    expectedOutcome = AttachOutcome.RESUMED_ATTACHED_STATE,
-                    actual = offlineResumeClient.attach(userId).getOrThrow(),
-                )
+                assertNotNull(offlineResumeClient.attach(userId).exceptionOrNull())
             } finally {
-                offlineResumeClient.close()
+                offlineResumeClient.closeFromCoordinatedOwner()
                 offlineResumeHttp.close()
             }
         } finally {
@@ -341,8 +347,8 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
 
     @Test
     fun sameInstall_canAlternateUsersAndSeeCorrectRemoteDataAgainstRealServer() =
-        runOwnedWebDatabaseTest {
-        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
+        runRealServerTest {
+        val config = requireRealServerConfig() ?: return@runRealServerTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("source-user")
@@ -436,8 +442,8 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
     }
 
     @Test
-    fun sameInstall_heavyMultiChunkAlternationAgainstRealServer() = runOwnedWebDatabaseTest {
-        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
+    fun sameInstall_heavyMultiChunkAlternationAgainstRealServer() = runRealServerTest {
+        val config = requireRealServerConfig() ?: return@runRealServerTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("heavy-user-a")
@@ -459,7 +465,7 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
             val userBPostIds = List(3) { randomRealServerUuid() }
 
             val httpA = newRealServerHttpClient(config.baseUrl, issueDummySigninToken(config.baseUrl, userId, initialSourceId))
-            val clientA = newRealServerClient(db, httpA, uploadLimit = 1, downloadLimit = 1, snapshotChunkRows = 2)
+            val clientA = newRealServerClient(db, httpA, maxPushRows = 1, maxPullBundles = 1, maxSnapshotChunkRows = 2)
             try {
                 clientA.open().getOrThrow()
                 assertConnectedOutcome(
@@ -475,8 +481,9 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
                         suffix = "heavy-a-$index",
                     )
                     clientA.pushPending().getOrThrow()
+                    clientA.pushPending().getOrThrow()
                 }
-                assertEquals(4L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$initialSourceId'"))
+                assertEquals(7L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$initialSourceId'"))
                 assertEquals(DetachOutcome.DETACHED, clientA.detach().getOrThrow())
             } finally {
                 clientA.close()
@@ -487,7 +494,7 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
             assertNotEquals(initialSourceId, sourceAfterUserA)
 
             val httpB = newRealServerHttpClient(config.baseUrl, issueDummySigninToken(config.baseUrl, otherUserId, sourceAfterUserA))
-            val clientB = newRealServerClient(db, httpB, uploadLimit = 1, downloadLimit = 1, snapshotChunkRows = 2)
+            val clientB = newRealServerClient(db, httpB, maxPushRows = 1, maxPullBundles = 1, maxSnapshotChunkRows = 2)
             try {
                 clientB.open().getOrThrow()
                 assertConnectedOutcome(
@@ -503,8 +510,9 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
                         suffix = "heavy-b-$index",
                     )
                     clientB.pushPending().getOrThrow()
+                    clientB.pushPending().getOrThrow()
                 }
-                assertEquals(4L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$sourceAfterUserA'"))
+                assertEquals(7L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$sourceAfterUserA'"))
                 assertEquals(DetachOutcome.DETACHED, clientB.detach().getOrThrow())
             } finally {
                 clientB.close()
@@ -512,7 +520,7 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
             }
 
             val verifyHttpA = newRealServerHttpClient(config.baseUrl, issueDummySigninToken(config.baseUrl, userId, verifySourceIdA))
-            val verifyClientA = newRealServerClient(verifyDbA, verifyHttpA, uploadLimit = 1, downloadLimit = 1, snapshotChunkRows = 2)
+            val verifyClientA = newRealServerClient(verifyDbA, verifyHttpA, maxPushRows = 1, maxPullBundles = 1, maxSnapshotChunkRows = 2)
             try {
                 verifyClientA.open().getOrThrow()
                 assertConnectedOutcome(
@@ -535,7 +543,7 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
             }
 
             val verifyHttpB = newRealServerHttpClient(config.baseUrl, issueDummySigninToken(config.baseUrl, otherUserId, verifySourceIdB))
-            val verifyClientB = newRealServerClient(verifyDbB, verifyHttpB, uploadLimit = 1, downloadLimit = 1, snapshotChunkRows = 2)
+            val verifyClientB = newRealServerClient(verifyDbB, verifyHttpB, maxPushRows = 1, maxPullBundles = 1, maxSnapshotChunkRows = 2)
             try {
                 verifyClientB.open().getOrThrow()
                 assertConnectedOutcome(
@@ -565,8 +573,8 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
 
     @Test
     fun sameInstall_localSeedThenRemoteAuthoritativeRestore_usesFreshSourceAfterDetachAgainstRealServer() =
-        runOwnedWebDatabaseTest {
-        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
+        runRealServerTest {
+        val config = requireRealServerConfig() ?: return@runRealServerTest
         resetRealServerState(config.baseUrl)
 
         val seedUserId = randomRealServerId("seed-local-user")
@@ -687,8 +695,8 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
     }
 
     @Test
-    fun freshSourceAfterDetach_restartsLocalSequence_againstRealServer() = runOwnedWebDatabaseTest {
-        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
+    fun freshSourceAfterDetach_restartsLocalSequence_againstRealServer() = runRealServerTest {
+        val config = requireRealServerConfig() ?: return@runRealServerTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("reuse-user")
@@ -727,9 +735,9 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
             assertEquals(DetachOutcome.DETACHED, client.detach().getOrThrow())
             val rotatedSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
             assertNotEquals(sourceId, rotatedSourceId)
+            client.closeFromCoordinatedOwner()
             http.close()
             http = newRealServerHttpClient(config.baseUrl, issueDummySigninToken(config.baseUrl, userId, rotatedSourceId))
-            client.close()
             val restartedClient = newRealServerClient(db, http)
             restartedClient.open().getOrThrow()
             assertConnectedOutcome(
@@ -763,8 +771,8 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
 
     @Test
     fun rotatedRebuild_usesRequestedReplacementAndOldSourceReturnsStructuredSourceRetired_againstRealServer() =
-        runOwnedWebDatabaseTest {
-        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
+        runRealServerTest {
+        val config = requireRealServerConfig() ?: return@runRealServerTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("retired-user")
@@ -827,15 +835,17 @@ internal class RealServerComprehensiveTest : RealServerSupport() {
                 config.baseUrl,
                 issueDummySigninToken(config.baseUrl, userId, recoverSourceId),
             )
-            val oldSourceResponse = oldSourceHttp.post("sync/push-sessions") {
+            val discovery = oldSourceHttp.get("sync/generations/1") {
+                header("Oversync-Source-ID", recoverSourceId)
+            }.body<JsonObject>()
+            val generation = discovery.getValue("schema_generation").jsonObject
+            val oldSourceResponse = oldSourceHttp.post("sync/snapshot-sessions") {
+                header("Oversync-Schema-Generation-ID", generation.getValue("id").jsonPrimitive.content)
+                header("Oversync-Schema-Generation-Fingerprint", generation.getValue("fingerprint").jsonPrimitive.content)
                 header("Oversync-Source-ID", recoverSourceId)
                 contentType(ContentType.Application.Json)
                 setBody(
-                    PushSessionCreateRequest(
-                        sourceBundleId = 1L,
-                        plannedRowCount = 1L,
-                        canonicalRequestHash = "a".repeat(64),
-                    ),
+                    """{"source_replacement":{"previous_source_id":"$recoverSourceId","new_source_id":"${randomRealServerId("second-rotated-source")}","reason":"history_pruned"}}""",
                 )
             }
             assertEquals(HttpStatusCode.Conflict, oldSourceResponse.status)

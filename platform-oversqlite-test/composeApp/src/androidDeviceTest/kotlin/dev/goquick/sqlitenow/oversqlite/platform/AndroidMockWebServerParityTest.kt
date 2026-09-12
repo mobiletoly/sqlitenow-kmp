@@ -40,10 +40,10 @@ class AndroidMockWebServerParityTest {
         server.start()
         val http = newMockWebServerHttpClient(server)
         val database = RealServerGeneratedDatabase(":memory:", VersionBasedDatabaseMigrations(), debug = true)
+        var opening: OversqliteOpening<RealServerGeneratedDatabase>? = null
         try {
-            enqueueCapabilities(server, *RealServerGeneratedDatabase.syncTables.map { it.tableName }.toTypedArray())
+            enqueueDiscovery(server, *RealServerGeneratedDatabase.syncTables.map { it.tableName }.toTypedArray())
             enqueueInitializeEmptyConnect(server)
-            enqueueCapabilities(server, *RealServerGeneratedDatabase.syncTables.map { it.tableName }.toTypedArray())
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -55,22 +55,14 @@ class AndroidMockWebServerParityTest {
                               "bundle_seq": 1,
                               "source_id": "peer-a",
                               "source_bundle_id": 11,
-                              "rows": [
-                                {
-                                  "schema": "main",
-                                  "table": "users",
-                                  "key": {"id":"user-1"},
-                                  "op": "INSERT",
-                                  "row_version": 1,
-                                  "payload": {
-                                    "id":"user-1",
+                              "bundle_hash": "9ca27250b0f374b86697063fa929345062dba95c5c98aac09ba43fcdb8ae5f65",
+                              "rows": [[7, 0, [["i", ["11111111-1111-4111-8111-111111111111"], 1, {
+                                    "id":"11111111-1111-4111-8111-111111111111",
                                     "name":"Generated Ada",
                                     "email":"generated-ada@example.com",
                                     "created_at":"2026-03-22T00:00:00Z",
                                     "updated_at":"2026-03-22T00:00:00Z"
-                                  }
-                                }
-                              ]
+                                  }]]]]
                             }
                           ]
                         }
@@ -78,10 +70,18 @@ class AndroidMockWebServerParityTest {
                 )
             )
 
-            database.open()
+            opening = database.openForSync(
+                config = database.buildOversqliteConfig(
+                    generationId = 1L,
+                    databaseId = "platform-sync",
+                    serviceId = "platform-mock",
+                ),
+                httpClient = http,
+            )
+            opening.advance()
             database.enableTableChangeNotifications()
-            val client = database.newOversqliteClient(schema = "main", httpClient = http)
-            client.openAndAttach("user-1").getOrThrow()
+            val client = database.newOversqliteClient(generationId = 1L, databaseId = "platform-sync", serviceId = "platform-mock", httpClient = http)
+            client.attach("11111111-1111-4111-8111-111111111111").getOrThrow()
 
             val emissions = mutableListOf<List<UserSelectAllResult>>()
             val firstEmission = CompletableDeferred<Unit>()
@@ -105,7 +105,7 @@ class AndroidMockWebServerParityTest {
             assertEquals(
                 listOf(
                     UserSelectAllResult(
-                        id = "user-1",
+                        id = "11111111-1111-4111-8111-111111111111",
                         name = "Generated Ada",
                         email = "generated-ada@example.com",
                     )
@@ -113,9 +113,10 @@ class AndroidMockWebServerParityTest {
                 emissions.last(),
             )
 
-            val capabilitiesRequest = server.takeRequest(5, TimeUnit.SECONDS)
-            assertNotNull(capabilitiesRequest)
-            assertEquals("/sync/capabilities", capabilitiesRequest?.url?.encodedPath)
+            val discoveryRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertEquals("/sync/generations/1", discoveryRequest?.url?.encodedPath)
+            assertEquals(null, discoveryRequest?.headers?.get("Oversync-Schema-Generation-ID"))
+            assertEquals(null, discoveryRequest?.headers?.get("Oversync-Schema-Generation-Fingerprint"))
 
             val connectRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(connectRequest)
@@ -123,16 +124,12 @@ class AndroidMockWebServerParityTest {
 
             val pullRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(pullRequest)
-            assertEquals("/sync/capabilities", pullRequest?.url?.encodedPath)
-
-            val gatedPullRequest = server.takeRequest(5, TimeUnit.SECONDS)
-            assertNotNull(gatedPullRequest)
-            assertEquals("/sync/pull", gatedPullRequest?.url?.encodedPath)
-            assertEquals("0", gatedPullRequest?.url?.queryParameter("after_bundle_seq"))
+            assertEquals("/sync/pull", pullRequest?.url?.encodedPath)
+            assertEquals("0", pullRequest?.url?.queryParameter("after_bundle_seq"))
         } finally {
+            opening?.close() ?: database.close()
             http.close()
             server.close()
-            database.close()
         }
     }
 
@@ -147,88 +144,27 @@ class AndroidMockWebServerParityTest {
             db.execSQL("CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)")
             val committedBundleHash = "29d27bd2015db825f6b2af4c08cf81883ad20d75584918caedd859d2270c9266"
             val canonicalRequestHash = sha256Hex(
-                """[{"base_row_version":"0","key":{"id":"user-1"},"op":"INSERT","payload":{"id":"user-1","name":"Ada Local"},"row_ordinal":"0","schema":"main","table":"users"}]"""
-                    .encodeToByteArray()
+                """{"generation_fingerprint":"8cd94e6ebb91e4022dd8bb64f7d60048b8bf380d5af4982313d23d2d7999b625","generation_id":"1","rows":[{"base_row_version":"0","key":{"id":"user-1"},"op":"INSERT","payload":{"id":"user-1","name":"Ada Local"},"row_ordinal":"0","schema":"main","table":"users"}],"type":"oversync.generation-pinned-push-request.v1"}""".encodeToByteArray()
             )
-            val client = DefaultOversqliteClient(
-                db = db,
-                config = OversqliteConfig(
-                    schema = "main",
-                    syncTables = listOf(SyncTable("users", syncKeyColumnName = "id"))
-                ),
-                http = http,
+            val client = newCoordinatedClient(
+                db,
+                http,
+                syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
             )
-            client.open().getOrThrow()
             val sourceId = client.sourceInfo().getOrThrow().currentSourceId
-            enqueueCapabilities(server, "users")
+            enqueueDiscovery(server, "users")
             enqueueInitializeEmptyConnect(server)
-            enqueueCapabilities(server, "users")
-            server.enqueue(
-                jsonMockResponse(
-                    """
-                        {
-                          "push_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-                          "status": "staging",
-                          "planned_row_count": 1,
-                          "next_expected_row_ordinal": 0,
-                          "source_id": "$sourceId",
-                          "source_bundle_id": 1,
-                          "canonical_request_hash": "$canonicalRequestHash"
-                        }
-                    """.trimIndent()
-                )
-            )
-            server.enqueue(
-                jsonMockResponse(
-                    """
-                        {
-                          "push_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-                          "next_expected_row_ordinal": 1
-                        }
-                    """.trimIndent()
-                )
-            )
             server.enqueue(
                 jsonMockResponse(
                     """
                         {
                           "bundle_seq": 1,
-                          "source_id": "$sourceId",
-                          "source_bundle_id": 1,
-                          "row_count": 1,
                           "bundle_hash": "$committedBundleHash",
-                          "canonical_request_hash": "$canonicalRequestHash"
+                          "rows": [[0, 0, [["i", ["user-1"], 7, {"id":"user-1","name":"Ada Local"}]]]]
                         }
                     """.trimIndent()
                 )
             )
-            server.enqueue(
-                jsonMockResponse(
-                    """
-                        {
-                          "bundle_seq": 1,
-                          "source_id": "$sourceId",
-                          "source_bundle_id": 1,
-                          "row_count": 1,
-                          "bundle_hash": "$committedBundleHash",
-                          "canonical_request_hash": "$canonicalRequestHash",
-                          "next_row_ordinal": 0,
-                          "has_more": false,
-                          "rows": [
-                            {
-                              "schema": "main",
-                              "table": "users",
-                              "key": {"id":"user-1"},
-                              "op": "INSERT",
-                              "row_version": 7,
-                              "payload": {"id":"user-1","name":"Ada Local"}
-                            }
-                          ]
-                        }
-                    """.trimIndent()
-                )
-            )
-            enqueueCapabilities(server, "users")
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -240,24 +176,14 @@ class AndroidMockWebServerParityTest {
                               "bundle_seq": 2,
                               "source_id": "peer-a",
                               "source_bundle_id": 11,
-                              "rows": [
-                                {
-                                  "schema": "main",
-                                  "table": "users",
-                                  "key": {"id":"user-2"},
-                                  "op": "INSERT",
-                                  "row_version": 1,
-                                  "payload": {"id":"user-2","name":"Grace Hopper"}
-                                }
-                              ]
+                              "bundle_hash": "08c2b0e67ed8b95ec86536881fdc92d72ca64bde1dace715a4d8ac2c20f5137d",
+                              "rows": [[0, 0, [["i", ["user-2"], 1, {"id":"user-2","name":"Grace Hopper"}]]]]
                             }
                           ]
                         }
                     """.trimIndent()
                 )
             )
-            enqueueCapabilities(server, "users")
-            enqueueCapabilities(server, "users")
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -265,7 +191,7 @@ class AndroidMockWebServerParityTest {
                           "snapshot_id": "snapshot-hydrate",
                           "snapshot_bundle_seq": 9,
                           "row_count": 1,
-                          "byte_count": 32,
+                          "logical_byte_count": 63,
                           "expires_at": "2026-03-22T00:00:00Z"
                         }
                     """.trimIndent()
@@ -275,20 +201,10 @@ class AndroidMockWebServerParityTest {
                 jsonMockResponse(
                     """
                         {
-                          "snapshot_id": "snapshot-hydrate",
-                          "snapshot_bundle_seq": 9,
-                          "byte_count": 32,
                           "next_row_ordinal": 1,
                           "has_more": false,
-                          "rows": [
-                            {
-                              "schema": "main",
-                              "table": "users",
-                              "key": {"id":"user-3"},
-                              "row_version": 4,
-                              "payload": {"id":"user-3","name":"Katherine Johnson"}
-                            }
-                          ]
+                          "logical_byte_count": 63,
+                          "rows": [[0, 1, [["i", ["user-3"], 4, {"id":"user-3","name":"Katherine Johnson"}]]]]
                         }
                     """.trimIndent()
                 )
@@ -312,67 +228,30 @@ class AndroidMockWebServerParityTest {
             assertEquals("Katherine Johnson", scalarText(db, "SELECT name FROM users WHERE id = 'user-3'"))
             assertEquals(9L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
 
-            val capabilitiesRequest = server.takeRequest(5, TimeUnit.SECONDS)
-            assertNotNull(capabilitiesRequest)
-            assertEquals("/sync/capabilities", capabilitiesRequest?.url?.encodedPath)
+            val discoveryRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertEquals("/sync/generations/1", discoveryRequest?.url?.encodedPath)
+            assertEquals(null, discoveryRequest?.headers?.get("Oversync-Schema-Generation-ID"))
+            assertEquals(null, discoveryRequest?.headers?.get("Oversync-Schema-Generation-Fingerprint"))
 
             val connectRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(connectRequest)
             assertEquals("/sync/connect", connectRequest?.url?.encodedPath)
 
-            val createPushRequest = server.takeRequest(5, TimeUnit.SECONDS)
-            assertNotNull(createPushRequest)
-            assertEquals("/sync/capabilities", createPushRequest?.url?.encodedPath)
-
-            val gatedCreatePushRequest = server.takeRequest(5, TimeUnit.SECONDS)
-            assertNotNull(gatedCreatePushRequest)
-            assertEquals("/sync/push-sessions", gatedCreatePushRequest?.url?.encodedPath)
-            val createPushJson = testJson.parseToJsonElement(gatedCreatePushRequest!!.body!!.utf8()).jsonObject
+            val pushRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(pushRequest)
+            assertEquals("/sync/push", pushRequest?.url?.encodedPath)
+            val createPushJson = testJson.parseToJsonElement(pushRequest!!.body!!.utf8()).jsonObject
             assertEquals("1", createPushJson["source_bundle_id"]?.jsonPrimitive?.content)
-            assertEquals("1", createPushJson["planned_row_count"]?.jsonPrimitive?.content)
-
-            val chunkPushRequest = server.takeRequest(5, TimeUnit.SECONDS)
-            assertNotNull(chunkPushRequest)
-            assertEquals(
-                "/sync/push-sessions/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/chunks",
-                chunkPushRequest?.url?.encodedPath,
-            )
-            val chunkPushJson = testJson.parseToJsonElement(chunkPushRequest!!.body!!.utf8()).jsonObject
-            assertEquals("0", chunkPushJson["start_row_ordinal"]?.jsonPrimitive?.content)
-            assertEquals(1, chunkPushJson["rows"]?.jsonArray?.size)
-            assertEquals(
-                "users",
-                chunkPushJson["rows"]?.jsonArray?.first()?.jsonObject?.get("table")?.jsonPrimitive?.content
-            )
-
-            val commitPushRequest = server.takeRequest(5, TimeUnit.SECONDS)
-            assertNotNull(commitPushRequest)
-            assertEquals(
-                "/sync/push-sessions/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/commit",
-                commitPushRequest?.url?.encodedPath,
-            )
-
-            val committedRowsRequest = server.takeRequest(5, TimeUnit.SECONDS)
-            assertNotNull(committedRowsRequest)
-            assertEquals("/sync/committed-bundles/1/rows", committedRowsRequest?.url?.encodedPath)
-            assertEquals("1000", committedRowsRequest?.url?.queryParameter("max_rows"))
+            val compactRows = createPushJson.getValue("rows").jsonArray
+            assertEquals(1, compactRows.size)
+            val compactGroup = compactRows.single().jsonArray
+            assertEquals("0", compactGroup[0].jsonPrimitive.content)
+            assertEquals("user-1", compactGroup[2].jsonArray.single().jsonArray[1].jsonArray.single().jsonPrimitive.content)
 
             val pullRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(pullRequest)
-            assertEquals("/sync/capabilities", pullRequest?.url?.encodedPath)
-
-            val gatedPullRequest = server.takeRequest(5, TimeUnit.SECONDS)
-            assertNotNull(gatedPullRequest)
-            assertEquals("/sync/pull", gatedPullRequest?.url?.encodedPath)
-            assertEquals("1", gatedPullRequest?.url?.queryParameter("after_bundle_seq"))
-
-            val snapshotProtocolGateRequest = server.takeRequest(5, TimeUnit.SECONDS)
-            assertNotNull(snapshotProtocolGateRequest)
-            assertEquals("/sync/capabilities", snapshotProtocolGateRequest?.url?.encodedPath)
-
-            val snapshotLimitsRequest = server.takeRequest(5, TimeUnit.SECONDS)
-            assertNotNull(snapshotLimitsRequest)
-            assertEquals("/sync/capabilities", snapshotLimitsRequest?.url?.encodedPath)
+            assertEquals("/sync/pull", pullRequest?.url?.encodedPath)
+            assertEquals("1", pullRequest?.url?.queryParameter("after_bundle_seq"))
 
             val snapshotCreateRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(snapshotCreateRequest)
@@ -402,9 +281,8 @@ class AndroidMockWebServerParityTest {
         val http = newMockWebServerHttpClient(server)
         try {
             db.execSQL("CREATE TABLE users (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL)")
-            enqueueCapabilities(server, "users")
+            enqueueDiscovery(server, "users")
             enqueueInitializeEmptyConnect(server)
-            enqueueCapabilities(server, "users")
             server.enqueue(
                 MockResponse.Builder()
                     .code(409)
@@ -412,7 +290,6 @@ class AndroidMockWebServerParityTest {
                     .body("""{"error":"history_pruned","message":"after_bundle_seq 0 is below retained floor 5"}""")
                     .build()
             )
-            enqueueCapabilities(server, "users")
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -420,7 +297,7 @@ class AndroidMockWebServerParityTest {
                           "snapshot_id": "snapshot-pruned",
                           "snapshot_bundle_seq": 9,
                           "row_count": 1,
-                          "byte_count": 32,
+                          "logical_byte_count": 49,
                           "expires_at": "2026-03-22T00:00:00Z"
                         }
                     """.trimIndent()
@@ -430,44 +307,31 @@ class AndroidMockWebServerParityTest {
                 jsonMockResponse(
                     """
                         {
-                          "snapshot_id": "snapshot-pruned",
-                          "snapshot_bundle_seq": 9,
-                          "byte_count": 32,
                           "next_row_ordinal": 1,
                           "has_more": false,
-                          "rows": [
-                            {
-                              "schema": "main",
-                              "table": "users",
-                              "key": {"id":"user-1"},
-                              "row_version": 2,
-                              "payload": {"id":"user-1","name":"Ada"}
-                            }
-                          ]
+                          "logical_byte_count": 49,
+                          "rows": [[0, 1, [["i", ["user-1"], 2, {"id":"user-1","name":"Ada"}]]]]
                         }
                     """.trimIndent()
                 )
             )
             server.enqueue(MockResponse.Builder().code(204).build())
 
-            val client = DefaultOversqliteClient(
-                db = db,
-                config = OversqliteConfig(
-                    schema = "main",
-                    syncTables = listOf(SyncTable("users", syncKeyColumnName = "id"))
-                ),
-                http = http,
+            val client = newCoordinatedClient(
+                db,
+                http,
+                syncTables = listOf(SyncTable("users", syncKeyColumnName = "id")),
             )
-
             client.openAndAttach("user-1").getOrThrow()
             client.pullToStable().getOrThrow()
 
             assertEquals("Ada", scalarText(db, "SELECT name FROM users WHERE id = 'user-1'"))
             assertEquals(9L, client.syncStatus().getOrThrow().lastBundleSeqSeen)
 
-            val capabilitiesRequest = server.takeRequest(5, TimeUnit.SECONDS)
-            assertNotNull(capabilitiesRequest)
-            assertEquals("/sync/capabilities", capabilitiesRequest?.url?.encodedPath)
+            val discoveryRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertEquals("/sync/generations/1", discoveryRequest?.url?.encodedPath)
+            assertEquals(null, discoveryRequest?.headers?.get("Oversync-Schema-Generation-ID"))
+            assertEquals(null, discoveryRequest?.headers?.get("Oversync-Schema-Generation-Fingerprint"))
 
             val connectRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(connectRequest)
@@ -475,16 +339,8 @@ class AndroidMockWebServerParityTest {
 
             val pullRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(pullRequest)
-            assertEquals("/sync/capabilities", pullRequest?.url?.encodedPath)
-
-            val gatedPullRequest = server.takeRequest(5, TimeUnit.SECONDS)
-            assertNotNull(gatedPullRequest)
-            assertEquals("/sync/pull", gatedPullRequest?.url?.encodedPath)
-            assertEquals("0", gatedPullRequest?.url?.queryParameter("after_bundle_seq"))
-
-            val snapshotLimitsRequest = server.takeRequest(5, TimeUnit.SECONDS)
-            assertNotNull(snapshotLimitsRequest)
-            assertEquals("/sync/capabilities", snapshotLimitsRequest?.url?.encodedPath)
+            assertEquals("/sync/pull", pullRequest?.url?.encodedPath)
+            assertEquals("0", pullRequest?.url?.queryParameter("after_bundle_seq"))
 
             val snapshotCreateRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(snapshotCreateRequest)
@@ -533,11 +389,10 @@ class AndroidMockWebServerParityTest {
                 """.trimIndent()
             )
 
-            enqueueCapabilities(server, "files")
+            enqueueDiscovery(server, "files")
             enqueueInitializeEmptyConnect(server)
-            enqueueCapabilities(server, "files")
+            enqueueDiscovery(server, "files")
             enqueueInitializeEmptyConnect(server)
-            enqueueCapabilities(server, "files")
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -549,28 +404,18 @@ class AndroidMockWebServerParityTest {
                               "bundle_seq": 1,
                               "source_id": "peer-a",
                               "source_bundle_id": 11,
-                              "rows": [
-                                {
-                                  "schema": "main",
-                                  "table": "files",
-                                  "key": {"id":"file-1"},
-                                  "op": "INSERT",
-                                  "row_version": 1,
-                                  "payload": {
+                              "bundle_hash": "ce3e9ca783254fcdaef5195149bddabc707e1d3cdf7eb8daa9e89a06894c3fc9",
+                              "rows": [[0, 0, [["i", ["file-1"], 1, {
                                     "id":"file-1",
                                     "name":"Blob File",
                                     "data":"AAECAwQFBgcICQoLDA0ODw=="
-                                  }
-                                }
-                              ]
+                                  }]]]]
                             }
                           ]
                         }
                     """.trimIndent()
                 )
             )
-            enqueueCapabilities(server, "files")
-            enqueueCapabilities(server, "files")
             server.enqueue(
                 jsonMockResponse(
                     """
@@ -578,7 +423,7 @@ class AndroidMockWebServerParityTest {
                           "snapshot_id": "snapshot-blob",
                           "snapshot_bundle_seq": 1,
                           "row_count": 1,
-                          "byte_count": 64,
+                          "logical_byte_count": 89,
                           "expires_at": "2026-03-22T00:00:00Z"
                         }
                     """.trimIndent()
@@ -588,45 +433,29 @@ class AndroidMockWebServerParityTest {
                 jsonMockResponse(
                     """
                         {
-                          "snapshot_id": "snapshot-blob",
-                          "snapshot_bundle_seq": 1,
-                          "byte_count": 64,
                           "next_row_ordinal": 1,
                           "has_more": false,
-                          "rows": [
-                            {
-                              "schema": "main",
-                              "table": "files",
-                              "key": {"id":"file-1"},
-                              "row_version": 1,
-                              "payload": {
+                          "logical_byte_count": 89,
+                          "rows": [[0, 1, [["i", ["file-1"], 1, {
                                 "id":"file-1",
                                 "name":"Blob File",
                                 "data":"AAECAwQFBgcICQoLDA0ODw=="
-                              }
-                            }
-                          ]
+                              }]]]]
                         }
                     """.trimIndent()
                 )
             )
             server.enqueue(MockResponse.Builder().code(204).build())
 
-            val pullClient = DefaultOversqliteClient(
-                db = pullDb,
-                config = OversqliteConfig(
-                    schema = "main",
-                    syncTables = listOf(SyncTable("files", syncKeyColumnName = "id"))
-                ),
-                http = pullHttp,
+            val pullClient = newCoordinatedClient(
+                pullDb,
+                pullHttp,
+                syncTables = listOf(SyncTable("files", syncKeyColumnName = "id")),
             )
-            val hydrateClient = DefaultOversqliteClient(
-                db = hydrateDb,
-                config = OversqliteConfig(
-                    schema = "main",
-                    syncTables = listOf(SyncTable("files", syncKeyColumnName = "id"))
-                ),
-                http = hydrateHttp,
+            val hydrateClient = newCoordinatedClient(
+                hydrateDb,
+                hydrateHttp,
+                syncTables = listOf(SyncTable("files", syncKeyColumnName = "id")),
             )
 
             pullClient.openAndAttach("user-1").getOrThrow()
@@ -667,88 +496,28 @@ class AndroidMockWebServerParityTest {
 
             val bundleHash = "ce3e9ca783254fcdaef5195149bddabc707e1d3cdf7eb8daa9e89a06894c3fc9"
             val canonicalRequestHash = sha256Hex(
-                """[{"base_row_version":"0","key":{"id":"file-1"},"op":"INSERT","payload":{"data":"AAECAwQFBgcICQoLDA0ODw==","id":"file-1","name":"Blob File"},"row_ordinal":"0","schema":"main","table":"files"}]"""
-                    .encodeToByteArray()
+                """{"generation_fingerprint":"9046cec4c1d716e38af72cd55222f0fd3a624bcc9875948e077ccffaba64d6f0","generation_id":"1","rows":[{"base_row_version":"0","key":{"id":"file-1"},"op":"INSERT","payload":{"data":"AAECAwQFBgcICQoLDA0ODw==","id":"file-1","name":"Blob File"},"row_ordinal":"0","schema":"main","table":"files"}],"type":"oversync.generation-pinned-push-request.v1"}""".encodeToByteArray()
             )
-            val client = DefaultOversqliteClient(
-                db = db,
-                config = OversqliteConfig(
-                    schema = "main",
-                    syncTables = listOf(SyncTable("files", syncKeyColumnName = "id"))
-                ),
-                http = http,
+            val client = newCoordinatedClient(
+                db,
+                http,
+                syncTables = listOf(SyncTable("files", syncKeyColumnName = "id")),
             )
-            client.open().getOrThrow()
             val sourceId = client.sourceInfo().getOrThrow().currentSourceId
 
-            enqueueCapabilities(server, "files")
+            enqueueDiscovery(server, "files")
             enqueueInitializeEmptyConnect(server)
-            enqueueCapabilities(server, "files")
-            server.enqueue(
-                jsonMockResponse(
-                    """
-                        {
-                          "push_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-                          "status": "staging",
-                          "planned_row_count": 1,
-                          "next_expected_row_ordinal": 0,
-                          "source_id": "$sourceId",
-                          "source_bundle_id": 1,
-                          "canonical_request_hash": "$canonicalRequestHash"
-                        }
-                    """.trimIndent()
-                )
-            )
-            server.enqueue(
-                jsonMockResponse(
-                    """
-                        {
-                          "push_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-                          "next_expected_row_ordinal": 1
-                        }
-                    """.trimIndent()
-                )
-            )
             server.enqueue(
                 jsonMockResponse(
                     """
                         {
                           "bundle_seq": 1,
-                          "source_id": "$sourceId",
-                          "source_bundle_id": 1,
-                          "row_count": 1,
                           "bundle_hash": "$bundleHash",
-                          "canonical_request_hash": "$canonicalRequestHash"
-                        }
-                    """.trimIndent()
-                )
-            )
-            server.enqueue(
-                jsonMockResponse(
-                    """
-                        {
-                          "bundle_seq": 1,
-                          "source_id": "$sourceId",
-                          "source_bundle_id": 1,
-                          "row_count": 1,
-                          "bundle_hash": "$bundleHash",
-                          "canonical_request_hash": "$canonicalRequestHash",
-                          "next_row_ordinal": 0,
-                          "has_more": false,
-                          "rows": [
-                            {
-                              "schema": "main",
-                              "table": "files",
-                              "key": {"id":"file-1"},
-                              "op": "INSERT",
-                              "row_version": 1,
-                              "payload": {
+                          "rows": [[0, 0, [["i", ["file-1"], 1, {
                                 "id":"file-1",
                                 "name":"Blob File",
                                 "data":"AAECAwQFBgcICQoLDA0ODw=="
-                              }
-                            }
-                          ]
+                              }]]]]
                         }
                     """.trimIndent()
                 )
@@ -763,44 +532,22 @@ class AndroidMockWebServerParityTest {
             )
             client.pushPending().getOrThrow()
 
-            val capabilitiesRequest = server.takeRequest(5, TimeUnit.SECONDS)
-            assertNotNull(capabilitiesRequest)
-            assertEquals("/sync/capabilities", capabilitiesRequest?.url?.encodedPath)
+            val discoveryRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertEquals("/sync/generations/1", discoveryRequest?.url?.encodedPath)
+            assertEquals(null, discoveryRequest?.headers?.get("Oversync-Schema-Generation-ID"))
+            assertEquals(null, discoveryRequest?.headers?.get("Oversync-Schema-Generation-Fingerprint"))
 
             val connectRequest = server.takeRequest(5, TimeUnit.SECONDS)
             assertNotNull(connectRequest)
             assertEquals("/sync/connect", connectRequest?.url?.encodedPath)
 
-            val createPushRequest = server.takeRequest(5, TimeUnit.SECONDS)
-            assertNotNull(createPushRequest)
-            assertEquals("/sync/capabilities", createPushRequest?.url?.encodedPath)
-
-            val gatedCreatePushRequest = server.takeRequest(5, TimeUnit.SECONDS)
-            assertNotNull(gatedCreatePushRequest)
-            assertEquals("/sync/push-sessions", gatedCreatePushRequest?.url?.encodedPath)
-            val createPushJson = testJson.parseToJsonElement(gatedCreatePushRequest!!.body!!.utf8()).jsonObject
+            val pushRequest = server.takeRequest(5, TimeUnit.SECONDS)
+            assertNotNull(pushRequest)
+            assertEquals("/sync/push", pushRequest?.url?.encodedPath)
+            val createPushJson = testJson.parseToJsonElement(pushRequest!!.body!!.utf8()).jsonObject
             assertEquals(canonicalRequestHash, createPushJson["canonical_request_hash"]!!.jsonPrimitive.content)
-
-            val chunkPushRequest = server.takeRequest(5, TimeUnit.SECONDS)
-            assertNotNull(chunkPushRequest)
-            assertEquals(
-                "/sync/push-sessions/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/chunks",
-                chunkPushRequest?.url?.encodedPath,
-            )
-            val chunkPushJson = testJson.parseToJsonElement(chunkPushRequest!!.body!!.utf8()).jsonObject
-            val payloadJson = chunkPushJson["rows"]!!.jsonArray.first().jsonObject["payload"]!!.jsonObject
+            val payloadJson = createPushJson.getValue("rows").jsonArray[0].jsonArray[2].jsonArray[0].jsonArray[3].jsonObject
             assertEquals("AAECAwQFBgcICQoLDA0ODw==", payloadJson["data"]!!.jsonPrimitive.content)
-
-            val commitPushRequest = server.takeRequest(5, TimeUnit.SECONDS)
-            assertNotNull(commitPushRequest)
-            assertEquals(
-                "/sync/push-sessions/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/commit",
-                commitPushRequest?.url?.encodedPath,
-            )
-
-            val committedRowsRequest = server.takeRequest(5, TimeUnit.SECONDS)
-            assertNotNull(committedRowsRequest)
-            assertEquals("/sync/committed-bundles/1/rows", committedRowsRequest?.url?.encodedPath)
 
             assertEquals(16L, scalarLong(db, "SELECT length(data) FROM files WHERE id = 'file-1'"))
             assertEquals("000102030405060708090A0B0C0D0E0F", scalarText(db, "SELECT hex(data) FROM files WHERE id = 'file-1'"))
@@ -830,22 +577,8 @@ class AndroidMockWebServerParityTest {
             .build()
     }
 
-    private fun enqueueCapabilities(server: MockWebServer, vararg tables: String) {
-        require(tables.isNotEmpty()) { "capabilities must advertise the client's complete sync table set" }
-        server.enqueue(
-            jsonMockResponse(
-                testJson.encodeToString(
-                    CapabilitiesResponse.serializer(),
-                    CapabilitiesResponse(
-                        protocolVersion = "v1",
-                        schemaVersion = 1,
-                        registeredTableSpecs = testRegisteredTableSpecs(*tables),
-                        features = mapOf("connect_lifecycle" to true),
-                        bundleLimits = testBundleCapabilitiesLimits(),
-                    ),
-                ),
-            )
-        )
+    private fun enqueueDiscovery(server: MockWebServer, vararg tables: String) {
+        server.enqueue(jsonMockResponse(testGenerationResponse(testRegisteredTableSpecs(*tables)).toString()))
     }
 
     private fun enqueueInitializeEmptyConnect(server: MockWebServer) {
@@ -860,15 +593,15 @@ class AndroidMockWebServerParityTest {
         )
     }
 
-    private suspend fun scalarLong(db: SafeSQLiteConnection, sql: String): Long {
-        return db.prepare(sql).use { st ->
+    private suspend fun scalarLong(db: PlatformTestDatabase, sql: String): Long {
+        return db.connection().prepare(sql).use { st ->
             check(st.step())
             st.getLong(0)
         }
     }
 
-    private suspend fun scalarText(db: SafeSQLiteConnection, sql: String): String {
-        return db.prepare(sql).use { st ->
+    private suspend fun scalarText(db: PlatformTestDatabase, sql: String): String {
+        return db.connection().prepare(sql).use { st ->
             check(st.step())
             st.getText(0)
         }

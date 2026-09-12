@@ -126,9 +126,9 @@ Important identity rules:
 Purpose:
 
 - freeze current dirty rows into one outbound source bundle
-- upload that bundle through push sessions
-- fetch the committed authoritative bundle back from the server
-- replay that authoritative bundle locally
+- encode and send that bundle as one compact `POST /sync/push`
+- validate and expand the compact authoritative response
+- apply that response atomically before clearing the prepared outbox
 
 Key rule:
 
@@ -162,7 +162,7 @@ Automatic downloads are explicit and default-off. They never start from `open()`
 When started, the worker performs download work only:
 
 - polling mode calls `pullToStable()` on the configured interval
-- watch mode first checks `GET /sync/capabilities` for `features.bundle_change_watch == true`
+- watch mode uses `watch_enabled` from the immutable admitted discovery contract
 - watch mode opens `GET /sync/watch?after_bundle_seq=<last_bundle_seq_seen>` with the current
   `Oversync-Source-ID`
 - bundle events are metadata-only wake-up hints; the event payload is not applied directly
@@ -179,7 +179,6 @@ Pause behavior is split deliberately:
 Cancellation behavior:
 
 - KMP callers own the coroutine running `runAutomaticDownloads(...)`
-- Dart callers own the returned `AutomaticDownloadsHandle`
 - cancellation/stop must release open watch streams and reconnect sleeps promptly
 
 ### 5.5 `rebuild()`
@@ -189,9 +188,9 @@ Cancellation behavior:
 Oversqlite chooses the internal mode:
 
 - generic rebuild-required and pull-side pruning use keep-source rebuild
-- committed-remote replay pruning below retained floor uses keep-source rebuild plus local source
+- direct-push replay pruning below retained floor uses keep-source rebuild plus local source
   floor advance
-- create-time stale/out-of-order source failures and commit-time source-sequence changes use
+- create-time stale/out-of-order source failures and push-time source-sequence changes use
   rebuild-plus-rotate recovery
 
 ### 5.6 `detach()` / `syncThenDetach()`
@@ -210,16 +209,14 @@ source.
 
 The current client talks to these endpoints:
 
+### Discovery and connect
+
+- `GET /sync/generations/{generationId}`
+- `POST /sync/connect`
+
 ### Push
 
-- `POST /sync/push-sessions`
-- `POST /sync/push-sessions/{pushId}/chunks`
-- `POST /sync/push-sessions/{pushId}/commit`
-- `DELETE /sync/push-sessions/{pushId}`
-
-### Committed bundle fetch
-
-- `GET /sync/committed-bundles/{bundleSeq}/rows`
+- `POST /sync/push`
 
 ### Pull
 
@@ -287,8 +284,8 @@ For committed-remote replay pruning below the retained floor:
 
 ## 10. Related Documents
 
-- conflict evolution and resolver model:
-  [`specs/oversqlite_conflict_resolution_results.md`](/Users/pochkin/Projects/my/sqlitenow-kmp/specs/oversqlite_conflict_resolution_results.md)
-- source pruning and recovery contract:
-  [`specs/oversqlite-v1-pruning-and-source-recovery.md`](/Users/pochkin/Projects/my/sqlitenow-kmp/specs/oversqlite-v1-pruning-and-source-recovery.md)
+- conflict evolution and resolver outcomes:
+  [`docs/sync/core-concepts.md#conflict-resolution`](/Users/pochkin/Projects/my/sqlitenow-kmp/docs/sync/core-concepts.md#conflict-resolution)
+- source pruning and recovery behavior:
+  [`docs/sync/core-concepts.md#rebuild-and-recovery`](/Users/pochkin/Projects/my/sqlitenow-kmp/docs/sync/core-concepts.md#rebuild-and-recovery)
 - public user-facing sync docs live under [`docs/sync/`](/Users/pochkin/Projects/my/sqlitenow-kmp/docs/sync)

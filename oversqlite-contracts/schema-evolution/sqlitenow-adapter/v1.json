@@ -1,0 +1,156 @@
+{
+  "format": "sqlitenow-client-upgrade-corpus/v1",
+  "scenario_ids": [
+    "CU-N01",
+    "CU-N02",
+    "CU-N03",
+    "CU-N04",
+    "CU-D01",
+    "CU-D02",
+    "CU-D03",
+    "CU-C01",
+    "CU-P01",
+    "CU-M01",
+    "CU-R01",
+    "CU-S01",
+    "CU-F01",
+    "CU-L01",
+    "CU-X01",
+    "CU-U0",
+    "CU-U1",
+    "CU-U2",
+    "CU-U3",
+    "CU-U4",
+    "CU-U5",
+    "CU-U6",
+    "CU-U7",
+    "CU-U8"
+  ],
+  "dispatch_groups": {
+    "opening_generation": {
+      "kmp": {
+        "source": "library-oversqlite/src/jvmTest/kotlin/dev/goquick/sqlitenow/oversqlite/OversqliteOpeningJvmTest.kt",
+        "test": "generationChangeCommitsU0ThroughU8AndPreservesLocalState"
+      }
+    },
+    "malformed_admission": {
+      "kmp": {
+        "source": "library-oversqlite/src/jvmTest/kotlin/dev/goquick/sqlitenow/oversqlite/OversqliteOpeningJvmTest.kt",
+        "test": "malformedU0TargetSelectionsLeaveNoArtifactsAndAllowCorrectedRetry"
+      }
+    },
+    "explicit_resolution": {
+      "kmp": {
+        "source": "library-oversqlite/src/jvmTest/kotlin/dev/goquick/sqlitenow/oversqlite/OversqliteOpeningJvmTest.kt",
+        "test": "definitiveOldIntentRejectionRequiresExplicitRetryOrDiscard"
+      }
+    },
+    "pruned_recovery": {
+      "kmp": {
+        "source": "library-oversqlite/src/commonTest/kotlin/dev/goquick/sqlitenow/oversqlite/CrossTargetSyncIntegrationTest.kt",
+        "test": "historyPruned_pullRebuildsThroughSnapshotWithoutSourceRotation"
+      }
+    },
+    "migration": {
+      "kmp": {
+        "source": "library-oversqlite/src/jvmTest/kotlin/dev/goquick/sqlitenow/oversqlite/OversqliteOpeningJvmTest.kt",
+        "test": "failedFreshMigrationRetainsJournalAndResumesAcrossReopen"
+      }
+    },
+    "fresh_local": {
+      "kmp": {
+        "source": "library-oversqlite/src/jvmTest/kotlin/dev/goquick/sqlitenow/oversqlite/OversqliteOpeningCrashRecoveryJvmTest.kt",
+        "test": "freshProcessesRecoverBeforeAndAfterFreshAndLocalOnlyCommits"
+      }
+    },
+    "boundary_recovery": {
+      "kmp": {
+        "source": "library-oversqlite/src/jvmTest/kotlin/dev/goquick/sqlitenow/oversqlite/OversqliteOpeningCrashRecoveryJvmTest.kt",
+        "test": "additiveAndSparseProcessesRecoverBeforeAndAfterEveryU0ThroughU8Commit"
+      }
+    },
+    "cancellation": {
+      "kmp": {
+        "source": "library-oversqlite/src/jvmTest/kotlin/dev/goquick/sqlitenow/oversqlite/OversqliteOpeningJvmTest.kt",
+        "test": "closeCancelsTheAtomicallyRegisteredOperationBeforeItCanStartWork"
+      }
+    },
+    "two_device": {
+      "kmp": {
+        "source": "library-oversqlite/src/jvmTest/kotlin/dev/goquick/sqlitenow/oversqlite/CoordinatedOpeningLiveAuthorityPilotJvmTest.kt",
+        "test": "twoDeviceGenerationOneToTwoPilotUsesLiveAuthority"
+      }
+    },
+    "values": {
+      "kmp": {
+        "source": "library-oversqlite/src/jvmTest/kotlin/dev/goquick/sqlitenow/oversqlite/OversqlitePayloadCodecTest.kt",
+        "test": "affinityNumericWireValuesAreCanonicalStrings"
+      }
+    },
+    "limits": {
+      "kmp": {
+        "source": "library-oversqlite/src/commonTest/kotlin/dev/goquick/sqlitenow/oversqlite/SnapshotProtocolTest.kt",
+        "test": "rawGzipDecoderAcceptsExactlyOneValidMemberWithinTheDecodedCeiling"
+      }
+    }
+  },
+  "action_dispatch": {
+    "preview": "opening_generation",
+    "preview_unknown_generation": "malformed_admission",
+    "preview_mismatched_fingerprint": "malformed_admission",
+    "resolve_old_intent": "opening_generation",
+    "pause": "explicit_resolution",
+    "discard_recreated_session": "explicit_resolution",
+    "resolve_conflict_retry": "explicit_resolution",
+    "cancel_each_boundary": "cancellation",
+    "old_keep_source_snapshot": "pruned_recovery",
+    "migrate": "migration",
+    "create_replacement_snapshot": "opening_generation",
+    "stage_snapshot": "opening_generation",
+    "apply_and_publish": "opening_generation",
+    "create_final_schema": "fresh_local",
+    "offline_local_only_migration": "fresh_local",
+    "upgrade_device_a_same_file": "two_device",
+    "sync_device_b_old": "two_device",
+    "freeze_and_start": "boundary_recovery",
+    "enter_old_resolution": "boundary_recovery",
+    "record_drain_witness": "boundary_recovery",
+    "target_preview_and_recheck": "boundary_recovery",
+    "application_migration": "boundary_recovery",
+    "clear_and_reserve_source": "boundary_recovery",
+    "replacement_snapshot_create": "boundary_recovery",
+    "stage_verified_chunk": "boundary_recovery",
+    "apply_verify_publish_ready": "boundary_recovery"
+  },
+  "preservation_labels": [
+    "anonymous_identity",
+    "atomic_old_or_target_schema",
+    "drain_witness",
+    "durable_phase",
+    "frozen_request_evidence",
+    "frozen_request_until_decision",
+    "installed_identity",
+    "intent_or_snapshot_evidence",
+    "local_only",
+    "local_only_sentinel",
+    "old_identity_until_U8",
+    "old_intent",
+    "old_proof",
+    "old_source",
+    "old_source_evidence",
+    "outbox",
+    "receipt",
+    "replacement_tuple",
+    "resolved_request_binding",
+    "same_file_identity",
+    "source_sequence",
+    "synchronized_state",
+    "target_proof",
+    "target_source",
+    "tuple"
+  ],
+  "value_vector_count": 29,
+  "limit_vector_count": 22,
+  "corpus_revision": "14",
+  "manifest_sha256": "f2f55e08a5f748bc783c579ea397b5ae225606c7e28eedd7d4764584fd45f53b"
+}

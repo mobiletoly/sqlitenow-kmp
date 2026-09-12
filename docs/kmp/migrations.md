@@ -23,7 +23,7 @@ header and page boundaries, integrity, foreign keys, schema, `user_version`,
 retained source hash, and reopen before committing health. Generated schema
 migrations run afterward if `user_version` is behind.
 
-The import temporarily owns the complete source byte array. The Phase 7
+The import temporarily owns the complete source byte array. The legacy SQL.js migration
 reference migrated an authentic `67,182,592`-byte released-format database with
 peak explicitly owned bytes equal to the source size and a structural bound
 below `2 * sourceBytes + 1 MiB`; browser heap telemetry was unavailable.

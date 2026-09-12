@@ -6,6 +6,10 @@ import dev.goquick.sqlitenow.oversqlite.platformsupport.assertConnectedOutcome
 import io.ktor.client.call.body
 import kotlinx.coroutines.test.runTest
 import io.ktor.client.HttpClient
+import io.ktor.client.request.get
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -66,6 +70,8 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
             val rowUserId = "11111111-1111-1111-1111-111111111111"
             val rowPostId = "22222222-2222-2222-2222-222222222222"
             insertBusinessUserAndPost(dbA, rowUserId, rowPostId, "real-server-smoke")
+            val largeContent = "Payload real-server-smoke" + "x".repeat(4_096)
+            dbA.execSQL("UPDATE posts SET content = '$largeContent' WHERE id = '$rowPostId'")
 
             clientA.pushPending().getOrThrow()
             clientB.pullToStable().getOrThrow()
@@ -82,7 +88,7 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
             assertEquals("User real-server-smoke", scalarText(dbB, "SELECT name FROM users WHERE id = '$rowUserId'"))
             assertEquals("Title real-server-smoke", scalarText(dbB, "SELECT title FROM posts WHERE id = '$rowPostId'"))
             assertEquals("User real-server-smoke", scalarText(dbC, "SELECT name FROM users WHERE id = '$rowUserId'"))
-            assertEquals("Payload real-server-smoke", scalarText(dbC, "SELECT content FROM posts WHERE id = '$rowPostId'"))
+            assertEquals(largeContent, scalarText(dbC, "SELECT content FROM posts WHERE id = '$rowPostId'"))
             assertFalse(clientA.syncStatus().getOrThrow().pending.hasPendingSyncData)
             assertFalse(clientB.syncStatus().getOrThrow().pending.hasPendingSyncData)
             assertFalse(clientC.syncStatus().getOrThrow().pending.hasPendingSyncData)
@@ -287,7 +293,7 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
     }
 
     @Test
-    fun openIsLocalOnly_andSameUserOfflineResume_workAgainstRealServer() = runTest {
+    fun openIsLocalOnly_andSameUserOfflineResumeRequiresDiscovery_workAgainstRealServer() = runTest {
         val config = requireRealServerConfig() ?: return@runTest
         resetRealServerState(config.baseUrl)
 
@@ -307,19 +313,25 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
                 http = offlineHttp,
                 transientRetryPolicy = OversqliteTransientRetryPolicy(maxAttempts = 1),
             )
+            println("realserver_offline_resume phase=fresh_open_start runtime=${webRuntimeKind()}")
             offlineFreshClient.open().getOrThrow()
+            println("realserver_offline_resume phase=fresh_open_ready runtime=${webRuntimeKind()}")
             assertNotNull(offlineFreshClient.attach(userId).exceptionOrNull())
+            println("realserver_offline_resume phase=fresh_attach_failed_as_expected runtime=${webRuntimeKind()}")
 
             val token = issueDummySigninToken(config.baseUrl, userId, attachedSourceId)
             val onlineHttp = newRealServerHttpClient(config.baseUrl, token)
             val onlineClient = newRealServerClient(attachedDb, onlineHttp)
             try {
+                println("realserver_offline_resume phase=online_open_start runtime=${webRuntimeKind()}")
                 onlineClient.open().getOrThrow()
+                println("realserver_offline_resume phase=online_open_ready runtime=${webRuntimeKind()}")
                 assertConnectedOutcome(
                     expectedOutcome = AttachOutcome.STARTED_EMPTY,
                     actual = onlineClient.attach(userId).getOrThrow(),
                     expectedAuthority = AuthorityStatus.AUTHORITATIVE_EMPTY,
                 )
+                println("realserver_offline_resume phase=online_attach_complete runtime=${webRuntimeKind()}")
             } finally {
                 onlineClient.close()
                 onlineHttp.close()
@@ -332,11 +344,11 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
                 transientRetryPolicy = OversqliteTransientRetryPolicy(maxAttempts = 1),
             )
             try {
+                println("realserver_offline_resume phase=offline_reopen_start runtime=${webRuntimeKind()}")
                 offlineResumeClient.open().getOrThrow()
-                assertConnectedOutcome(
-                    expectedOutcome = AttachOutcome.RESUMED_ATTACHED_STATE,
-                    actual = offlineResumeClient.attach(userId).getOrThrow(),
-                )
+                println("realserver_offline_resume phase=offline_reopen_ready runtime=${webRuntimeKind()}")
+                assertNotNull(offlineResumeClient.attach(userId).exceptionOrNull())
+                println("realserver_offline_resume phase=offline_discovery_failed_as_expected runtime=${webRuntimeKind()}")
             } finally {
                 offlineResumeClient.close()
                 offlineResumeHttp.close()
@@ -363,13 +375,14 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
         try {
             createBusinessSubsetTables(db)
 
-            val initialSourceId = bootstrapManagedSourceId(db, config.baseUrl)
+            var initialSourceId = bootstrapManagedSourceId(db, config.baseUrl)
 
             val tokenA = issueDummySigninToken(config.baseUrl, userId, initialSourceId)
             val httpA = newRealServerHttpClient(config.baseUrl, tokenA)
             val clientA = newRealServerClient(db, httpA)
             try {
                 clientA.open().getOrThrow()
+                initialSourceId = clientA.sourceInfo().getOrThrow().currentSourceId
                 assertConnectedOutcome(
                     expectedOutcome = AttachOutcome.STARTED_EMPTY,
                     actual = clientA.attach(userId).getOrThrow(),
@@ -458,7 +471,7 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
             createBusinessSubsetTables(verifyDbA)
             createBusinessSubsetTables(verifyDbB)
 
-            val initialSourceId = bootstrapManagedSourceId(db, config.baseUrl)
+            var initialSourceId = bootstrapManagedSourceId(db, config.baseUrl)
             val verifySourceIdA = bootstrapManagedSourceId(verifyDbA, config.baseUrl)
             val verifySourceIdB = bootstrapManagedSourceId(verifyDbB, config.baseUrl)
             val userARowIds = List(3) { randomRealServerUuid() }
@@ -466,10 +479,13 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
             val userBRowIds = List(3) { randomRealServerUuid() }
             val userBPostIds = List(3) { randomRealServerUuid() }
 
-            val httpA = newRealServerHttpClient(config.baseUrl, issueDummySigninToken(config.baseUrl, userId, initialSourceId))
-            val clientA = newRealServerClient(db, httpA, uploadLimit = 1, downloadLimit = 1, snapshotChunkRows = 2)
+            val transientNode = webRuntimeKind() == "js-node"
+            var activeToken = issueDummySigninToken(config.baseUrl, userId, initialSourceId)
+            val httpA = newRealServerHttpClient(config.baseUrl, tokenProvider = { activeToken })
+            val clientA = newRealServerClient(db, httpA, maxPushRows = 1, maxPullBundles = 1, maxSnapshotChunkRows = 2)
             try {
                 clientA.open().getOrThrow()
+                initialSourceId = clientA.sourceInfo().getOrThrow().currentSourceId
                 assertConnectedOutcome(
                     expectedOutcome = AttachOutcome.STARTED_EMPTY,
                     actual = clientA.attach(userId).getOrThrow(),
@@ -483,19 +499,27 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
                         suffix = "heavy-a-$index",
                     )
                     clientA.pushPending().getOrThrow()
+                    clientA.pushPending().getOrThrow()
                 }
-                assertEquals(4L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$initialSourceId'"))
+                assertEquals(7L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$initialSourceId'"))
                 assertEquals(DetachOutcome.DETACHED, clientA.detach().getOrThrow())
             } finally {
-                clientA.close()
-                httpA.close()
+                if (!transientNode) {
+                    clientA.close()
+                    httpA.close()
+                }
             }
 
             val sourceAfterUserA = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
             assertNotEquals(initialSourceId, sourceAfterUserA)
 
-            val httpB = newRealServerHttpClient(config.baseUrl, issueDummySigninToken(config.baseUrl, otherUserId, sourceAfterUserA))
-            val clientB = newRealServerClient(db, httpB, uploadLimit = 1, downloadLimit = 1, snapshotChunkRows = 2)
+            activeToken = issueDummySigninToken(config.baseUrl, otherUserId, sourceAfterUserA)
+            val httpB = if (transientNode) httpA else newRealServerHttpClient(config.baseUrl, activeToken)
+            val clientB = if (transientNode) {
+                clientA
+            } else {
+                newRealServerClient(db, httpB, maxPushRows = 1, maxPullBundles = 1, maxSnapshotChunkRows = 2)
+            }
             try {
                 clientB.open().getOrThrow()
                 assertConnectedOutcome(
@@ -511,8 +535,9 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
                         suffix = "heavy-b-$index",
                     )
                     clientB.pushPending().getOrThrow()
+                    clientB.pushPending().getOrThrow()
                 }
-                assertEquals(4L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$sourceAfterUserA'"))
+                assertEquals(7L, scalarLong(db, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$sourceAfterUserA'"))
                 assertEquals(DetachOutcome.DETACHED, clientB.detach().getOrThrow())
             } finally {
                 clientB.close()
@@ -520,7 +545,7 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
             }
 
             val verifyHttpA = newRealServerHttpClient(config.baseUrl, issueDummySigninToken(config.baseUrl, userId, verifySourceIdA))
-            val verifyClientA = newRealServerClient(verifyDbA, verifyHttpA, uploadLimit = 1, downloadLimit = 1, snapshotChunkRows = 2)
+            val verifyClientA = newRealServerClient(verifyDbA, verifyHttpA, maxPushRows = 1, maxPullBundles = 1, maxSnapshotChunkRows = 2)
             try {
                 verifyClientA.open().getOrThrow()
                 assertConnectedOutcome(
@@ -543,7 +568,7 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
             }
 
             val verifyHttpB = newRealServerHttpClient(config.baseUrl, issueDummySigninToken(config.baseUrl, otherUserId, verifySourceIdB))
-            val verifyClientB = newRealServerClient(verifyDbB, verifyHttpB, uploadLimit = 1, downloadLimit = 1, snapshotChunkRows = 2)
+            val verifyClientB = newRealServerClient(verifyDbB, verifyHttpB, maxPushRows = 1, maxPullBundles = 1, maxSnapshotChunkRows = 2)
             try {
                 verifyClientB.open().getOrThrow()
                 assertConnectedOutcome(
@@ -596,18 +621,18 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
             createBusinessSubsetTables(remoteSeedDb)
             createBusinessSubsetTables(verifyDb)
 
-            val installSeedSourceId = bootstrapManagedSourceId(installDb, config.baseUrl)
+            var installSeedSourceId = bootstrapManagedSourceId(installDb, config.baseUrl)
             val remoteSeedSourceId = bootstrapManagedSourceId(remoteSeedDb, config.baseUrl)
             val verifySourceId = bootstrapManagedSourceId(verifyDb, config.baseUrl)
 
-            installHttpSeed = newRealServerHttpClient(
-                config.baseUrl,
-                issueDummySigninToken(config.baseUrl, seedUserId, installSeedSourceId),
-            )
+            val transientNode = webRuntimeKind() == "js-node"
+            var installToken = issueDummySigninToken(config.baseUrl, seedUserId, installSeedSourceId)
+            installHttpSeed = newRealServerHttpClient(config.baseUrl, tokenProvider = { installToken })
             val installSeedClient = newRealServerClient(installDb, installHttpSeed)
             try {
                 insertBusinessUserAndPost(installDb, installSeedUserRowId, installSeedPostRowId, "install-local-seed")
                 installSeedClient.open().getOrThrow()
+                installSeedSourceId = installSeedClient.sourceInfo().getOrThrow().currentSourceId
                 assertConnectedOutcome(
                     expectedOutcome = AttachOutcome.SEEDED_FROM_LOCAL,
                     actual = installSeedClient.attach(seedUserId).getOrThrow(),
@@ -617,8 +642,10 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
                 assertEquals(2L, scalarLong(installDb, "SELECT next_source_bundle_id FROM _sync_source_state WHERE source_id = '$installSeedSourceId'"))
                 assertEquals(DetachOutcome.DETACHED, installSeedClient.detach().getOrThrow())
             } finally {
-                installSeedClient.close()
-                installHttpSeed?.close()
+                if (!transientNode) {
+                    installSeedClient.close()
+                    installHttpSeed?.close()
+                }
             }
 
             val installRestoreSourceId = scalarText(installDb, "SELECT current_source_id FROM _sync_attachment_state")
@@ -644,11 +671,17 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
                 remoteSeedHttp?.close()
             }
 
-            installHttpRestore = newRealServerHttpClient(
-                config.baseUrl,
-                issueDummySigninToken(config.baseUrl, restoredUserId, installRestoreSourceId),
-            )
-            val installRestoreClient = newRealServerClient(installDb, installHttpRestore)
+            installToken = issueDummySigninToken(config.baseUrl, restoredUserId, installRestoreSourceId)
+            installHttpRestore = if (transientNode) {
+                installHttpSeed
+            } else {
+                newRealServerHttpClient(config.baseUrl, installToken)
+            }
+            val installRestoreClient = if (transientNode) {
+                installSeedClient
+            } else {
+                newRealServerClient(installDb, installHttpRestore)
+            }
             try {
                 installRestoreClient.open().getOrThrow()
                 assertConnectedOutcome(
@@ -711,7 +744,7 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
             createBusinessSubsetTables(db)
             createBusinessSubsetTables(verifyDb)
 
-            val sourceId = bootstrapManagedSourceId(db, config.baseUrl)
+            var sourceId = bootstrapManagedSourceId(db, config.baseUrl)
             val verifySourceId = bootstrapManagedSourceId(verifyDb, config.baseUrl)
             val token = issueDummySigninToken(config.baseUrl, userId, sourceId)
             val verifyToken = issueDummySigninToken(config.baseUrl, userId, verifySourceId)
@@ -721,6 +754,7 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
             val verifyClient = newRealServerClient(verifyDb, verifyHttp)
 
             client.open().getOrThrow()
+            sourceId = client.sourceInfo().getOrThrow().currentSourceId
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.STARTED_EMPTY,
                 actual = client.attach(userId).getOrThrow(),
@@ -734,10 +768,14 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
             assertEquals(DetachOutcome.DETACHED, client.detach().getOrThrow())
             val rotatedSourceId = scalarText(db, "SELECT current_source_id FROM _sync_attachment_state")
             assertNotEquals(sourceId, rotatedSourceId)
-            http?.close()
-            http = newRealServerHttpClient(config.baseUrl, issueDummySigninToken(config.baseUrl, userId, rotatedSourceId))
-            client.close()
-            val restartedClient = newRealServerClient(db, http)
+            val restartedClient = if (webRuntimeKind() == "js-node") {
+                client
+            } else {
+                http?.close()
+                http = newRealServerHttpClient(config.baseUrl, issueDummySigninToken(config.baseUrl, userId, rotatedSourceId))
+                client.close()
+                newRealServerClient(db, http)
+            }
             restartedClient.open().getOrThrow()
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
@@ -759,6 +797,7 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
             assertEquals(1L, scalarLong(verifyDb, "SELECT COUNT(*) FROM posts WHERE id = '$secondPostId'"))
             assertEquals("Title real-server-second", scalarText(verifyDb, "SELECT title FROM posts WHERE id = '$secondPostId'"))
             restartedClient.close()
+            http?.close()
             http = null
         } finally {
             http?.close()
@@ -787,7 +826,7 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
             createBusinessSubsetTables(verifyDb)
 
             val seedSourceId = bootstrapManagedSourceId(seedDb, config.baseUrl)
-            val recoverSourceId = bootstrapManagedSourceId(recoverDb, config.baseUrl)
+            var recoverSourceId = bootstrapManagedSourceId(recoverDb, config.baseUrl)
             val verifySourceId = bootstrapManagedSourceId(verifyDb, config.baseUrl)
             val rotatedSourceId = randomRealServerId("rotated-source")
 
@@ -815,12 +854,13 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
             seedClient.pushPending().getOrThrow()
 
             recoverClient.open().getOrThrow()
+            recoverSourceId = recoverClient.sourceInfo().getOrThrow().currentSourceId
             assertConnectedOutcome(
                 expectedOutcome = AttachOutcome.USED_REMOTE_STATE,
                 actual = recoverClient.attach(userId).getOrThrow(),
             )
 
-            markSourceRecoveryRequired(recoverDb, replacementSourceId = rotatedSourceId)
+            markSourceRecoveryRequired(recoverDb.connection(), replacementSourceId = rotatedSourceId)
             recoverClient.rebuild().getOrThrow()
 
             assertEquals(rotatedSourceId, scalarText(recoverDb, "SELECT current_source_id FROM _sync_attachment_state"))
@@ -833,15 +873,17 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
                 config.baseUrl,
                 issueDummySigninToken(config.baseUrl, userId, recoverSourceId),
             )
-            val oldSourceResponse = oldSourceHttp.post("sync/push-sessions") {
+            val discovery = oldSourceHttp.get("sync/generations/1") {
+                header("Oversync-Source-ID", recoverSourceId)
+            }.body<JsonObject>()
+            val generation = discovery.getValue("schema_generation").jsonObject
+            val oldSourceResponse = oldSourceHttp.post("sync/snapshot-sessions") {
+                header("Oversync-Schema-Generation-ID", generation.getValue("id").jsonPrimitive.content)
+                header("Oversync-Schema-Generation-Fingerprint", generation.getValue("fingerprint").jsonPrimitive.content)
                 header("Oversync-Source-ID", recoverSourceId)
                 contentType(ContentType.Application.Json)
                 setBody(
-                    PushSessionCreateRequest(
-                        sourceBundleId = 1L,
-                        plannedRowCount = 1L,
-						canonicalRequestHash = "0".repeat(64),
-                    ),
+                    """{"source_replacement":{"previous_source_id":"$recoverSourceId","new_source_id":"${randomRealServerId("second-rotated-source")}","reason":"history_pruned"}}""",
                 )
             }
             assertEquals(HttpStatusCode.Conflict, oldSourceResponse.status)
@@ -859,7 +901,11 @@ internal class RealServerHarnessTest : RealServerHarnessSupport() {
             val restartedRecoverClient = newRealServerClient(recoverDb, recoverHttp)
             restartedRecoverClient.open().getOrThrow()
             assertConnectedOutcome(
-                expectedOutcome = AttachOutcome.RESUMED_ATTACHED_STATE,
+                expectedOutcome = if (webRuntimeKind() == "js-node") {
+                    AttachOutcome.USED_REMOTE_STATE
+                } else {
+                    AttachOutcome.RESUMED_ATTACHED_STATE
+                },
                 actual = restartedRecoverClient.attach(userId).getOrThrow(),
             )
 

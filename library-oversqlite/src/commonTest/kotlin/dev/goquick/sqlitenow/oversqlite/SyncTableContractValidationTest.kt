@@ -9,7 +9,7 @@ internal class SyncTableContractValidationTest {
     @Test
     fun exactContractMatchesRegardlessOfResponseOrder() {
         val validated = validated("users" to "ID", "posts" to "post_id")
-        capabilities(
+        contract(
             RegisteredTableSpec("business", "posts", listOf("post_id")),
             RegisteredTableSpec("business", "users", listOf("id")),
         ).requireMatchingSyncTableContract(validated)
@@ -18,7 +18,7 @@ internal class SyncTableContractValidationTest {
     @Test
     fun mismatchDiagnosticsAreCompleteAndDeterministic() {
         val mismatch = assertFailsWith<SyncTableContractMismatchException> {
-            capabilities(
+            contract(
                 RegisteredTableSpec("business", "z_server", listOf("id")),
                 RegisteredTableSpec("business", "users", listOf("server_id")),
                 RegisteredTableSpec("business", "a_server", listOf("id")),
@@ -59,7 +59,7 @@ internal class SyncTableContractValidationTest {
         val serverTables = clientTables + "monitoring_focus"
 
         val mismatch = assertFailsWith<SyncTableContractMismatchException> {
-            capabilities(
+            contract(
                 *serverTables.reversed().map { table ->
                     RegisteredTableSpec("business", table, listOf("id"))
                 }.toTypedArray(),
@@ -76,7 +76,7 @@ internal class SyncTableContractValidationTest {
     @Test
     fun schemaAndCaseAreComparedExactlyWithoutNormalizingServerValues() {
         val mismatch = assertFailsWith<SyncTableContractMismatchException> {
-            capabilities(
+            contract(
                 RegisteredTableSpec("Business", "Users", listOf("ID")),
             ).requireMatchingSyncTableContract(validated("users" to "id"))
         }
@@ -86,7 +86,7 @@ internal class SyncTableContractValidationTest {
     }
 
     @Test
-    fun malformedSpecsFailAsInvalidCapabilitiesInsteadOfMismatch() {
+    fun malformedSpecsFailAsInvalidDiscoveryInsteadOfMismatch() {
         val malformed = listOf(
             listOf(RegisteredTableSpec("", "users", listOf("id"))),
             listOf(RegisteredTableSpec("business", " ", listOf("id"))),
@@ -101,7 +101,7 @@ internal class SyncTableContractValidationTest {
 
         malformed.forEach { specs ->
             assertFailsWith<RemoteResponseSemanticException> {
-                capabilities(*specs.toTypedArray())
+                contract(*specs.toTypedArray())
                     .requireMatchingSyncTableContract(validated("users" to "id"))
             }
         }
@@ -111,7 +111,7 @@ internal class SyncTableContractValidationTest {
     fun exceptionMessageSanitizesAdvertisedIdentifiersAndKeys() {
         val secret = "hostile\nsecret"
         val mismatch = assertFailsWith<SyncTableContractMismatchException> {
-            capabilities(
+            contract(
                 RegisteredTableSpec(secret, "monitoring_focus", listOf("id")),
                 RegisteredTableSpec("business", "users", listOf(secret)),
             ).requireMatchingSyncTableContract(validated("users" to "id"))
@@ -122,7 +122,7 @@ internal class SyncTableContractValidationTest {
     }
 
     private fun validated(vararg tables: Pair<String, String>) = ValidatedConfig(
-        schema = "business",
+        generation = testGeneration(tables.map { (table, key) -> RegisteredTableSpec("business", table, listOf(key)) }),
         tables = tables.map { (table, key) -> ValidatedSyncTable(table, key) },
         pkByTable = emptyMap(),
         keyByTable = emptyMap(),
@@ -130,11 +130,10 @@ internal class SyncTableContractValidationTest {
         tableInfoByName = emptyMap(),
     )
 
-    private fun capabilities(vararg specs: RegisteredTableSpec) = CapabilitiesResponse(
+    private fun contract(vararg specs: RegisteredTableSpec) = AdmittedOversqliteContract(
         protocolVersion = "v1",
-        schemaVersion = 1,
-        registeredTableSpecs = specs.toList(),
-        features = emptyMap(),
-        bundleLimits = testBundleCapabilitiesLimits(),
+        generation = testGeneration(specs.toList()),
+        limits = testWireLimits(),
+        watchEnabled = false,
     )
 }

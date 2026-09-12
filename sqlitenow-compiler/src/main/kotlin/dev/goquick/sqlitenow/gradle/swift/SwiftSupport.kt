@@ -228,10 +228,6 @@ internal fun String.swiftNamespacePropertyName(): String = toSwiftLowerCamel()
 
 internal fun String.swiftNamespaceTypeName(suffix: String): String = "${pascalize(this)}$suffix"
 
-internal fun String.swiftBridgeResultName(): String = "App$this"
-
-internal fun String.swiftBridgeParamsName(): String = "App${this}Bridge"
-
 internal fun AnnotatedExecuteStatement.tableNameForExecute(): String =
     when (val execute = src) {
         is InsertStatement -> execute.table

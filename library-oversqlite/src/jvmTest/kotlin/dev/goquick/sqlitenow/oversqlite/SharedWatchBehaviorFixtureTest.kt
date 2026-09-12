@@ -79,7 +79,7 @@ internal class SharedWatchBehaviorFixtureTest : CrossTargetSyncTestSupport() {
         }
         when (script.kind) {
             "hold_watch_open" -> holdNextWatchResponseOpen()
-            "unsupported_capability" -> Unit
+            "watch_disabled" -> Unit
             "non_ok_watch_response" -> {
                 val response = script.response ?: error("missing non-OK response")
                 enqueueWatchResponse(

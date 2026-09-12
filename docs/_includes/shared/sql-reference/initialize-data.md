@@ -3,12 +3,7 @@
 `init/` files seed a database only when it is created for the first time. They
 run after schema files and before the database is marked as initialized.
 
-{% if include.platform == "dart" %}
-```text
-lib/db/sql/AppDatabase/init/
-  seed.sql
-```
-{% elsif include.platform == "kmp" %}
+{% if include.platform == "kmp" %}
 ```text
 src/commonMain/sql/AppDatabase/init/
   seed.sql

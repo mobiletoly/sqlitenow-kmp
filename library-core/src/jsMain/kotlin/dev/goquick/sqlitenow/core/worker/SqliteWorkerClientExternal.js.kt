@@ -65,6 +65,8 @@ internal external fun forceTerminateSqliteWorker(client: dynamic): Promise<dynam
 
 internal external fun waitForSqliteWorkerCleanupDeadline(client: dynamic): Promise<dynamic>
 
+internal external fun isSqliteWorkerTerminationConfirmed(client: dynamic): Boolean
+
 internal external fun sqliteWorkerRuntimeKind(client: dynamic): String
 
 internal external fun sqliteWorkerClientDiagnostics(client: dynamic): String

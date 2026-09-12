@@ -85,6 +85,8 @@ internal actual class SqliteWorkerTransport private constructor(
         waitForSqliteWorkerCleanupDeadline(client).await()
     }
 
+    actual val terminationConfirmed: Boolean get() = isSqliteWorkerTerminationConfirmed(client)
+
     actual fun runtimeKind(): String = sqliteWorkerRuntimeKind(client)
 
     actual fun diagnosticsForTest(): String = sqliteWorkerClientDiagnostics(client)

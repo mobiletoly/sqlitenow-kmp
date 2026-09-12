@@ -14,6 +14,8 @@ import kotlin.JsFun
       if (g && g[name] != null) {
         return String(g[name]);
       }
+      const karmaValue = g?.__karma__?.config?.baselineLiveSettings?.[name];
+      if (karmaValue != null) return String(karmaValue);
       return null;
     }
     """,

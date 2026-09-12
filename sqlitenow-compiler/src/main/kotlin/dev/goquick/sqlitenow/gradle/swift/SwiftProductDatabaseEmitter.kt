@@ -75,6 +75,7 @@ internal class SwiftProductDatabaseEmitter(
             line("private let migrationCallbackAdapter: SQLiteNowMigrationCallbackAdapter")
             if (syncEnabled) {
                 line("private let syncClientLease = SQLiteNowSyncClientLease()")
+                line("internal var syncClientLeaseForTest: SQLiteNowSyncClientLease { syncClientLease }")
             }
             line("fileprivate let adapters: ${databaseName}Adapters")
             model.namespaces.forEach { namespace ->
@@ -96,7 +97,8 @@ internal class SwiftProductDatabaseEmitter(
                     line("path: path.path,")
                     line("migrationPlan: Self.migrationPlan(),")
                     line("debug: debug,")
-                    line("onMigrationStep: migrationCallbackAdapter")
+                    line("onMigrationStep: migrationCallbackAdapter,")
+                    line("syncManaged: ${syncEnabled}")
                 }
                 line(")")
                 line("self.runtime = runtime")
@@ -121,7 +123,7 @@ internal class SwiftProductDatabaseEmitter(
             line("public func close() async throws {")
             indent {
                 if (syncEnabled) {
-                    line("syncClientLease.closeActiveClient()")
+                    line("syncClientLease.close()")
                 }
                 line("_ = try await mapRuntimeErrors {")
                 indent {

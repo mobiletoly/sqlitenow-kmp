@@ -148,6 +148,9 @@ class DatabaseCodeGenerator(
         classBuilder.addSuperclassConstructorParameter("dbName = dbName")
         classBuilder.addSuperclassConstructorParameter("migration = migration")
         classBuilder.addSuperclassConstructorParameter("debug = debug")
+        if (oversqlite) {
+            classBuilder.addSuperclassConstructorParameter("syncManaged = true")
+        }
 
         // Add private adapter properties matching constructor params
         addAdapterPrivateProperties(classBuilder, namespacesWithFilteredAdapters.keys)

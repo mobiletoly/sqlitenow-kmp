@@ -16,6 +16,9 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 
 internal sealed class ReplayRowAction {
     data object AcceptAuthoritative : ReplayRowAction()
@@ -69,6 +72,8 @@ internal class OversqliteReplayPlanner(
                             requeueOp = "INSERT",
                             requeuePayload = livePayload,
                         )
+                    } else if (pending.exists) {
+                        ReplayRowAction.PreserveLocal(requeueOp = "DELETE", requeuePayload = null)
                     } else {
                         ReplayRowAction.AcceptAuthoritative
                     }
@@ -81,7 +86,7 @@ internal class OversqliteReplayPlanner(
                             requeuePayload = null,
                         )
 
-                        pending.exists && !pendingMatches -> ReplayRowAction.PreserveLocal(
+                        pending.exists -> ReplayRowAction.PreserveLocal(
                             requeueOp = "UPDATE",
                             requeuePayload = livePayload,
                         )
@@ -145,12 +150,20 @@ internal class OversqlitePushReplayExecutor(
         committedRows: List<CommittedReplayRow>,
         committed: CommittedPushBundle,
         statementCache: StatementCache,
+        reservationToken: String? = null,
     ): Set<String> {
         require(committedRows.size.toLong() == committed.rowCount) {
             "committed push replay row count ${committedRows.size} does not match expected row_count ${committed.rowCount}"
         }
+        requireCommittedEffectCoverage(uploadedRows, committedRows)
 
-        val plans = buildReplayPlans(state, uploadedRows, statementCache)
+        val plans = buildReplayPlans(state, uploadedRows, committedRows, statementCache,reservationToken)
+        bundleApplier.survivors.prepare(state, applyUnit("push", committed.bundleSeq, committed.bundleHash), committedRows.size, operationKind = "settlement", workspaceStatementCache = statementCache, replayStatementCache = statementCache) { index ->
+            val row = committedRows[index]
+            if (plans[row.toRowRef()]?.action is ReplayRowAction.PreserveLocal) {
+                bundleApplier.survivors.capture(state, row.tableName, row.localPk, workspaceStatementCache = statementCache, replayStatementCache = statementCache)
+            } else ApplySurvivor(row.tableName, row.localPk, row.payload, wire = true)
+        }
         val updatedTables = linkedSetOf<String>()
         for (row in committedRows) {
             val bundleRow = BundleRow(
@@ -162,21 +175,23 @@ internal class OversqlitePushReplayExecutor(
                 payload = row.payload?.let { json.parseToJsonElement(it) },
             )
             when (val action = plans[row.toRowRef()]?.action) {
-                null -> bundleApplier.applyAuthoritativeRow(state, bundleRow, row.localPk, row.keyJson, statementCache)
+                null -> bundleApplier.applyAuthoritativeRow(state, bundleRow, row.localPk, row.keyJson, statementCache,"settlement",committed.bundleSeq)
                 ReplayRowAction.AcceptAuthoritative -> {
-                    bundleApplier.applyAuthoritativeRow(state, bundleRow, row.localPk, row.keyJson, statementCache)
+                    bundleApplier.applyAuthoritativeRow(state, bundleRow, row.localPk, row.keyJson, statementCache,"settlement",committed.bundleSeq)
                     syncStateStore.deleteDirtyRow(row.schemaName, row.tableName, row.keyJson, statementCache)
                 }
                 is ReplayRowAction.PreserveLocal -> {
-                    syncStateStore.updateStructuredRowState(
-                        schemaName = state.validated.schema,
+                    syncStateStore.installAuthoritativeBaseline(
+                        schemaName = state.validated.schemaForTable(row.tableName),
                         tableName = row.tableName,
                         keyJson = row.keyJson,
                         rowVersion = row.rowVersion,
-                        deleted = row.op == "DELETE",
+                        kind = if(row.op=="DELETE") "deleted" else "live",
+                        payload = row.payload?.let { localStore.captureAuthoritativePayload(row.tableName,json.parseToJsonElement(it) as JsonObject,statementCache) },
+                        origin = "settlement", bundleSeq = committed.bundleSeq,
                         statementCache = statementCache,
                     )
-                    syncStateStore.requeueDirtyIntent(
+                    syncStateStore.rebaseDirtyIntent(
                         schemaName = row.schemaName,
                         tableName = row.tableName,
                         keyJson = row.keyJson,
@@ -189,19 +204,55 @@ internal class OversqlitePushReplayExecutor(
             }
             updatedTables += row.tableName.lowercase()
         }
+        updatedTables += restoreDirtyBusinessRows(state, statementCache)
+        bundleApplier.survivors.restore(state, statementCache, verifyOnly = true, workspaceStatementCache = statementCache, replayStatementCache = statementCache)
+        bundleApplier.survivors.restorePrimaryIntent(state, statementCache, verifyOnly = true, workspaceStatementCache = statementCache, replayStatementCache = statementCache)
+        bundleApplier.survivors.finish()
 
         sourceStateStore.advanceAfterCommittedPush(state.sourceId, committed.sourceBundleId)
         attachmentStateStore.advanceAfterCommittedPush(committed.bundleSeq, statementCache)
-        outboxStateStore.clearBundleAndRows(statementCache)
+        outboxStateStore.clearBundleAndRows(statementCache, pagedSettlement = true)
         assertReplayResidualDirtyState(uploadedRows, plans, statementCache)
         return updatedTables
+    }
+
+    private fun requireCommittedEffectCoverage(
+        uploadedRows: List<DirtyRowCapture>,
+        committedRows: List<CommittedReplayRow>,
+    ) {
+        val committedKeys = mutableSetOf<String>()
+        for (row in committedRows) {
+            require(committedKeys.add(replayIdentity(row.schemaName, row.tableName, row.wireKey))) {
+                "committed effect stream contains a duplicate wire key"
+            }
+        }
+        for (uploaded in uploadedRows) {
+            require(replayIdentity(uploaded.schemaName, uploaded.tableName, uploaded.wireKey) in committedKeys) {
+                "committed effect stream does not cover every frozen outbox wire key"
+            }
+        }
+    }
+
+    private fun replayIdentity(schema: String, table: String, key: SyncKey): String {
+        val canonicalKey = canonicalizeJsonElement(
+            buildJsonObject {
+                for ((name, value) in key.entries.sortedBy { it.key }) {
+                    put(name, JsonPrimitive(value))
+                }
+            },
+        )
+        return "$schema\u0000$table\u0000$canonicalKey"
     }
 
     private suspend fun buildReplayPlans(
         state: RuntimeState,
         uploadedRows: List<DirtyRowCapture>,
+        committedRows: List<CommittedReplayRow>,
         statementCache: StatementCache,
+        reservationToken: String?,
     ): Map<DirtyRowRef, UploadedReplayPlan> {
+        val base=if(reservationToken!=null) bundleApplier.survivors.reservationCharge(reservationToken) else WorkspaceCharge()
+        var held=WorkspaceCharge()
         return buildMap {
             for (uploaded in uploadedRows) {
                 val tableInfo = state.validated.tableInfoByName[uploaded.tableName.lowercase()]
@@ -209,6 +260,7 @@ internal class OversqlitePushReplayExecutor(
                         "missing validated table info for " +
                             safeSnapshotDiagnosticIdentifier(uploaded.tableName),
                     )
+                held=bundleApplier.survivors.reserveDecisionCopies(state,reservationToken,base,held,uploaded.schemaName,uploaded.tableName,uploaded.keyJson,uploaded.localPk)
                 val currentDirty = syncStateStore.loadDirtyUploadState(
                     schemaName = uploaded.schemaName,
                     tableName = uploaded.tableName,
@@ -229,7 +281,52 @@ internal class OversqlitePushReplayExecutor(
                 }
                 put(plan.rowRef, plan)
             }
+            for (effect in committedRows) {
+                val ref = effect.toRowRef()
+                if (ref in this) continue
+                held=bundleApplier.survivors.reserveDecisionCopies(state,reservationToken,base,held,effect.schemaName,effect.tableName,effect.keyJson,effect.localPk)
+                val dirty = syncStateStore.loadDirtyUploadState(
+                    effect.schemaName, effect.tableName, effect.keyJson, statementCache,
+                )
+                if (!dirty.exists) continue
+                val desired = localStore.serializeExistingRow(effect.tableName, effect.localPk, statementCache)
+                put(
+                    ref,
+                    UploadedReplayPlan(
+                        rowRef = ref,
+                        action = ReplayRowAction.PreserveLocal(
+                            requeueOp = when {
+                                desired == null -> "DELETE"
+                                effect.op == "DELETE" -> "INSERT"
+                                else -> "UPDATE"
+                            },
+                            requeuePayload = desired,
+                        ),
+                        diagnostics = ReplayPlanDiagnostics(true, false, desired, false, dirty.payload),
+                    ),
+                )
+            }
         }
+    }
+
+    private suspend fun restoreDirtyBusinessRows(
+        state: RuntimeState,
+        statementCache: StatementCache,
+    ): Set<String> {
+        val changed = linkedSetOf<String>()
+        // A committed effect can run an application trigger that changes an entirely
+        // different dirty key. Its stored payload remains the desired local state
+        // while apply mode suppresses capture triggers.
+        repeat(64) {
+            val survivorChanges = bundleApplier.survivors.restore(state, statementCache, workspaceStatementCache = statementCache, replayStatementCache = statementCache)
+            changed += survivorChanges
+            var restored = survivorChanges.isNotEmpty()
+            val primaryChanges = bundleApplier.survivors.restorePrimaryIntent(state, statementCache, workspaceStatementCache = statementCache, replayStatementCache = statementCache)
+            changed += primaryChanges
+            restored = restored || primaryChanges.isNotEmpty()
+            if (!restored) return changed
+        }
+        error("dirty business rows did not stabilize after committed effects")
     }
 
     private suspend fun assertReplayResidualDirtyState(
@@ -294,5 +391,5 @@ private fun safeReplayOperation(value: String): String =
 internal fun DirtyRowCapture.toRowRef(): DirtyRowRef =
     DirtyRowRef(schemaName = schemaName, tableName = tableName, keyJson = keyJson)
 
-private fun CommittedReplayRow.toRowRef(): DirtyRowRef =
+internal fun CommittedReplayRow.toRowRef(): DirtyRowRef =
     DirtyRowRef(schemaName = schemaName, tableName = tableName, keyJson = keyJson)

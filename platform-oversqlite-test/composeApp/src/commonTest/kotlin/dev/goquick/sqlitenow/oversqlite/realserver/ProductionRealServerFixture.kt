@@ -1,12 +1,21 @@
 package dev.goquick.sqlitenow.oversqlite.realserver
 
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
+import dev.goquick.sqlitenow.oversqlite.platform.PlatformTestDatabase
 import dev.goquick.sqlitenow.oversqlite.platform.generated.RealServerGeneratedDatabase
 
 internal val productionRealServerSyncTables = RealServerGeneratedDatabase.syncTables
 
 internal suspend fun createProductionRealServerTables(db: SafeSQLiteConnection) {
-    db.execSQL(
+    createProductionRealServerTables { statement -> db.execSQL(statement) }
+}
+
+internal suspend fun createProductionRealServerTables(db: PlatformTestDatabase) {
+    createProductionRealServerTables { statement -> db.execSQL(statement) }
+}
+
+private suspend fun createProductionRealServerTables(exec: suspend (String) -> Unit) {
+    exec(
         """
         CREATE TABLE users (
             id TEXT PRIMARY KEY NOT NULL,
@@ -17,7 +26,7 @@ internal suspend fun createProductionRealServerTables(db: SafeSQLiteConnection) 
         )
         """.trimIndent(),
     )
-    db.execSQL(
+    exec(
         """
         CREATE TABLE categories (
             id TEXT PRIMARY KEY NOT NULL,
@@ -26,7 +35,7 @@ internal suspend fun createProductionRealServerTables(db: SafeSQLiteConnection) 
         )
         """.trimIndent(),
     )
-    db.execSQL(
+    exec(
         """
         CREATE TABLE teams (
             id TEXT PRIMARY KEY NOT NULL,
@@ -35,7 +44,7 @@ internal suspend fun createProductionRealServerTables(db: SafeSQLiteConnection) 
         )
         """.trimIndent(),
     )
-    db.execSQL(
+    exec(
         """
         CREATE TABLE team_members (
             id TEXT PRIMARY KEY NOT NULL,
@@ -44,7 +53,7 @@ internal suspend fun createProductionRealServerTables(db: SafeSQLiteConnection) 
         )
         """.trimIndent(),
     )
-    db.execSQL(
+    exec(
         """
         CREATE TABLE files (
             id BLOB PRIMARY KEY NOT NULL,
@@ -53,7 +62,7 @@ internal suspend fun createProductionRealServerTables(db: SafeSQLiteConnection) 
         )
         """.trimIndent(),
     )
-    db.execSQL(
+    exec(
         """
         CREATE TABLE file_reviews (
             id BLOB PRIMARY KEY NOT NULL,
@@ -62,7 +71,7 @@ internal suspend fun createProductionRealServerTables(db: SafeSQLiteConnection) 
         )
         """.trimIndent(),
     )
-    db.execSQL(
+    exec(
         """
         CREATE TABLE typed_rows (
             id TEXT PRIMARY KEY NOT NULL,
@@ -80,7 +89,7 @@ internal suspend fun createProductionRealServerTables(db: SafeSQLiteConnection) 
         )
         """.trimIndent(),
     )
-    db.execSQL(
+    exec(
         """
         CREATE TABLE posts (
             id TEXT PRIMARY KEY NOT NULL,

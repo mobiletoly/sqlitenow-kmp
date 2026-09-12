@@ -18,6 +18,7 @@ package dev.goquick.sqlitenow.gradle.swift
 import dev.goquick.sqlitenow.gradle.oversqlite.ResolvedOversqliteSyncTable
 
 internal class SwiftProductSyncSourceEmitter(
+    private val databaseName: String,
     private val syncTables: List<ResolvedOversqliteSyncTable>,
 ) {
     fun emitSyncTypes(writer: SwiftWriter) {
@@ -26,20 +27,16 @@ internal class SwiftProductSyncSourceEmitter(
     }
 
     fun emitMakeSyncClient(writer: SwiftWriter) {
-        writer.line("public func makeSyncClient(")
+        writer.line("public func openForSync(")
         writer.indent {
             line("baseURL: URL,")
             line("auth: SQLiteNowSyncAuth,")
-            line("config: SQLiteNowSyncConfig = .init(),")
-            line("resolver: SQLiteNowSyncResolver? = nil")
+            line("config: SQLiteNowSyncConfig,")
+            line("resolver: SQLiteNowSyncResolver? = nil,")
+            line("upgradePlan: SQLiteNowSyncUpgradePlan? = nil")
         }
-        writer.line(") throws -> SQLiteNowSyncClient {")
+        writer.line(") async throws -> SQLiteNowSyncOpening<${databaseName}> {")
         writer.indent {
-            line("guard runtime.isOpen() else {")
-            indent {
-                line("throw SQLiteNowError.misuse(message: \"Call open() before makeSyncClient(...).\")")
-            }
-            line("}")
             line("let runtimeConfig = try config.runtimeConfig(syncTables: [")
             indent {
                 syncTables.forEachIndexed { index, syncTable ->
@@ -52,16 +49,46 @@ internal class SwiftProductSyncSourceEmitter(
                 }
             }
             line("])")
-            line("let runtimeClient = SQLiteNowSyncRuntimeClient(")
+            line("let binding = SQLiteNowSyncClientBinding(baseURL: baseURL, auth: auth, config: config, resolver: resolver)")
+            line("let runtimeOpening = try await mapRuntimeErrors {")
             indent {
-                line("coreDatabase: runtime,")
-                line("baseUrl: baseURL.absoluteString,")
-                line("auth: auth.runtimeAuth,")
-                line("config: runtimeConfig,")
-                line("resolver: resolver?.runtimeResolver")
+                line("let result = try await awaitSyncOpeningOperation { completion in")
+                indent {
+                    line("SQLiteNowSyncRuntimeFactory().startOpenForSync(")
+                    indent {
+                        line("coreDatabase: self.runtime,")
+                        line("baseUrl: baseURL.absoluteString,")
+                        line("auth: auth.runtimeAuth,")
+                        line("config: runtimeConfig,")
+                        line("resolver: resolver?.runtimeResolver,")
+                        line("upgradePlan: upgradePlan?.runtimePlan,")
+                        line("completion: completion")
+                    }
+                    line(")")
+                }
+                line("}")
+                line("guard let opening = result.opening else {")
+                indent { line("throw SQLiteNowError.sync(message: \"KMP omitted the coordinated-opening result.\")") }
+                line("}")
+                line("return opening")
             }
-            line(")")
-            line("return try syncClientLease.bind(runtime: runtimeClient)")
+            line("}")
+            line("return SQLiteNowSyncOpening(runtime: runtimeOpening, database: self, lease: syncClientLease, binding: binding)")
+        }
+        writer.line("}")
+        writer.line()
+        writer.line("public func makeSyncClient(")
+        writer.indent {
+            line("baseURL: URL,")
+            line("auth: SQLiteNowSyncAuth,")
+            line("config: SQLiteNowSyncConfig,")
+            line("resolver: SQLiteNowSyncResolver? = nil")
+        }
+        writer.line(") throws -> SQLiteNowSyncClient {")
+        writer.indent {
+            line("let binding = SQLiteNowSyncClientBinding(baseURL: baseURL, auth: auth, config: config, resolver: resolver)")
+            line("if let readyClient = try syncClientLease.readyClient(matching: binding) { return readyClient }")
+            line("throw SQLiteNowError.misuse(message: \"openForSync().advance() must reach ready before makeSyncClient(...).\")")
         }
         writer.line("}")
         writer.line()

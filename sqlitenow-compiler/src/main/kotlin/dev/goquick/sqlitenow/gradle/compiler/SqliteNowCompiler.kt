@@ -21,7 +21,6 @@ import dev.goquick.sqlitenow.gradle.TempDatabaseConnector
 import dev.goquick.sqlitenow.gradle.database.DatabaseCodeGenerator
 import dev.goquick.sqlitenow.gradle.database.MigrationInspector
 import dev.goquick.sqlitenow.gradle.database.MigratorCodeGenerator
-import dev.goquick.sqlitenow.gradle.dart.DartCodeGenerator
 import dev.goquick.sqlitenow.gradle.generator.data.DataStructCodeGenerator
 import dev.goquick.sqlitenow.gradle.generator.query.QueryCodeGenerator
 import dev.goquick.sqlitenow.gradle.oversqlite.resolveOversqliteSyncTables
@@ -29,9 +28,7 @@ import dev.goquick.sqlitenow.gradle.sqlinspect.SQLBatchInspector
 import dev.goquick.sqlitenow.gradle.sqlinspect.SchemaInspector
 import dev.goquick.sqlitenow.gradle.swift.DEFAULT_SWIFT_CORE_RUNTIME_MODULE_NAME
 import dev.goquick.sqlitenow.gradle.swift.DEFAULT_SWIFT_SYNC_RUNTIME_MODULE_NAME
-import dev.goquick.sqlitenow.gradle.swift.SqliteNowSwiftExportConfig
 import dev.goquick.sqlitenow.gradle.swift.SqliteNowSwiftProductExportConfig
-import dev.goquick.sqlitenow.gradle.swift.SwiftCodeGenerator
 import dev.goquick.sqlitenow.gradle.swift.SwiftCoreRuntimeCodeGenerator
 import dev.goquick.sqlitenow.gradle.swift.SwiftProductRuntimeMode
 import dev.goquick.sqlitenow.gradle.swift.SwiftSyncTable
@@ -47,15 +44,8 @@ data class SqliteNowCompilerInput(
     val schemaDatabaseFile: File? = null,
     val debug: Boolean = false,
     val oversqlite: Boolean = false,
-    val backend: SqliteNowCompilerBackend = SqliteNowCompilerBackend.KOTLIN,
-    val swiftExport: SqliteNowSwiftExportConfig? = null,
     val swiftProductExport: SqliteNowSwiftProductExportConfig? = null,
 )
-
-enum class SqliteNowCompilerBackend {
-    KOTLIN,
-    DART,
-}
 
 enum class SqliteNowCompilerDiagnosticSeverity {
     WARNING,
@@ -109,10 +99,6 @@ fun compileSqliteNowDatabase(
         }
 
         input.swiftProductExport?.let { swiftProductExport ->
-            require(input.backend == SqliteNowCompilerBackend.KOTLIN) {
-                "Product Swift source export is only available from the Kotlin metadata path."
-            }
-
             val dataStructCodeGenerator = DataStructCodeGenerator(
                 conn = conn,
                 queriesDir = queriesDirs,
@@ -167,41 +153,6 @@ fun compileSqliteNowDatabase(
                     )
                 },
                 swiftPackageSyncTables = swiftPackageSyncTables,
-            )
-        }
-
-        if (input.backend == SqliteNowCompilerBackend.DART) {
-            val dataStructCodeGenerator = DataStructCodeGenerator(
-                conn = conn,
-                queriesDir = queriesDirs,
-                statementExecutors = schemaInspector.statementExecutors,
-                packageName = input.packageName,
-                outputDir = input.outputDirectory
-            )
-            DartCodeGenerator(
-                databaseName = input.databaseName,
-                outputDir = input.outputDirectory,
-                schemaInspector = schemaInspector,
-                sqlBatchInspector = sqlBatchInspector,
-                migrationInspector = migrationInspector,
-                dataStructCodeGenerator = dataStructCodeGenerator,
-                oversqlite = input.oversqlite,
-            ).generateCode()
-            conn.commit()
-
-            return SqliteNowCompilerResult(
-                generatedFiles = input.outputDirectory
-                    .walkTopDown()
-                    .filter { it.isFile }
-                    .sortedBy { it.relativeTo(input.outputDirectory).invariantSeparatorsPath }
-                    .toList(),
-                warnings = warnings,
-                diagnostics = warnings.map {
-                    SqliteNowCompilerDiagnostic(
-                        severity = SqliteNowCompilerDiagnosticSeverity.WARNING,
-                        message = it,
-                    )
-                },
             )
         }
 
@@ -263,17 +214,6 @@ fun compileSqliteNowDatabase(
         }
         dbCodeGen.generateDatabaseClass()
 
-        input.swiftExport?.let { swiftExport ->
-            SwiftCodeGenerator(
-                databaseName = input.databaseName,
-                databasePackageName = input.packageName,
-                kotlinOutputDir = input.outputDirectory,
-                dataStructCodeGenerator = dataStructCodeGenerator,
-                config = swiftExport,
-                oversqlite = input.oversqlite,
-            ).generateCode()
-        }
-
         return SqliteNowCompilerResult(
             generatedFiles = buildList {
                 addAll(
@@ -283,15 +223,6 @@ fun compileSqliteNowDatabase(
                         .sortedBy { it.relativeTo(input.outputDirectory).invariantSeparatorsPath }
                         .toList()
                 )
-                input.swiftExport?.swiftOutputDirectory?.takeIf { it.exists() }?.let { swiftOutput ->
-                    addAll(
-                        swiftOutput
-                            .walkTopDown()
-                            .filter { it.isFile }
-                            .sortedBy { it.relativeTo(swiftOutput).invariantSeparatorsPath }
-                            .toList()
-                    )
-                }
             },
             warnings = warnings,
             diagnostics = warnings.map {

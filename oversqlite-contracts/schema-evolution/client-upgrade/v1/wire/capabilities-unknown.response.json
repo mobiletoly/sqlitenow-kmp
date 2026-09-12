@@ -1,0 +1,1 @@
+{"error":"unknown_schema_generation","message":"schema generation is unknown","retryable":false,"remediation":"upgrade_or_reconfigure_client"}

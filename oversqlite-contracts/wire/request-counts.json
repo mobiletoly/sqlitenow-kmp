@@ -1,0 +1,28 @@
+{
+  "formatVersion": 3,
+  "traces": [
+    {"name":"opening","initial":{"phase":"new"},"events":["discover","connect"],"requests":["GET /sync/generations/{generation_id}","POST /sync/connect"],"forbiddenRequests":["GET /sync/capabilities"]},
+    {"name":"admitted-no-change","initial":{"phase":"ready"},"events":["sync","pull_complete"],"requests":["GET /sync/pull"],"sequentialExchangeCount":1,"forbiddenRequests":["GET /sync/generations/{generation_id}","GET /sync/capabilities"]},
+    {"name":"admitted-one-row","initial":{"phase":"ready","frozenPush":{"sourceId":"source-push","sourceBundleId":7,"body":"{\"source_bundle_id\":7,\"canonical_request_hash\":\"72df2033e0ac3eed9081f821a9dd0039b6a25cc7fbf02b9c4e5f4b51a31d2f3c\",\"rows\":[[0,0,[[\"i\",[\"user-1\"],0,{\"id\":\"user-1\",\"name\":\"Ada\"}]]]]}"}},"events":["sync","push_complete","pull_complete"],"requests":["POST /sync/push","GET /sync/pull"],"sequentialExchangeCount":2,"forbiddenRequests":["POST /sync/push-sessions","POST /sync/push-sessions/{push_id}/chunks","POST /sync/push-sessions/{push_id}/commit","GET /sync/committed-bundles/{bundle_seq}/rows"]},
+    {"name":"lost-push-response-replay","initial":{"phase":"ready","frozenPush":{"sourceId":"source-push","sourceBundleId":7,"body":"{\"source_bundle_id\":7,\"canonical_request_hash\":\"72df2033e0ac3eed9081f821a9dd0039b6a25cc7fbf02b9c4e5f4b51a31d2f3c\",\"rows\":[[0,0,[[\"i\",[\"user-1\"],0,{\"id\":\"user-1\",\"name\":\"Ada\"}]]]]}"}},"events":["sync","push_response_lost","retry_exact_push","pull_complete"],"requests":["POST /sync/push","POST /sync/push","GET /sync/pull"],"replayIsExact":true},
+    {"name":"pagination","initial":{"phase":"ready","checkpoint":0},"events":["sync","pull_has_more:1","pull_complete:2"],"requests":["GET /sync/pull","GET /sync/pull"],"expectedTerminal":{"checkpoint":2,"running":false}},
+    {"name":"watch-burst","initial":{"phase":"ready","checkpoint":0},"events":["watch_burst:100","pull_complete:100"],"requests":["GET /sync/pull","GET /sync/pull"],"expectedTerminal":{"checkpoint":100,"activePulls":0,"trailingPulls":0}},
+    {"name":"pull-defaults","initial":{"phase":"ready"},"events":["pull"],"requests":["GET /sync/pull"]},
+    {"name":"watch-default","initial":{"phase":"ready"},"events":["watch"],"requests":["GET /sync/watch"]},
+    {"name":"snapshot-chunk-defaults","initial":{"phase":"ready"},"events":["snapshot_chunk"],"requests":["GET /sync/snapshot-sessions/{snapshot_id}"]}
+  ],
+  "queryCases": [
+    {"name":"pull-omitted-defaults","operation":"pull","query":{},"expected":{"accepted":true,"after_bundle_seq":"0","max_bundles":"server_default","target_bundle_seq":"0"}},
+    {"name":"pull-valid","operation":"pull","query":{"after_bundle_seq":["3"],"max_bundles":["11"],"target_bundle_seq":["14"]},"expected":{"accepted":true,"after_bundle_seq":"3","max_bundles":"11","target_bundle_seq":"14"}},
+    {"name":"pull-empty","operation":"pull","query":{"max_bundles":[""]},"expected":{"accepted":false}},
+    {"name":"pull-duplicate","operation":"pull","query":{"after_bundle_seq":["1","2"]},"expected":{"accepted":false}},
+    {"name":"watch-omitted-default","operation":"watch","query":{},"expected":{"accepted":true,"after_bundle_seq":"0"}},
+    {"name":"watch-valid","operation":"watch","query":{"after_bundle_seq":["12"]},"expected":{"accepted":true,"after_bundle_seq":"12"}},
+    {"name":"watch-empty","operation":"watch","query":{"after_bundle_seq":[""]},"expected":{"accepted":false}},
+    {"name":"watch-duplicate","operation":"watch","query":{"after_bundle_seq":["1","2"]},"expected":{"accepted":false}},
+    {"name":"snapshot-omitted-defaults","operation":"snapshot","query":{},"expected":{"accepted":true,"after_row_ordinal":"0","max_rows":"server_default","max_bytes":"server_default"}},
+    {"name":"snapshot-valid","operation":"snapshot","query":{"after_row_ordinal":["5"],"max_rows":["19"],"max_bytes":["4194304"]},"expected":{"accepted":true,"after_row_ordinal":"5","max_rows":"19","max_bytes":"4194304"}},
+    {"name":"snapshot-empty","operation":"snapshot","query":{"max_bytes":[""]},"expected":{"accepted":false}},
+    {"name":"snapshot-duplicate","operation":"snapshot","query":{"max_rows":["1","2"]},"expected":{"accepted":false}}
+  ]
+}

@@ -78,11 +78,6 @@ internal class OversqliteErrorCategoryTest {
                 expected = OversqliteErrorCategory.AUTH,
             ),
             Scenario(
-                name = "committed bundle not found is network",
-                error = CommittedBundleNotFoundException("{}"),
-                expected = OversqliteErrorCategory.NETWORK,
-            ),
-            Scenario(
                 name = "history pruned is network",
                 error = HistoryPrunedException("history pruned"),
                 expected = OversqliteErrorCategory.NETWORK,
@@ -113,12 +108,11 @@ internal class OversqliteErrorCategoryTest {
         val hostileProtocolVersion = "HOSTILE_PROTOCOL_VERSION_SECRET"
         listOf("v0", "", hostileProtocolVersion).forEach { actual ->
             val error = assertFailsWith<ProtocolVersionMismatchException>(actual) {
-                CapabilitiesResponse(
+                AdmittedOversqliteContract(
                     protocolVersion = actual,
-                    schemaVersion = 1,
-                    registeredTableSpecs = testRegisteredTableSpecs("users"),
-                    features = emptyMap(),
-                    bundleLimits = testBundleCapabilitiesLimits(),
+                    generation = testGeneration(testRegisteredTableSpecs("users")),
+                    limits = testWireLimits(),
+                    watchEnabled = false,
                 ).requireSupportedProtocol()
             }
             assertEquals("v1", error.expected)

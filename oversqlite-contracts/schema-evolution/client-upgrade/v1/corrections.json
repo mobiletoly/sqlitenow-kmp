@@ -1,0 +1,413 @@
+{
+  "format": "client-upgrade-conformance/v1",
+  "revision": "14",
+  "prior_manifest_sha256": "af5efe530ce715f86089e3007e974a9e43aa409a4c4e73eb82de568a20357c3f",
+  "corrections": [
+    {
+      "id": "R2-WIRE-PROOF",
+      "rationale": "The successful source-replacement exchange omitted the required generation fingerprint header.",
+      "invariants": [
+        "I08",
+        "I12"
+      ]
+    },
+    {
+      "id": "R2-PRODUCTION-VECTORS",
+      "rationale": "Generation-ID and inner-JSON-depth boundary recipes now use canonical production-valid values and root-at-depth-zero counting.",
+      "invariants": [
+        "I07",
+        "I12"
+      ]
+    },
+    {
+      "id": "R2-EXECUTABLE-GO-MAPPING",
+      "rationale": "Scenario and invariant mappings now resolve and execute exact Go tests instead of searching test source text.",
+      "invariants": [
+        "I01",
+        "I02",
+        "I03",
+        "I04",
+        "I05",
+        "I06",
+        "I07",
+        "I08",
+        "I09",
+        "I10",
+        "I11",
+        "I12"
+      ]
+    },
+    {
+      "id": "R3-SEMANTIC-GO-EXECUTION",
+      "rationale": "Every portable scenario is supplied to an explicit Go executor, must consume all actions, exchanges, and faults, and must return checked observations and preservation claims.",
+      "invariants": [
+        "I01",
+        "I02",
+        "I03",
+        "I04",
+        "I05",
+        "I06",
+        "I07",
+        "I08",
+        "I09",
+        "I10",
+        "I11",
+        "I12"
+      ]
+    },
+    {
+      "id": "R3-PRODUCTION-VALID-CAPABILITIES",
+      "rationale": "The successful target capabilities exchange carries the compiled target fingerprint, generation tables, features, and complete production-valid limits.",
+      "invariants": [
+        "I01",
+        "I08",
+        "I12"
+      ]
+    },
+    {
+      "id": "R3-FLOAT32-LOCAL-ROUNDING",
+      "rationale": "The float32 corpus distinguishes local SQLite REAL rounding from strict canonical text on the wire.",
+      "invariants": [
+        "I07",
+        "I12"
+      ]
+    },
+    {
+      "id": "R4-OWNED-READY-VALIDATION",
+      "rationale": "Ordinary-client construction acquires file ownership before inspecting mutable journal, identity, version, and physical state.",
+      "invariants": [
+        "I01",
+        "I02"
+      ]
+    },
+    {
+      "id": "R4-RECREATED-PUSH-LOCATOR",
+      "rationale": "Explicit resolution accepts and durably records a server-recreated staging locator for the same exact Q39 request before cleanup.",
+      "invariants": [
+        "I03",
+        "I10"
+      ]
+    },
+    {
+      "id": "R4-BOUNDED-SNAPSHOT-ACCOUNTING",
+      "rationale": "Snapshot totals use bounded pages and durable incremental byte progress instead of materializing and rescanning the complete staged prefix for every chunk.",
+      "invariants": [
+        "I09"
+      ]
+    },
+    {
+      "id": "R4-INDEPENDENT-SCENARIO-OBSERVATIONS",
+      "rationale": "Scenario executors emit independently constructed production-backed observations, concrete fault cases replace alternatives, and integer application vectors use the declared textual integer wire codec.",
+      "invariants": [
+        "I01",
+        "I02",
+        "I03",
+        "I04",
+        "I05",
+        "I06",
+        "I07",
+        "I08",
+        "I09",
+        "I10",
+        "I11",
+        "I12"
+      ]
+    },
+    {
+      "id": "R4-REJECT-PROTOTYPE-CONTROL-LAYOUT",
+      "rationale": "Initialization fails closed when durable active push-session evidence is absent instead of altering an unsupported prototype control layout.",
+      "invariants": [
+        "I01",
+        "I03"
+      ]
+    },
+    {
+      "id": "R5-EXECUTED-SCENARIO-OBSERVATIONS",
+      "rationale": "Portable outcomes and preservation facts are now derived from production coordinator state, real process-death boundaries, production wire fixtures, and the PostgreSQL-backed mobile and remote-commit journeys instead of fixed maps returned after unrelated tests.",
+      "invariants": [
+        "I01",
+        "I02",
+        "I03",
+        "I04",
+        "I05",
+        "I06",
+        "I07",
+        "I08",
+        "I09",
+        "I10",
+        "I11",
+        "I12"
+      ]
+    },
+    {
+      "id": "R5-COORDINATOR-RECOVERY-AND-INTEGRITY",
+      "rationale": "Coordinator writer connections enable foreign keys, U4 and U8 verify foreign-key integrity, old-source recovery resumes under coordinator ownership, permitted migration DML suspends only capture triggers, anonymous completed plans tolerate a later matching attachment, and structured generation rejections retain typed outcomes.",
+      "invariants": [
+        "I01",
+        "I03",
+        "I04",
+        "I05",
+        "I06",
+        "I07",
+        "I09",
+        "I10",
+        "I11"
+      ]
+    },
+    {
+      "id": "R6-RUNTIME-INTEGRITY-AND-IDENTITY",
+      "rationale": "Resumed settlement uses a foreign-key-enforcing reserved writer and validates integrity before acknowledgement; coordinator clients always have a logger; managed ready files require their complete declared contract; capture refresh refuses application-trigger collisions; preservation includes implicit row identity; physical validation includes generated columns and exact control-table prefixes; and delayed generation loss remains typed.",
+      "invariants": [
+        "I01",
+        "I03",
+        "I04",
+        "I07",
+        "I09",
+        "I10"
+      ]
+    },
+    {
+      "id": "R6-EXECUTED-PORTABLE-SEMANTICS",
+      "rationale": "Drain, settlement, empty progress, local-only pending intent, and U-boundary observations now come from the exact production operations claimed by each fixture, while typed values and limits preserve exact JSON types and consume fixture bytes rather than vector IDs.",
+      "invariants": [
+        "I03",
+        "I07",
+        "I10",
+        "I11",
+        "I12"
+      ]
+    },
+    {
+      "id": "R6-PORTABLE-PROTOCOL-HASHES",
+      "rationale": "The corpus now supplies fixed language-neutral generation-pinned request, generation-projected effect, and complete snapshot chunk framing examples, independently checked by the Go verifier and production hash readers.",
+      "invariants": [
+        "I03",
+        "I04",
+        "I08",
+        "I09",
+        "I12"
+      ]
+    },
+    {
+      "id": "R6-MOBILE-RESOLUTION-AND-FINAL-APPLY-DEATH",
+      "rationale": "The version-aware mobile journey reaches a real needs-resolution state through the public resolver and the PostgreSQL-backed journey kills the client after durable final snapshot staging before readiness publication, then recovers the same file.",
+      "invariants": [
+        "I03",
+        "I09",
+        "I10",
+        "I12"
+      ]
+    },
+    {
+      "id": "R7-LOCAL-GUARD-OWNERSHIP",
+      "rationale": "Local-only write guards have canonical owned identities, reject pre-U0 name collisions without durable mutation, require exact inventory at completion, and are excluded from preservation only while that exact inventory exists.",
+      "invariants": [
+        "I01",
+        "I02",
+        "I07",
+        "I09",
+        "I11"
+      ]
+    },
+    {
+      "id": "R7-PHYSICAL-AND-READER-CLOSURE",
+      "rationale": "Implicit row identity is selected from exact PRAGMA table_list metadata, version readers allow only non-assigning user_version PRAGMA access, and fresh inventory excludes only the literal sqlite_ prefix.",
+      "invariants": [
+        "I01",
+        "I06",
+        "I07",
+        "I11"
+      ]
+    },
+    {
+      "id": "R7-TYPED-OLD-GENERATION-LOSS",
+      "rationale": "Every old-generation request reader validates exact structured status and error-code pairs before generic handling and retains frozen intent, session, receipt, staging, and sequencing evidence.",
+      "invariants": [
+        "I03",
+        "I04",
+        "I10"
+      ]
+    },
+    {
+      "id": "R7-VERIFIABLE-EXECUTION-TRACKER",
+      "rationale": "Scenario adapters emit ordered action, exchange, and fault identities only at production dispatch, production response decoding, and inspected fault aftermath; the runner rejects omissions, duplicates, and declaration-only counts.",
+      "invariants": [
+        "I01",
+        "I02",
+        "I03",
+        "I04",
+        "I05",
+        "I06",
+        "I07",
+        "I08",
+        "I09",
+        "I10",
+        "I11",
+        "I12"
+      ]
+    },
+    {
+      "id": "R7-NEGOTIATION-CONFLICT-CANCELLATION",
+      "rationale": "The corpus adds exact unknown-generation, fingerprint-mismatch, conflict-resolution retry, and U0-U8 cancellation-matrix scenarios consumed through production readers and durable-state inspection.",
+      "invariants": [
+        "I01",
+        "I02",
+        "I03",
+        "I04",
+        "I05",
+        "I08",
+        "I09",
+        "I10",
+        "I12"
+      ]
+    },
+    {
+      "id": "R7-SNAPSHOT-ROW-BYTE-BOUNDARIES",
+      "rationale": "Exact-limit and ceiling-plus-one snapshot row recipes have fixed hashes and execute through the PostgreSQL snapshot materializer with independently checked encoded byte totals and no partial rejected state.",
+      "invariants": [
+        "I07",
+        "I09",
+        "I12"
+      ]
+    },
+    {
+      "id": "R8-READER-WRITE-BARRIER",
+      "rationale": "Every application version read combines the restrictive authorizer with SQLite query-only enforcement so an empty-string user_version assignment cannot mutate the durable ledger.",
+      "invariants": [
+        "I01",
+        "I05",
+        "I06",
+        "I11"
+      ]
+    },
+    {
+      "id": "R8-EXACT-RAW-WIRE",
+      "rationale": "Capabilities fixtures carry the production empty GET body and all claimed negotiation and replacement requests are compared as exact raw bytes before exchange consumption is recorded.",
+      "invariants": [
+        "I01",
+        "I08",
+        "I10",
+        "I12"
+      ]
+    },
+    {
+      "id": "R8-CANCELLATION-DURABLE-EVIDENCE",
+      "rationale": "Cancellation preservation labels require exact installed identity, application local-only digest, outbox and drain state, replacement tuple, staged snapshot rows, and final ready publication evidence appropriate to each durable phase.",
+      "invariants": [
+        "I02",
+        "I03",
+        "I05",
+        "I07",
+        "I08",
+        "I09",
+        "I10",
+        "I12"
+      ]
+    },
+    {
+      "id": "R9-READY-CLIENT-TABLE-SCOPE",
+      "rationale": "Migration-aware ready construction requires Config.Tables, Config.Schema, and every ordered sync-key tuple to match the complete compiled local contract before ownership or mutable runtime initialization, preventing local-only tables from becoming trigger-managed synchronized tables.",
+      "invariants": [
+        "I01",
+        "I07"
+      ]
+    },
+    {
+      "id": "R9-EXACT-CANCELLATION-REPLACEMENT-TUPLE",
+      "rationale": "Cancellation preservation captures the exact persisted old source, newly reserved source, replacement reason, and target generation proof at the relevant durable boundary and rejects any later substitution.",
+      "invariants": [
+        "I08",
+        "I10",
+        "I12"
+      ]
+    },
+    {
+      "id": "R10-DISJOINT-LOCAL-ONLY-SCOPE",
+      "rationale": "Upgrade plans and migration-aware ready clients reject every table declared as both local-only and synchronized before ownership or mutation in generation, fresh, and same-proof local-only modes.",
+      "invariants": [
+        "I01",
+        "I07",
+        "I10",
+        "I11",
+        "I12"
+      ]
+    },
+    {
+      "id": "R10-DURABLE-JOURNAL-INTEGRITY",
+      "rationale": "Every durable journal record carries a canonical integrity witness, validates phase coherence, and is compared with the immutable plan before resume so tuple or proof corruption fails before remote dispatch.",
+      "invariants": [
+        "I01",
+        "I08",
+        "I10",
+        "I12"
+      ]
+    },
+    {
+      "id": "R10-MIGRATION-RESULT-LIFETIME",
+      "rationale": "Migration reader and transaction queries are bound to a callback-scoped context, and all tracked result sets are closed before the capability and SQLite authorizer are released.",
+      "invariants": [
+        "I05",
+        "I06",
+        "I10",
+        "I11",
+        "I12"
+      ]
+    },
+    {
+      "id": "R11-DURABLE-DRAIN-BOUNDARY",
+      "rationale": "U2 now commits a standalone old-generation drain witness, while U3 independently previews the target and enters migration so restart after U2 requires no further old-generation I/O.",
+      "invariants": [
+        "I03",
+        "I10",
+        "I12"
+      ]
+    },
+    {
+      "id": "R11-MIGRATION-CLEANUP-CAUSES",
+      "rationale": "Migration result cleanup and authorizer-release failures are joined with callback errors, cancellation, and panic causes instead of replacing the primary diagnostic.",
+      "invariants": [
+        "I05",
+        "I06",
+        "I12"
+      ]
+    },
+    {
+      "id": "R11-READY-CONFIG-OWNERSHIP",
+      "rationale": "Ordinary ready clients deep-clone every mutable configuration slice, nested contract, and retry policy before retaining the configuration.",
+      "invariants": [
+        "I01",
+        "I12"
+      ]
+    },
+    {
+      "id": "R12-UMBRELLA-AUTHORITY",
+      "rationale": "Refresh the umbrella-spec identity after accepted transition revision 4 and implementation resumption. Existing upgrade scenarios, wire bytes, expected outcomes and Go adapter mappings are unchanged. Ordinary conflict and maintenance behavior is added by the separate maintenance-conflicts/v1 supplement.",
+      "invariants": [
+        "I12"
+      ]
+    },
+    {
+      "id": "M8-AUTHORITY-BOOKKEEPING",
+      "rationale": "Refresh parent specification identity after accepted rollout lifecycle bookkeeping. Existing wire, transition, invariant and consumer expectations are unchanged.",
+      "invariants": [
+        "I12"
+      ]
+    },
+    {
+      "id": "M8-RETAINED-CONSUMER-REPAIR",
+      "rationale": "The retained consumer named a removed pre-table-evolution push restart test. Bind the current accepted session-resume-until-expiry implementation test. Portable transitions and wire fixtures do not change.",
+      "invariants": [
+        "I03",
+        "I12"
+      ]
+    },
+    {
+      "id": "R14-DISCOVERY-VALUE-FAMILIES",
+      "rationale": "The accepted discovery redesign derives int64 and float64 conversions from SQLite affinity. Narrow PostgreSQL ranges remain server validation; float4 inputs retain binary64 precision until authoritative effects. No protocol version change.",
+      "invariants": [
+        "I04",
+        "I12"
+      ]
+    }
+  ]
+}

@@ -24,6 +24,7 @@ import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.SQLiteStatement
 import dev.goquick.sqlitenow.core.SqlitePersistence
+import dev.goquick.sqlitenow.core.SqliteNowLifecycleBusyException
 import dev.goquick.sqlitenow.core.SuspendSQLiteConnectionCleanup
 import dev.goquick.sqlitenow.core.sqlite.SqliteException
 import dev.goquick.sqlitenow.core.sqlite.toSqliteExceptionPreservingSuppressed
@@ -42,6 +43,7 @@ internal class SqliteWorkerSQLiteDriver private constructor(
 
     private var nextRequestId = 1
     private val queuedOneWays = linkedMapOf<Int, SqliteWorkerRequest>()
+    private val queuedOwnedFinalizations = mutableSetOf<Int>()
     private var shutdown = false
     private var terminalFailure: Throwable? = null
     private var shutdownMetrics: SqliteWorkerMetrics? = null
@@ -53,6 +55,33 @@ internal class SqliteWorkerSQLiteDriver private constructor(
             legacySourceMode = "built-in",
             customPersistence = null,
         )
+
+    internal suspend fun inspect(fileName: String, legacySourceMode: String): SQLiteConnection? {
+        require(fileName.isNotBlank()) { "SQLite worker database name must be non-empty." }
+        require(legacySourceMode in setOf("built-in", "custom", "none"))
+        val inspected = try {
+            request(
+                SqliteWorkerRequest(
+                    protocol = SQLITE_WORKER_PROTOCOL,
+                    command = "inspect",
+                    fileName = fileName,
+                    legacySourceMode = legacySourceMode,
+                ),
+            ) { it }
+        } catch (cancelled: CancellationException) {
+            withContext(NonCancellable) { forceCleanup() }
+            throw cancelled
+        }
+        return when (inspected.openState) {
+            "preparation-required" -> null
+            "inspection-ready" -> SqliteWorkerSQLiteConnection(
+                driver = this,
+                databaseId = checkNotNull(inspected.databaseId),
+                config = config,
+            ).also(connections::add)
+            else -> error("Unsupported SQLite worker inspection state: ${inspected.openState}")
+        }
+    }
 
     internal suspend fun open(
         fileName: String,
@@ -256,6 +285,8 @@ internal class SqliteWorkerSQLiteDriver private constructor(
 
     internal fun diagnosticsForTest(): String = transport.diagnosticsForTest()
 
+    internal val terminationConfirmed: Boolean get() = transport.terminationConfirmed
+
     suspend fun shutdown(): SqliteWorkerMetrics {
         if (shutdown) {
             flushQueued()
@@ -372,14 +403,16 @@ internal class SqliteWorkerSQLiteDriver private constructor(
         }
     }
 
-    internal fun sendOneWay(request: SqliteWorkerRequest): Int {
+    internal fun sendOneWay(request: SqliteWorkerRequest, finalizesOwnedStatement: Boolean = false): Int {
         if (shutdown) return 0
         request.validate()
+        require(!finalizesOwnedStatement || request.command == "closeStatement")
         val requestId = transport.sendOneWay(sqliteWorkerJson.encodeToString(request))
         require(requestId < 0) { "One-way SQLite worker request IDs must be negative." }
         check(queuedOneWays.put(requestId, request) == null) {
             "One-way SQLite worker request ID $requestId is already queued."
         }
+        if (finalizesOwnedStatement) queuedOwnedFinalizations += requestId
         return requestId
     }
 
@@ -414,6 +447,7 @@ internal class SqliteWorkerSQLiteDriver private constructor(
         val expected = queuedOneWays.toMap()
         var queuedFailure: Throwable? = null
         var terminalCause: Throwable? = null
+        var ownedFinalizationFailure: Throwable? = null
         try {
             val encoded = runCleanupBarrier("one-way flush") { transport.flush() }
             val batch = sqliteWorkerJson.decodeFromString<SqliteWorkerFlushBatch>(encoded)
@@ -428,7 +462,11 @@ internal class SqliteWorkerSQLiteDriver private constructor(
                 }
                 envelope.validateOneWayFor(envelope.id, request)
                 envelope.error?.let { error ->
-                    queuedFailure = appendFailure(queuedFailure, error.toSqliteException())
+                    val failure = error.toSqliteException()
+                    queuedFailure = appendFailure(queuedFailure, failure)
+                    if (envelope.id in queuedOwnedFinalizations && ownedFinalizationFailure == null) {
+                        ownedFinalizationFailure = failure
+                    }
                 }
             }
             for (message in batch.barrierFailures) {
@@ -447,7 +485,11 @@ internal class SqliteWorkerSQLiteDriver private constructor(
             )
         } finally {
             expected.keys.forEach(queuedOneWays::remove)
+            expected.keys.forEach(queuedOwnedFinalizations::remove)
         }
+        // Logical worker removal cannot prove native disposal after a failed finalize.
+        // Fence the owner before another request can dispatch, retaining ordered errors.
+        if (terminalCause == null) terminalCause = ownedFinalizationFailure
         if (terminalCause != null) {
             val terminal = forceTerminateAfterFailure(terminalCause)
             queuedFailure = appendFailure(queuedFailure, terminal)
@@ -627,6 +669,7 @@ internal class SqliteWorkerSQLiteConnection(
     internal val databaseId: Int,
     private val config: SqliteWorkerConfig,
 ) : SQLiteConnection, SuspendSQLiteConnectionCleanup {
+    internal val runtimeKind: String = driver.runtimeKind()
     private var closed = false
     private var transactionActive = false
     private val statements = mutableSetOf<SqliteWorkerSQLiteStatement>()
@@ -674,6 +717,8 @@ internal class SqliteWorkerSQLiteConnection(
         driver.onConnectionClosed(this)
     }
 
+    override val physicalCleanupComplete: Boolean get() = driver.terminationConfirmed
+
     override suspend fun awaitCleanup() {
         driver.shutdown()
     }
@@ -710,6 +755,11 @@ internal class SqliteWorkerSQLiteConnection(
     internal fun diagnosticsForTest(): String = driver.diagnosticsForTest()
 
     internal suspend fun metricsForTest(): SqliteWorkerMetrics = driver.metrics()
+
+    /** Simulates page/worker death without sending SQLite close or releasing ownership normally. */
+    internal suspend fun forceTerminateOwnerForTest() {
+        driver.forceTerminateForTest()
+    }
 
     internal fun onStatementClosed(statement: SqliteWorkerSQLiteStatement) {
         statements -= statement
@@ -877,7 +927,7 @@ internal class SqliteWorkerSQLiteStatement(
         if (closed) return
         closed = true
         discardCachedRows()
-        driver.sendOneWay(statementRequest("closeStatement"))
+        driver.sendOneWay(statementRequest("closeStatement"), finalizesOwnedStatement = true)
         connection.onStatementClosed(this)
     }
 
@@ -965,19 +1015,31 @@ internal class SqliteWorkerException(
     }
 }
 
-private fun SqliteWorkerError.toSqliteException(): SqliteException =
-    SqliteWorkerException(this).toSqliteExceptionPreservingSuppressed()
+private fun SqliteWorkerError.toSqliteException(): Throwable =
+    if (lifecycleBusy) {
+        SqliteNowLifecycleBusyException(message)
+    } else {
+        SqliteWorkerException(this).toSqliteExceptionPreservingSuppressed()
+    }
 
 internal fun Throwable.normalizeWorkerFailure(): Throwable =
     when (this) {
-        is CancellationException, is SqliteException -> this
+        is CancellationException, is SqliteException, is SqliteNowLifecycleBusyException -> this
         else -> toSqliteExceptionPreservingSuppressed()
     }
 
 private fun Throwable.addSuppressedIfDistinct(additional: Throwable) {
-    if (additional !== this && suppressedExceptions.none { it === additional }) {
-        addSuppressed(additional)
+    val pending = mutableListOf(this)
+    val seen = mutableListOf<Throwable>()
+    while (pending.isNotEmpty()) {
+        val current = pending.removeAt(pending.lastIndex)
+        if (current === additional) return
+        if (seen.any { it === current }) continue
+        seen += current
+        current.cause?.let(pending::add)
+        pending.addAll(current.suppressedExceptions)
     }
+    addSuppressed(additional)
 }
 
 private suspend fun captureFailure(
@@ -993,6 +1055,6 @@ private suspend fun captureFailure(
 
 private fun appendFailure(primary: Throwable?, additional: Throwable): Throwable {
     if (primary == null) return additional
-    if (primary !== additional) primary.addSuppressed(additional)
+    primary.addSuppressedIfDistinct(additional)
     return primary
 }

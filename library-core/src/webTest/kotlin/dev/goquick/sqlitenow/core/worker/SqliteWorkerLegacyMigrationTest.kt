@@ -30,7 +30,7 @@ import kotlinx.serialization.json.jsonPrimitive
 class SqliteWorkerLegacyMigrationTest {
     @Test
     fun authenticReleasedFormatFixtureUsesIsolatedSqlJs1130() = runTest {
-        val dbName = phase5bName("authentic-sqljs-fixture")
+        val dbName = legacyMigrationDatabaseName("authentic-sqljs-fixture")
         val fixture = createAuthenticLegacySqlJsFixture(dbName)
         try {
             fixture.connection.execSQL(
@@ -46,7 +46,7 @@ class SqliteWorkerLegacyMigrationTest {
                 bytes.copyOfRange(0, 16).decodeToString().startsWith("SQLite format 3"),
             )
             println(
-                "PHASE7_LEGACY_FIXTURE generator=sql.js " +
+                "DEFAULT_PERSISTENCE_LEGACY_FIXTURE generator=sql.js " +
                     "version=$AUTHENTIC_LEGACY_SQLJS_VERSION bytes=${bytes.size} " +
                     "userVersion=27",
             )
@@ -64,10 +64,10 @@ class SqliteWorkerLegacyMigrationTest {
         )
 
         scenarios.forEach { scenario ->
-            val dbName = phase5bName("phase7-default-no-store-${scenario.name}")
+            val dbName = legacyMigrationDatabaseName("default_persistence-default-no-store-${scenario.name}")
             try {
                 assertFalse(legacySnapshotExistsForTest(dbName, scenario.forceOpfs))
-                val database = Phase5BDatabase(dbName)
+                val database = LegacyMigrationDatabase(dbName)
                 assertEquals(null, database.connectionConfig.persistence)
                 database.open()
                 try {
@@ -76,10 +76,10 @@ class SqliteWorkerLegacyMigrationTest {
                     assertEquals("browser-worker", worker.metricsForTest().runtimeKind)
                     assertEquals("direct-opfs", worker.metricsForTest().storageMode)
                     database.connection().execSQL(
-                        "CREATE TABLE phase7_no_store(value TEXT NOT NULL)",
+                        "CREATE TABLE default_persistence_no_store(value TEXT NOT NULL)",
                     )
                     database.connection().execSQL(
-                        "INSERT INTO phase7_no_store VALUES ('${scenario.name}')",
+                        "INSERT INTO default_persistence_no_store VALUES ('${scenario.name}')",
                     )
                     database.persistSnapshotNow()
                     assertEquals(0, worker.metricsForTest().snapshotExports)
@@ -95,9 +95,9 @@ class SqliteWorkerLegacyMigrationTest {
 
     @Test
     fun persistenceClassificationAndCustomMigrationAreExact() = runTest {
-        val dbName = phase5bName("custom")
+        val dbName = legacyMigrationDatabaseName("custom")
         val source = SnapshotPersistence()
-        assertEquals(null, Phase5BDatabase("$dbName-default").connectionConfig.persistence)
+        assertEquals(null, LegacyMigrationDatabase("$dbName-default").connectionConfig.persistence)
 
         seedProductionShapedSnapshot(dbName, source)
         val seededBytes = assertNotNull(source.bytes).copyOf()
@@ -133,7 +133,7 @@ class SqliteWorkerLegacyMigrationTest {
                 assertTrue(metrics.migrationTargetFileName.startsWith("sqlitenow-worker-v1-"))
                 assertEquals(64, metrics.migrationSourceSha256.length)
                 println(
-                    "PHASE5B_CUSTOM dbName=$dbName sourceKind=${metrics.migrationSourceKind} " +
+                    "LEGACY_MIGRATION_CUSTOM dbName=$dbName sourceKind=${metrics.migrationSourceKind} " +
                         "sourceBytes=${metrics.migrationSourceBytes} " +
                         "sourceSha256=${metrics.migrationSourceSha256} " +
                         "target=${metrics.migrationTargetFileName} " +
@@ -142,7 +142,7 @@ class SqliteWorkerLegacyMigrationTest {
                         "retained=${metrics.migrationSourceRetained}",
                 )
 
-                connection.execSQL("INSERT INTO phase5b_child VALUES (2, 1, 'ordinary')")
+                connection.execSQL("INSERT INTO legacy_migration_child VALUES (2, 1, 'ordinary')")
                 connection.persistSnapshotNow()
                 assertEquals(0, worker.metricsForTest().snapshotExports)
             } finally {
@@ -162,7 +162,7 @@ class SqliteWorkerLegacyMigrationTest {
             try {
                 assertProductionFixture(reopened)
                 reopened.prepare(
-                    "SELECT value FROM phase5b_child WHERE id = 2",
+                    "SELECT value FROM legacy_migration_child WHERE id = 2",
                 ).use { statement ->
                     assertTrue(statement.step())
                     assertEquals("ordinary", statement.getText(0))
@@ -181,7 +181,7 @@ class SqliteWorkerLegacyMigrationTest {
     @Test
     fun signedBootstrapUserVersionMigratesAndRemainsHealthy() = runTest {
         if (!browserWorkerAvailable()) return@runTest
-        val dbName = phase5bName("signed-bootstrap-user-version")
+        val dbName = legacyMigrationDatabaseName("signed-bootstrap-user-version")
         val source = SnapshotPersistence()
         try {
             seedProductionShapedSnapshot(
@@ -231,7 +231,7 @@ class SqliteWorkerLegacyMigrationTest {
             BuiltInScenario("indexeddb", false),
         )
         scenarios.forEach { scenario ->
-            val dbName = phase5bName("builtin-${scenario.name}")
+            val dbName = legacyMigrationDatabaseName("builtin-${scenario.name}")
             try {
                 val persistence =
                     legacySnapshotPersistenceForTest(dbName, scenario.forceOpfs)
@@ -252,7 +252,7 @@ class SqliteWorkerLegacyMigrationTest {
                     assertTrue(metrics.migrationSourceRetained)
                     assertEquals(0, metrics.snapshotExports)
                     println(
-                        "PHASE5B_BUILTIN dbName=$dbName " +
+                        "LEGACY_MIGRATION_BUILTIN dbName=$dbName " +
                             "sourceKind=${metrics.migrationSourceKind} " +
                             "sourceBytes=${metrics.migrationSourceBytes} " +
                             "sourceSha256=${metrics.migrationSourceSha256} " +
@@ -281,8 +281,8 @@ class SqliteWorkerLegacyMigrationTest {
     @Test
     fun builtInDualSourceSelectionIsDeterministicAndAmbiguityFailsClosed() = runTest {
         if (!browserWorkerAvailable()) return@runTest
-        val identicalName = phase5bName("dual-identical")
-        val ambiguousName = phase5bName("dual-ambiguous")
+        val identicalName = legacyMigrationDatabaseName("dual-identical")
+        val ambiguousName = legacyMigrationDatabaseName("dual-ambiguous")
         try {
             val first = SnapshotPersistence()
             val second = SnapshotPersistence()
@@ -324,7 +324,7 @@ class SqliteWorkerLegacyMigrationTest {
     @Test
     fun markerlessDirectTargetWinsOverStaleLegacySnapshot() = runTest {
         if (!browserWorkerAvailable()) return@runTest
-        val dbName = phase5bName("markerless-target")
+        val dbName = legacyMigrationDatabaseName("markerless-target")
         try {
             val direct = sqliteWorkerConnectionProvider().openConnection(
                 dbName = dbName,
@@ -368,7 +368,7 @@ class SqliteWorkerLegacyMigrationTest {
     @Test
     fun builtInSourceMutationBeforeHealthCommitFailsClosed() = runTest {
         if (!browserWorkerAvailable()) return@runTest
-        val dbName = phase5bName("source-mutation")
+        val dbName = legacyMigrationDatabaseName("source-mutation")
         try {
             val persistence =
                 legacySnapshotPersistenceForTest(dbName, forceOpfs = true)
@@ -422,7 +422,7 @@ class SqliteWorkerLegacyMigrationTest {
             "before-intent-cleanup",
         )
         stages.forEach { stage ->
-            val dbName = phase5bName("interrupt-$stage")
+            val dbName = legacyMigrationDatabaseName("interrupt-$stage")
             val source = SnapshotPersistence()
             try {
                 seedProductionShapedSnapshot(dbName, source)
@@ -468,7 +468,7 @@ class SqliteWorkerLegacyMigrationTest {
     @Test
     fun cancellationBeforeIntentWriteLeavesNoMigrationArtifacts() = runTest {
         if (!browserWorkerAvailable()) return@runTest
-        val dbName = phase5bName("cancel-before-intent-write")
+        val dbName = legacyMigrationDatabaseName("cancel-before-intent-write")
         val cancelledSource = SnapshotPersistence()
         val replacementSource = SnapshotPersistence()
         try {
@@ -534,7 +534,7 @@ class SqliteWorkerLegacyMigrationTest {
     @Test
     fun cancellationAfterBuiltInIntegrityRestoresRetryableIntent() = runTest {
         if (!browserWorkerAvailable()) return@runTest
-        val dbName = phase5bName("cancel-built-in-after-integrity")
+        val dbName = legacyMigrationDatabaseName("cancel-built-in-after-integrity")
         try {
             seedProductionShapedSnapshot(
                 dbName,
@@ -588,7 +588,7 @@ class SqliteWorkerLegacyMigrationTest {
     @Test
     fun cancellationAfterCustomHealthRestoresRetryableIntent() = runTest {
         if (!browserWorkerAvailable()) return@runTest
-        val dbName = phase5bName("cancel-custom-after-health")
+        val dbName = legacyMigrationDatabaseName("cancel-custom-after-health")
         val source = SnapshotPersistence()
         try {
             seedProductionShapedSnapshot(dbName, source)
@@ -641,7 +641,7 @@ class SqliteWorkerLegacyMigrationTest {
     @Test
     fun cancellationAfterCompleteOpenResponseRestoresRetryableIntent() = runTest {
         if (!browserWorkerAvailable()) return@runTest
-        val dbName = phase5bName("cancel-complete-response")
+        val dbName = legacyMigrationDatabaseName("cancel-complete-response")
         val source = SnapshotPersistence()
         try {
             seedProductionShapedSnapshot(dbName, source)
@@ -694,7 +694,7 @@ class SqliteWorkerLegacyMigrationTest {
     @Test
     fun preDispatchCompleteOpenCancellationClearsPendingOpen() = runTest {
         if (!browserWorkerAvailable()) return@runTest
-        val dbName = phase5bName("cancel-complete-predispatch")
+        val dbName = legacyMigrationDatabaseName("cancel-complete-predispatch")
         val source = SnapshotPersistence()
         try {
             seedProductionShapedSnapshot(dbName, source)
@@ -742,7 +742,7 @@ class SqliteWorkerLegacyMigrationTest {
     fun customAbsentMalformedThrownAndCancelledLoadsNeverFallBackSilently() = runTest {
         if (!browserWorkerAvailable()) return@runTest
 
-        val absentName = phase5bName("custom-absent")
+        val absentName = legacyMigrationDatabaseName("custom-absent")
         val absent = SnapshotPersistence()
         try {
             val fresh = sqliteWorkerConnectionProvider().openConnection(
@@ -764,7 +764,7 @@ class SqliteWorkerLegacyMigrationTest {
             cleanupMigrationState(absentName)
         }
 
-        val malformedName = phase5bName("custom-malformed")
+        val malformedName = legacyMigrationDatabaseName("custom-malformed")
         try {
             val malformed = SnapshotPersistence().also { it.bytes = ByteArray(512) }
             val failure = assertFailsWith<SqliteException> {
@@ -813,7 +813,7 @@ class SqliteWorkerLegacyMigrationTest {
             cleanupMigrationState(malformedName)
         }
 
-        val cancelledName = phase5bName("custom-cancelled")
+        val cancelledName = legacyMigrationDatabaseName("custom-cancelled")
         val blocking = BlockingLoadPersistence()
         try {
             coroutineScope {
@@ -856,9 +856,9 @@ class SqliteWorkerLegacyMigrationTest {
     @Test
     fun integrityFailureAndUnreadableSchemaFailClosed() = runTest {
         if (!browserWorkerAvailable()) return@runTest
-        val integrityName = phase5bName("failed-integrity")
-        val foreignKeyName = phase5bName("failed-foreign-key")
-        val schemaName = phase5bName("unreadable-schema")
+        val integrityName = legacyMigrationDatabaseName("failed-integrity")
+        val foreignKeyName = legacyMigrationDatabaseName("failed-foreign-key")
+        val schemaName = legacyMigrationDatabaseName("unreadable-schema")
         try {
             val failedIntegrity = SnapshotPersistence()
             seedFailedIntegritySnapshot(integrityName, failedIntegrity)
@@ -939,7 +939,7 @@ class SqliteWorkerLegacyMigrationTest {
             "mismatched-intent",
         )
         modes.forEach { mode ->
-            val dbName = phase5bName("marker-$mode")
+            val dbName = legacyMigrationDatabaseName("marker-$mode")
             try {
                 val driver = SqliteWorkerSQLiteDriver.create()
                 try {
@@ -970,7 +970,7 @@ class SqliteWorkerLegacyMigrationTest {
     @Test
     fun concurrentSameTargetOpenUsesOneCommittedMigration() = runTest {
         if (!browserWorkerAvailable()) return@runTest
-        val dbName = phase5bName("concurrent-same")
+        val dbName = legacyMigrationDatabaseName("concurrent-same")
         val source = SnapshotPersistence()
         try {
             seedProductionShapedSnapshot(dbName, source)
@@ -1017,8 +1017,8 @@ class SqliteWorkerLegacyMigrationTest {
     @Test
     fun concurrentDifferentTargetOpensRemainIndependent() = runTest {
         if (!browserWorkerAvailable()) return@runTest
-        val firstName = phase5bName("concurrent-first")
-        val secondName = phase5bName("concurrent-second")
+        val firstName = legacyMigrationDatabaseName("concurrent-first")
+        val secondName = legacyMigrationDatabaseName("concurrent-second")
         val firstSource = SnapshotPersistence()
         val secondSource = SnapshotPersistence()
         try {
@@ -1069,7 +1069,7 @@ class SqliteWorkerLegacyMigrationTest {
         val source = SnapshotPersistence()
         cleanupMigrationState(dbName)
         try {
-            seedProductionShapedSnapshot(phase5bName("memory-source"), source)
+            seedProductionShapedSnapshot(legacyMigrationDatabaseName("memory-source"), source)
             assertNotNull(source.bytes)
             source.resetCounts()
             val migrated = sqliteWorkerConnectionProvider().openConnection(
@@ -1107,8 +1107,8 @@ class SqliteWorkerLegacyMigrationTest {
     @Test
     fun deterministicHeapSamplesReportMiddlePeakAndFinalEndForCustomAndBuiltInImports() = runTest {
         if (!browserWorkerAvailable()) return@runTest
-        val customName = phase5bName("heap-custom")
-        val builtInName = phase5bName("heap-builtin")
+        val customName = legacyMigrationDatabaseName("heap-custom")
+        val builtInName = legacyMigrationDatabaseName("heap-builtin")
         val customSource = SnapshotPersistence()
         try {
             seedProductionShapedSnapshot(customName, customSource)
@@ -1175,7 +1175,7 @@ class SqliteWorkerLegacyMigrationTest {
     @Test
     fun largeCustomSnapshotUsesBoundedOneTimeTransfer() = runTest {
         if (!browserWorkerAvailable()) return@runTest
-        val dbName = phase5bName("large-64mib")
+        val dbName = legacyMigrationDatabaseName("large-64mib")
         val source = SnapshotPersistence()
         try {
             seedAuthenticLegacySnapshot(dbName, source) { connection ->
@@ -1217,7 +1217,7 @@ class SqliteWorkerLegacyMigrationTest {
                     assertEquals(0L, metrics.migrationHeapEndBytes)
                 }
                 println(
-                    "PHASE5B_LARGE dbName=$dbName " +
+                    "LEGACY_MIGRATION_LARGE dbName=$dbName " +
                         "sourceKind=${metrics.migrationSourceKind} " +
                         "sourceBytes=${metrics.migrationSourceBytes} " +
                         "sourceSha256=${metrics.migrationSourceSha256} " +
@@ -1270,34 +1270,34 @@ class SqliteWorkerLegacyMigrationTest {
         seedAuthenticLegacySnapshot(dbName, persistence) { connection ->
             connection.execSQL("PRAGMA foreign_keys = ON")
             connection.execSQL(
-                "CREATE TABLE phase5b_parent(" +
+                "CREATE TABLE legacy_migration_parent(" +
                     "id INTEGER PRIMARY KEY, exact_value INTEGER NOT NULL, " +
                     "label TEXT NOT NULL, payload BLOB NOT NULL, ratio REAL, nullable TEXT)",
             )
             connection.execSQL(
-                "CREATE TABLE phase5b_child(" +
+                "CREATE TABLE legacy_migration_child(" +
                     "id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL, value TEXT NOT NULL, " +
-                    "FOREIGN KEY(parent_id) REFERENCES phase5b_parent(id))",
+                    "FOREIGN KEY(parent_id) REFERENCES legacy_migration_parent(id))",
             )
             connection.execSQL(
-                "CREATE INDEX phase5b_child_parent_idx ON phase5b_child(parent_id)",
+                "CREATE INDEX legacy_migration_child_parent_idx ON legacy_migration_child(parent_id)",
             )
             connection.execSQL(
-                "CREATE TRIGGER phase5b_child_trim AFTER INSERT ON phase5b_child " +
-                    "BEGIN UPDATE phase5b_child SET value = trim(value) WHERE id = NEW.id; END",
+                "CREATE TRIGGER legacy_migration_child_trim AFTER INSERT ON legacy_migration_child " +
+                    "BEGIN UPDATE legacy_migration_child SET value = trim(value) WHERE id = NEW.id; END",
             )
             connection.execSQL(
-                "CREATE VIEW phase5b_view AS " +
-                    "SELECT p.id, p.exact_value, c.value FROM phase5b_parent p " +
-                    "JOIN phase5b_child c ON c.parent_id = p.id",
+                "CREATE VIEW legacy_migration_view AS " +
+                    "SELECT p.id, p.exact_value, c.value FROM legacy_migration_parent p " +
+                    "JOIN legacy_migration_child c ON c.parent_id = p.id",
             )
             connection.execSQL(
-                "INSERT INTO phase5b_parent VALUES " +
+                "INSERT INTO legacy_migration_parent VALUES " +
                     "(1, 9223372036854775807, 'legacy', X'00FF7F80', 12.5, NULL)",
             )
-            connection.execSQL("INSERT INTO phase5b_child VALUES (1, 1, ' child ')")
+            connection.execSQL("INSERT INTO legacy_migration_child VALUES (1, 1, ' child ')")
             connection.execSQL(
-                "INSERT INTO phase5b_parent VALUES " +
+                "INSERT INTO legacy_migration_parent VALUES " +
                     "(2, 9223372036854775806, 'pending-local', X'00FF7F80', -0.0, NULL)",
             )
             connection.execSQL(
@@ -1397,6 +1397,8 @@ class SqliteWorkerLegacyMigrationTest {
                 )
                 """.trimIndent(),
             )
+            // Historical opaque worker-migration input only. The current Oversqlite opener rejects
+            // this obsolete receipt-bearing control layout; core migration does not interpret it.
             connection.execSQL(
                 """
                 CREATE TABLE _sync_outbox_bundle (
@@ -1444,27 +1446,27 @@ class SqliteWorkerLegacyMigrationTest {
             connection.execSQL("INSERT INTO _sync_apply_state VALUES (1, 0)")
             connection.execSQL(
                 "INSERT INTO _sync_row_state VALUES (" +
-                    "'main', 'phase5b_parent', '$PHASE5B_KEY_JSON', 11, 0, " +
+                    "'main', 'legacy_migration_parent', '$LEGACY_MIGRATION_KEY_JSON', 11, 0, " +
                     "'2026-07-25T20:15:30.123Z')",
             )
             connection.execSQL(
                 "INSERT INTO _sync_dirty_rows VALUES (" +
-                    "'main', 'phase5b_parent', '$PHASE5B_KEY_JSON', 'UPDATE', 11, " +
-                    "'$PHASE5B_LOCAL_PAYLOAD', 17, '2026-07-25T20:16:00.456Z')",
+                    "'main', 'legacy_migration_parent', '$LEGACY_MIGRATION_KEY_JSON', 'UPDATE', 11, " +
+                    "'$LEGACY_MIGRATION_LOCAL_PAYLOAD', 17, '2026-07-25T20:16:00.456Z')",
             )
             connection.execSQL(
                 "INSERT INTO _sync_snapshot_stage VALUES (" +
-                    "'phase5b-snapshot-1', 3, 'main', 'phase5b_parent', " +
-                    "'$PHASE5B_KEY_JSON', 11, '$PHASE5B_SNAPSHOT_PAYLOAD')",
+                    "'legacy_migration-snapshot-1', 3, 'main', 'legacy_migration_parent', " +
+                    "'$LEGACY_MIGRATION_KEY_JSON', 11, '$LEGACY_MIGRATION_SNAPSHOT_PAYLOAD')",
             )
             connection.execSQL(
                 "INSERT INTO _sync_source_state VALUES (" +
-                    "'phase5b-source-1', 8, '', '2026-07-25T20:00:00.000Z')",
+                    "'legacy_migration-source-1', 8, '', '2026-07-25T20:00:00.000Z')",
             )
             connection.execSQL(
                 "INSERT INTO _sync_attachment_state VALUES (" +
-                    "1, 'phase5b-source-1', 'attached', 'phase5b-user-1', 'main', " +
-                    "41, 0, 'phase5b-init-1')",
+                    "1, 'legacy_migration-source-1', 'attached', 'legacy_migration-user-1', 'main', " +
+                    "41, 0, 'legacy_migration-init-1')",
             )
             connection.execSQL(
                 "INSERT INTO _sync_operation_state VALUES (1, 'none', '', '', 0, 0, 0, 0, '', '')",
@@ -1472,18 +1474,18 @@ class SqliteWorkerLegacyMigrationTest {
             connection.execSQL(
                 "INSERT INTO _sync_outbox_bundle VALUES (" +
                     "1, 'jcs_uniform_numeric_strings_v1', 'prepared', " +
-                    "'phase5b-source-1', 7, 'phase5b-init-1', " +
-                    "'$PHASE5B_CANONICAL_REQUEST_HASH', 1, '', 0)",
+                    "'legacy_migration-source-1', 7, 'legacy_migration-init-1', " +
+                    "'$LEGACY_MIGRATION_CANONICAL_REQUEST_HASH', 1, '', 0)",
             )
             connection.execSQL(
                 "INSERT INTO _sync_outbox_rows VALUES (" +
-                    "7, 1, 'main', 'phase5b_parent', '$PHASE5B_KEY_JSON', " +
-                    "'$PHASE5B_WIRE_KEY_JSON', 'UPDATE', 11, " +
-                    "'$PHASE5B_LOCAL_PAYLOAD', '$PHASE5B_WIRE_PAYLOAD')",
+                    "7, 1, 'main', 'legacy_migration_parent', '$LEGACY_MIGRATION_KEY_JSON', " +
+                    "'$LEGACY_MIGRATION_WIRE_KEY_JSON', 'UPDATE', 11, " +
+                    "'$LEGACY_MIGRATION_LOCAL_PAYLOAD', '$LEGACY_MIGRATION_WIRE_PAYLOAD')",
             )
             connection.execSQL(
                 "INSERT INTO _sync_managed_tables VALUES " +
-                    "('main', 'phase5b_child'), ('main', 'phase5b_parent')",
+                    "('main', 'legacy_migration_child'), ('main', 'legacy_migration_parent')",
             )
             connection.execSQL("PRAGMA user_version = $userVersion")
         }
@@ -1572,9 +1574,9 @@ class SqliteWorkerLegacyMigrationTest {
         expectedUserVersion: Int = 7,
     ) {
         connection.prepare(
-            "SELECT phase5b_view.exact_value, label, hex(payload), ratio, nullable, " +
-                "phase5b_view.value " +
-                "FROM phase5b_view JOIN phase5b_parent USING(id)",
+            "SELECT legacy_migration_view.exact_value, label, hex(payload), ratio, nullable, " +
+                "legacy_migration_view.value " +
+                "FROM legacy_migration_view JOIN legacy_migration_parent USING(id)",
         ).use { statement ->
             assertTrue(statement.step())
             assertEquals(Long.MAX_VALUE, statement.getLong(0))
@@ -1614,39 +1616,39 @@ class SqliteWorkerLegacyMigrationTest {
             connection,
             "SELECT schema_name || '|' || table_name || '|' || key_json || '|' || " +
                 "row_version || '|' || deleted || '|' || updated_at FROM _sync_row_state",
-            "main|phase5b_parent|$PHASE5B_KEY_JSON|11|0|2026-07-25T20:15:30.123Z",
+            "main|legacy_migration_parent|$LEGACY_MIGRATION_KEY_JSON|11|0|2026-07-25T20:15:30.123Z",
         )
         assertSingleTextRow(
             connection,
             "SELECT schema_name || '|' || table_name || '|' || key_json || '|' || op || '|' || " +
                 "base_row_version || '|' || dirty_ordinal || '|' || updated_at " +
                 "FROM _sync_dirty_rows",
-            "main|phase5b_parent|$PHASE5B_KEY_JSON|UPDATE|11|17|2026-07-25T20:16:00.456Z",
+            "main|legacy_migration_parent|$LEGACY_MIGRATION_KEY_JSON|UPDATE|11|17|2026-07-25T20:16:00.456Z",
         )
-        assertPayloadBytes(connection, "SELECT CAST(payload AS BLOB) FROM _sync_dirty_rows", PHASE5B_LOCAL_PAYLOAD)
+        assertPayloadBytes(connection, "SELECT CAST(payload AS BLOB) FROM _sync_dirty_rows", LEGACY_MIGRATION_LOCAL_PAYLOAD)
         assertSingleTextRow(
             connection,
             "SELECT snapshot_id || '|' || row_ordinal || '|' || schema_name || '|' || " +
                 "table_name || '|' || key_json || '|' || row_version FROM _sync_snapshot_stage",
-            "phase5b-snapshot-1|3|main|phase5b_parent|$PHASE5B_KEY_JSON|11",
+            "legacy_migration-snapshot-1|3|main|legacy_migration_parent|$LEGACY_MIGRATION_KEY_JSON|11",
         )
         assertPayloadBytes(
             connection,
             "SELECT CAST(payload AS BLOB) FROM _sync_snapshot_stage",
-            PHASE5B_SNAPSHOT_PAYLOAD,
+            LEGACY_MIGRATION_SNAPSHOT_PAYLOAD,
         )
         assertSingleTextRow(
             connection,
             "SELECT source_id || '|' || next_source_bundle_id || '|' || replaced_by_source_id || " +
                 "'|' || created_at FROM _sync_source_state",
-            "phase5b-source-1|8||2026-07-25T20:00:00.000Z",
+            "legacy_migration-source-1|8||2026-07-25T20:00:00.000Z",
         )
         assertSingleTextRow(
             connection,
             "SELECT singleton_key || '|' || current_source_id || '|' || binding_state || '|' || " +
                 "attached_user_id || '|' || schema_name || '|' || last_bundle_seq_seen || '|' || " +
                 "rebuild_required || '|' || pending_initialization_id FROM _sync_attachment_state",
-            "1|phase5b-source-1|attached|phase5b-user-1|main|41|0|phase5b-init-1",
+            "1|legacy_migration-source-1|attached|legacy_migration-user-1|main|41|0|legacy_migration-init-1",
         )
         assertSingleTextRow(
             connection,
@@ -1662,25 +1664,25 @@ class SqliteWorkerLegacyMigrationTest {
                 "source_id || '|' || source_bundle_id || '|' || initialization_id || '|' || " +
                 "canonical_request_hash || '|' || row_count || '|' || remote_bundle_hash || '|' || " +
                 "remote_bundle_seq FROM _sync_outbox_bundle",
-            "1|jcs_uniform_numeric_strings_v1|prepared|phase5b-source-1|7|phase5b-init-1|" +
-                "$PHASE5B_CANONICAL_REQUEST_HASH|1||0",
+            "1|jcs_uniform_numeric_strings_v1|prepared|legacy_migration-source-1|7|legacy_migration-init-1|" +
+                "$LEGACY_MIGRATION_CANONICAL_REQUEST_HASH|1||0",
         )
         assertSingleTextRow(
             connection,
             "SELECT source_bundle_id || '|' || row_ordinal || '|' || schema_name || '|' || " +
                 "table_name || '|' || key_json || '|' || wire_key_json || '|' || op || '|' || " +
                 "base_row_version FROM _sync_outbox_rows",
-            "7|1|main|phase5b_parent|$PHASE5B_KEY_JSON|$PHASE5B_WIRE_KEY_JSON|UPDATE|11",
+            "7|1|main|legacy_migration_parent|$LEGACY_MIGRATION_KEY_JSON|$LEGACY_MIGRATION_WIRE_KEY_JSON|UPDATE|11",
         )
         assertPayloadBytes(
             connection,
             "SELECT CAST(local_payload AS BLOB) FROM _sync_outbox_rows",
-            PHASE5B_LOCAL_PAYLOAD,
+            LEGACY_MIGRATION_LOCAL_PAYLOAD,
         )
         assertPayloadBytes(
             connection,
             "SELECT CAST(wire_payload AS BLOB) FROM _sync_outbox_rows",
-            PHASE5B_WIRE_PAYLOAD,
+            LEGACY_MIGRATION_WIRE_PAYLOAD,
         )
         connection.prepare(
             "SELECT schema_name || '|' || table_name FROM _sync_managed_tables " +
@@ -1690,7 +1692,7 @@ class SqliteWorkerLegacyMigrationTest {
                 while (statement.step()) add(statement.getText(0))
             }
             assertEquals(
-                listOf("main|phase5b_child", "main|phase5b_parent"),
+                listOf("main|legacy_migration_child", "main|legacy_migration_parent"),
                 rows,
             )
         }
@@ -1698,7 +1700,7 @@ class SqliteWorkerLegacyMigrationTest {
             connection,
             "SELECT exact_value || '|' || label || '|' || hex(payload) || '|' || " +
                 "printf('%.1f', ratio) || '|' || ifnull(nullable, '') " +
-                "FROM phase5b_parent WHERE id = 2",
+                "FROM legacy_migration_parent WHERE id = 2",
             "9223372036854775806|pending-local|00FF7F80|0.0|",
         )
         connection.prepare("PRAGMA user_version").use { statement ->
@@ -1708,7 +1710,7 @@ class SqliteWorkerLegacyMigrationTest {
     }
 
     private suspend fun assertProductionSchemaObjects(connection: SafeSQLiteConnection) {
-        connection.prepare("PRAGMA foreign_key_list('phase5b_child')").use { statement ->
+        connection.prepare("PRAGMA foreign_key_list('legacy_migration_child')").use { statement ->
             val foreignKeys = buildList {
                 while (statement.step()) {
                     add(
@@ -1720,7 +1722,7 @@ class SqliteWorkerLegacyMigrationTest {
                 }
             }
             assertEquals(
-                listOf("0|0|phase5b_parent|parent_id|id|NO ACTION|NO ACTION|NONE"),
+                listOf("0|0|legacy_migration_parent|parent_id|id|NO ACTION|NO ACTION|NONE"),
                 foreignKeys,
             )
         }
@@ -1729,8 +1731,8 @@ class SqliteWorkerLegacyMigrationTest {
         }
         assertIndex(
             connection = connection,
-            tableName = "phase5b_child",
-            indexName = "phase5b_child_parent_idx",
+            tableName = "legacy_migration_child",
+            indexName = "legacy_migration_child_parent_idx",
             expectedColumn = "0|1|parent_id",
         )
         assertIndex(
@@ -1742,10 +1744,10 @@ class SqliteWorkerLegacyMigrationTest {
         connection.prepare(
             "SELECT type || '|' || name || '|' || tbl_name FROM sqlite_schema " +
                 "WHERE name IN (" +
-                "'phase5b_child_parent_idx', " +
+                "'legacy_migration_child_parent_idx', " +
                 "'idx_sync_dirty_rows_dirty_ordinal', " +
-                "'phase5b_child_trim', " +
-                "'phase5b_view'" +
+                "'legacy_migration_child_trim', " +
+                "'legacy_migration_view'" +
                 ") AND sql IS NOT NULL ORDER BY type, name",
         ).use { statement ->
             val schemaEntries = buildList {
@@ -1754,9 +1756,9 @@ class SqliteWorkerLegacyMigrationTest {
             assertEquals(
                 listOf(
                     "index|idx_sync_dirty_rows_dirty_ordinal|_sync_dirty_rows",
-                    "index|phase5b_child_parent_idx|phase5b_child",
-                    "trigger|phase5b_child_trim|phase5b_child",
-                    "view|phase5b_view|phase5b_view",
+                    "index|legacy_migration_child_parent_idx|legacy_migration_child",
+                    "trigger|legacy_migration_child_trim|legacy_migration_child",
+                    "view|legacy_migration_view|legacy_migration_view",
                 ),
                 schemaEntries,
             )
@@ -1912,17 +1914,17 @@ private data class BuiltInScenario(
     val forceOpfs: Boolean,
 )
 
-private class Phase5BDatabase(
+private class LegacyMigrationDatabase(
     dbName: String,
     connectionProvider: dev.goquick.sqlitenow.core.SqliteConnectionProvider =
         BundledSqliteConnectionProvider,
 ) : SqliteNowDatabase(
     dbName = dbName,
-    migration = Phase5BNoopMigrations,
+    migration = LegacyMigrationNoopMigrations,
     connectionProvider = connectionProvider,
 )
 
-private object Phase5BNoopMigrations : DatabaseMigrations {
+private object LegacyMigrationNoopMigrations : DatabaseMigrations {
     override suspend fun applyMigration(
         conn: SafeSQLiteConnection,
         currentVersion: Int,
@@ -1936,15 +1938,15 @@ internal expect suspend fun legacySnapshotExistsForTest(
 
 internal expect suspend fun workerStorageArtifactsForTest(dbName: String): Set<String>
 
-private const val PHASE5B_KEY_JSON = """{"id":"2"}"""
-private const val PHASE5B_WIRE_KEY_JSON = """{"id":"2"}"""
-private const val PHASE5B_LOCAL_PAYLOAD =
+private const val LEGACY_MIGRATION_KEY_JSON = """{"id":"2"}"""
+private const val LEGACY_MIGRATION_WIRE_KEY_JSON = """{"id":"2"}"""
+private const val LEGACY_MIGRATION_LOCAL_PAYLOAD =
     """{"exact_value":"9223372036854775806","id":"2","label":"pending-local","nullable":null,"payload":"AP9/gA==","ratio":"-0.0"}"""
-private const val PHASE5B_WIRE_PAYLOAD =
+private const val LEGACY_MIGRATION_WIRE_PAYLOAD =
     """{"exact_value":"9223372036854775806","id":"2","label":"pending-local","nullable":null,"payload":"AP9/gA==","ratio":"0"}"""
-private const val PHASE5B_SNAPSHOT_PAYLOAD =
+private const val LEGACY_MIGRATION_SNAPSHOT_PAYLOAD =
     """{"exact_value":"9223372036854775805","id":"2","label":"remote-base","nullable":null,"payload":"AP9/gA==","ratio":"0"}"""
-private const val PHASE5B_CANONICAL_REQUEST_HASH =
+private const val LEGACY_MIGRATION_CANONICAL_REQUEST_HASH =
     "4f2d8d9ca566f61250765792f6237cf5105063a0db144a8aa72dd5fda5e3ea1c"
 
 private class SnapshotPersistence : SqlitePersistence {
@@ -2015,5 +2017,5 @@ private class BlockingLoadPersistence : SqlitePersistence {
     }
 }
 
-private fun phase5bName(scenario: String): String =
-    "__sqlitenow_phase5b_${scenario}_${Random.nextInt().toUInt()}"
+private fun legacyMigrationDatabaseName(scenario: String): String =
+    "__sqlitenow_legacy_migration_${scenario}_${Random.nextInt().toUInt()}"

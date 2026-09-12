@@ -17,16 +17,7 @@ INSERT INTO task (title, completed, created_at)
 VALUES (:title, 0, :createdAt);
 ```
 
-{% if include.platform == "dart" %}
-```dart
-await db.task.insertOne(
-  TaskInsertOneParams(
-    title: 'Call patient',
-    createdAt: DateTime.now().toUtc().toIso8601String(),
-  ),
-);
-```
-{% elsif include.platform == "kmp" %}
+{% if include.platform == "kmp" %}
 ```kotlin
 db.task.insertOne(
     TaskQuery.InsertOne.Params(
@@ -54,11 +45,7 @@ SET completed = 1
 WHERE id = :id;
 ```
 
-{% if include.platform == "dart" %}
-```dart
-await db.task.completeById(TaskCompleteByIdParams(id: taskId));
-```
-{% elsif include.platform == "kmp" %}
+{% if include.platform == "kmp" %}
 ```kotlin
 db.task.completeById(TaskQuery.CompleteById.Params(id = taskId))
 ```
@@ -75,11 +62,7 @@ DELETE FROM task
 WHERE completed = 1;
 ```
 
-{% if include.platform == "dart" %}
-```dart
-await db.task.deleteCompleted();
-```
-{% elsif include.platform == "kmp" %}
+{% if include.platform == "kmp" %}
 ```kotlin
 db.task.deleteCompleted()
 ```

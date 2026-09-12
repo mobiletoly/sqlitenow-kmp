@@ -122,7 +122,7 @@ internal class SnapshotSourceRecoveryRequiredException(
     override val category: OversqliteErrorCategory = OversqliteErrorCategory.STATE
 }
 
-class CommittedReplayPrunedException(
+class PushReplayHistoryPrunedException(
     rawBody: String,
 ) : DownloadHttpException(HttpStatusCode.Conflict, rawBody)
 
@@ -145,10 +145,6 @@ class SourceReplacementInvalidHttpException(
             OversqliteErrorCategory.NETWORK
         }
 }
-
-class CommittedBundleNotFoundException(
-    rawBody: String,
-) : DownloadHttpException(HttpStatusCode.NotFound, rawBody)
 
 class PushConflictException(
     rawBody: String,
@@ -177,38 +173,38 @@ internal fun decodePushConflictExceptionOrNull(
     rawBody: String,
 ): PushConflictException? {
     if (status != HttpStatusCode.Conflict) return null
-    val response = runCatching {
-        httpErrorJson.decodeFromString<PushConflictResponse>(rawBody)
-    }.getOrNull() ?: return null
+    val root = runCatching { httpErrorJson.parseToJsonElement(rawBody) as JsonObject }.getOrNull() ?: return null
+    if ((root["error"] as? JsonPrimitive)?.content != "push_conflict") return null
+    require(root.keys == setOf("error", "message", "conflict")) {
+        "push conflict response fields are invalid"
+    }
+    val conflictObject = root["conflict"] as? JsonObject
+        ?: throw RemoteResponseSemanticException("push conflict response")
+    val required = setOf(
+        "schema", "table", "key", "op", "base_row_version",
+        "server_row_version", "server_row_deleted", "server_row",
+    )
+    require(conflictObject.keys == required) {
+        "push conflict response fields are invalid"
+    }
+    val response = runCatching { httpErrorJson.decodeFromString<PushConflictResponse>(rawBody) }
+        .getOrElse { throw RemoteResponseDecodeException("push conflict response") }
     if (response.error != "push_conflict" || response.conflict == null) return null
     validatePushConflictDetails(response.conflict)
     return PushConflictException(rawBody = "", response = response.copy(message = ""))
 }
 
-internal fun decodeCommittedBundleNotFoundExceptionOrNull(
+internal fun decodePushReplayHistoryPrunedExceptionOrNull(
     status: HttpStatusCode,
     rawBody: String,
-): CommittedBundleNotFoundException? {
-    decodeErrorResponseOrNull(
-        status = status,
-        rawBody = rawBody,
-        expectedStatus = HttpStatusCode.NotFound,
-        expectedError = "committed_bundle_not_found",
-    ) ?: return null
-    return CommittedBundleNotFoundException(rawBody = "")
-}
-
-internal fun decodeCommittedReplayPrunedExceptionOrNull(
-    status: HttpStatusCode,
-    rawBody: String,
-): CommittedReplayPrunedException? {
+): PushReplayHistoryPrunedException? {
     decodeErrorResponseOrNull(
         status = status,
         rawBody = rawBody,
         expectedStatus = HttpStatusCode.Conflict,
         expectedError = "history_pruned",
     ) ?: return null
-    return CommittedReplayPrunedException(rawBody = "")
+    return PushReplayHistoryPrunedException(rawBody = "")
 }
 
 internal data class ValidatedSourceRetiredWire(

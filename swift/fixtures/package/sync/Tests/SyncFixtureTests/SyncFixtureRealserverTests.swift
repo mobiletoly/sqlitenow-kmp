@@ -11,31 +11,31 @@ final class SyncFixtureRealserverTests: XCTestCase {
         let rowId = UUID().uuidString.lowercased()
         let writer = SyncFixtureDatabase(path: temporaryDatabaseURL(prefix: "typed-writer"))
         let reader = SyncFixtureDatabase(path: temporaryDatabaseURL(prefix: "typed-reader"))
-
-        try await withOpenDatabases([writer, reader]) {
-            let writerSourceId = try await bootstrapSourceId(database: writer, baseURL: realserver.baseURL)
-            let readerSourceId = try await bootstrapSourceId(database: reader, baseURL: realserver.baseURL)
-            let writerToken = try await issueDummySigninToken(baseURL: realserver.baseURL, userId: userId, sourceId: writerSourceId)
-            let readerToken = try await issueDummySigninToken(baseURL: realserver.baseURL, userId: userId, sourceId: readerSourceId)
-            let smallSnapshotConfig = SQLiteNowSyncConfig(
-                schema: "business",
-                snapshotChunkRows: 1,
+        let smallSnapshotConfig = SQLiteNowSyncConfig(
+            generationId: 1, databaseId: "swift-sync-fixture", serviceId: "nethttp-server-example",
+            transferTargets: .init(
+                maxSnapshotChunkRows: 1,
                 // The reference server advertises a 4 MiB maximum row, which is also
                 // the minimum valid client chunk/apply byte budget.
-                snapshotChunkBytes: 4 * 1_024 * 1_024,
-                snapshotApplyBatchRows: 1,
-                snapshotApplyBatchBytes: 4 * 1_024 * 1_024
-            )
-            let writerSync = try writer.makeSyncClient(
-                baseURL: realserver.baseURL,
-                auth: .bearer(token: writerToken),
-                config: smallSnapshotConfig
-            )
-            defer {
-                writerSync.close()
-            }
+                maxSnapshotChunkDecodedBytes: 4 * 1_024 * 1_024
+            ),
+            snapshotApplyBatchRows: 1,
+            snapshotApplyBatchBytes: 4 * 1_024 * 1_024
+        )
+        let writerTokens = MutableTokenStore()
+        let readerTokens = MutableTokenStore()
+        let writerOpening = try await openForSync(writer, baseURL: realserver.baseURL, config: smallSnapshotConfig, tokens: writerTokens)
+        let readerOpening = try await openForSync(reader, baseURL: realserver.baseURL, config: smallSnapshotConfig, tokens: readerTokens)
 
-            try await writerSync.open()
+        try await withOpenings([writerOpening, readerOpening]) {
+            let writerSync = try XCTUnwrap(writerOpening.readyOrNil()?.client)
+            let readerSync = try XCTUnwrap(readerOpening.readyOrNil()?.client)
+            let writerSourceId = try await writerSync.sourceInfo().currentSourceId
+            let readerSourceId = try await readerSync.sourceInfo().currentSourceId
+            let writerToken = try await issueDummySigninToken(baseURL: realserver.baseURL, userId: userId, sourceId: writerSourceId)
+            let readerToken = try await issueDummySigninToken(baseURL: realserver.baseURL, userId: userId, sourceId: readerSourceId)
+            writerTokens.set(writerToken)
+            readerTokens.set(readerToken)
             try requireConnected(try await writerSync.attach(userId: userId))
             try await writer.typedRows.insert(
                 TypedRowsInsertParams(
@@ -56,15 +56,6 @@ final class SyncFixtureRealserverTests: XCTestCase {
             try await assertPushCommitted(writerSync)
 
             // The reader remains unattached until the writer's authoritative state is committed.
-            let readerSync = try reader.makeSyncClient(
-                baseURL: realserver.baseURL,
-                auth: .bearer(token: readerToken),
-                config: smallSnapshotConfig
-            )
-            defer {
-                readerSync.close()
-            }
-            try await readerSync.open()
             let restore = try requireUsedRemoteState(try await readerSync.attach(userId: userId))
             XCTAssertGreaterThan(restore.rowCount, 0)
 
@@ -105,30 +96,26 @@ final class SyncFixtureRealserverTests: XCTestCase {
         let updatedRowContent = "Generated Swift realserver content after update"
         let writer = SyncFixtureDatabase(path: temporaryDatabaseURL(prefix: "writer"))
         let reader = SyncFixtureDatabase(path: temporaryDatabaseURL(prefix: "reader"))
+        let syncConfig = SQLiteNowSyncConfig(
+            generationId: 1,
+            databaseId: "swift-sync-fixture",
+            serviceId: "nethttp-server-example"
+        )
+        let writerTokens = MutableTokenStore()
+        let readerTokens = MutableTokenStore()
+        let writerOpening = try await openForSync(writer, baseURL: config.baseURL, config: syncConfig, tokens: writerTokens)
+        let readerOpening = try await openForSync(reader, baseURL: config.baseURL, config: syncConfig, tokens: readerTokens)
 
-        try await withOpenDatabases([writer, reader]) {
-            let writerSourceId = try await bootstrapSourceId(database: writer, baseURL: config.baseURL)
-            let readerSourceId = try await bootstrapSourceId(database: reader, baseURL: config.baseURL)
+        try await withOpenings([writerOpening, readerOpening]) {
+            let writerSync = try XCTUnwrap(writerOpening.readyOrNil()?.client)
+            let readerSync = try XCTUnwrap(readerOpening.readyOrNil()?.client)
+            let writerSourceId = try await writerSync.sourceInfo().currentSourceId
+            let readerSourceId = try await readerSync.sourceInfo().currentSourceId
             let writerToken = try await issueDummySigninToken(baseURL: config.baseURL, userId: userId, sourceId: writerSourceId)
             let readerToken = try await issueDummySigninToken(baseURL: config.baseURL, userId: userId, sourceId: readerSourceId)
-            let writerSync = try writer.makeSyncClient(
-                baseURL: config.baseURL,
-                auth: .bearer(token: writerToken),
-                config: .init(schema: "business")
-            )
-            let readerSync = try reader.makeSyncClient(
-                baseURL: config.baseURL,
-                auth: .bearer(token: readerToken),
-                config: .init(schema: "business")
-            )
-            defer {
-                writerSync.close()
-                readerSync.close()
-            }
-
-            try await writerSync.open()
+            writerTokens.set(writerToken)
+            readerTokens.set(readerToken)
             try requireConnected(try await writerSync.attach(userId: userId))
-            try await readerSync.open()
             try requireConnected(try await readerSync.attach(userId: userId))
 
             try await writer.users.insert(UsersInsertParams(id: rowUserId, name: rowName, email: rowEmail))
@@ -197,16 +184,23 @@ final class SyncFixtureRealserverTests: XCTestCase {
         _ = try await request(baseURL: baseURL, path: "/syncx/status")
     }
 
-    private func bootstrapSourceId(database: SyncFixtureDatabase, baseURL: URL) async throws -> String {
-        let sync = try database.makeSyncClient(
+    private func openForSync(
+        _ database: SyncFixtureDatabase,
+        baseURL: URL,
+        config: SQLiteNowSyncConfig,
+        tokens: MutableTokenStore
+    ) async throws -> SQLiteNowSyncOpening<SyncFixtureDatabase> {
+        let opening = try await database.openForSync(
             baseURL: baseURL,
-            auth: .bearer(token: "bootstrap-\(UUID().uuidString)")
+            auth: tokens.auth,
+            config: config
         )
-        try await sync.open()
-        defer {
-            sync.close()
+        let status = try await opening.advance()
+        guard status.outcome == .ready, opening.readyOrNil() != nil else {
+            try? await opening.close()
+            throw RealserverSmokeError.unexpectedAttachResult("coordinated opening did not publish ready")
         }
-        return try await sync.sourceInfo().currentSourceId
+        return opening
     }
 
     private func issueDummySigninToken(baseURL: URL, userId: String, sourceId: String) async throws -> String {
@@ -344,22 +338,19 @@ final class SyncFixtureRealserverTests: XCTestCase {
             .appendingPathComponent("sqlitenow-sync-fixture-realserver-\(prefix)-\(UUID().uuidString).db")
     }
 
-    private func withOpenDatabases<T>(
-        _ databases: [SyncFixtureDatabase],
+    private func withOpenings<T>(
+        _ openings: [SQLiteNowSyncOpening<SyncFixtureDatabase>],
         _ body: () async throws -> T
     ) async throws -> T {
-        for database in databases {
-            try await database.open()
-        }
         do {
             let result = try await body()
-            for database in databases.reversed() {
-                try await database.close()
+            for opening in openings.reversed() {
+                try await opening.close()
             }
             return result
         } catch {
-            for database in databases.reversed() {
-                try? await database.close()
+            for opening in openings.reversed() {
+                try? await opening.close()
             }
             throw error
         }
@@ -368,6 +359,23 @@ final class SyncFixtureRealserverTests: XCTestCase {
 
 private struct RealserverConfig {
     let baseURL: URL
+}
+
+private final class MutableTokenStore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var token = "bootstrap-\(UUID().uuidString)"
+
+    var auth: SQLiteNowSyncAuth {
+        .bearer(accessToken: { [weak self] in self?.value() ?? "" })
+    }
+
+    func set(_ value: String) {
+        lock.withLock { token = value }
+    }
+
+    private func value() -> String {
+        lock.withLock { token }
+    }
 }
 
 

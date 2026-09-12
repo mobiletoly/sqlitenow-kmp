@@ -4,6 +4,8 @@ import dev.goquick.sqlitenow.core.SqliteConnectionConfig
 import java.nio.file.Files
 import java.nio.file.Path
 
+internal actual fun supportsDurableTestDatabaseRestart(): Boolean = true
+
 internal actual fun createTempSqliteNowTestDbPath(prefix: String): String =
     Files.createTempFile(prefix, ".db").toAbsolutePath().toString()
 

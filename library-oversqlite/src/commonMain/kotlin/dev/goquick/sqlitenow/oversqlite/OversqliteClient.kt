@@ -114,12 +114,24 @@ interface OversqliteClient {
     suspend fun detach(): Result<DetachOutcome>
 
     /**
-     * Freezes local dirty rows into one logical bundle and uploads it through chunked push
-     * sessions.
+     * Freezes a bounded selection of local dirty rows into one logical bundle and sends it with
+     * the direct push operation.
      *
      * Requires successful [open] and [attach].
      */
     suspend fun pushPending(): Result<PushReport>
+
+    suspend fun readPushDependencyDiagnostic(diagnosticId: String,cursor: String?=null,pageSize: Int=64): Result<PushDependencyDiagnosticPage>
+    suspend fun releasePushDependencyDiagnostic(diagnosticId: String): Result<Unit>
+
+    /** Returns the durable unresolved conflict, if one exists. Requires successful [open]. */
+    suspend fun pendingConflict(): Result<PendingConflict?>
+
+    /** Atomically applies [result] to the selected durable conflict. */
+    suspend fun resolveConflict(selected: PendingConflict, result: MergeResult): Result<Unit>
+
+    /** Clears only the selected conflict observation so the same frozen push can be retried. */
+    suspend fun retryConflict(selected: PendingConflict): Result<Unit>
 
     /**
      * Pulls authoritative remote bundles until the current stable bundle sequence is fully applied.
@@ -265,13 +277,16 @@ data class SyncReport(
 
 /** Public result of [OversqliteClient.syncThenDetach]. */
 data class SyncThenDetachResult(
-    val lastSync: SyncReport,
+    val lastSync: SyncReport?,
     val detach: DetachOutcome,
     val syncRounds: Int,
     val remainingPendingRowCount: Long,
+    val blockedReason: SyncThenDetachBlockedReason? = null,
 ) {
     fun isSuccess(): Boolean = detach == DetachOutcome.DETACHED
 }
+
+enum class SyncThenDetachBlockedReason { PUSH_ATTEMPT_LIMIT, NO_PROGRESS, SYNC_ROUND_LIMIT }
 
 /** High-level pending sync status returned by [OversqliteClient.pendingSyncStatus]. */
 data class PendingSyncStatus(
@@ -292,6 +307,8 @@ data class PendingSyncStatus(
  * derive lifecycle meaning from its format.
  */
 data class SourceInfo(
+    val generationId: Long,
+    val contractConfirmed: Boolean,
     val currentSourceId: String,
     val rebuildRequired: Boolean,
     val sourceRecoveryRequired: Boolean,

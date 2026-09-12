@@ -16,9 +16,9 @@ import dev.goquick.sqlitenow.core.test.db.LibraryTestDatabase
 import dev.goquick.sqlitenow.core.test.db.execute
 import dev.goquick.sqlitenow.core.test.db.executeAsList
 import dev.goquick.sqlitenow.core.test.db.executeReturningOne
-import dev.goquick.sqlitenow.core.test.phase6.db.ParityValueQuery
-import dev.goquick.sqlitenow.core.test.phase6.db.executeAsList
-import dev.goquick.sqlitenow.core.test.phase6.db.executeReturningOne
+import dev.goquick.sqlitenow.core.test.worker.db.ParityValueQuery
+import dev.goquick.sqlitenow.core.test.worker.db.executeAsList
+import dev.goquick.sqlitenow.core.test.worker.db.executeReturningOne
 import dev.goquick.sqlitenow.core.util.fromSqliteDate
 import dev.goquick.sqlitenow.core.util.fromRfc3339String
 import dev.goquick.sqlitenow.core.util.toSqliteDate
@@ -48,7 +48,7 @@ import kotlinx.serialization.json.Json
 class GeneratedWorkerParityTest {
     @Test
     fun generatedCoreFixtureUsesOrdinaryDefaultWorker() = runTest {
-        val dbName = phase7DefaultDbName("generated-core")
+        val dbName = default_persistenceDefaultDbName("generated-core")
         cleanupGeneratedWorkerMigrationState(dbName)
         try {
             runScenario(dbName)
@@ -59,7 +59,7 @@ class GeneratedWorkerParityTest {
 
     @Test
     fun generatedDebugWritePreservesWorkerSqliteExceptionAndItsDirectCause() = runTest {
-        val workerDbName = phase7DefaultDbName("debug-error")
+        val workerDbName = default_persistenceDefaultDbName("debug-error")
         cleanupGeneratedWorkerMigrationState(workerDbName)
         val database = createParityDatabase(workerDbName)
         database.open()
@@ -93,7 +93,7 @@ class GeneratedWorkerParityTest {
 
     @Test
     fun generatedAsOneClosesBeforeDrainingMoreThanOneWorkerPage() = runTest {
-        val workerDbName = phase7DefaultDbName("as-one-close")
+        val workerDbName = default_persistenceDefaultDbName("as-one-close")
         cleanupGeneratedWorkerMigrationState(workerDbName)
         val database = createParityDatabase(workerDbName)
         database.open()
@@ -131,7 +131,7 @@ class GeneratedWorkerParityTest {
 
     @Test
     fun closeFinalizesLiveCurrentStatementsForBothGeneratedProviders() = runTest {
-        val workerDbName = phase7DefaultDbName("live-statement-close")
+        val workerDbName = default_persistenceDefaultDbName("live-statement-close")
         cleanupGeneratedWorkerMigrationState(workerDbName)
         try {
             val database = createParityDatabase(workerDbName)
@@ -437,8 +437,8 @@ private fun createParityDatabase(
         ),
     )
 
-private fun phase7DefaultDbName(scenario: String): String =
-    "__sqlitenow_phase7_${scenario}_${Random.nextInt().toUInt()}"
+private fun default_persistenceDefaultDbName(scenario: String): String =
+    "__sqlitenow_default_persistence_${scenario}_${Random.nextInt().toUInt()}"
 
 private data class ParityOutcome(
     val schema: List<String>,

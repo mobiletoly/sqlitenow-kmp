@@ -102,8 +102,10 @@ final class SyncSampleViewModel: ObservableObject {
     @Published var errorMessage: String?
 
     private var database: NowSampleSyncDatabase?
+    private var syncOpening: SQLiteNowSyncOpening<NowSampleSyncDatabase>?
     private var syncClient: SQLiteNowSyncClient?
     private var tokenStore: SyncTokenStore?
+    private var openedBaseURL: URL?
     private var automaticDownloads: SQLiteNowAutomaticDownloads?
     private var peopleTask: Task<Void, Never>?
     private var progressTask: Task<Void, Never>?
@@ -137,22 +139,18 @@ final class SyncSampleViewModel: ObservableObject {
     func signIn() {
         Task {
             await runSyncAction {
-                let db = try await openDatabase()
+                _ = try await openDatabase()
                 let baseURL = try normalizedBaseURL()
-                let store = SyncTokenStore()
+                guard openedBaseURL == baseURL,
+                      let sync = syncClient else {
+                    throw SQLiteNowError.misuse(
+                        message: "Restart the sample after changing the sync server URL."
+                    )
+                }
+                let store = tokenStore ?? SyncTokenStore()
                 tokenStore = store
-
-                closeSyncClient()
-
-                let sync = try db.makeSyncClient(
-                    baseURL: baseURL,
-                    auth: store.auth,
-                    config: .init(schema: "business", verboseLogs: false)
-                )
-                syncClient = sync
                 statusText = "Opening sync"
                 observeProgress(sync)
-                try await sync.open()
 
                 let source = try await sync.sourceInfo()
                 sourceId = source.currentSourceId
@@ -341,8 +339,33 @@ final class SyncSampleViewModel: ObservableObject {
 
         isOpeningDatabase = true
         let db = NowSampleSyncDatabase(path: try databaseURL())
-        database = db
-        try await db.open()
+        let baseURL = try normalizedBaseURL()
+        let store = tokenStore ?? SyncTokenStore()
+        tokenStore = store
+        let opening = try await db.openForSync(
+            baseURL: baseURL,
+            auth: store.auth,
+            config: .init(
+                generationId: 1,
+                databaseId: "swift-sync-fixture",
+                serviceId: "nethttp-server-example",
+                verboseLogs: false
+            )
+        )
+        do {
+            let status = try await opening.advance()
+            guard status.outcome == .ready,
+                  let ready = opening.readyOrNil() else {
+                throw SQLiteNowError.sync(message: "Coordinated opening did not publish the database.")
+            }
+            database = db
+            syncOpening = opening
+            syncClient = ready.client
+            openedBaseURL = baseURL
+        } catch {
+            try? await opening.close()
+            throw error
+        }
         observePeople(db)
         isOpeningDatabase = false
         statusText = "Local database ready"
@@ -400,9 +423,11 @@ final class SyncSampleViewModel: ObservableObject {
     }
 
     private func clearSession() {
-        closeSyncClient()
+        progressTask?.cancel()
+        progressTask = nil
+        automaticDownloads?.cancel()
+        automaticDownloads = nil
         tokenStore?.clear()
-        tokenStore = nil
         isSignedIn = false
         signedInUser = nil
     }
@@ -526,6 +551,8 @@ final class SyncSampleViewModel: ObservableObject {
             return "Idle"
         case let .active(operation, phase):
             return "\(operation.label) / \(phase.label)"
+        case let .unknown(kind):
+            return "Unknown (\(kind))"
         }
     }
 

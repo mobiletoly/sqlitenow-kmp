@@ -39,9 +39,9 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
     fun chunkedPushPullAndHydrate_convergeAcrossClients() = runTest {
         if (!platformSuiteEnabled()) return@runTest
         val server = MockSyncServer()
-        val dbA = newDb()
-        val dbB = newDb()
-        val dbC = newDb()
+        val dbA = newCoordinatedDb()
+        val dbB = newCoordinatedDb()
+        val dbC = newCoordinatedDb()
         val httpA = server.newHttpClient()
         val httpB = server.newHttpClient()
         val httpC = server.newHttpClient()
@@ -50,9 +50,9 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             createUsersAndPostsTables(dbB)
             createUsersAndPostsTables(dbC)
 
-            val clientA = newClient(dbA, httpA, uploadLimit = 2, downloadLimit = 2)
-            val clientB = newClient(dbB, httpB, uploadLimit = 2, downloadLimit = 2)
-            val clientC = newClient(dbC, httpC, uploadLimit = 2, downloadLimit = 2)
+            val clientA = newClient(dbA, httpA, maxPushRows = 2, maxPullBundles = 2)
+            val clientB = newClient(dbB, httpB, maxPushRows = 2, maxPullBundles = 2)
+            val clientC = newClient(dbC, httpC, maxPushRows = 2, maxPullBundles = 2)
 
             clientA.openAndConnect(userId = "user-1").getOrThrow()
             clientB.openAndConnect(userId = "user-1").getOrThrow()
@@ -69,15 +69,17 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             insertUser(dbA, "u3", "Linus")
             insertPost(dbA, "p3", "u3", "Linus Post")
 
-            clientA.pushPending().getOrThrow()
-            assertTrue(server.uploadedChunkCount >= 3)
+            repeat(3) {
+                clientA.pushPending().getOrThrow()
+            }
+            assertEquals(3, server.pushRequestCount)
 
             clientB.pullToStable().getOrThrow()
             clientC.rebuild().getOrThrow()
 
-            assertEquals(1L, clientA.syncStatus().getOrThrow().lastBundleSeqSeen)
-            assertEquals(1L, clientB.syncStatus().getOrThrow().lastBundleSeqSeen)
-            assertEquals(1L, clientC.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(3L, clientA.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(3L, clientB.syncStatus().getOrThrow().lastBundleSeqSeen)
+            assertEquals(3L, clientC.syncStatus().getOrThrow().lastBundleSeqSeen)
             assertEquals(3L, scalarLong(dbB, "SELECT COUNT(*) FROM users"))
             assertEquals(3L, scalarLong(dbB, "SELECT COUNT(*) FROM posts"))
             assertEquals(3L, scalarLong(dbC, "SELECT COUNT(*) FROM users"))
@@ -94,7 +96,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             dbA.close()
             dbB.close()
             dbC.close()
-            cleanupPhase6OwnedStorage()
+            cleanupOwnedWorkerStorage()
         }
     }
 
@@ -102,8 +104,8 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
     fun pullToStable_succeedsWithoutSqliteNowInvalidationBinding() = runTest {
         if (!platformSuiteEnabled()) return@runTest
         val server = MockSyncServer()
-        val leaderDb = newDb()
-        val followerDb = newDb()
+        val leaderDb = newCoordinatedDb()
+        val followerDb = newCoordinatedDb()
         val leaderHttp = server.newHttpClient()
         val followerHttp = server.newHttpClient()
         try {
@@ -129,7 +131,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             followerHttp.close()
             leaderDb.close()
             followerDb.close()
-            cleanupPhase6OwnedStorage()
+            cleanupOwnedWorkerStorage()
         }
     }
 
@@ -137,8 +139,8 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
     fun pushPending_doesNotSkipEarlierUnseenPeerBundles() = runTest {
         if (!platformSuiteEnabled()) return@runTest
         val server = MockSyncServer()
-        val dbA = newDb()
-        val dbB = newDb()
+        val dbA = newCoordinatedDb()
+        val dbB = newCoordinatedDb()
         try {
             createUsersAndPostsTables(dbA)
             createUsersAndPostsTables(dbB)
@@ -166,7 +168,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
         } finally {
             dbA.close()
             dbB.close()
-            cleanupPhase6OwnedStorage()
+            cleanupOwnedWorkerStorage()
         }
     }
 
@@ -174,9 +176,9 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
     fun threeDevices_pushWithoutPull_thenAllPull_converge() = runTest {
         if (!platformSuiteEnabled()) return@runTest
         val server = MockSyncServer()
-        val dbA = newDb()
-        val dbB = newDb()
-        val dbC = newDb()
+        val dbA = newCoordinatedDb()
+        val dbB = newCoordinatedDb()
+        val dbC = newCoordinatedDb()
         val httpA = server.newHttpClient()
         val httpB = server.newHttpClient()
         val httpC = server.newHttpClient()
@@ -231,16 +233,17 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             dbA.close()
             dbB.close()
             dbC.close()
-            cleanupPhase6OwnedStorage()
+            cleanupOwnedWorkerStorage()
         }
     }
 
     @Test
     fun restartAfterOwnPushBeforePull_stillFetchesEarlierPeerBundles() = runTest {
         if (!platformSuiteEnabled()) return@runTest
+        if (webRuntimeKind() == "js-node") return@runTest
         val server = MockSyncServer()
-        val dbA = newDb()
-        val dbB = newDb()
+        val dbA = newCoordinatedDb()
+        val dbB = newCoordinatedDb()
         val httpA = server.newHttpClient()
         val httpB = server.newHttpClient()
         val restartedHttpB = server.newHttpClient()
@@ -279,16 +282,16 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             restartedHttpB.close()
             dbA.close()
             dbB.close()
-            cleanupPhase6OwnedStorage()
+            cleanupOwnedWorkerStorage()
         }
     }
 
     @Test
     fun conflictingPush_withUnseenPeerBundles_clientWinsStillConverges() = runTest {
         val server = MockSyncServer()
-        val dbA = newDb()
-        val dbB = newDb()
-        val dbC = newDb()
+        val dbA = newCoordinatedDb()
+        val dbB = newCoordinatedDb()
+        val dbC = newCoordinatedDb()
         val httpA = server.newHttpClient()
         val httpB = server.newHttpClient()
         val httpC = server.newHttpClient()
@@ -343,16 +346,16 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             dbA.close()
             dbB.close()
             dbC.close()
-            cleanupPhase6OwnedStorage()
+            cleanupOwnedWorkerStorage()
         }
     }
 
     @Test
     fun conflictingPush_keepLocalResolverAutoRetriesAndWins() = runTest {
         val server = MockSyncServer()
-        val dbA = newDb()
-        val dbB = newDb()
-        val observerDb = newDb()
+        val dbA = newCoordinatedDb()
+        val dbB = newCoordinatedDb()
+        val observerDb = newCoordinatedDb()
         val httpA = server.newHttpClient()
         val httpB = server.newHttpClient()
         val observerHttp = server.newHttpClient()
@@ -397,16 +400,16 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             dbA.close()
             dbB.close()
             observerDb.close()
-            cleanupPhase6OwnedStorage()
+            cleanupOwnedWorkerStorage()
         }
     }
 
     @Test
     fun conflictingPush_updatedAtResolverKeepsNewerLocalIntent() = runTest {
-        val server = MockSyncServer()
-        val dbA = newDb()
-        val dbB = newDb()
-        val observerDb = newDb()
+        val server = MockSyncServer(usersUpdatedAt = true)
+        val dbA = newCoordinatedDb()
+        val dbB = newCoordinatedDb()
+        val observerDb = newCoordinatedDb()
         val httpA = server.newHttpClient()
         val httpB = server.newHttpClient()
         val observerHttp = server.newHttpClient()
@@ -455,16 +458,16 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             dbA.close()
             dbB.close()
             observerDb.close()
-            cleanupPhase6OwnedStorage()
+            cleanupOwnedWorkerStorage()
         }
     }
 
     @Test
     fun conflictingPush_updatedAtResolverAcceptsNewerServerState() = runTest {
-        val server = MockSyncServer()
-        val dbA = newDb()
-        val dbB = newDb()
-        val observerDb = newDb()
+        val server = MockSyncServer(usersUpdatedAt = true)
+        val dbA = newCoordinatedDb()
+        val dbB = newCoordinatedDb()
+        val observerDb = newCoordinatedDb()
         val httpA = server.newHttpClient()
         val httpB = server.newHttpClient()
         val observerHttp = server.newHttpClient()
@@ -513,16 +516,16 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             dbA.close()
             dbB.close()
             observerDb.close()
-            cleanupPhase6OwnedStorage()
+            cleanupOwnedWorkerStorage()
         }
     }
 
     @Test
     fun conflictingPush_clientWinsResolverAutoRetriesAndWins() = runTest {
         val server = MockSyncServer()
-        val dbA = newDb()
-        val dbB = newDb()
-        val observerDb = newDb()
+        val dbA = newCoordinatedDb()
+        val dbB = newCoordinatedDb()
+        val observerDb = newCoordinatedDb()
         val httpA = server.newHttpClient()
         val httpB = server.newHttpClient()
         val observerHttp = server.newHttpClient()
@@ -564,16 +567,16 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             dbA.close()
             dbB.close()
             observerDb.close()
-            cleanupPhase6OwnedStorage()
+            cleanupOwnedWorkerStorage()
         }
     }
 
     @Test
     fun conflictingPush_keepMergedResolverCommitsMergedPayload() = runTest {
         val server = MockSyncServer()
-        val dbA = newDb()
-        val dbB = newDb()
-        val observerDb = newDb()
+        val dbA = newCoordinatedDb()
+        val dbB = newCoordinatedDb()
+        val observerDb = newCoordinatedDb()
         val httpA = server.newHttpClient()
         val httpB = server.newHttpClient()
         val observerHttp = server.newHttpClient()
@@ -625,16 +628,16 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             dbA.close()
             dbB.close()
             observerDb.close()
-            cleanupPhase6OwnedStorage()
+            cleanupOwnedWorkerStorage()
         }
     }
 
     @Test
     fun conflictingPush_preservesSiblingRowsFromRejectedBundle() = runTest {
         val server = MockSyncServer()
-        val dbA = newDb()
-        val dbB = newDb()
-        val observerDb = newDb()
+        val dbA = newCoordinatedDb()
+        val dbB = newCoordinatedDb()
+        val observerDb = newCoordinatedDb()
         val httpA = server.newHttpClient()
         val httpB = server.newHttpClient()
         val observerHttp = server.newHttpClient()
@@ -678,15 +681,15 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             dbA.close()
             dbB.close()
             observerDb.close()
-            cleanupPhase6OwnedStorage()
+            cleanupOwnedWorkerStorage()
         }
     }
 
     @Test
     fun conflictingPush_retryExhaustionLeavesReplayableDirtyState() = runTest {
         val server = MockSyncServer()
-        val dbA = newDb()
-        val dbB = newDb()
+        val dbA = newCoordinatedDb()
+        val dbB = newCoordinatedDb()
         val httpA = server.newHttpClient()
         val httpB = server.newHttpClient()
         try {
@@ -752,23 +755,23 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             httpB.close()
             dbA.close()
             dbB.close()
-            cleanupPhase6OwnedStorage()
+            cleanupOwnedWorkerStorage()
         }
     }
 
     @Test
     fun historyPruned_pullRebuildsThroughSnapshotWithoutSourceRotation() = runTest {
         val server = MockSyncServer()
-        val leaderDb = newDb()
-        val followerDb = newDb()
+        val leaderDb = newCoordinatedDb()
+        val followerDb = newCoordinatedDb()
         val leaderHttp = server.newHttpClient()
         val followerHttp = server.newHttpClient()
         try {
             createUsersAndPostsTables(leaderDb)
             createUsersAndPostsTables(followerDb)
 
-            val leader = newClient(leaderDb, leaderHttp, uploadLimit = 2, downloadLimit = 2)
-            val follower = newClient(followerDb, followerHttp, uploadLimit = 2, downloadLimit = 2)
+            val leader = newClient(leaderDb, leaderHttp, maxPushRows = 2, maxPullBundles = 2)
+            val follower = newClient(followerDb, followerHttp, maxPushRows = 2, maxPullBundles = 2)
 
             leader.openAndConnect(userId = "user-1").getOrThrow()
             follower.openAndConnect(userId = "user-1").getOrThrow()
@@ -803,7 +806,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             followerHttp.close()
             leaderDb.close()
             followerDb.close()
-            cleanupPhase6OwnedStorage()
+            cleanupOwnedWorkerStorage()
         }
     }
 
@@ -811,8 +814,8 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
     fun detach_rotatesSourceAndAllowsFollowupPush() = runTest {
         if (!platformSuiteEnabled()) return@runTest
         val server = MockSyncServer()
-        val activeDb = newDb()
-        val verifyDb = newDb()
+        val activeDb = newCoordinatedDb()
+        val verifyDb = newCoordinatedDb()
         val activeHttp = server.newHttpClient()
         val verifyHttp = server.newHttpClient()
         try {
@@ -867,7 +870,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             verifyHttp.close()
             activeDb.close()
             verifyDb.close()
-            cleanupPhase6OwnedStorage()
+            cleanupOwnedWorkerStorage()
         }
     }
 
@@ -875,8 +878,8 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
     fun sourceRetired_pushCreateRotatesSourceAndPreservesReservedReplacementAcrossRebuild() = runTest {
         if (!platformSuiteEnabled()) return@runTest
         val server = MockSyncServer()
-        val activeDb = newDb()
-        val verifyDb = newDb()
+        val activeDb = newCoordinatedDb()
+        val verifyDb = newCoordinatedDb()
         val activeHttp = server.newHttpClient()
         val verifyHttp = server.newHttpClient()
         try {
@@ -893,7 +896,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
 
             val sourceBefore = scalarText(activeDb, "SELECT current_source_id FROM _sync_attachment_state")
             insertUser(activeDb, "u1", "Platform Rotated")
-            server.sourceRetiredOnPushCreate = SourceRetiredResponse(
+            server.sourceRetiredOnPush = SourceRetiredResponse(
                 error = "source_retired",
                 message = "source retired on create",
                 sourceId = sourceBefore,
@@ -907,7 +910,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             assertEquals("platform-rotated-device", scalarText(activeDb, "SELECT replacement_source_id FROM _sync_operation_state"))
             assertEquals(sourceBefore, scalarText(activeDb, "SELECT current_source_id FROM _sync_attachment_state"))
 
-            server.sourceRetiredOnPushCreate = null
+            server.sourceRetiredOnPush = null
             activeClient.rebuild().getOrThrow()
 
             assertEquals(
@@ -924,7 +927,7 @@ internal class PlatformParityTest : PlatformCrossTargetTestSupport() {
             verifyHttp.close()
             activeDb.close()
             verifyDb.close()
-            cleanupPhase6OwnedStorage()
+            cleanupOwnedWorkerStorage()
         }
     }
 }

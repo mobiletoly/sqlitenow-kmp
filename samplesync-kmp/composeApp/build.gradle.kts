@@ -123,6 +123,7 @@ kotlin {
             implementation(libs.compose.ui.tooling)
             implementation(libs.compose.ui.toolingPreview)
             implementation(libs.ktor.client.okhttp)
+            implementation("io.ktor:ktor-client-mock:${libs.versions.ktor.get()}")
         }
 
         getByName("androidDeviceTest").dependencies {

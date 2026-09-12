@@ -66,6 +66,8 @@ internal external fun forceTerminateSqliteWorker(client: JsAny): Promise<JsAny>
 
 internal external fun waitForSqliteWorkerCleanupDeadline(client: JsAny): Promise<JsAny>
 
+internal external fun isSqliteWorkerTerminationConfirmed(client: JsAny): Boolean
+
 internal external fun sqliteWorkerRuntimeKind(client: JsAny): String
 
 internal external fun sqliteWorkerClientDiagnostics(client: JsAny): String

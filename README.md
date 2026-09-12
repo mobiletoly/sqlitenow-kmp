@@ -5,12 +5,8 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/mobiletoly/sqlitenow-kmp/gradle.yml?branch=main&logo=github&label=CI)](https://github.com/mobiletoly/sqlitenow-kmp/actions/workflows/gradle.yml)
 [![License](https://img.shields.io/github/license/mobiletoly/sqlitenow-kmp?logo=apache&label=License)](LICENSE)
 
-**If SQLiteNow saves you time, please consider starring ⭐ the repository - it helps
-more KMP, Flutter/Dart, and Swift developers find it.**
 
-SQLiteNow is SQL-first tooling for type-safe SQLite access in Kotlin
-Multiplatform and Flutter/Dart apps, plus native Swift apps through a local
-generated-package workflow. Write schema, migration, and query files in SQL,
+SQLiteNow is SQL-first tooling for type-safe SQLite access in Kotlin Multiplatform and native Swift apps through a local generated-package workflow. Write schema, migration, and query files in SQL,
 then generate platform-native code with typed parameters, typed results,
 migrations, transactions, and reactive invalidation.
 
@@ -86,9 +82,7 @@ Adapters can convert between SQLite values and domain types, and `mapTo` can
 shape data further when the generated model should match application-layer
 types.
 
-Full examples are available in [`/sample-kmp`](./sample-kmp) for KMP,
-[`/dart/examples`](./dart/examples) for Dart/Flutter, and
-[`/swift/samples/core`](./swift/samples/core) for native Swift.
+Full examples are available in [`/sample-kmp`](./sample-kmp) for KMP and [`/swift/samples/core`](./swift/samples/core) for native Swift.
 
 
 ## Choose Your Platform
@@ -96,7 +90,6 @@ Full examples are available in [`/sample-kmp`](./sample-kmp) for KMP,
 | Platform                   | Use this when                                                               | Status                                                                | Start here                                                                |
 |----------------------------|-----------------------------------------------------------------------------|-----------------------------------------------------------------------|---------------------------------------------------------------------------|
 | Kotlin Multiplatform       | You are building shared Kotlin apps for Android, iOS, desktop, JS, or Wasm. | Released Gradle plugin and KMP runtime libraries                      | [KMP guide](https://mobiletoly.github.io/sqlitenow-kmp/kmp/)              |
-| Flutter/Dart               | You are building Flutter apps or pure Dart packages.                        | Released Dart runtime and CLI packages                                | [Flutter/Dart guide](https://mobiletoly.github.io/sqlitenow-kmp/flutter/) |
 | Native Swift local package | You want Swift/Xcode code to consume a generated local SwiftPM package.     | Local generated package workflow; release artifacts still in progress | [Swift guide](https://mobiletoly.github.io/sqlitenow-kmp/swift/)          |
 
 Supported target details:
@@ -105,8 +98,6 @@ Supported target details:
   JVM desktop/server, JavaScript browser, and Kotlin/Wasm browser. macOS support,
   including the JVM runtime and repository development host, requires Apple Silicon;
   Intel macOS is not supported.
-- Flutter/Dart: Flutter native runtimes through Dart VM and `package:sqlite3`,
-  plus pure Dart packages through the Dart runtime.
 - Native Swift local package: Apple platforms through generated SwiftPM
   packages with reusable arm64 runtime XCFramework artifacts.
 - JavaScript browser and Kotlin/Wasm browser use the packaged SQLite worker by
@@ -182,47 +173,6 @@ For a complete app walkthrough, follow the
 and browse the
 [sample project](https://github.com/mobiletoly/moodtracker-sample-kmp).
 
-### Flutter/Dart
-
-Full setup: [Flutter/Dart getting started](https://mobiletoly.github.io/sqlitenow-kmp/flutter/getting-started/)
-
-Flutter and Dart apps use `sqlitenow_runtime` plus `sqlitenow_cli`:
-
-```yaml
-dependencies:
-  sqlitenow_runtime: ^X.Y.Z
-
-dev_dependencies:
-  sqlitenow_cli: ^X.Y.Z
-```
-
-Configure generation in `sqlitenow.yaml`:
-
-```yaml
-databases:
-  AppDatabase:
-    input: lib/db/sql/AppDatabase
-    output: lib/db/generated
-    package: app.db
-    runtime: dart
-```
-
-Generate Dart code:
-
-```shell
-flutter pub run sqlitenow_cli generate
-```
-
-For pure Dart packages, use:
-
-```shell
-dart run sqlitenow_cli generate
-```
-
-Generated Dart is written to the configured `output` directory, such as
-`lib/db/generated/app_database.dart`. Edit SQL/configuration and regenerate
-instead of hand-editing generated Dart.
-
 ### Native Swift Local Package
 
 Full setup: [Swift getting started](https://mobiletoly.github.io/sqlitenow-kmp/swift/getting-started/)
@@ -282,14 +232,13 @@ Sync setup requires three explicit pieces on each client:
 - the Oversqlite runtime package
 - generated database configuration with Oversqlite enabled
 
-Oversqlite canonical bytes use RFC 8785 JCS plus the
-`jcs_uniform_numeric_strings_v1` contract. SQLite `INTEGER` and finite `REAL` business values upload
-as canonical JSON strings; exact decimals stay SQLite `TEXT` and JSON strings. Floating strings use
-the shortest finite binary64 spelling and normalize negative zero to `"0"`. SQLite Boolean
-affinity uses strict `"0"`/`"1"` ingress strings, while authoritative server output uses JSON
-Booleans. There is no per-column numeric configuration: the generated `enableSync` table list is
-the complete client metadata surface. SQLiteNow library-core and generated output with
-`oversqlite = false` are unchanged.
+Oversqlite discovers the selected server generation and validates it against SQLite metadata.
+Keep ordinary SQL and `enableSync=true`; select `generationId`, `databaseId` and `serviceId` when
+constructing the client. No SQL wire annotations or application-defined codecs are required.
+The breaking v1 protocol uses canonical strings for integers, finite reals and exact decimals,
+JSON Booleans for Boolean columns, and canonical UUID, base64 and JSON representations where
+the server contract requires them. Local changes retain their SQLite types before discovery.
+SQLiteNow library-core and generation with `oversqlite = false` are unchanged.
 
 Only fresh Oversqlite databases using this canonicalization and numeric contract are supported.
 There is no in-place durable-state migration, canonicalization or hash fallback, or mixed-version
@@ -302,7 +251,7 @@ The sync system automatically handles:
 - **Change tracking** for all sync-enabled tables
 - **Conflict resolution** for concurrent writes across devices
 - **Incremental sync** to minimize bandwidth usage
-- **Chunked push upload** for large dirty sets without a total-row hard ceiling
+- **Bounded direct push** selected by both row count and complete decoded-body size
 - **Error handling** and retry logic
 - **Authentication** via customizable HTTP clients
 
@@ -360,15 +309,30 @@ val httpClient = HttpClient {
     }
 }
 
-// Create sync client
-val syncClient = db.newOversqliteClient(
-    schema = "myapp",
+// Retain the opening for the whole database lifetime. It is the lifecycle owner.
+val opening = db.openForSync(
+    config = db.buildOversqliteConfig(
+        generationId = 1L,
+        databaseId = "AppDatabase",
+        serviceId = "myapp-sync",
+    ),
     httpClient = httpClient,
-    resolver = ServerWinsResolver
+    resolver = ServerWinsResolver,
 )
+val openingStatus = opening.advance()
+check(openingStatus.outcome == OversqliteOpeningOutcome.READY)
+val syncClient = checkNotNull(opening.readyOrNull()).client
 
-// Open local runtime and attach the authenticated account.
-syncClient.open().getOrThrow()
+// The generated factory now resolves to that exact published client.
+check(syncClient === db.newOversqliteClient(
+    generationId = 1L,
+    databaseId = "AppDatabase",
+    serviceId = "myapp-sync",
+    httpClient = httpClient,
+    resolver = ServerWinsResolver,
+))
+
+// Attach the authenticated account.
 syncClient.attach(userId = "user123").getOrThrow()
 
 // Perform full sync (upload local changes, download remote changes)
@@ -388,64 +352,11 @@ automaticDownloads.cancelAndJoin()
 
 KMP sync example: [`/samplesync-kmp`](./samplesync-kmp).
 
-### Flutter/Dart
-
-Add the Dart runtime packages and enable Oversqlite in `sqlitenow.yaml`.
-Replace `X.Y.Z` with the latest SQLiteNow release version.
-
-```yaml
-dependencies:
-  sqlitenow_runtime: ^X.Y.Z
-  sqlitenow_oversqlite: ^X.Y.Z
-
-dev_dependencies:
-  sqlitenow_cli: ^X.Y.Z
-```
-
-```yaml
-databases:
-  AppDatabase:
-    input: lib/db/sql/AppDatabase
-    output: lib/db/generated
-    package: app.db
-    runtime: dart
-    oversqlite: true
-```
-
-Then use the generated sync client in your application:
-
-```dart
-
-final httpClient = IoOversqliteHttpClient(
-  baseUri: Uri.parse('https://api.myapp.com'),
-  defaultHeaders: {
-    HttpHeaders.authorizationHeader: 'Bearer $token',
-  },
-);
-
-final syncClient = db.newOversqliteClient(
-  schema: 'myapp',
-  httpClient: httpClient,
-);
-
-await syncClient.open();
-await syncClient.attach('user123');
-await syncClient.sync();
-
-// Optional: start default-off automatic downloads.
-// Bundle-change watch is only a wake-up hint; pullToStable() remains authoritative.
-final automaticDownloads = syncClient.startAutomaticDownloads();
-await automaticDownloads.stop();
-```
-
-Dart sync package and realserver coverage: [
-`/dart/packages/sqlitenow_oversqlite`](./dart/packages/sqlitenow_oversqlite).
-
 ## Components
 
 Client-side framework components:
 
-- **SQLiteNow Generator** - Generates type-safe Kotlin, Dart, or native Swift
+- **SQLiteNow Generator** - Generates type-safe Kotlin or native Swift
   package code from SQL files.
 - **SQLiteNow Library** - Provides runtime APIs for database access,
   transactions, migrations, and reactive invalidation.

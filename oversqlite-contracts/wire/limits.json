@@ -1,0 +1,15 @@
+{
+  "formatVersion": 2,
+  "cases": [
+    {"name":"soft-target-first-row-progress","maxPushDecodedBytes":4096,"localPushTargetBytes":512,"firstRowRequestBytes":600,"firstRowLogicalBytes":128,"expected":"freeze_and_send_one_row","sourceBundleIdConsumed":true},
+    {"name":"row-exceeds-logical-limit","maxRowDecodedBytes":127,"firstRowLogicalBytes":128,"expectedError":"push_row_exceeds_admitted_limit","sourceBundleIdConsumed":false},
+    {"name":"first-row-exceeds-hard-request-limit","maxPushDecodedBytes":599,"firstRowRequestBytes":600,"firstRowLogicalBytes":128,"expectedError":"invalid_admitted_contract","sourceBundleIdConsumed":false},
+    {"name":"envelope-exceeds-hard-limit","maxPushDecodedBytes":30,"emptyEnvelopeBytes":31,"expectedError":"invalid_admitted_contract","sourceBundleIdConsumed":false},
+    {"name":"indivisible-pull-fits-admitted-limit","maxPullDecodedBytes":4096,"oneBundleResponseBytes":4096,"expected":"returned"},
+    {"name":"indivisible-pull-rejected-before-publish","maxPullDecodedBytes":4095,"oneBundleResponseBytes":4096,"expectedError":"bundle_projection_too_large","emptyHasMoreResponseForbidden":true},
+    {"name":"snapshot-row-rejected-before-session","maxSnapshotDecodedBytesPerChunk":4095,"oneRowChunkBytes":4096,"expectedError":"snapshot_session_limit_exceeded","dimension":"row_decoded_body_bytes","sessionPublished":false},
+    {"name":"snapshot-one-row-retry","requestedMaxBytes":1024,"requiredDecodedBodyBytes":4096,"serverMaxBytes":4096,"retryMaxRows":1,"retryMaxBytes":4096,"sameOrdinal":true},
+    {"name":"snapshot-one-row-retry-over-hard-max","requestedMaxBytes":1024,"requiredDecodedBodyBytes":4097,"serverMaxBytes":4096,"expected":"protocol_violation_checkpoint_unchanged"},
+    {"name":"snapshot-logical-total-pagination-independent","domain":"oversync.snapshot-logical-row.v1","rows":[["i",0,["u1"],7,{"id":"u1","name":"Ada"}],["i",1,[1,"tenant"],8,{"project_id":1,"tenant_id":"tenant","title":"P"}]],"paginationPlans":[[2],[1,1]],"expectedSameLogicalByteCount":true}
+  ]
+}

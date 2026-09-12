@@ -9,41 +9,41 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
 
-private const val phase5ProfileRowsEnvironment = "OVERSQLITE_PHASE5_REALSERVER_ROWS"
-private const val phase5ProfileRowBytesEnvironment = "OVERSQLITE_PHASE5_REALSERVER_ROW_BYTES"
-private const val phase5ProfileRunLabelEnvironment = "OVERSQLITE_PHASE5_REALSERVER_RUN_LABEL"
+private const val snapshot_profileProfileRowsEnvironment = "OVERSQLITE_SNAPSHOT_PROFILE_ROWS"
+private const val snapshot_profileProfileRowBytesEnvironment = "OVERSQLITE_SNAPSHOT_PROFILE_ROW_BYTES"
+private const val snapshot_profileProfileRunLabelEnvironment = "OVERSQLITE_SNAPSHOT_PROFILE_RUN_LABEL"
 
 internal class RealServerSnapshotProfileJvmTest : RealServerSupport() {
     @Test
     fun preseededSnapshotProfile_restoresThroughRealServer() = runBlocking<Unit> {
-        val rawRows = System.getenv(phase5ProfileRowsEnvironment) ?: return@runBlocking
+        val rawRows = System.getenv(snapshot_profileProfileRowsEnvironment) ?: return@runBlocking
         check(System.getenv("GITHUB_ACTIONS") != "true") {
-            "Phase 5 realserver profiles are local-heavy and must not run with GITHUB_ACTIONS=true"
+            "snapshot profile realserver profiles are local-heavy and must not run with GITHUB_ACTIONS=true"
         }
         require(System.getenv("OVERSQLITE_REALSERVER_HEAVY") == "true") {
-            "Phase 5 realserver profiles require OVERSQLITE_REALSERVER_HEAVY=true"
+            "snapshot profile realserver profiles require OVERSQLITE_REALSERVER_HEAVY=true"
         }
 
         val rows = rawRows.toIntOrNull()
-            ?: error("$phase5ProfileRowsEnvironment must be numeric")
+            ?: error("$snapshot_profileProfileRowsEnvironment must be numeric")
         require(rows == 10_000 || rows == 100_000) {
-            "$phase5ProfileRowsEnvironment must be 10000 or 100000"
+            "$snapshot_profileProfileRowsEnvironment must be 10000 or 100000"
         }
-        val rowBytes = System.getenv(phase5ProfileRowBytesEnvironment)?.toIntOrNull()
-            ?: error("$phase5ProfileRowBytesEnvironment must be 256 or 1024")
+        val rowBytes = System.getenv(snapshot_profileProfileRowBytesEnvironment)?.toIntOrNull()
+            ?: error("$snapshot_profileProfileRowBytesEnvironment must be 256 or 1024")
         require(rowBytes == 256 || rowBytes == 1024) {
-            "$phase5ProfileRowBytesEnvironment must be 256 or 1024"
+            "$snapshot_profileProfileRowBytesEnvironment must be 256 or 1024"
         }
-        val runLabel = System.getenv(phase5ProfileRunLabelEnvironment)
+        val runLabel = System.getenv(snapshot_profileProfileRunLabelEnvironment)
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
             ?: "manual-${rows}x$rowBytes"
-        val userId = "phase5-${rows}x$rowBytes"
+        val userId = "snapshot_profile-${rows}x$rowBytes"
         val realServer = requireNotNull(requireRealServerConfig()) {
-            "Phase 5 realserver profile requires an available explicitly configured server"
+            "snapshot profile realserver profile requires an available explicitly configured server"
         }
 
-        val directory = Files.createTempDirectory("oversqlite-phase5-realserver-")
+        val directory = Files.createTempDirectory("oversqlite-snapshot_profile-realserver-")
         val databasePath = directory.resolve("oversqlite.sqlite")
         val database = BundledSqliteConnectionProvider.openConnection(databasePath.toString(), debug = false)
         var http: HttpClient? = null
@@ -61,7 +61,7 @@ internal class RealServerSnapshotProfileJvmTest : RealServerSupport() {
             val profileClient = newRealServerClient(
                 db = database,
                 http = profileHttp,
-                snapshotChunkRows = 1_000,
+                maxSnapshotChunkRows = 1_000,
                 transientRetryPolicy = OversqliteTransientRetryPolicy(maxAttempts = 1),
             )
             client = profileClient
@@ -94,7 +94,7 @@ internal class RealServerSnapshotProfileJvmTest : RealServerSupport() {
             val elapsedMillis = elapsedNanos / 1_000_000L
             val throughput = if (elapsedNanos == 0L) 0.0 else rows * 1_000_000_000.0 / elapsedNanos
             println(
-                "phase5_realserver_profile runtime=kmp-jvm label=$runLabel rows=$rows " +
+                "snapshot_profile_realserver_profile runtime=kmp-jvm label=$runLabel rows=$rows " +
                     "approximate_row_bytes=$rowBytes elapsed_ms=$elapsedMillis " +
                     "throughput_rows_per_second=${"%.2f".format(throughput)} " +
                     "sessions=${diagnostics.sessionCount} chunks=${diagnostics.fetchedChunks} " +

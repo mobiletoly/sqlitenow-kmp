@@ -39,7 +39,7 @@ internal class OversqliteManagedTableStore(
                     } else {
                         used = true
                     }
-                    statement.bindText(1, validated.schema)
+                    statement.bindText(1, validated.schemaForTable(table.tableName))
                     statement.bindText(2, table.tableName)
                     statement.step()
                 }

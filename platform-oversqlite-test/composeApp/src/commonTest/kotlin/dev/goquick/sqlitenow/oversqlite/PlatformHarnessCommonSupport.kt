@@ -14,7 +14,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 suspend fun OversqliteClient.openAndConnect(userId: String): Result<AttachResult> {
-    open().getOrThrow()
     return attach(userId)
 }
 

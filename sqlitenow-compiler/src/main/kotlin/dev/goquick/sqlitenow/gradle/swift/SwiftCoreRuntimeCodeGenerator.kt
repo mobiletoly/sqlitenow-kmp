@@ -65,7 +65,7 @@ internal class SwiftCoreRuntimeCodeGenerator(
     private val plan = SwiftGenerationPlan(context, dataStructCodeGenerator)
     private val syncEnabled: Boolean
         get() = config.runtimeMode == SwiftProductRuntimeMode.SYNC
-    private val syncSourceEmitter = SwiftProductSyncSourceEmitter(syncTables)
+    private val syncSourceEmitter = SwiftProductSyncSourceEmitter(databaseName, syncTables)
     private val model = SwiftProductGenerationModel(
         context = context,
         plan = plan,

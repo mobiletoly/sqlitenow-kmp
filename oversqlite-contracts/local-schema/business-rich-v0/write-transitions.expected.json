@@ -6,93 +6,93 @@
       "name": "insert-rich-graph",
       "dirtyRows": [
         {
-          "schemaName": "business",
+          "schemaName": "local",
           "tableName": "users",
           "keyJson": "{\"id\":\"user-1\"}",
           "op": "INSERT",
           "baseRowVersion": 0,
-          "payload": "{\"id\":\"user-1\",\"name\":\"User 1\",\"email\":\"user-1@example.com\",\"created_at\":\"2026-06-09 10:13:08\",\"updated_at\":\"2026-06-09 10:13:08\"}",
+          "payload": "{\"id\":{\"storage\":\"text\",\"value\":\"user-1\"},\"name\":{\"storage\":\"text\",\"value\":\"User 1\"},\"email\":{\"storage\":\"text\",\"value\":\"user-1@example.com\"},\"created_at\":{\"storage\":\"text\",\"value\":\"2026-06-09 10:13:08\"},\"updated_at\":{\"storage\":\"text\",\"value\":\"2026-06-09 10:13:08\"}}",
           "dirtyOrdinal": 1
         },
         {
-          "schemaName": "business",
+          "schemaName": "local",
           "tableName": "posts",
           "keyJson": "{\"id\":\"post-1\"}",
           "op": "INSERT",
           "baseRowVersion": 0,
-          "payload": "{\"id\":\"post-1\",\"title\":\"Post 1\",\"content\":\"Content 1\",\"author_id\":\"user-1\",\"created_at\":\"2026-06-09 10:13:08\",\"updated_at\":\"2026-06-09 10:13:08\"}",
+          "payload": "{\"id\":{\"storage\":\"text\",\"value\":\"post-1\"},\"title\":{\"storage\":\"text\",\"value\":\"Post 1\"},\"content\":{\"storage\":\"text\",\"value\":\"Content 1\"},\"author_id\":{\"storage\":\"text\",\"value\":\"user-1\"},\"created_at\":{\"storage\":\"text\",\"value\":\"2026-06-09 10:13:08\"},\"updated_at\":{\"storage\":\"text\",\"value\":\"2026-06-09 10:13:08\"}}",
           "dirtyOrdinal": 2
         },
         {
-          "schemaName": "business",
+          "schemaName": "local",
           "tableName": "categories",
           "keyJson": "{\"id\":\"category-root\"}",
           "op": "INSERT",
           "baseRowVersion": 0,
-          "payload": "{\"id\":\"category-root\",\"name\":\"Root\",\"parent_id\":null}",
+          "payload": "{\"id\":{\"storage\":\"text\",\"value\":\"category-root\"},\"name\":{\"storage\":\"text\",\"value\":\"Root\"},\"parent_id\":{\"storage\":\"null\",\"value\":null}}",
           "dirtyOrdinal": 3
         },
         {
-          "schemaName": "business",
+          "schemaName": "local",
           "tableName": "categories",
           "keyJson": "{\"id\":\"category-child\"}",
           "op": "INSERT",
           "baseRowVersion": 0,
-          "payload": "{\"id\":\"category-child\",\"name\":\"Child\",\"parent_id\":\"category-root\"}",
+          "payload": "{\"id\":{\"storage\":\"text\",\"value\":\"category-child\"},\"name\":{\"storage\":\"text\",\"value\":\"Child\"},\"parent_id\":{\"storage\":\"text\",\"value\":\"category-root\"}}",
           "dirtyOrdinal": 4
         },
         {
-          "schemaName": "business",
+          "schemaName": "local",
           "tableName": "teams",
           "keyJson": "{\"id\":\"team-1\"}",
           "op": "INSERT",
           "baseRowVersion": 0,
-          "payload": "{\"id\":\"team-1\",\"name\":\"Team 1\",\"captain_member_id\":\"member-captain\"}",
+          "payload": "{\"id\":{\"storage\":\"text\",\"value\":\"team-1\"},\"name\":{\"storage\":\"text\",\"value\":\"Team 1\"},\"captain_member_id\":{\"storage\":\"text\",\"value\":\"member-captain\"}}",
           "dirtyOrdinal": 5
         },
         {
-          "schemaName": "business",
+          "schemaName": "local",
           "tableName": "team_members",
           "keyJson": "{\"id\":\"member-captain\"}",
           "op": "INSERT",
           "baseRowVersion": 0,
-          "payload": "{\"id\":\"member-captain\",\"name\":\"Captain\",\"team_id\":\"team-1\"}",
+          "payload": "{\"id\":{\"storage\":\"text\",\"value\":\"member-captain\"},\"name\":{\"storage\":\"text\",\"value\":\"Captain\"},\"team_id\":{\"storage\":\"text\",\"value\":\"team-1\"}}",
           "dirtyOrdinal": 6
         },
         {
-          "schemaName": "business",
+          "schemaName": "local",
           "tableName": "team_members",
           "keyJson": "{\"id\":\"member-2\"}",
           "op": "INSERT",
           "baseRowVersion": 0,
-          "payload": "{\"id\":\"member-2\",\"name\":\"Member 2\",\"team_id\":\"team-1\"}",
+          "payload": "{\"id\":{\"storage\":\"text\",\"value\":\"member-2\"},\"name\":{\"storage\":\"text\",\"value\":\"Member 2\"},\"team_id\":{\"storage\":\"text\",\"value\":\"team-1\"}}",
           "dirtyOrdinal": 7
         },
         {
-          "schemaName": "business",
+          "schemaName": "local",
           "tableName": "files",
           "keyJson": "{\"id\":\"00112233445566778899aabbccddeeff\"}",
           "op": "INSERT",
           "baseRowVersion": 0,
-          "payload": "{\"id\":\"00112233445566778899aabbccddeeff\",\"name\":\"File 1\",\"data\":\"deadbeef\"}",
+          "payload": "{\"id\":{\"storage\":\"blob\",\"value\":\"00112233445566778899aabbccddeeff\"},\"name\":{\"storage\":\"text\",\"value\":\"File 1\"},\"data\":{\"storage\":\"blob\",\"value\":\"deadbeef\"}}",
           "dirtyOrdinal": 8
         },
         {
-          "schemaName": "business",
+          "schemaName": "local",
           "tableName": "file_reviews",
           "keyJson": "{\"id\":\"10112233445566778899aabbccddeeff\"}",
           "op": "INSERT",
           "baseRowVersion": 0,
-          "payload": "{\"id\":\"10112233445566778899aabbccddeeff\",\"review\":\"Review 1\",\"file_id\":\"00112233445566778899aabbccddeeff\"}",
+          "payload": "{\"id\":{\"storage\":\"blob\",\"value\":\"10112233445566778899aabbccddeeff\"},\"review\":{\"storage\":\"text\",\"value\":\"Review 1\"},\"file_id\":{\"storage\":\"blob\",\"value\":\"00112233445566778899aabbccddeeff\"}}",
           "dirtyOrdinal": 9
         },
         {
-          "schemaName": "business",
+          "schemaName": "local",
           "tableName": "typed_rows",
           "keyJson": "{\"id\":\"typed-1\"}",
           "op": "INSERT",
           "baseRowVersion": 0,
-          "payload": "{\"id\":\"typed-1\",\"name\":\"Typed 1\",\"note\":null,\"count_value\":\"42\",\"small_count\":null,\"medium_count\":null,\"exact_amount\":null,\"enabled_flag\":\"1\",\"rating\":\"1.25\",\"float4_value\":null,\"data\":\"cafebabe\",\"created_at\":\"2026-03-24T18:42:11Z\"}",
+          "payload": "{\"id\":{\"storage\":\"text\",\"value\":\"typed-1\"},\"name\":{\"storage\":\"text\",\"value\":\"Typed 1\"},\"note\":{\"storage\":\"null\",\"value\":null},\"count_value\":{\"storage\":\"integer\",\"value\":\"42\"},\"small_count\":{\"storage\":\"null\",\"value\":null},\"medium_count\":{\"storage\":\"null\",\"value\":null},\"exact_amount\":{\"storage\":\"null\",\"value\":null},\"enabled_flag\":{\"storage\":\"integer\",\"value\":\"1\"},\"rating\":{\"storage\":\"real\",\"value\":\"1.25\"},\"float4_value\":{\"storage\":\"null\",\"value\":null},\"data\":{\"storage\":\"blob\",\"value\":\"cafebabe\"},\"created_at\":{\"storage\":\"text\",\"value\":\"2026-03-24T18:42:11Z\"}}",
           "dirtyOrdinal": 10
         }
       ],
@@ -111,7 +111,7 @@
       "name": "delete-file-cascades-review",
       "dirtyRows": [
         {
-          "schemaName": "business",
+          "schemaName": "local",
           "tableName": "files",
           "keyJson": "{\"id\":\"20112233445566778899aabbccddeeff\"}",
           "op": "DELETE",
@@ -120,7 +120,7 @@
           "dirtyOrdinal": 1
         },
         {
-          "schemaName": "business",
+          "schemaName": "local",
           "tableName": "file_reviews",
           "keyJson": "{\"id\":\"21112233445566778899aabbccddeeff\"}",
           "op": "DELETE",

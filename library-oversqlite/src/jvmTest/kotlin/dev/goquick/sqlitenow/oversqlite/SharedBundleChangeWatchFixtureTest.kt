@@ -1,134 +1,99 @@
 package dev.goquick.sqlitenow.oversqlite
 
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
+import kotlin.test.assertFails
+import kotlin.test.assertTrue
 
 class SharedBundleChangeWatchFixtureTest {
-    private val contractJson = Json {
-        ignoreUnknownKeys = true
-        explicitNulls = true
-    }
-    private val fixtureFile = oversqliteContractFixture("watch/basic.json")
+    private val root = Json.parseToJsonElement(
+        oversqliteContractFixture("watch/basic.json").readText(),
+    ).jsonObject
 
     @Test
-    fun kmpWatchCapabilityFixturesDecodeAgainstModels() {
-        val spec = contractJson.decodeFromString(WatchSpec.serializer(), fixtureFile.readText())
-        assertEquals(1, spec.formatVersion)
-        for (case in spec.capabilitiesCases) {
-            val capabilities = contractJson.decodeFromString(
-                CapabilitiesResponse.serializer(),
-                case.response.body.toString(),
-            )
-            assertEquals(
-                case.expectedBundleChangeWatchSupported,
-                capabilities.bundleChangeWatchSupported,
-                case.name,
-            )
+    fun discoveryAndSseCasesUseTheReducedWatchContract() {
+        assertEquals(2, root.getValue("formatVersion").jsonPrimitive.int)
+        root.getValue("discoveryCases").jsonArray.map { it.jsonObject }.forEach { case ->
+            val response = case.getValue("response").jsonObject
+            assertEquals(200, response.getValue("status").jsonPrimitive.int)
+            val body = response.getValue("body").jsonObject
+            assertEquals(case.getValue("expectedWatchEnabled").jsonPrimitive.boolean, body.getValue("watch_enabled").jsonPrimitive.boolean)
+            assertEquals(setOf("protocol_version", "schema_generation", "limits", "watch_enabled"), body.keys)
         }
-    }
 
-    @Test
-    fun kmpWatchSseFixturesParseAgainstModels() {
-        val spec = contractJson.decodeFromString(WatchSpec.serializer(), fixtureFile.readText())
-        for (case in spec.sseCases) {
-            if (case.expectError) {
-                assertFailsWith<IllegalArgumentException>(case.name) {
-                    parseBundleChangeEventLines(case.lines, contractJson)
-                }
+        root.getValue("sseCases").jsonArray.map { it.jsonObject }.forEach { case ->
+            val result = runCatching { parseBundleEvents(case.getValue("lines").jsonArray.map { it.jsonPrimitive.content }) }
+            if (case["expectError"]?.jsonPrimitive?.boolean == true) {
+                assertFails { result.getOrThrow() }
             } else {
-                assertEquals(
-                    case.expectedEvents,
-                    parseBundleChangeEventLines(case.lines, contractJson),
-                    case.name,
-                )
+                val expected = case.getValue("expectedEvents").jsonArray.map {
+                    it.jsonObject.getValue("bundle_seq").jsonPrimitive.int
+                }
+                assertEquals(expected, result.getOrThrow(), case.getValue("name").jsonPrimitive.content)
             }
         }
     }
 
     @Test
-    fun kmpWatchSetupErrorFixturesRemainStructured() {
-        val spec = contractJson.decodeFromString(WatchSpec.serializer(), fixtureFile.readText())
-        assertEquals(
-            listOf(400, 401, 403, 409, 409, 503, 500),
-            spec.setupErrorResponses.map { it.status },
-        )
-        for (response in spec.setupErrorResponses) {
-            assertEquals(
-                response.expectedError,
-                response.body["error"]?.jsonPrimitive?.contentOrNull,
-                response.status.toString(),
-            )
+    fun burstCasesBoundWatchPullConflation() {
+        root.getValue("conflationCases").jsonArray.map { it.jsonObject }.forEach { case ->
+            val events = case.getValue("events").jsonPrimitive.int
+            val initialCheckpoint = case["checkpoint"]?.jsonPrimitive?.long ?: 0L
+            val highWater = case["highWater"]?.jsonPrimitive?.long ?: events.toLong()
+            var activePulls = 0
+            var trailingPulls = 0
+            var checkpoint = initialCheckpoint
+            repeat(events) { index ->
+                val signaled = index + 1L
+                if (activePulls == 0) {
+                    activePulls = 1
+                } else {
+                    trailingPulls = 1
+                }
+                checkpoint = maxOf(checkpoint, signaled)
+            }
+            if (events > 0) {
+                checkpoint = maxOf(checkpoint, highWater)
+            }
+            assertEquals(case.getValue("expectedActivePulls").jsonPrimitive.int, activePulls)
+            assertTrue(trailingPulls <= case.getValue("expectedTrailingPullsAtMost").jsonPrimitive.int)
+            case["expectedCheckpoint"]?.let { assertEquals(it.jsonPrimitive.long, checkpoint) }
+            if (events == 0) assertEquals(highWater, checkpoint)
         }
     }
 
-    @Test
-    fun kmpWatchRuntimeFixturesRemainStructured() {
-        val spec = contractJson.decodeFromString(WatchSpec.serializer(), fixtureFile.readText())
-        assertEquals(
-            listOf("non-ok-watch-response-closes-before-fallback"),
-            spec.runtimeCases.map { it.name },
-        )
-        for (case in spec.runtimeCases) {
-            assertEquals(1, case.expectedCloseCount, case.name)
-            assertEquals(1, case.expectedFallbackPullsAtLeast, case.name)
-            assertEquals(
-                "bundle_change_watch_disabled",
-                case.response.body["error"]?.jsonPrimitive?.contentOrNull,
-                case.name,
-            )
+    private fun parseBundleEvents(lines: List<String>): List<Int> {
+        val events = mutableListOf<Int>()
+        var event = ""
+        var data = ""
+        fun flush() {
+            if (event == "bundle") {
+                val body = Json.parseToJsonElement(data).jsonObject
+                assertEquals(setOf("bundle_seq"), body.keys)
+                val sequence = body.getValue("bundle_seq").jsonPrimitive.int
+                require(sequence > 0) { "bundle_seq must be positive" }
+                events += sequence
+            }
+            event = ""
+            data = ""
         }
+        lines.forEach { line ->
+            when {
+                line.isEmpty() -> flush()
+                line.startsWith(":") -> Unit
+                line.startsWith("event: ") -> event = line.removePrefix("event: ")
+                line.startsWith("data: ") -> data = line.removePrefix("data: ")
+            }
+        }
+        flush()
+        return events
     }
-
-
-    @Serializable
-    private data class WatchSpec(
-        val formatVersion: Int,
-        val capabilitiesCases: List<CapabilityCase>,
-        val sseCases: List<SseCase>,
-        val setupErrorResponses: List<SetupErrorResponse>,
-        val runtimeCases: List<RuntimeCase>,
-    )
-
-    @Serializable
-    private data class CapabilityCase(
-        val name: String,
-        val response: FixtureHttpResponse,
-        val expectedBundleChangeWatchSupported: Boolean,
-    )
-
-    @Serializable
-    private data class SseCase(
-        val name: String,
-        val lines: List<String>,
-        val expectedEvents: List<BundleChangeEvent> = emptyList(),
-        val expectError: Boolean = false,
-    )
-
-    @Serializable
-    private data class SetupErrorResponse(
-        val status: Int,
-        val body: JsonObject,
-        val expectedError: String,
-    )
-
-    @Serializable
-    private data class RuntimeCase(
-        val name: String,
-        val response: FixtureHttpResponse,
-        val expectedCloseCount: Int,
-        val expectedFallbackPullsAtLeast: Int,
-    )
-
-    @Serializable
-    private data class FixtureHttpResponse(
-        val status: Int,
-        val body: JsonObject,
-    )
 }

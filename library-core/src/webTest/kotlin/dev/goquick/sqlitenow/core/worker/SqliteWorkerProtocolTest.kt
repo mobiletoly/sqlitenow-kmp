@@ -18,15 +18,15 @@ import kotlinx.serialization.json.jsonPrimitive
 
 class SqliteWorkerProtocolTest {
     @Test
-    fun phase5bOpenAndCompleteOpenVariantsAreStrict() {
+    fun legacy_migrationOpenAndCompleteOpenVariantsAreStrict() {
         val builtInOpen = SqliteWorkerRequest(
             protocol = SQLITE_WORKER_PROTOCOL,
             command = "open",
-            fileName = "phase5b-built-in",
+            fileName = "legacy_migration-built-in",
             legacySourceMode = "built-in",
         )
         val customOpen = builtInOpen.copy(
-            fileName = "phase5b-custom",
+            fileName = "legacy_migration-custom",
             legacySourceMode = "custom",
         )
         val completePresent = SqliteWorkerRequest(
@@ -41,7 +41,7 @@ class SqliteWorkerProtocolTest {
             it.validate()
         }
         assertEquals(
-            """{"protocol":"$SQLITE_WORKER_PROTOCOL","command":"open","fileName":"phase5b-custom","legacySourceMode":"custom"}""",
+            """{"protocol":"$SQLITE_WORKER_PROTOCOL","command":"open","fileName":"legacy_migration-custom","legacySourceMode":"custom"}""",
             sqliteWorkerJson.encodeToString(customOpen),
         )
         assertEquals(
@@ -316,7 +316,7 @@ class SqliteWorkerProtocolTest {
         )
         error.validate()
         assertEquals(
-            """{"id":42,"error":{"operation":"page","message":"interrupted","sql":"SELECT 1","sqliteCode":9,"cancelled":true,"suppressed":["rollback failed","statement close failed"]}}""",
+            """{"id":42,"error":{"operation":"page","message":"interrupted","sql":"SELECT 1","sqliteCode":9,"cancelled":true,"suppressed":["rollback failed","statement close failed"],"lifecycleBusy":false}}""",
             sqliteWorkerJson.encodeToString(error),
         )
     }
@@ -482,9 +482,9 @@ class SqliteWorkerProtocolTest {
             }
         }
 
-        listOf("operation", "message", "cancelled", "suppressed").forEach { field ->
+        listOf("operation", "message", "cancelled", "suppressed", "lifecycleBusy").forEach { field ->
             val completeError = sqliteWorkerJson.parseToJsonElement(
-                """{"operation":"page","message":"","cancelled":false,"suppressed":[]}""",
+                """{"operation":"page","message":"","cancelled":false,"suppressed":[],"lifecycleBusy":false}""",
             ).jsonObject
             assertFailsWith<SerializationException>("error.$field") {
                 sqliteWorkerJson.decodeFromString<SqliteWorkerError>(
@@ -495,7 +495,7 @@ class SqliteWorkerProtocolTest {
         listOf("sql", "sqliteCode", "inTransaction").forEach { field ->
             assertFailsWith<SerializationException>("explicit null $field") {
                 sqliteWorkerJson.decodeFromString<SqliteWorkerError>(
-                    """{"operation":"page","message":"","cancelled":false,"suppressed":[],"$field":null}""",
+                    """{"operation":"page","message":"","cancelled":false,"suppressed":[],"lifecycleBusy":false,"$field":null}""",
                 )
             }
         }
@@ -539,7 +539,7 @@ class SqliteWorkerProtocolTest {
             ),
         ).validateFor(1, pageRequest)
         sqliteWorkerJson.decodeFromString<SqliteWorkerError>(
-            """{"operation":"page","message":"","cancelled":false,"suppressed":[]}""",
+            """{"operation":"page","message":"","cancelled":false,"suppressed":[],"lifecycleBusy":false}""",
         )
     }
 
@@ -928,9 +928,9 @@ class SqliteWorkerProtocolTest {
     }
 
     @Test
-    fun closeStatementCannotFinalizeAStatementOwnedByAnotherDatabase() = runTest {
-        val firstDatabaseName = nextWorkerProtocolDatabaseName("owner-first")
-        val secondDatabaseName = nextWorkerProtocolDatabaseName("owner-second")
+    fun closeStatementCannotFinalizeAStatementOwnedByAnotherDatabaseHandle() = runTest {
+        val databaseName = nextWorkerProtocolDatabaseName("statement-owner")
+        val otherDatabaseName = nextWorkerProtocolDatabaseName("other-lifecycle")
         val transport = SqliteWorkerTransport.create(
             sqliteWorkerJson.encodeToString(SqliteWorkerConfig()),
         )
@@ -945,36 +945,58 @@ class SqliteWorkerProtocolTest {
             }
         }
         try {
-            val firstDatabase = checkNotNull(
-                request(
-                    SqliteWorkerRequest(
-                        protocol = SQLITE_WORKER_PROTOCOL,
-                        command = "open",
-                        fileName = firstDatabaseName,
-                        legacySourceMode = transport.rawOpenLegacySourceMode(),
-                    ),
-                ).data?.databaseId,
+            val firstOpen = request(
+                SqliteWorkerRequest(
+                    protocol = SQLITE_WORKER_PROTOCOL,
+                    command = "open",
+                    fileName = databaseName,
+                    legacySourceMode = transport.rawOpenLegacySourceMode(),
+                ),
             )
-            val secondDatabase = checkNotNull(
-                request(
-                    SqliteWorkerRequest(
-                        protocol = SQLITE_WORKER_PROTOCOL,
-                        command = "open",
-                        fileName = secondDatabaseName,
-                        legacySourceMode = transport.rawOpenLegacySourceMode(),
-                    ),
-                ).data?.databaseId,
+            val firstDatabase = checkNotNull(firstOpen.data?.databaseId) {
+                "first open failed: ${firstOpen.error}"
+            }
+            val otherIdentity = request(
+                SqliteWorkerRequest(
+                    protocol = SQLITE_WORKER_PROTOCOL,
+                    command = "open",
+                    fileName = otherDatabaseName,
+                    legacySourceMode = transport.rawOpenLegacySourceMode(),
+                ),
             )
-            val statement = checkNotNull(
-                request(
-                    SqliteWorkerRequest(
-                        protocol = SQLITE_WORKER_PROTOCOL,
-                        command = "prepare",
-                        databaseId = firstDatabase,
-                        sql = "SELECT 47",
+            if (transport.runtimeKind() == "browser-worker") {
+                assertTrue(
+                    otherIdentity.error?.message.orEmpty().contains(
+                        "cannot own two lifecycle database identities",
                     ),
-                ).data?.statementId,
+                )
+            } else {
+                checkNotNull(otherIdentity.data?.databaseId) {
+                    "transient second open failed: ${otherIdentity.error}"
+                }
+            }
+            val secondOpen = request(
+                SqliteWorkerRequest(
+                    protocol = SQLITE_WORKER_PROTOCOL,
+                    command = "open",
+                    fileName = databaseName,
+                    legacySourceMode = transport.rawOpenLegacySourceMode(),
+                ),
             )
+            val secondDatabase = checkNotNull(secondOpen.data?.databaseId) {
+                "second open failed: ${secondOpen.error}"
+            }
+            val prepare = request(
+                SqliteWorkerRequest(
+                    protocol = SQLITE_WORKER_PROTOCOL,
+                    command = "prepare",
+                    databaseId = firstDatabase,
+                    sql = "SELECT 47",
+                ),
+            )
+            val statement = checkNotNull(prepare.data?.statementId) {
+                "prepare failed: ${prepare.error}"
+            }
 
             val wrongOwner = request(
                 SqliteWorkerRequest(
@@ -1007,8 +1029,8 @@ class SqliteWorkerProtocolTest {
                 command = "shutdown",
             )
             transport.shutdown(requestId, sqliteWorkerJson.encodeToString(shutdown))
-            cleanupWorkerProtocolDatabase(firstDatabaseName)
-            cleanupWorkerProtocolDatabase(secondDatabaseName)
+            cleanupWorkerProtocolDatabase(databaseName)
+            cleanupWorkerProtocolDatabase(otherDatabaseName)
         }
     }
 
@@ -1081,17 +1103,17 @@ class SqliteWorkerProtocolTest {
             }
             assertFailsWith<Throwable> {
                 transport.holdMigrationCancellationForTest(
-                    "phase5b-control",
+                    "legacy_migration-control",
                     "before-intent",
                 )
             }
 
             val controlId = transport.holdMigrationCancellationForTest(
-                "phase5b-control",
+                "legacy_migration-control",
                 "after-integrity",
             )
             transport.injectResponseForTest(
-                """{"kind":"test-cancellation-hold","protocol":"$SQLITE_WORKER_PROTOCOL","id":$controlId,"command":"migration","databaseName":"phase5b-control","stage":"after-integrity","pendingOpenCount":0}""",
+                """{"kind":"test-cancellation-hold","protocol":"$SQLITE_WORKER_PROTOCOL","id":$controlId,"command":"migration","databaseName":"legacy_migration-control","stage":"after-integrity","pendingOpenCount":0}""",
             )
             assertEquals(0, transport.awaitCancellationHoldForTest(controlId))
             val reused = assertFailsWith<Throwable> {

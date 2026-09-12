@@ -223,6 +223,14 @@ class QueryEmitterCoverageTest {
             WHERE birth_date = :birthDate;
             """.trimIndent()
         )
+        File(queriesDir, "person/selectByBirthDates.sql").writeText(
+            """
+            -- @@{name=SelectByBirthDates}
+            SELECT birth_date
+            FROM person
+            WHERE birth_date IN (:birthDates);
+            """.trimIndent()
+        )
 
         val personTable = annotatedCreateTable(
             tableName = "person",
@@ -258,16 +266,20 @@ class QueryEmitterCoverageTest {
         val statements = dataStructGenerator.nsWithStatements.getValue("person")
             .filterIsInstance<dev.goquick.sqlitenow.gradle.model.AnnotatedSelectStatement>()
         val selectAll = statements.first { it.src.namedParameters.isEmpty() }
-        val selectByBirthDate = statements.first { it.src.namedParameters.isNotEmpty() }
+        val selectByBirthDate = statements.first { it.getDataClassName() == "SelectByBirthDate" }
+        val selectByBirthDates = statements.first { it.getDataClassName() == "SelectByBirthDates" }
 
         val noParams = emitter.generateBindStatementParamsFunction("person", selectAll).toString()
         val debugBind = emitter.generateBindStatementParamsFunction("person", selectByBirthDate).toString()
+        val collectionAdapterBind = emitter.generateBindStatementParamsFunction("person", selectByBirthDates).toString()
 
         assertFalse(noParams.contains("params:"))
         assertFalse(noParams.contains("__paramsLog"))
         assertTrue(debugBind.contains("val __paramsLog = mutableListOf<String>()"))
         assertTrue(debugBind.contains("sqliteNowLogger.d"))
         assertTrue(debugBind.contains("sqliteNowPreview"))
+        assertTrue(collectionAdapterBind.contains("Json.encodeToString(params.birthDates.map { birthDateToSqlValue(it) })"))
+        assertTrue(collectionAdapterBind.contains("statement.bindText(1, birthDates)"))
     }
 
     private fun newQueryReadEmitter(ctx: GeneratorContext): QueryReadEmitter {

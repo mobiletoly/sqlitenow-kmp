@@ -8,5 +8,8 @@ internal actual fun realServerEnv(name: String): String? {
         return processValue.toString()
     }
     val globalValue = global[name]
-    return globalValue?.toString()
+    if (globalValue != null) return globalValue.toString()
+    val settings = global.__karma__?.config?.baselineLiveSettings
+    val karmaValue = if (settings != null) settings[name] else null
+    return karmaValue?.toString()
 }

@@ -39,13 +39,12 @@ The canonical home of `comprehensive` is `:library-oversqlite`.
 ### Shared wire fixtures
 
 Shared wire fixtures live under `oversqlite-contracts/` and pin protocol JSON
-shape, parser behavior, and request/response model compatibility between KMP
-and Dart. They do not by themselves prove runtime parity.
+shape, parser behavior, and request/response model compatibility for KMP. They do not by themselves prove runtime coverage beyond the exercised KMP consumer.
 
 ### Shared behavior fixtures
 
 Shared behavior fixtures live under `oversqlite-contracts/**/behavior/` and
-must be executed by both KMP and Dart. They pin retry, rebuild, source
+must be executed by KMP. They pin retry, rebuild, source
 recovery, outbox, dirty-row, and automatic-download durable outcomes.
 
 ### `platform`
@@ -147,8 +146,6 @@ Prefer these suite-level tasks over broad target tasks.
 | KMP watch wire fixtures | `./gradlew :library-oversqlite:jvmTest --tests dev.goquick.sqlitenow.oversqlite.SharedBundleChangeWatchFixtureTest` |
 | KMP push behavior       | `./gradlew :library-oversqlite:jvmTest --tests dev.goquick.sqlitenow.oversqlite.SharedPushBehaviorFixtureTest` |
 | KMP watch behavior      | `./gradlew :library-oversqlite:jvmTest --tests dev.goquick.sqlitenow.oversqlite.SharedWatchBehaviorFixtureTest` |
-| Dart push behavior      | `cd dart && flutter test packages/sqlitenow_oversqlite/test/push_behavior_fixture_test.dart` |
-| Dart watch behavior     | `cd dart && flutter test packages/sqlitenow_oversqlite/test/watch_behavior_fixture_test.dart` |
 
 ### Platform
 
@@ -208,36 +205,11 @@ Optional overrides:
 
 Watch-specific live coverage is part of the normal realserver lanes. It verifies:
 
-- watch-enabled capability probing
+- discovery-advertised watch enablement
 - watch-triggered two-client convergence through `pullToStable()`
 - prompt watch cancellation
 
 Watch setup-error fallback and malformed/EOF stream fallback are covered by the mocked automatic-download/watch tests, not by the live realserver lanes.
-
-The focused Dart watch lane is:
-
-```shell
-cd dart && OVERSQLITE_REALSERVER_TESTS=true \
-  OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL=http://localhost:8080 \
-  flutter test packages/sqlitenow_oversqlite/test/realserver_watch_test.dart
-```
-
-The focused Dart generated rich-schema lane is:
-
-```shell
-cd dart && OVERSQLITE_REALSERVER_TESTS=true \
-  OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL=http://localhost:8080 \
-  flutter test packages/sqlitenow_oversqlite/test/realserver_rich_schema_test.dart
-```
-
-The focused Flutter Android live-server lane is:
-
-```shell
-cd dart/examples/flutter_todo && \
-  flutter test integration_test/realserver_smoke_test.dart -d emulator-5554 \
-    --dart-define=OVERSQLITE_REALSERVER_TESTS=true \
-    --dart-define=OVERSQLITE_REAL_SERVER_SMOKE_BASE_URL=http://10.0.2.2:8080
-```
 
 ## Suite Gates
 
@@ -292,7 +264,6 @@ Examples of broad target tasks that are not suite names:
 | `comprehensive` | `:library-oversqlite`                                 | host-side JVM entry point today                                                   |
 | `platform`      | `:platform-oversqlite-test:composeApp`                | Android, JVM, iOS, macOS arm64, JS Node, Wasm browser                                   |
 | `realserver`    | `:library-oversqlite` and `:platform-oversqlite-test:composeApp` | shared JVM plus Android, JVM, iOS, macOS arm64, JS Node, Wasm browser runtime harnesses |
-| Dart realserver | `dart/packages/sqlitenow_oversqlite` and `dart/examples/flutter_todo` | host package tests plus opt-in Flutter Android integration fixture                |
 
 ## CI/CD Policy
 
@@ -310,15 +281,10 @@ that still runs through generic target tasks.
 Use these defaults:
 
 - normal oversqlite work: `./gradlew oversqliteComprehensive`
-- shared contract changes: run the relevant wire and behavior fixture runners
-  in both KMP and Dart
+- shared contract changes: run the relevant wire and behavior fixture runners in KMP
 - runtime-surface validation: one of the `oversqlitePlatform*` tasks, or `oversqlitePlatformAll`
 - final live integration validation: one of the `oversqliteRealserver*` tasks, or
   `oversqliteRealserverAll`
-- Dart package validation: `cd dart && flutter test packages/sqlitenow_oversqlite/test`
-- Dart live watch validation: the `realserver_watch_test.dart` command above
-- Dart generated rich-schema live validation: the `realserver_rich_schema_test.dart` command above
-- Flutter Android live validation: the `realserver_smoke_test.dart` command above
 - heavier live integration validation: `oversqliteRealserverAllHeavy` or the relevant `*Heavy`
   surface task
 

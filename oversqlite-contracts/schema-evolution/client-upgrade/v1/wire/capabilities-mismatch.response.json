@@ -1,0 +1,1 @@
+{"error":"schema_generation_fingerprint_mismatch","message":"schema generation fingerprint does not match","retryable":false,"remediation":"upgrade_or_reconfigure_client"}

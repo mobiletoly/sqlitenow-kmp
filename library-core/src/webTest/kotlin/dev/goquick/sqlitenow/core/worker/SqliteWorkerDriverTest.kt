@@ -3,12 +3,17 @@ package dev.goquick.sqlitenow.core.worker
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteStatement
 import dev.goquick.sqlitenow.core.SqliteConnectionConfig
+import dev.goquick.sqlitenow.core.SqliteNowInternalApi
+import dev.goquick.sqlitenow.core.createSqliteConnectionExecutionContext
+import dev.goquick.sqlitenow.core.SqliteNowLifecycleBusyException
 import dev.goquick.sqlitenow.core.sqlite.SqliteException
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
@@ -17,10 +22,12 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonArray
@@ -148,7 +155,7 @@ class SqliteWorkerDriverTest {
             assertEquals(64, afterEarlyClose.maxPageRows)
             assertEquals(0, afterEarlyClose.liveStatements)
             println(
-                "PHASE6_EARLY_EXIT rows=100000 stepped=${afterEarlyClose.steppedRows} " +
+                "WORKER_EARLY_EXIT rows=100000 stepped=${afterEarlyClose.steppedRows} " +
                     "encoded=${afterEarlyClose.encodedRows} " +
                     "transferred=${afterEarlyClose.transferredRows} " +
                     "maxPageRows=${afterEarlyClose.maxPageRows} " +
@@ -257,9 +264,10 @@ class SqliteWorkerDriverTest {
                 execute(connection, "INSERT INTO values_table VALUES (1)")
                 assertTrue(connection.inTransaction())
 
-                val long = connection.prepare(longRunningSql())
+                // This hold precedes step(): prove page-boundary cleanup, not VM interruption.
+                val statement = connection.prepare("SELECT value FROM values_table")
                 driver.holdNextActivePageForTest()
-                val active = async(start = CoroutineStart.UNDISPATCHED) { long.step() }
+                val active = async(start = CoroutineStart.UNDISPATCHED) { statement.step() }
                 driver.awaitActivePageForTest()
                 active.cancelAndJoin()
 
@@ -271,7 +279,7 @@ class SqliteWorkerDriverTest {
 
                 val metrics = driver.metrics()
                 assertTrue(metrics.requestsCancelled >= 1)
-                assertTrue(metrics.transactionsRolledBackOnCancel >= 1)
+                assertEquals(1L, metrics.transactionsRolledBackOnCancel)
                 assertEquals(0, metrics.liveStatements)
             }
         }
@@ -287,11 +295,13 @@ class SqliteWorkerDriverTest {
             val workerConnection = connection.ref as SqliteWorkerSQLiteConnection
             try {
                 connection.execSQL("CREATE TABLE values_table(value INTEGER)")
-                workerConnection.holdNextActivePageForTest()
                 val active = async(start = CoroutineStart.UNDISPATCHED) {
                     connection.transaction {
                         connection.execSQL("INSERT INTO values_table VALUES (1)")
-                        val statement = connection.prepare(longRunningSql())
+                        // Arm after BEGIN and the write, so cancellation reaches the
+                        // transaction body. This remains a pre-step boundary witness.
+                        val statement = connection.prepare("SELECT value FROM values_table")
+                        workerConnection.holdNextActivePageForTest()
                         try {
                             statement.step()
                         } finally {
@@ -307,9 +317,183 @@ class SqliteWorkerDriverTest {
                 assertTrue(count.step())
                 assertEquals(0L, count.getLong(0))
                 count.close()
+                val metrics = workerConnection.metricsForTest()
+                assertEquals(1L, metrics.transactionsRolledBackOnCancel)
+                assertEquals(0, metrics.liveStatements)
                 connection.execSQL("INSERT INTO values_table VALUES (2)")
             } finally {
                 connection.close()
+            }
+        }
+
+    @Test
+    @OptIn(SqliteNowInternalApi::class)
+    fun coordinatedProviderRetainsFailedInspectionHandleUntilExplicitCloseRetry() =
+        runTest(timeout = 180.seconds) {
+            val databaseName = nextWorkerDriverDatabaseName()
+            var driver: SqliteWorkerSQLiteDriver? = null
+            val session = openSqliteWorkerCoordinatedSession(
+                dbName = databaseName,
+                debug = false,
+                config = SqliteConnectionConfig(),
+                workerModuleUrl = null,
+                pageRows = SQLITE_WORKER_DEFAULT_PAGE_ROWS,
+                pageBytes = SQLITE_WORKER_DEFAULT_PAGE_BYTES,
+                startupModeForTest = "normal",
+                cleanupTimeoutMillis = 100,
+                inspectionRefForTest = { openedDriver ->
+                    driver = openedDriver
+                    openedDriver.open(databaseName)
+                },
+            )
+            val inspection = assertNotNull(session.inspectionConnection)
+            assertFalse(session.preparationRequired)
+            val raw = inspection.ref
+            val closeFailure = IllegalStateException("PROVIDER_RAW_CLOSE_RETRY_SENTINEL")
+            var rawCloseCalls = 0
+            inspection.closeRawDriverForTest = {
+                rawCloseCalls++
+                if (rawCloseCalls == 1) throw closeFailure
+                raw.close()
+            }
+
+            assertSame(closeFailure, assertFailsWith<IllegalStateException> { session.prepareConnection() })
+            assertEquals(1, rawCloseCalls)
+            assertFailsWith<IllegalStateException> { session.prepareConnection() }
+            assertSame(raw, inspection.ref)
+            val retainedDriver = assertNotNull(driver)
+            if (retainedDriver.runtimeKind() == "browser-worker") {
+                val contender = SqliteWorkerSQLiteDriver.create()
+                try {
+                    assertFailsWith<SqliteNowLifecycleBusyException> {
+                        contender.inspect(databaseName, "built-in")
+                    }
+                } finally { contender.shutdown() }
+            }
+
+            session.close()
+            assertEquals(2, rawCloseCalls)
+            session.close()
+            assertEquals(2, rawCloseCalls)
+            cleanupWorkerDriverDatabase(databaseName)
+        }
+
+    @Test
+    fun coordinatedProviderFinishesContextAfterPhysicalTerminationWithStickyShutdownFailure() =
+        runTest(timeout = 180.seconds) {
+            data class Scenario(val name: String, val prepared: Boolean, val failContext: Boolean)
+            for (scenario in listOf(
+                Scenario("unprepared", false, false),
+                Scenario("prepared", true, false),
+                Scenario("unprepared context retry", false, true),
+                Scenario("prepared context retry", true, true),
+            )) {
+                val before = globalWorkerDiagnostics()
+                val databaseName = nextWorkerDriverDatabaseName()
+                val delegate = createSqliteConnectionExecutionContext(databaseName)
+                var contextCloses = 0
+                val context = object : dev.goquick.sqlitenow.core.SqliteConnectionExecutionContext {
+                    override val dispatcher = delegate.dispatcher
+                    override fun close() {
+                        contextCloses++
+                        if (scenario.failContext && contextCloses == 1) error("context retry")
+                        delegate.close()
+                    }
+                }
+                val driver = SqliteWorkerSQLiteDriver.create(cleanupTimeoutMillis = 100)
+                val session = SqliteWorkerCoordinatedProviderSession(
+                    dbName = databaseName,
+                    debug = false,
+                    config = SqliteConnectionConfig(),
+                    initialDriver = driver,
+                    createDriver = { error("must not replace retained driver") },
+                    executionContext = context,
+                    inspectionConnection = null,
+                )
+                if (scenario.prepared) session.prepareConnection()
+                driver.forceCleanup()
+                assertTrue(driver.terminationConfirmed, scenario.name)
+                val failure = runCatching { session.close() }.exceptionOrNull()
+                assertNotNull(failure, scenario.name)
+                assertEquals(1, contextCloses, scenario.name)
+                assertFailsWith<IllegalStateException>(scenario.name) { session.prepareConnection() }
+                session.close()
+                session.close()
+                assertEquals(if (scenario.failContext) 2 else 1, contextCloses, scenario.name)
+                val after = globalWorkerDiagnostics()
+                assertEquals(before.workersCreated + 1, after.workersCreated, scenario.name)
+                assertEquals(before.workersTerminated + 1, after.workersTerminated, scenario.name)
+                assertEquals(before.activeWorkers, after.activeWorkers, scenario.name)
+                cleanupWorkerDriverDatabase(databaseName)
+            }
+        }
+
+    @Test
+    fun providerPreparationFailureRetainsIndependentShutdownDiagnosticAndFinishesContext() =
+        runTest(timeout = 180.seconds) {
+            val before = globalWorkerDiagnostics()
+            val databaseName = nextWorkerDriverDatabaseName()
+            val driver = SqliteWorkerSQLiteDriver.create(cleanupTimeoutMillis = 100)
+            // Keep an actual worker-owned database for the shutdown fault after preparation fails.
+            driver.open(databaseName)
+            driver.failShutdownCleanupForTest("preparation finalize diagnostic", "preparation rollback diagnostic", "preparation close diagnostic")
+            val execution = createSqliteConnectionExecutionContext(databaseName)
+            var contextsClosed = 0
+            val context = object : dev.goquick.sqlitenow.core.SqliteConnectionExecutionContext {
+                override val dispatcher = execution.dispatcher
+                override fun close() { contextsClosed++; execution.close() }
+            }
+            val session = SqliteWorkerCoordinatedProviderSession("", false,
+                SqliteConnectionConfig(), driver, { error("must not replace failed driver during close") }, context, null)
+            val failure = assertFailsWith<IllegalArgumentException> { session.prepareConnection() }
+            assertTrue(failure.message.orEmpty().contains("non-empty"))
+            val shutdown = failure.suppressedExceptions.single()
+            assertTrue(shutdown.message.orEmpty().contains("preparation finalize diagnostic"))
+            assertEquals(listOf("preparation rollback diagnostic", "preparation close diagnostic"),
+                shutdown.suppressedExceptions.map { it.message })
+            assertTrue(driver.terminationConfirmed)
+            assertEquals(0, contextsClosed)
+            session.close()
+            session.close()
+            assertEquals(1, contextsClosed)
+            val after = globalWorkerDiagnostics()
+            assertEquals(before.workersCreated + 1, after.workersCreated)
+            assertEquals(before.workersTerminated + 1, after.workersTerminated)
+            assertEquals(before.activeWorkers, after.activeWorkers)
+            cleanupWorkerDriverDatabase(databaseName)
+        }
+
+    @Test
+    fun providerCloseJoinsCancelledPreparationWithoutReplacingTheDriver() =
+        runTest(timeout = 180.seconds) {
+            supervisorScope {
+                val before = globalWorkerDiagnostics()
+                val databaseName = nextWorkerDriverDatabaseName()
+                val driver = SqliteWorkerSQLiteDriver.create(cleanupTimeoutMillis = 100)
+                val execution = createSqliteConnectionExecutionContext(databaseName)
+                var contextsClosed = 0
+                val context = object : dev.goquick.sqlitenow.core.SqliteConnectionExecutionContext {
+                    override val dispatcher = execution.dispatcher
+                    override fun close() { contextsClosed++; execution.close() }
+                }
+                val session = SqliteWorkerCoordinatedProviderSession(databaseName, false,
+                    SqliteConnectionConfig(), driver, { error("must not replace a preparing driver") }, context, null)
+                driver.holdNextResponseForTest("open")
+                val preparing = async(start = CoroutineStart.UNDISPATCHED) { session.prepareConnection() }
+                awaitClientDiagnostic(driver, "completedResponses", 1)
+                val first = async(start = CoroutineStart.UNDISPATCHED) { session.close() }
+                val second = async(start = CoroutineStart.UNDISPATCHED) { session.close() }
+                assertFailsWith<IllegalStateException> { session.prepareConnection() }
+                assertFailsWith<CancellationException> { preparing.await() }
+                first.await(); second.await()
+                assertTrue(driver.terminationConfirmed)
+                assertEquals(1, contextsClosed)
+                session.close()
+                val after = globalWorkerDiagnostics()
+                assertEquals(before.workersCreated + 1, after.workersCreated)
+                assertEquals(before.workersTerminated + 1, after.workersTerminated)
+                assertEquals(before.activeWorkers, after.activeWorkers)
+                cleanupWorkerDriverDatabase(databaseName)
             }
         }
 
@@ -433,13 +617,9 @@ class SqliteWorkerDriverTest {
     fun cancellationReclaimsACompletedPrepareBeforeKotlinDelivery() =
         runTest(timeout = 180.seconds) {
             withWorker { driver, connection ->
-                driver.holdNextResponseForTest("prepare")
-                val preparing = async(start = CoroutineStart.UNDISPATCHED) {
+                cancelAfterCompletedResponse(driver, "prepare") {
                     connection.prepare("SELECT 41")
                 }
-                awaitClientDiagnostic(driver, "completedResponses", 1)
-                preparing.cancel()
-                assertFailsWith<CancellationException> { preparing.await() }
 
                 val metrics = driver.metrics()
                 assertEquals(0, metrics.liveStatements)
@@ -456,19 +636,17 @@ class SqliteWorkerDriverTest {
     fun cancellationReclaimsACompletedOpenBeforeKotlinDelivery() =
         runTest(timeout = 180.seconds) {
             val driver = SqliteWorkerSQLiteDriver.create()
+            val databaseName = nextWorkerDriverDatabaseName()
             try {
-                driver.holdNextResponseForTest("open")
-                val opening = async(start = CoroutineStart.UNDISPATCHED) {
-                    driver.open(":memory:")
+                cancelAfterCompletedResponse(driver, "open") {
+                    driver.open(databaseName)
                 }
-                awaitClientDiagnostic(driver, "completedResponses", 1)
-                opening.cancel()
-                assertFailsWith<CancellationException> { opening.await() }
 
                 assertEquals(0, driver.metrics().liveDatabases)
                 awaitClientDiagnostic(driver, "completedResponses", 0)
             } finally {
                 assertZeroResources(driver.shutdown())
+                cleanupWorkerDriverDatabase(databaseName)
             }
         }
 
@@ -479,11 +657,7 @@ class SqliteWorkerDriverTest {
                 execute(connection, "BEGIN")
                 assertTrue(connection.inTransaction())
                 val statement = connection.prepare("SELECT 1")
-                driver.holdNextResponseForTest("page")
-                val stepping = async(start = CoroutineStart.UNDISPATCHED) { statement.step() }
-                awaitClientDiagnostic(driver, "completedResponses", 1)
-                stepping.cancel()
-                assertFailsWith<CancellationException> { stepping.await() }
+                cancelAfterCompletedResponse(driver, "page") { statement.step() }
 
                 assertFalse(connection.inTransaction())
                 val metrics = driver.metrics()
@@ -1160,6 +1334,79 @@ class SqliteWorkerDriverTest {
                 assertZeroResources(driver.shutdown())
             }
         }
+
+    @Test
+    fun browserLifecycleBusyIsTypedAndWorkerTerminationReleasesOwnership() =
+        runTest(timeout = 180.seconds) {
+            val databaseName = nextWorkerDriverDatabaseName()
+            val first = SqliteWorkerSQLiteDriver.create()
+            if (first.runtimeKind() != "browser-worker") {
+                first.shutdown()
+                return@runTest
+            }
+
+            val contender = SqliteWorkerSQLiteDriver.create()
+            try {
+                assertNull(first.inspect(databaseName, "built-in"))
+                val busy = assertFailsWith<SqliteNowLifecycleBusyException> {
+                    contender.inspect(databaseName, "built-in")
+                }
+                assertTrue(busy.databaseIdentity.contains("lifecycle lock is busy"))
+            } finally {
+                contender.shutdown()
+                first.forceCleanup()
+            }
+
+            val successor = SqliteWorkerSQLiteDriver.create()
+            try {
+                assertNull(successor.inspect(databaseName, "built-in"))
+            } finally {
+                successor.forceCleanup()
+            }
+        }
+
+    @Test
+    fun browserInspectionCancellationTerminatesStartupOwnerAndReleasesLifecycleLock() =
+        runTest(timeout = 180.seconds) {
+            val databaseName = nextWorkerDriverDatabaseName()
+            val cancelledOwner = SqliteWorkerSQLiteDriver.create()
+            if (cancelledOwner.runtimeKind() != "browser-worker") {
+                cancelledOwner.shutdown()
+                return@runTest
+            }
+
+            cancelledOwner.holdNextResponseForTest("inspect")
+            val inspection = async(start = CoroutineStart.UNDISPATCHED) {
+                cancelledOwner.inspect(databaseName, "built-in")
+            }
+            awaitClientDiagnostic(cancelledOwner, "completedResponses", 1)
+            inspection.cancel(CancellationException("cancel coordinated inspection"))
+            assertFailsWith<CancellationException> { inspection.await() }
+
+            val successor = SqliteWorkerSQLiteDriver.create()
+            try {
+                assertNull(successor.inspect(databaseName, "built-in"))
+            } finally {
+                successor.forceCleanup()
+            }
+        }
+
+    // Cancel only after the worker has produced the resource and before Kotlin receives it.
+    private suspend fun <T> cancelAfterCompletedResponse(
+        driver: SqliteWorkerSQLiteDriver,
+        command: String,
+        operation: suspend () -> T,
+    ) = coroutineScope {
+        driver.holdNextResponseForTest(command)
+        val pending = async(start = CoroutineStart.UNDISPATCHED) { operation() }
+        try {
+            awaitClientDiagnostic(driver, "completedResponses", 1)
+            pending.cancel()
+            assertFailsWith<CancellationException> { pending.await() }
+        } finally {
+            pending.cancelAndJoin()
+        }
+    }
 
     private suspend fun withWorker(
         pageRows: Int = SQLITE_WORKER_DEFAULT_PAGE_ROWS,

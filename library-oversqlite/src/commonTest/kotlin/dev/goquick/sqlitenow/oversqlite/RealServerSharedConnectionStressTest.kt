@@ -26,8 +26,8 @@ internal class RealServerSharedConnectionStressTest : RealServerSupport() {
 
     @Test
     fun sharedConnectionSurvivesConcurrentAliasStarQueriesWhileSyncingAgainstRealServer() =
-        runOwnedWebDatabaseTest {
-        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
+        runRealServerTest {
+        val config = requireRealServerConfig() ?: return@runRealServerTest
         val remoteUpdateRounds = if (realServerHeavyModeEnabled(config)) 160 else 40
         val localUpdateIterations = if (realServerHeavyModeEnabled(config)) 1_600 else 320
         val readerCoroutines = if (realServerHeavyModeEnabled(config)) 6 else 2
@@ -67,12 +67,12 @@ internal class RealServerSharedConnectionStressTest : RealServerSupport() {
                     },
                 )
 
-                val seedClient = newRealServerClient(seedDb, seedHttp, uploadLimit = 4, downloadLimit = 1)
-                val activeClient = newRealServerClient(activeDb, activeHttp, uploadLimit = 4, downloadLimit = 1)
+                val seedClient = newRealServerClient(seedDb, seedHttp, maxPushRows = 4, maxPullBundles = 1)
+                val activeClient = newRealServerClient(activeDb, activeHttp, maxPushRows = 4, maxPullBundles = 1)
 
                 seedClient.awaitConnected(userId)
                 seedClient.pullToStableUnlessDirty()
-                seedClient.pushPending().getOrThrow()
+                drainPendingLocalChanges(seedClient, seedDb)
                 activeClient.awaitConnected(userId)
                 activeClient.pullToStable().getOrThrow()
                 assertEquals(TotalRowCount.toLong(), queryUsersWithAliasStar(activeDb))

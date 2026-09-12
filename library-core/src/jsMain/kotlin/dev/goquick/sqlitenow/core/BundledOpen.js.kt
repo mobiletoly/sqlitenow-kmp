@@ -16,7 +16,12 @@
 package dev.goquick.sqlitenow.core
 
 import androidx.sqlite.SQLiteConnection
+import dev.goquick.sqlitenow.core.worker.SQLITE_WORKER_CLEANUP_TIMEOUT_MILLIS
+import dev.goquick.sqlitenow.core.worker.SQLITE_WORKER_DEFAULT_PAGE_BYTES
+import dev.goquick.sqlitenow.core.worker.SQLITE_WORKER_DEFAULT_PAGE_ROWS
+import dev.goquick.sqlitenow.core.worker.bundledSqliteWorkerStartupModeForTest
 import dev.goquick.sqlitenow.core.worker.openSqliteWorkerConnection
+import dev.goquick.sqlitenow.core.worker.openSqliteWorkerCoordinatedSession
 
 @Suppress("UNUSED_PARAMETER")
 internal actual suspend fun openBundledSqliteConnection(
@@ -30,3 +35,19 @@ internal actual suspend fun openBundledSqliteConnection(
     }
     return openSqliteWorkerConnection(dbName = dbName, config = config)
 }
+
+@OptIn(SqliteNowInternalApi::class)
+internal actual suspend fun createBundledCoordinatedOpeningProviderSession(
+    dbName: String,
+    debug: Boolean,
+    config: SqliteConnectionConfig,
+): SqliteNowCoordinatedProviderSession = openSqliteWorkerCoordinatedSession(
+    dbName = dbName,
+    debug = debug,
+    config = config,
+    workerModuleUrl = null,
+    pageRows = SQLITE_WORKER_DEFAULT_PAGE_ROWS,
+    pageBytes = SQLITE_WORKER_DEFAULT_PAGE_BYTES,
+    startupModeForTest = bundledSqliteWorkerStartupModeForTest,
+    cleanupTimeoutMillis = SQLITE_WORKER_CLEANUP_TIMEOUT_MILLIS,
+)

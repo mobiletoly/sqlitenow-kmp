@@ -47,9 +47,7 @@ private fun canonicalizeJsonPrimitive(value: JsonPrimitive): String {
     }
 }
 
-private fun canonicalizeJsonString(value: String): String {
-    val out = StringBuilder(value.length + 2)
-    out.append('"')
+internal fun requireUnicodeScalarString(value: String) {
     var index = 0
     while (index < value.length) {
         val ch = value[index]
@@ -61,6 +59,17 @@ private fun canonicalizeJsonString(value: String): String {
                 "invalid unpaired high surrogate"
             }
         }
+        index++
+    }
+}
+
+private fun canonicalizeJsonString(value: String): String {
+    requireUnicodeScalarString(value)
+    val out = StringBuilder(value.length + 2)
+    out.append('"')
+    var index = 0
+    while (index < value.length) {
+        val ch = value[index]
         when (ch) {
             '\\' -> out.append("\\\\")
             '"' -> out.append("\\\"")
@@ -164,6 +173,111 @@ internal fun sha256Hex(bytes: ByteArray): String {
     writeIntBigEndian(digest, 24, h6)
     writeIntBigEndian(digest, 28, h7)
     return bytesToHexLower(digest)
+}
+
+internal class Sha256Accumulator {
+    private val block = ByteArray(64)
+    private val words = IntArray(64)
+    private var used = 0
+    private var byteCount = 0L
+    private var h0 = 0x6a09e667
+    private var h1 = -0x4498517b
+    private var h2 = 0x3c6ef372
+    private var h3 = -0x5ab00ac6
+    private var h4 = 0x510e527f
+    private var h5 = -0x64fa9774
+    private var h6 = 0x1f83d9ab
+    private var h7 = 0x5be0cd19
+
+    fun appendAscii(value: Char) {
+        require(value.code < 0x80)
+        appendByte(value.code.toByte())
+    }
+
+    fun append(bytes: ByteArray) {
+        bytes.forEach(::appendByte)
+    }
+
+    private fun appendByte(value: Byte) {
+        block[used++] = value
+        byteCount++
+        if (used == block.size) {
+            compress()
+            used = 0
+        }
+    }
+
+    fun finishHex(): String {
+        val bitCount = byteCount * 8L
+        block[used++] = 0x80.toByte()
+        if (used > 56) {
+            while (used < block.size) block[used++] = 0
+            compress()
+            used = 0
+        }
+        while (used < 56) block[used++] = 0
+        for (shift in 56 downTo 0 step 8) block[used++] = (bitCount ushr shift).toByte()
+        compress()
+        val digest = ByteArray(32)
+        writeIntBigEndian(digest, 0, h0)
+        writeIntBigEndian(digest, 4, h1)
+        writeIntBigEndian(digest, 8, h2)
+        writeIntBigEndian(digest, 12, h3)
+        writeIntBigEndian(digest, 16, h4)
+        writeIntBigEndian(digest, 20, h5)
+        writeIntBigEndian(digest, 24, h6)
+        writeIntBigEndian(digest, 28, h7)
+        return bytesToHexLower(digest)
+    }
+
+    private fun compress() {
+        for (index in 0 until 16) {
+            val offset = index * 4
+            words[index] = ((block[offset].toInt() and 0xff) shl 24) or
+                ((block[offset + 1].toInt() and 0xff) shl 16) or
+                ((block[offset + 2].toInt() and 0xff) shl 8) or
+                (block[offset + 3].toInt() and 0xff)
+        }
+        for (index in 16 until 64) {
+            val s0 = words[index - 15].rotateRight(7) xor words[index - 15].rotateRight(18) xor
+                (words[index - 15] ushr 3)
+            val s1 = words[index - 2].rotateRight(17) xor words[index - 2].rotateRight(19) xor
+                (words[index - 2] ushr 10)
+            words[index] = words[index - 16] + s0 + words[index - 7] + s1
+        }
+        var a = h0
+        var b = h1
+        var c = h2
+        var d = h3
+        var e = h4
+        var f = h5
+        var g = h6
+        var h = h7
+        for (index in 0 until 64) {
+            val s1 = e.rotateRight(6) xor e.rotateRight(11) xor e.rotateRight(25)
+            val choice = (e and f) xor (e.inv() and g)
+            val temp1 = h + s1 + choice + SHA256_K[index] + words[index]
+            val s0 = a.rotateRight(2) xor a.rotateRight(13) xor a.rotateRight(22)
+            val majority = (a and b) xor (a and c) xor (b and c)
+            val temp2 = s0 + majority
+            h = g
+            g = f
+            f = e
+            e = d + temp1
+            d = c
+            c = b
+            b = a
+            a = temp1 + temp2
+        }
+        h0 += a
+        h1 += b
+        h2 += c
+        h3 += d
+        h4 += e
+        h5 += f
+        h6 += g
+        h7 += h
+    }
 }
 
 private fun padSha256(bytes: ByteArray): ByteArray {

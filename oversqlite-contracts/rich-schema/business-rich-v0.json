@@ -313,12 +313,12 @@
     {
       "name": "signed-64-min",
       "local": {"count_value": "-9223372036854775808", "small_count": "-32768", "medium_count": "-2147483648", "exact_amount": "-1234567890.123456789"},
-      "committed": {"count_value": "-9223372036854775808", "small_count": "-32768", "medium_count": "-2147483648", "exact_amount": "-1234567890.1234567890"}
+      "committed": {"count_value": "-9223372036854775808", "small_count": "-32768", "medium_count": "-2147483648", "exact_amount": "-1234567890.123456789"}
     },
     {
       "name": "signed-64-max",
       "local": {"count_value": "9223372036854775807", "small_count": "32767", "medium_count": "2147483647", "exact_amount": "1234567890.123456789"},
-      "committed": {"count_value": "9223372036854775807", "small_count": "32767", "medium_count": "2147483647", "exact_amount": "1234567890.1234567890"}
+      "committed": {"count_value": "9223372036854775807", "small_count": "32767", "medium_count": "2147483647", "exact_amount": "1234567890.123456789"}
     },
     {
       "name": "above-javascript-safe-range",

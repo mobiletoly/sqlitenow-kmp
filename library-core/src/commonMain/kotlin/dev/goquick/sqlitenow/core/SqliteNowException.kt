@@ -22,3 +22,13 @@ class SqliteNowException(
     message,
     cause
 )
+
+/** Ordinary opening was refused because coordinated sync admission owns this database. */
+class SqliteNowSyncOpenRequiredException(
+    message: String,
+) : RuntimeException(message)
+
+/** Another participating SQLiteNow owner already holds this database's lifecycle lease. */
+class SqliteNowLifecycleBusyException(
+    val databaseIdentity: String,
+) : RuntimeException("SQLiteNow database is already owned: $databaseIdentity")

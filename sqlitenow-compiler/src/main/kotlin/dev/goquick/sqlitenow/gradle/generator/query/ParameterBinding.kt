@@ -66,7 +66,14 @@ class ParameterBinding(
     ) {
         if (needsAdapter(statement, paramName)) {
             generateAdapterParameterBinding(
-                fnBld, paramName, paramIndex, propertyName, statement, processedAdapterVars
+                fnBld,
+                paramName,
+                paramIndex,
+                propertyName,
+                statement,
+                namespace,
+                className,
+                processedAdapterVars,
             )
         } else {
             generateRegularParameterBinding(
@@ -85,6 +92,8 @@ class ParameterBinding(
         paramIndex: Int,
         propertyName: String,
         statement: AnnotatedStatement,
+        namespace: String,
+        className: String,
         processedAdapterVars: MutableMap<String, String>
     ) {
         // Use actual column name for adapter function name (ignore property name customizations)
@@ -94,12 +103,22 @@ class ParameterBinding(
 
         val underlyingType = getUnderlyingTypeForParameter(statement, paramName)
         val isNullable = columnLookup.isParameterNullable(statement, paramName)
+        val isCollection = getActualParameterType(namespace, className, propertyName) == "Collection"
 
         val tempVarName = if (processedAdapterVars.containsKey(propertyName)) {
             processedAdapterVars[propertyName]!!
         } else {
             processedAdapterVars[propertyName] = propertyName
-            fnBld.addStatement("val %L = %L(params.%L)", propertyName, adapterParamName, propertyName)
+            if (isCollection) {
+                fnBld.addStatement(
+                    "val %L = Json.encodeToString(params.%L.map { %L(it) })",
+                    propertyName,
+                    propertyName,
+                    adapterParamName,
+                )
+            } else {
+                fnBld.addStatement("val %L = %L(params.%L)", propertyName, adapterParamName, propertyName)
+            }
             propertyName
         }
 

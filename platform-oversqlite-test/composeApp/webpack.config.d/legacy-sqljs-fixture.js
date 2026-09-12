@@ -3,6 +3,8 @@ const isLegacySqlJsFixtureTest = String(__dirname).includes(
 );
 
 if (isLegacySqlJsFixtureTest) {
+  // Shared JS fixtures retain lazy Node-only filesystem helpers; browser tests never call them.
+  config.externalsPresets = Object.assign({}, config.externalsPresets, { node: true });
   config.resolve = config.resolve || {};
   config.resolve.fallback = Object.assign({}, config.resolve.fallback, {
     fs: false,

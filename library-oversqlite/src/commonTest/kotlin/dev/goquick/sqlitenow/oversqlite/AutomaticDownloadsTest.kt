@@ -3,6 +3,7 @@ package dev.goquick.sqlitenow.oversqlite
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import io.ktor.http.HttpStatusCode
 import io.ktor.client.HttpClient
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
@@ -70,88 +71,6 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
             } finally {
                 worker.cancelAndJoin()
             }
-        } finally {
-            env.close()
-        }
-    }
-
-    @Test
-    fun automaticDownloads_pollingModePropagatesProtocolMismatchWithoutRetry() = runOwnedWebDatabaseTest {
-        val env = newTwoClientEnv()
-        try {
-            val hostileProtocolVersion = "HOSTILE_PROTOCOL_VERSION_SECRET"
-            env.server.protocolVersion = hostileProtocolVersion
-            val initialCapabilityAttempts = env.server.capabilitySourceIds.size
-            val initialPullAttempts = env.server.pullRequestCount
-
-            supervisorScope {
-                val worker = async(Dispatchers.Default) {
-                    env.follower.runAutomaticDownloads(
-                        OversqliteAutomaticDownloadConfig(
-                            automaticDownloadIntervalMillis = 25,
-                            bundleChangeWatchReconnectMinMillis = 10,
-                            bundleChangeWatchReconnectMaxMillis = 20,
-                        ),
-                    )
-                }
-
-                val mismatch = assertFailsWith<ProtocolVersionMismatchException> {
-                    withContext(Dispatchers.Default) {
-                        withTimeout(5_000) {
-                            worker.await()
-                        }
-                    }
-                }
-                assertEquals("v1", mismatch.expected)
-                assertEquals("", mismatch.actual)
-                assertEquals("oversqlite protocol version mismatch", mismatch.message)
-                assertFalse(mismatch.message.orEmpty().contains(hostileProtocolVersion))
-            }
-
-            assertEquals(initialCapabilityAttempts + 1, env.server.capabilitySourceIds.size)
-            assertEquals(initialPullAttempts, env.server.pullRequestCount)
-            assertTrue(env.server.watchAfterBundleSeqs.isEmpty())
-        } finally {
-            env.close()
-        }
-    }
-
-    @Test
-    fun automaticDownloads_pollingModePropagatesTableContractMismatchWithoutRetry() = runOwnedWebDatabaseTest {
-        val env = newTwoClientEnv()
-        try {
-            env.server.registeredTableSpecs = testRegisteredTableSpecs(
-                "users",
-                "posts",
-                "monitoring_focus",
-            )
-            val initialCapabilityAttempts = env.server.capabilitySourceIds.size
-            val initialPullAttempts = env.server.pullRequestCount
-
-            supervisorScope {
-                val worker = async(Dispatchers.Default) {
-                    env.follower.runAutomaticDownloads(
-                        OversqliteAutomaticDownloadConfig(
-                            automaticDownloadIntervalMillis = 25,
-                            bundleChangeWatchReconnectMinMillis = 10,
-                            bundleChangeWatchReconnectMaxMillis = 20,
-                        ),
-                    )
-                }
-
-                val mismatch = assertFailsWith<SyncTableContractMismatchException> {
-                    withContext(Dispatchers.Default) {
-                        withTimeout(5_000) {
-                            worker.await()
-                        }
-                    }
-                }
-                assertEquals(listOf("main.monitoring_focus"), mismatch.serverOnlyTables)
-            }
-
-            assertEquals(initialCapabilityAttempts + 1, env.server.capabilitySourceIds.size)
-            assertEquals(initialPullAttempts, env.server.pullRequestCount)
-            assertTrue(env.server.watchAfterBundleSeqs.isEmpty())
         } finally {
             env.close()
         }
@@ -272,6 +191,201 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
+    fun automaticDownloads_pausedWatchClosureDoesNotRunFallbackPull() = runOwnedWebDatabaseTest {
+        for (cause in listOf<Throwable?>(null, IllegalStateException("test watch stream failure"))) {
+            val env = newTwoClientEnv {
+                bundleChangeWatchSupported = true
+                holdNextWatchResponseOpen()
+            }
+            try {
+                val worker = launch(Dispatchers.Default) {
+                    env.follower.runAutomaticDownloads(autoWatchConfig(reconnectMinMillis = 1_000))
+                }
+                try {
+                    eventually { env.server.watchAfterBundleSeqs.isNotEmpty() }
+                    env.follower.pauseDownloads()
+                    insertUser(env.leaderDb, "watch-paused-close", "Retained")
+                    env.leader.pushPending().getOrThrow()
+                    val initialPulls = env.server.pullRequestCount
+                    env.server.closeHeldWatchResponses(cause)
+                    withContext(Dispatchers.Default) { delay(150) }
+
+                    assertEquals(initialPulls, env.server.pullRequestCount)
+                    assertEquals(
+                        0L,
+                        OversqliteAttachmentStateStore(env.followerDb).loadState().lastBundleSeqSeen,
+                    )
+                    assertEquals(
+                        0L,
+                        scalarLong(env.followerDb, "SELECT COUNT(*) FROM users WHERE id = 'watch-paused-close'"),
+                    )
+
+                    env.follower.resumeDownloads()
+                    eventually {
+                        scalarLong(env.followerDb, "SELECT COUNT(*) FROM users WHERE id = 'watch-paused-close'") == 1L
+                    }
+                } finally {
+                    worker.cancelAndJoin()
+                }
+            } finally {
+                env.close()
+            }
+        }
+    }
+
+    @Test
+    fun automaticDownloads_openWatchRetainsPausedTargetUntilResumeWithoutAnotherEvent() = runOwnedWebDatabaseTest {
+        val env = newTwoClientEnv {
+            bundleChangeWatchSupported = true
+            holdNextWatchResponseOpen()
+        }
+        try {
+            val worker = launch(Dispatchers.Default) {
+                env.follower.runAutomaticDownloads(
+                    OversqliteAutomaticDownloadConfig(
+                        automaticDownloadIntervalMillis = 25,
+                        bundleChangeWatchMode = BundleChangeWatchMode.AUTO,
+                        bundleChangeWatchReconnectMinMillis = 10,
+                        bundleChangeWatchReconnectMaxMillis = 20,
+                    ),
+                )
+            }
+            try {
+                eventually { env.server.watchAfterBundleSeqs.isNotEmpty() }
+                env.follower.pauseDownloads()
+                insertUser(env.leaderDb, "watch-resume", "Retained")
+                env.leader.pushPending().getOrThrow()
+                env.server.sendHeldWatchBundleEvent(1)
+                assertEquals(0L, scalarLong(env.followerDb, "SELECT COUNT(*) FROM users WHERE id = 'watch-resume'"))
+                env.follower.resumeDownloads()
+                eventually {
+                    scalarLong(env.followerDb, "SELECT COUNT(*) FROM users WHERE id = 'watch-resume'") == 1L
+                }
+                assertEquals(1, env.server.watchAfterBundleSeqs.size)
+            } finally {
+                worker.cancelAndJoin()
+            }
+        } finally {
+            env.close()
+        }
+    }
+
+    @Test
+    fun automaticDownloads_openWatchRetriesFailedPullWithoutAnotherEvent() = runOwnedWebDatabaseTest {
+        val env = newTwoClientEnv {
+            bundleChangeWatchSupported = true
+            holdNextWatchResponseOpen()
+        }
+        try {
+            val worker = launch(Dispatchers.Default) {
+                env.follower.runAutomaticDownloads(
+                    autoWatchConfig().copy(automaticDownloadIntervalMillis = 25),
+                )
+            }
+            try {
+                eventually { env.server.watchAfterBundleSeqs.isNotEmpty() }
+                insertUser(env.leaderDb, "watch-retry", "Retained")
+                env.leader.pushPending().getOrThrow()
+                env.server.remainingTransientPullFailures = 3
+                env.server.sendHeldWatchBundleEvent(1)
+                eventually {
+                    scalarLong(env.followerDb, "SELECT COUNT(*) FROM users WHERE id = 'watch-retry'") == 1L
+                }
+                assertEquals(1, env.server.watchAfterBundleSeqs.size)
+            } finally {
+                worker.cancelAndJoin()
+            }
+        } finally {
+            env.close()
+        }
+    }
+
+    @Test
+    fun automaticDownloads_openWatchRetriesAfterOperationContentionWithoutAnotherEvent() = runOwnedWebDatabaseTest {
+        val env = newTwoClientEnv {
+            bundleChangeWatchSupported = true
+            holdNextWatchResponseOpen()
+        }
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val watchPullDenied = CompletableDeferred<Unit>()
+        try {
+            val generation = testGeneration()
+            val sourceId = env.follower.sourceInfo().getOrThrow().currentSourceId
+            val worker = launch(Dispatchers.Default) {
+                OversqliteAutomaticDownloads(
+                    automaticDownloadConfig = autoWatchConfig().copy(automaticDownloadIntervalMillis = 60_000),
+                    remoteApi = OversqliteRemoteApi(
+                        http = env.followerHttp,
+                        json = Json { ignoreUnknownKeys = true },
+                        generation = { generation },
+                        log = { },
+                    ),
+                    attachmentStateStore = OversqliteAttachmentStateStore(env.followerDb),
+                    downloadsPaused = { false },
+                    connectedRuntimeState = {
+                        RuntimeState(
+                            validated = ValidatedConfig(
+                                generation = generation,
+                                tables = emptyList(),
+                                pkByTable = emptyMap(),
+                                keyByTable = emptyMap(),
+                                tableOrder = emptyMap(),
+                                tableInfoByName = emptyMap(),
+                            ),
+                            admittedContract = AdmittedOversqliteContract(
+                                protocolVersion = "v1",
+                                generation = generation,
+                                limits = testWireLimits(),
+                                watchEnabled = true,
+                            ),
+                            userId = "user-1",
+                            sourceId = sourceId,
+                        )
+                    },
+                    pullToStable = {
+                        env.follower.pullToStable().also { result ->
+                            if (result.exceptionOrNull() is SyncOperationInProgressException) {
+                                watchPullDenied.complete(Unit)
+                            }
+                        }
+                    },
+                    log = { },
+                ).run()
+            }
+            var manual: kotlinx.coroutines.Job? = null
+            try {
+                eventually { env.server.watchAfterBundleSeqs.isNotEmpty() }
+                env.server.beforePullResponse = {
+                    entered.complete(Unit)
+                    release.await()
+                }
+                manual = launch(Dispatchers.Default) { env.follower.sync().getOrThrow() }
+                eventually { entered.isCompleted }
+                entered.await()
+                insertUser(env.leaderDb, "watch-contention", "Retained")
+                env.leader.pushPending().getOrThrow()
+                env.server.sendHeldWatchBundleEvent(1)
+                withContext(Dispatchers.Default) {
+                    withTimeout(2_000) { watchPullDenied.await() }
+                }
+                release.complete(Unit)
+                manual.join()
+                eventually(timeoutMillis = 2_000) {
+                    scalarLong(env.followerDb, "SELECT COUNT(*) FROM users WHERE id = 'watch-contention'") == 1L
+                }
+                assertEquals(1, env.server.watchAfterBundleSeqs.size)
+            } finally {
+                release.complete(Unit)
+                manual?.cancelAndJoin()
+                worker.cancelAndJoin()
+            }
+        } finally {
+            env.close()
+        }
+    }
+
+    @Test
     fun automaticDownloads_watchSetupErrorsFallBackToPull() = runOwnedWebDatabaseTest {
         val setupErrors = listOf(
             HttpStatusCode.BadRequest to "invalid_request",
@@ -319,7 +433,7 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun automaticDownloads_watchReconnectUsesFreshCapabilitiesAndLatestDurableState() = runOwnedWebDatabaseTest {
+    fun automaticDownloads_watchReconnectUsesAdmittedContractAndLatestDurableState() = runOwnedWebDatabaseTest {
         val env = newTwoClientEnv {
             bundleChangeWatchSupported = true
         }
@@ -327,20 +441,19 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
             insertUser(env.leaderDb, "u1", "Ada")
             env.leader.pushPending().getOrThrow()
 
-            val initialCapabilityRequests = env.server.capabilitySourceIds.size
+            val initialDiscoveryRequests = env.server.discoverySourceIds.size
             val worker = launch(Dispatchers.Default) {
                 env.follower.runAutomaticDownloads(autoWatchConfig())
             }
             try {
                 eventually {
-                    env.server.watchAfterBundleSeqs.contains(1L) &&
-                        env.server.capabilitySourceIds.size >= initialCapabilityRequests + 2
+                    env.server.watchAfterBundleSeqs.contains(1L)
                 }
 
                 assertEquals(0L, env.server.watchAfterBundleSeqs.first())
                 assertContains(env.server.watchAfterBundleSeqs, 1L)
                 assertTrue(env.server.watchSourceIds.all { it.isNotBlank() })
-                assertEquals(env.server.watchSourceIds.last(), env.server.capabilitySourceIds.last())
+                assertEquals(initialDiscoveryRequests, env.server.discoverySourceIds.size)
             } finally {
                 worker.cancelAndJoin()
             }
@@ -350,7 +463,7 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
     }
 
     @Test
-    fun automaticDownloads_heartbeatsDoNotTriggerPullsByThemselves() = runOwnedWebDatabaseTest {
+    fun automaticDownloads_heartbeatsDoNotPreventEofFallbackPull() = runOwnedWebDatabaseTest {
         val env = newTwoClientEnv {
             bundleChangeWatchSupported = true
             enqueueWatchResponse(
@@ -370,11 +483,9 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
             }
             try {
                 eventually {
-                    env.server.watchAfterBundleSeqs.size == 1 && env.server.pullRequestCount == 1
+                    env.server.watchAfterBundleSeqs.isNotEmpty() && env.server.pullRequestCount > 0
                 }
-                delay(100)
-                assertEquals(1, env.server.watchAfterBundleSeqs.size)
-                assertEquals(1, env.server.pullRequestCount)
+                assertEquals(0L, env.server.watchAfterBundleSeqs.first())
             } finally {
                 worker.cancelAndJoin()
             }
@@ -437,12 +548,10 @@ internal class AutomaticDownloadsTest : CrossTargetSyncTestSupport() {
                 remoteApi = OversqliteRemoteApi(
                     http = http,
                     json = Json { ignoreUnknownKeys = true },
-                    log = { },
-                ),
+                    log = { }, generation = { testGeneration() },),
                 attachmentStateStore = OversqliteAttachmentStateStore(db),
                 downloadsPaused = { false },
                 connectedRuntimeState = { error("unused") },
-                fetchCapabilities = { error("unused") },
                 pullToStable = { Result.failure(IllegalStateException(sentinel)) },
                 log = { logs += it() },
             ).run()

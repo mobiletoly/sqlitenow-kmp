@@ -12,18 +12,30 @@ This page describes the current oversqlite operations.
 
 ## Lifecycle Operations
 
-### `open()`
+### `openForSync(...).advance()`
 
-Prepares the local runtime and restores or creates the current internal source identity. Local-only.
-Call on every launch.
+Coordinates inspection, migration, and publication of the exact ready database/client pair. Call
+on every launch and retain the pair published by that opening:
+
+```kotlin
+val opening = database.openForSync(config, httpClient, resolver)
+opening.advance()
+val ready = checkNotNull(opening.readyOrNull())
+val database = ready.database
+val client = ready.client
+```
+
+Fresh and unchanged advancement is local-only. Generation-change advancement can require the
+server. Do not call ordinary `open()` for a sync-managed database.
 
 ### `attach(userId)`
 
 Attaches or resumes the authenticated account scope. Required before connected sync operations.
 
-An initial or remote attach validates the server's advertised sync-table contract before
-`/sync/connect` or snapshot creation. Resuming the same durable attachment remains local-only and
-network-free; the next operation that already contacts the server performs the validation.
+Every opened client admits the server's discovery contract before publishing an attached result.
+A new attachment validates discovery before `/sync/connect`; a durable same-user resume refreshes
+discovery for the new client lifetime. Ordinary sync operations reuse the immutable admitted
+contract and do not perform contract preflights.
 
 ### `sourceInfo()`
 
@@ -33,7 +45,7 @@ Returns read-only diagnostic information about the current internal source state
 
 Returns the current authority and pending-sync status for the attached scope.
 
-Requires successful `open()` and `attach(userId)`.
+Requires a ready result from `openForSync(...).advance()` and successful `attach(userId)`.
 
 ### `detach()`
 
@@ -51,7 +63,9 @@ state is rebound to a fresh internal source identity.
 
 ### `syncThenDetach()`
 
-Runs bounded best-effort `sync()` rounds and then attempts `detach()`.
+Runs at most three `sync()`/`detach()` rounds with one shared allowance of 64 push attempts.
+`SyncThenDetachResult.lastSync` is absent when no round completed sync. A blocked result includes
+`blockedReason` and the remaining pending row count; it leaves the attachment intact.
 
 If the final detach succeeds destructively, `syncThenDetach()` rotates to the same fresh-source
 anonymous state as plain `detach()`. If it returns `BLOCKED_UNSYNCED_DATA`, the existing source is
@@ -59,21 +73,21 @@ preserved.
 
 ## Connected Sync Operations
 
-These operations require successful `open()` and `attach(userId)`.
+These operations require a ready result from `openForSync(...).advance()` and successful
+`attach(userId)`.
 
-Before remote sync work, SQLiteNow compares the validated local schema, managed tables, and ordered
-sync-key columns with `registered_table_specs` from `/sync/capabilities`. Table ordering is ignored,
-but identifiers and key order must match exactly. A difference throws
-`SyncTableContractMismatchException` before connect, outbox freeze, pull, or snapshot work. Its
-sorted `serverOnlyTables`, `clientOnlyTables`, and `syncKeyMismatches` fields are safe for
-compatibility diagnostics.
-
-This check establishes table/key compatibility only. It is not wire-profile, projection, or
-per-column payload negotiation.
+Attachment obtains the contract once from `/sync/generations/{id}` and validates the full managed
+SQLite shape, pending values, limits, and watch availability before admission. A changed
+fingerprint fails closed. Server schemas and wire types are discovered automatically; applications
+keep ordinary SQL and table selection.
 
 ### `pushPending()`
 
-Freezes the current dirty snapshot into one logical outbound bundle and uploads it.
+Freezes a dependency-ordered batch within both the local transfer targets and admitted server row
+and decoded-byte limits, then sends exactly one compact `POST /sync/push`. Remaining rows stay
+pending for later calls. One row may exceed a local byte target to guarantee progress, but a row
+over the server hard limit fails before the outbox changes or a source bundle ID is consumed.
+Retries reuse the exact frozen request.
 
 Returns `PushReport` with:
 
@@ -89,33 +103,34 @@ Returns `RemoteSyncReport`.
 
 ### `sync()`
 
-Runs the standard interactive flow:
+Drains successive bounded pushes, then pulls to a stable remote checkpoint. A local write arriving
+before a fetched bundle applies returns the flow to upload drainage. One invocation admits at most
+64 push attempts, including conflict reentry and checkpoint recovery. `SyncIncompleteException`
+reports `PUSH_ATTEMPT_LIMIT` or `NO_PROGRESS`, pending dirty/outbound counts, push attempts, and
+uniquely confirmed bundles. Already committed work stays durable and the next `sync()` may resume.
+One-bundle `pushPending()` and fail-closed `pullToStable()` keep their separate meanings.
 
-1. `pushPending()`
-2. `pullToStable()`
+Upload and download pause flags control background work; explicit operations continue while paused.
+An automatic watch retains its pending high-water target across a temporary blocker or pause.
 
-Returns `SyncReport`.
+Returns `SyncReport` only after the final local pending-state check succeeds.
 
 ## Numeric Wire Contract
 
-Oversqlite uses RFC 8785 JCS plus `jcs_uniform_numeric_strings_v1`. Every synchronized SQLite
-`INTEGER` and finite `REAL` business value is a canonical JSON string on push, pull, conflict,
-committed replay, and snapshot surfaces. Exact decimal values remain SQLite `TEXT` and JSON
-strings. Floating values use the shortest finite binary64 spelling, and negative zero becomes
-`"0"`.
+Oversqlite's breaking v1 contract uses canonical strings for signed integers, finite binary64
+values and exact decimals on every wire surface. Negative floating zero becomes `"0"`. Boolean
+columns use JSON Booleans; UUID, byte and JSON columns use the representation declared by the
+server generation. SQLite affinity determines whether local storage is compatible.
 
-SQLite Boolean affinity uploads only the strict strings `"0"` and `"1"`; authoritative server
-responses use JSON Booleans. Invalid signed-64, non-finite, or non-canonical numeric values fail
-before row or retry-state mutation. Numeric behavior is affinity-driven and has no per-column
-configuration surface.
-
-This is a fresh-database contract. In-place migration, hash fallback, mixed-version operation, and
-wire-profile negotiation are not supported.
+Pending changes retain their SQLite storage types before discovery. Invalid values remain pending
+and fail admission or upload. Applications do not specify wire types or codecs in SQL.
+Incompatible development databases must be explicitly recreated; legacy state conversion is not
+part of this contract.
 
 ## Automatic Downloads And Watch
 
-Automatic downloads are optional and default-off. Starting the worker is explicit; `open()` and
-`attach(userId)` never start background network work.
+Automatic downloads are optional and default-off. Starting the worker is explicit;
+`openForSync(...).advance()` and `attach(userId)` never start background network work.
 
 The worker downloads only. It never uploads local changes, clears dirty state, rebuilds
 automatically, or bypasses sync recovery gates.
@@ -127,7 +142,7 @@ Polling and bundle-change watch both wake the same authoritative download path:
 | Polling | The configured interval expires. | `pullToStable()` responses. | The next interval tries again. |
 | Bundle-change watch | The server emits a `/sync/watch` bundle event. | `pullToStable()` responses. | The worker falls back to polling and later retries watch. |
 
-When bundle-change watch is enabled and the server advertises `features.bundle_change_watch`, the
+When bundle-change watch is enabled and the admitted discovery contract sets `watch_enabled`, the
 worker opens `/sync/watch` as a metadata-only wake-up stream. Watch events do not contain
 authoritative row data for the client to apply. Every remote mutation still reaches SQLite through
 the ordinary `pullToStable()` path.
@@ -204,3 +219,24 @@ The current source stream is stale or out-of-order. Ordinary sync is blocked unt
 The server and client disagree about synchronized tables or their sync keys. Correct the generated
 client configuration or server registration before retrying. Automatic downloads treat this as a
 terminal compatibility failure instead of polling indefinitely.
+
+### `OversqliteRemoteContractException`
+
+A validated server contract error retains its `code`, `httpStatus`, `operation`, `remediation`,
+`retryable` flag, and optional discovery `generationId`. Non-retryable errors stop automatic
+downloads; retryable capacity errors retain transport retry behavior. Malformed error envelopes
+fail protocol validation.
+
+The SDK owns source and generation headers. A default header may match the exact ordinary request
+identity once; conflicting or duplicate values fail before dispatch. Discovery rejects generation
+proof defaults because it discovers that proof.
+## Explicit conflict resolution
+
+The default resolver defers conflicts and preserves the frozen outbound request. A failed
+`pushPending()` or `sync()` reports `ConflictNeedsResolutionException`; inspect the durable handle
+with `pendingConflict()`, then call `resolveConflict(handle, result)` or
+`retryConflict(handle)`. Server-wins and client-wins behavior remain available only when selected
+explicitly. A handle becomes stale after a newer local edit and is rejected without mutation.
+
+Oversqlite does not follow HTTP redirects. Redirect responses are returned as bounded HTTP errors,
+so authenticated source and generation-proof headers are never replayed to a redirect target.

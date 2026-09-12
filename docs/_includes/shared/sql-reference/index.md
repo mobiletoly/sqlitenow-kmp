@@ -3,8 +3,8 @@
 Reference documentation for SQLiteNow SQL files, annotations, query generation,
 and generated APIs.
 
-{% assign base = "/flutter/sql-reference" %}
-{% assign migrations = "/flutter/migrations" %}
+{% assign base = "/kmp/sql-reference" %}
+{% assign migrations = "/kmp/migrations" %}
 {% if include.platform == "kmp" %}
 {% assign base = "/kmp/sql-reference" %}
 {% assign migrations = "/kmp/migrations" %}

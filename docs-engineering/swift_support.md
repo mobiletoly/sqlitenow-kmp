@@ -119,7 +119,7 @@ asset path and public SwiftPM tag have passed clean-consumer validation with
 
 ## Current Release Gate
 
-Phase 13D remains blocked until a real release provides:
+Swift interoperability remains blocked until a real release provides:
 
 - a `vX.Y.Z` GitHub Release with compiler, core runtime, and sync runtime assets
 - a bare `X.Y.Z` SwiftPM distribution tag

@@ -359,7 +359,7 @@ internal fun generatorContext(
     createViewStatements: List<AnnotatedCreateViewStatement> = emptyList(),
     selectStatements: List<AnnotatedSelectStatement> = emptyList(),
 ): GeneratorContext {
-    val tmpDir = createTempDirectory(prefix = "phase3-mapping-").toFile()
+    val tmpDir = createTempDirectory(prefix = "mapping-mapping-").toFile()
     val namespaces: Map<String, List<AnnotatedStatement>> =
         if (selectStatements.isEmpty()) {
             emptyMap()

@@ -110,44 +110,38 @@ class SqliteNowCompilerArtifactTest {
     }
 
     @Test
-    fun compilerArtifactPreservesLegacyDartRequestCompatibility() {
-        val sqlDir = createLegacyDartSql("LegacyDartDatabase")
-        val outputDir = tempDir.resolve("generated-dart")
-        val requestFile = tempDir.resolve("legacy-dart-request.json").apply {
+    fun compilerArtifactRejectsBackendFieldBeforeOutputMutation() {
+        val outputDir = tempDir.resolve("generated").apply {
+            mkdirs()
+            resolve("preserved.txt").writeText("preserve")
+        }
+        val requestFile = tempDir.resolve("unsupported-backend-request.json").apply {
             writeText(
                 buildJsonObject {
                     put("contractVersion", 1)
-                    put("databaseName", "LegacyDartDatabase")
-                    put("sqlDirectory", sqlDir.absolutePath)
-                    put("packageName", "ignored.for.dart")
+                    put("databaseName", "UnsupportedBackendDatabase")
+                    put("sqlDirectory", tempDir.resolve("missing-sql").absolutePath)
+                    put("packageName", "com.test.unsupported")
                     put("outputDirectory", outputDir.absolutePath)
-                    put("schemaDatabaseFile", JsonNull)
-                    put("debug", false)
-                    put("oversqlite", false)
-                    put("backend", "dart")
+                    put("backend", "removed")
                 }.toString()
             )
         }
 
         val run = runCompilerJar(requestFile)
-        assertEquals(0, run.exitCode, "stdout:\n${run.stdout}\nstderr:\n${run.stderr}")
-
-        val response = run.response
-        assertEquals(true, response.getValue("success").jsonPrimitive.boolean)
-        assertEquals(1, response.getValue("contractVersion").jsonPrimitive.content.toInt())
-        assertFalse(response.containsKey("generatedSwiftFiles"))
-        assertEquals(listOf(outputDir.resolve("legacy_dart_database.dart").absolutePath), response.stringArray("generatedFiles"))
-        assertTrue(outputDir.resolve("legacy_dart_database.dart").isFile)
+        assertEquals(1, run.exitCode, "stdout:\n${run.stdout}\nstderr:\n${run.stderr}")
+        assertTrue(run.response.getValue("failure").jsonObject.getValue("message").jsonPrimitive.content.contains("Unsupported field 'backend'"))
+        assertEquals("preserve", outputDir.resolve("preserved.txt").readText())
     }
 
     @Test
-    fun compilerArtifactRejectsUnsupportedLegacyContractWithoutEchoingIt() {
+    fun compilerArtifactRejectsUnsupportedKotlinContractWithoutEchoingIt() {
         val requestFile = tempDir.resolve("unsupported-legacy-contract-request.json").apply {
             writeText(
                 buildJsonObject {
                     put("contractVersion", 999)
-                    put("databaseName", "UnsupportedLegacyContractDatabase")
-                    put("sqlDirectory", tempDir.resolve("sql/UnsupportedLegacyContractDatabase").absolutePath)
+                    put("databaseName", "UnsupportedKotlinContractDatabase")
+                    put("sqlDirectory", tempDir.resolve("sql/UnsupportedKotlinContractDatabase").absolutePath)
                     put("packageName", "com.test.unsupported")
                     put("outputDirectory", tempDir.resolve("generated-unsupported").absolutePath)
                     put("schemaDatabaseFile", JsonNull)
@@ -268,9 +262,12 @@ class SqliteNowCompilerArtifactTest {
         assertTrue(databaseSwift.contains("@preconcurrency import SQLiteNowSyncRuntime"))
         assertTrue(supportSwift.contains("@preconcurrency import SQLiteNowSyncRuntime"))
         assertTrue(syncSupportSwift.contains("@preconcurrency import SQLiteNowSyncRuntime"))
-        assertTrue(syncSupportSwift.contains("public struct SQLiteNowSyncAuth: Sendable"))
+        assertTrue(syncSupportSwift.contains("public struct SQLiteNowSyncAuth: @unchecked Sendable"))
         assertTrue(syncSupportSwift.contains("refreshedAccessTokenProvider"))
         assertFalse(syncSupportSwift.contains("refreshTokenProvider"))
+        assertFalse(syncSupportSwift.contains("read" + "Old"))
+        assertFalse(syncSupportSwift.contains("SQLiteNowSync" + "OldValue"))
+        assertFalse(syncSupportSwift.contains("old" + "ReadsAvailable"))
         assertFalse(supportSwift.contains("public struct SQLiteNowSyncAuth: Sendable"))
         assertFalse(databaseSwift.contains("@preconcurrency import SQLiteNowCoreRuntime"))
         assertTrue(databaseSwift.contains("SQLiteNowSyncRuntimeTableSpec(tableName: \"docs\", syncKeyColumnName: \"doc_id\")"))
@@ -488,7 +485,7 @@ class SqliteNowCompilerArtifactTest {
         val syncSupportSwift = packagedSyncSupport.readText()
         assertTrue(swift.contains("@preconcurrency import SQLiteNowSyncRuntime"))
         assertTrue(swift.contains("SQLiteNowSyncRuntimeTableSpec(tableName: \"docs\", syncKeyColumnName: \"doc_id\")"))
-        assertTrue(syncSupportSwift.contains("public struct SQLiteNowSyncAuth: Sendable"))
+        assertTrue(syncSupportSwift.contains("public struct SQLiteNowSyncAuth: @unchecked Sendable"))
         assertTrue(syncSupportSwift.contains("refreshedAccessTokenProvider"))
         assertFalse(syncSupportSwift.contains("refreshTokenProvider"))
 
@@ -593,32 +590,6 @@ class SqliteNowCompilerArtifactTest {
                 ),
                 expectedMessage = "request specified 999",
             ),
-            FailureScenario(
-                name = "swift product request with legacy backend dart",
-                request = swiftProductRequest(
-                    databaseName = "FailureCoreDatabase",
-                    sqlDirectory = validSqlDir,
-                    compilerOutputDirectory = tempDir.resolve("compiler-output/legacy-backend"),
-                    swiftOutputDirectory = tempDir.resolve("swift-output/LegacyBackendSQLiteNow"),
-                    swiftModuleName = "LegacyBackendSQLiteNow",
-                    runtime = "core",
-                    legacyBackend = "dart",
-                ),
-                expectedMessage = "legacy request field(s): backend",
-            ),
-            FailureScenario(
-                name = "swift product request with legacy oversqlite field",
-                request = swiftProductRequest(
-                    databaseName = "FailureCoreDatabase",
-                    sqlDirectory = validSqlDir,
-                    compilerOutputDirectory = tempDir.resolve("compiler-output/legacy-oversqlite"),
-                    swiftOutputDirectory = tempDir.resolve("swift-output/LegacyOversqliteSQLiteNow"),
-                    swiftModuleName = "LegacyOversqliteSQLiteNow",
-                    runtime = "sync",
-                    includeLegacyOversqlite = true,
-                ),
-                expectedMessage = "legacy request field(s): oversqlite",
-            ),
         )
 
         return scenarios.map { scenario ->
@@ -642,6 +613,53 @@ class SqliteNowCompilerArtifactTest {
             }
         }
     }
+
+    @TestFactory
+    fun compilerArtifactRejectsRetiredSwiftFieldsBeforeSqlOrOutputMutation(): List<DynamicTest> =
+        listOf(
+            "swiftExport",
+            "swiftOverlayOutputDir",
+            "swiftOverlayModuleName",
+            "swiftFrameworkModuleName",
+            "swiftBridgePackageName",
+            "frameworkModuleName",
+            "bridgePackageName",
+        ).map { retiredField ->
+            DynamicTest.dynamicTest(retiredField) {
+                val sqlDir = tempDir.resolve("sql/retired-$retiredField")
+                sqlDir.resolve("schema/invalid.sql").apply {
+                    parentFile.mkdirs()
+                    writeText("THIS IS NOT SQL")
+                }
+                val outputDir = tempDir.resolve("generated-retired-$retiredField").apply { mkdirs() }
+                val sentinel = outputDir.resolve("user-owned.txt").apply { writeText("preserve") }
+                val requestFile = tempDir.resolve("retired-$retiredField-request.json").apply {
+                    writeText(
+                        buildJsonObject {
+                            put("contractVersion", 1)
+                            put("databaseName", "RetiredSwiftFieldDatabase")
+                            put("sqlDirectory", sqlDir.absolutePath)
+                            put("packageName", "com.test.retired")
+                            put("outputDirectory", outputDir.absolutePath)
+                            put("debug", false)
+                            put("oversqlite", false)
+                            put(retiredField, "retired")
+                        }.toString()
+                    )
+                }
+
+                val run = runCompilerJar(requestFile)
+
+                assertEquals(1, run.exitCode, "stdout:\n${run.stdout}\nstderr:\n${run.stderr}")
+                assertTrue(
+                    run.response.getValue("failure").jsonObject.getValue("message").jsonPrimitive.content
+                        .contains("Retired Swift overlay/bridge field(s) are unsupported: $retiredField"),
+                    "Expected retired-field rejection before SQL parsing. stdout:\n${run.stdout}"
+                )
+                assertEquals("preserve", sentinel.readText(), "Retired-field rejection must not clean output")
+                assertEquals(listOf(sentinel), outputDir.listFiles()?.toList())
+            }
+        }
 
     @TestFactory
     fun compilerArtifactRejectsInvalidSwiftProductPackageRequests(): List<DynamicTest> {
@@ -997,20 +1015,6 @@ class SqliteNowCompilerArtifactTest {
                 ),
                 expectedMessage = "Refusing to clean existing Swift package output",
             ),
-            FailureScenario(
-                name = "package request with legacy backend dart",
-                request = swiftProductPackageRequest(
-                    databaseName = "FailurePackageDatabase",
-                    sqlDirectory = validSqlDir,
-                    compilerOutputDirectory = tempDir.resolve("compiler-output/package-legacy-backend"),
-                    swiftPackageName = "LegacyBackendPackageSQLiteNow",
-                    swiftTargetName = "LegacyBackendPackageSQLiteNow",
-                    runtime = "core",
-                    runtimeXcframeworkDirectory = runtimeDir,
-                    legacyBackend = "dart",
-                ),
-                expectedMessage = "legacy request field(s): backend",
-            ),
         )
 
         return scenarios.map { scenario ->
@@ -1055,7 +1059,7 @@ class SqliteNowCompilerArtifactTest {
     }
 
     @Test
-    fun compilerArtifactContractDescribesLegacyAndSwiftProductRequests() {
+    fun compilerArtifactContractDescribesKotlinAndSwiftProductRequests() {
         val compilerJar = compilerJar()
         val process = ProcessBuilder(
             javaExecutable(),
@@ -1076,7 +1080,9 @@ class SqliteNowCompilerArtifactTest {
         assertEquals(2, response.getValue("contractVersion").jsonPrimitive.content.toInt())
         assertEquals(compilerVersion(), response.getValue("generatorVersion").jsonPrimitive.content)
         assertEquals(listOf("1", "2"), response.getValue("supportedContractVersions").jsonArray.map { it.jsonPrimitive.content })
-        assertNotNull(response.getValue("requests").jsonObject["legacyKotlinOrDart"])
+        val requests = response.getValue("requests").jsonObject
+        assertNotNull(requests["kotlinV1"])
+        assertFalse(requests.getValue("kotlinV1").jsonObject.containsKey("backend"))
         val swiftRequest = response.getValue("requests").jsonObject.getValue("swiftProductSource").jsonObject
         assertEquals("swiftProductSource", swiftRequest.getValue("generationMode").jsonPrimitive.content)
         assertEquals("string-core-or-sync", swiftRequest.getValue("runtime").jsonPrimitive.content)
@@ -1197,8 +1203,6 @@ class SqliteNowCompilerArtifactTest {
         swiftModuleName: String?,
         runtime: String,
         runtimeModuleName: String? = null,
-        legacyBackend: String? = null,
-        includeLegacyOversqlite: Boolean = false,
     ): JsonObject =
         buildJsonObject {
             put("contractVersion", contractVersion)
@@ -1219,12 +1223,6 @@ class SqliteNowCompilerArtifactTest {
             }
             put("schemaDatabaseFile", JsonNull)
             put("debug", false)
-            if (legacyBackend != null) {
-                put("backend", legacyBackend)
-            }
-            if (includeLegacyOversqlite) {
-                put("oversqlite", true)
-            }
         }
 
     private fun swiftProductPackageRequest(
@@ -1242,8 +1240,6 @@ class SqliteNowCompilerArtifactTest {
         runtimeModuleName: String? = null,
         requestedAppleTargets: List<String>? = null,
         sqliteNowVersion: String? = "1.2.3",
-        legacyBackend: String? = null,
-        includeLegacyOversqlite: Boolean = false,
     ): JsonObject =
         buildJsonObject {
             put("contractVersion", contractVersion)
@@ -1287,12 +1283,6 @@ class SqliteNowCompilerArtifactTest {
             }
             put("schemaDatabaseFile", JsonNull)
             put("debug", false)
-            if (legacyBackend != null) {
-                put("backend", legacyBackend)
-            }
-            if (includeLegacyOversqlite) {
-                put("oversqlite", true)
-            }
         }
 
     private fun runtimeArtifactRequest(
@@ -1345,27 +1335,6 @@ class SqliteNowCompilerArtifactTest {
             parentFile.mkdirs()
             writeText("fake zipped runtime for $moduleName $version")
         }
-
-    private fun createLegacyDartSql(databaseName: String): File {
-        val sqlDir = tempDir.resolve("sql/$databaseName")
-        sqlDir.resolve("schema/person.sql").writeSql(
-            """
-                CREATE TABLE person (
-                    id INTEGER PRIMARY KEY NOT NULL,
-                    name TEXT NOT NULL
-                );
-            """.trimIndent()
-        )
-        sqlDir.resolve("queries/person/selectAll.sql").writeSql(
-            """
-                -- @@{ queryResult=PersonRow }
-                SELECT id, name
-                FROM person
-                ORDER BY id;
-            """.trimIndent()
-        )
-        return sqlDir
-    }
 
     private fun createCoreSwiftProductSql(databaseName: String): File {
         val sqlDir = tempDir.resolve("sql/$databaseName")

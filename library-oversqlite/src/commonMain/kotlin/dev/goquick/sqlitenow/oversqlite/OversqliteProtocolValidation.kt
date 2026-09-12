@@ -15,9 +15,13 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
@@ -37,13 +41,77 @@ internal fun requireValidOptionalOversqliteSessionToken(value: String): String =
     if (value.isEmpty()) value else requireValidOversqliteSessionToken(value)
 
 internal fun validateConnectResponse(response: ConnectResponse) {
-    if (response.resolution == "initialize_local") {
-        requireValidOversqliteSessionToken(response.initializationId)
-    } else {
-        require(response.initializationId.isEmpty()) {
-            "connect response initialization_id must be absent"
-        }
-    }
+	require(response.resolution in setOf("remote_authoritative", "initialize_local", "initialize_empty", "retry_later")) {
+		"connect response resolution is unsupported"
+	}
+	when (response.resolution) {
+		"initialize_local" -> {
+			requireValidOversqliteSessionToken(response.initializationId)
+			require(response.leaseExpiresAt.isNotBlank()) { "connect response lease_expires_at is required" }
+			parseOversqliteRfc3339Instant(response.leaseExpiresAt)
+			require(response.retryAfterSeconds == 0) { "connect response retry_after_seconds must be absent" }
+		}
+		"retry_later" -> {
+			require(response.retryAfterSeconds >= 1) { "connect response retry_after_seconds must be positive" }
+			require(response.leaseExpiresAt.isNotBlank()) { "connect response lease_expires_at is required" }
+			parseOversqliteRfc3339Instant(response.leaseExpiresAt)
+			require(response.initializationId.isEmpty()) { "connect response initialization_id must be absent" }
+		}
+		else -> {
+			require(response.initializationId.isEmpty()) { "connect response initialization_id must be absent" }
+			require(response.leaseExpiresAt.isEmpty()) { "connect response lease_expires_at must be absent" }
+			require(response.retryAfterSeconds == 0) { "connect response retry_after_seconds must be absent" }
+		}
+	}
+}
+
+internal fun validateConnectResponseWire(raw: String) {
+	try {
+		requireUniqueSnapshotJsonObjectMembers(raw)
+		val root = Json.parseToJsonElement(raw).jsonObject
+		val allowed = setOf("resolution", "initialization_id", "lease_expires_at", "retry_after_seconds")
+		require(root.keys.all(allowed::contains)) { "connect response contains unknown fields" }
+		val resolution = root["resolution"] as? JsonPrimitive
+		require(resolution != null && resolution.isString)
+		val initializationId = optionalConnectString(root, "initialization_id")
+		val leaseExpiresAt = optionalConnectString(root, "lease_expires_at")
+		val retryAfterSeconds = optionalConnectPositiveInt(root, "retry_after_seconds")
+		when (resolution.content) {
+			"initialize_local" -> {
+				require(initializationId != null)
+				requireValidOversqliteSessionToken(initializationId)
+				require(leaseExpiresAt != null && leaseExpiresAt.isNotBlank())
+				parseOversqliteRfc3339Instant(leaseExpiresAt)
+				require(retryAfterSeconds == null)
+			}
+			"retry_later" -> {
+				require(initializationId == null)
+				require(leaseExpiresAt != null && leaseExpiresAt.isNotBlank())
+				parseOversqliteRfc3339Instant(leaseExpiresAt)
+				require(retryAfterSeconds != null && retryAfterSeconds >= 1)
+			}
+			"initialize_empty", "remote_authoritative" -> {
+				require(initializationId == null && leaseExpiresAt == null && retryAfterSeconds == null)
+			}
+			else -> error("unsupported connect response resolution")
+		}
+	} catch (_: Throwable) {
+		throw RemoteResponseSemanticException("connect request")
+	}
+}
+
+private fun optionalConnectString(root: JsonObject, name: String): String? {
+		val value = root[name] ?: return null
+		val primitive = value as? JsonPrimitive
+		require(primitive != null && primitive.isString)
+		return primitive.content
+}
+
+private fun optionalConnectPositiveInt(root: JsonObject, name: String): Int? {
+		val value = root[name] ?: return null
+		val primitive = value as? JsonPrimitive
+		require(primitive != null && !primitive.isString)
+		return primitive.content.toIntOrNull() ?: error("connect response integer is invalid")
 }
 
 internal fun requireValidOversqliteSourceId(value: String): String {
@@ -97,7 +165,36 @@ internal fun validateBundle(bundle: Bundle) {
     require(bundle.bundleSeq > 0) { "bundle_seq ${bundle.bundleSeq} must be positive" }
     requireValidOversqliteSourceId(bundle.sourceId)
     require(bundle.sourceBundleId > 0) { "bundle source_bundle_id ${bundle.sourceBundleId} must be positive" }
-    validateIndexedRows(bundle.rows, "bundle", ::validateBundleRow)
+    validateIndexedRows(bundle.rows, "bundle") { row ->
+        validateBundleRow(row)
+        require(row.rowVersion == bundle.bundleSeq) {
+            "bundle row row_version ${row.rowVersion} does not match bundle_seq ${bundle.bundleSeq}"
+        }
+    }
+    require(isCanonicalSha256(bundle.bundleHash)) { "bundle_hash is invalid" }
+    require(canonicalCommittedBundleHash(bundle.rows) == bundle.bundleHash) { "bundle_hash does not match rows" }
+}
+
+internal fun canonicalCommittedBundleHash(rows: List<BundleRow>): String {
+    val digest = Sha256Accumulator()
+    digest.appendAscii('[')
+    rows.forEachIndexed { ordinal, row ->
+        if (ordinal > 0) digest.appendAscii(',')
+        val canonicalRow = buildJsonObject {
+            put("key", buildJsonObject {
+                row.key.entries.sortedBy { it.key }.forEach { (name, value) -> put(name, JsonPrimitive(value)) }
+            })
+            put("op", JsonPrimitive(row.op))
+            put("payload", if (row.op == "DELETE") JsonNull else row.payload ?: error("bundle row payload is required"))
+            put("row_ordinal", JsonPrimitive(ordinal.toString()))
+            put("row_version", JsonPrimitive(row.rowVersion.toString()))
+            put("schema", JsonPrimitive(row.schema))
+            put("table", JsonPrimitive(row.table))
+        }
+        digest.append(canonicalizeJsonElement(canonicalRow).encodeToByteArray())
+    }
+    digest.appendAscii(']')
+    return digest.finishHex()
 }
 
 internal fun validateBundleRow(row: BundleRow) {
@@ -135,9 +232,9 @@ internal fun validateSnapshotSession(session: SnapshotSession) {
         require(session.snapshotBundleSeq >= 0)
         require(session.rowCount >= 0)
         require(session.rowCount == 0L || session.snapshotBundleSeq > 0)
-        require(session.byteCount >= 0)
-        require(session.rowCount != 0L || session.byteCount == 0L)
-        require(session.rowCount == 0L || session.byteCount > 0L)
+        require(session.logicalByteCount >= 0)
+        require(session.rowCount != 0L || session.logicalByteCount == 0L)
+        require(session.rowCount == 0L || session.logicalByteCount > 0L)
         require(session.expiresAt.isNotBlank())
         parseOversqliteRfc3339Instant(session.expiresAt)
     } catch (error: IllegalArgumentException) {
@@ -155,13 +252,13 @@ internal fun validateSnapshotChunkResponse(
     maxBytes: Long,
 ) {
     try {
-        require(chunk.snapshotId == snapshotId)
-        require(chunk.snapshotBundleSeq == snapshotBundleSeq)
-        require(chunk.rows.isEmpty() || chunk.snapshotBundleSeq > 0)
+        require(snapshotId.isNotBlank())
+        require(snapshotBundleSeq >= 0L)
+        require(chunk.rows.isEmpty() || snapshotBundleSeq > 0)
         require(chunk.rows.size <= maxRows)
-        require(chunk.byteCount in 0..maxBytes)
-        require(chunk.rows.isNotEmpty() || chunk.byteCount == 0L)
-        require(chunk.rows.isEmpty() || chunk.byteCount > 0L)
+        require(chunk.logicalByteCount >= 0L)
+        require(chunk.rows.isNotEmpty() || chunk.logicalByteCount == 0L)
+        require(chunk.rows.isEmpty() || chunk.logicalByteCount > 0L)
         val expectedOrdinal = checkedAddSnapshotLong(afterRowOrdinal, chunk.rows.size.toLong()) {
             "snapshot chunk next ordinal overflow"
         }
@@ -177,64 +274,26 @@ internal fun validateSnapshotChunkResponse(
 }
 
 internal fun negotiateSnapshotLimits(
-    capabilities: CapabilitiesResponse,
+    contract: AdmittedOversqliteContract,
     config: OversqliteConfig,
 ): SnapshotNegotiation {
-    capabilities.requireSupportedProtocol()
-    val limits = capabilities.bundleLimits
-    if (limits.defaultRowsPerSnapshotChunk <= 0 || limits.maxRowsPerSnapshotChunk <= 0) {
-        throw SnapshotCapabilitiesException(
-            "snapshot capabilities require positive default_rows_per_snapshot_chunk and max_rows_per_snapshot_chunk",
-        )
-    }
-    if (limits.defaultRowsPerSnapshotChunk > limits.maxRowsPerSnapshotChunk) {
-        throw SnapshotCapabilitiesException(
-            "snapshot capability default_rows_per_snapshot_chunk exceeds max_rows_per_snapshot_chunk",
-        )
-    }
-    if (
-        limits.defaultBytesPerSnapshotChunk <= 0L ||
-        limits.maxBytesPerSnapshotChunk <= 0L ||
-        limits.maxBytesPerSnapshotRow <= 0L
-    ) {
-        throw SnapshotCapabilitiesException(
-            "snapshot capabilities require positive default/max chunk byte and max row byte limits",
-        )
-    }
-    if (limits.defaultBytesPerSnapshotChunk > limits.maxBytesPerSnapshotChunk) {
-        throw SnapshotCapabilitiesException(
-            "snapshot capability default_bytes_per_snapshot_chunk exceeds max_bytes_per_snapshot_chunk",
-        )
-    }
-    if (limits.maxBytesPerSnapshotRow > limits.maxBytesPerSnapshotChunk) {
-        throw SnapshotCapabilitiesException(
-            "snapshot capability max_bytes_per_snapshot_row exceeds max_bytes_per_snapshot_chunk",
-        )
-    }
-    if (limits.maxConcurrentSnapshotBuilds <= 0 || limits.maxConcurrentSnapshotChunkRequests <= 0) {
-        throw SnapshotCapabilitiesException(
-            "snapshot capabilities require positive max_concurrent_snapshot_builds and " +
-                "max_concurrent_snapshot_chunk_requests",
-        )
-    }
-    val effectiveRows = minOf(config.snapshotChunkRows, limits.maxRowsPerSnapshotChunk)
-    val effectiveBytes = minOf(config.snapshotChunkBytes, limits.maxBytesPerSnapshotChunk)
-    if (effectiveBytes < limits.maxBytesPerSnapshotRow) {
-        throw SnapshotCapabilitiesException(
-            "effective snapshot chunk byte budget is below server max_bytes_per_snapshot_row; " +
-                "increase snapshotChunkBytes",
-        )
-    }
-    if (config.snapshotApplyBatchBytes < limits.maxBytesPerSnapshotRow) {
-        throw SnapshotCapabilitiesException(
-            "snapshot apply byte budget is below server max_bytes_per_snapshot_row; " +
+    contract.requireSupportedProtocol()
+    val limits = contract.limits
+    val effectiveRows = minOf(config.transferTargets.maxSnapshotChunkRows, limits.maxSnapshotRowsPerChunk)
+    val effectiveBytes = minOf(
+        config.transferTargets.maxSnapshotChunkDecodedBytes,
+        limits.maxSnapshotDecodedBytesPerChunk,
+    )
+    if (config.snapshotApplyBatchBytes < limits.maxRowDecodedBytes) {
+        throw SnapshotTransferLimitException(
+            "snapshot apply byte budget is below server max_row_decoded_bytes; " +
                 "increase snapshotApplyBatchBytes",
         )
     }
     return SnapshotNegotiation(
         maxRows = effectiveRows,
         maxBytes = effectiveBytes,
-        maxRowBytes = limits.maxBytesPerSnapshotRow,
+        maxRowBytes = limits.maxRowDecodedBytes,
     )
 }
 
@@ -252,115 +311,6 @@ internal inline fun checkedAddSnapshotLong(
     return left + right
 }
 
-internal fun validatePushSessionCreateResponse(
-    response: PushSessionCreateResponse,
-    sourceBundleId: Long,
-    plannedRowCount: Long,
-    sourceId: String,
-    canonicalRequestHash: String,
-) {
-    val expectedSourceId = requireValidOversqliteSourceId(sourceId)
-    val responseSourceId = requireValidOptionalOversqliteSourceId(response.sourceId)
-    when (response.status) {
-        "staging" -> {
-            requireValidOversqliteSessionToken(response.pushId)
-            require(response.plannedRowCount == plannedRowCount) {
-                "push session response planned_row_count ${response.plannedRowCount} does not match requested $plannedRowCount"
-            }
-            require(response.nextExpectedRowOrdinal == 0L) {
-                "push session response next_expected_row_ordinal ${response.nextExpectedRowOrdinal} must be 0"
-            }
-            if (response.canonicalRequestHash != canonicalRequestHash) {
-                throw SourceSequenceMismatchException(
-                    "push session response canonical_request_hash ${response.canonicalRequestHash} does not match prepared hash $canonicalRequestHash",
-                )
-            }
-        }
-
-        "already_committed" -> {
-            require(response.bundleSeq > 0) { "push session already_committed response missing bundle_seq" }
-            requireValidOversqliteSourceId(responseSourceId)
-            require(responseSourceId == expectedSourceId) {
-                "push session already_committed response source_id does not match expected source"
-            }
-            require(response.sourceBundleId == sourceBundleId) {
-                "push session already_committed response source_bundle_id ${response.sourceBundleId} does not match requested $sourceBundleId"
-            }
-            require(response.rowCount >= 0) {
-                "push session already_committed response missing row_count"
-            }
-            require(response.bundleHash.isNotBlank()) {
-                "push session already_committed response missing bundle_hash"
-            }
-            if (response.canonicalRequestHash != canonicalRequestHash) {
-                throw SourceSequenceMismatchException(
-                    "push session already_committed response canonical_request_hash ${response.canonicalRequestHash} does not match prepared hash $canonicalRequestHash",
-                )
-            }
-        }
-
-        else -> error("push session response returned unsupported status ${response.status}")
-    }
-}
-
-internal fun validatePushSessionChunkResponse(
-    response: PushSessionChunkResponse,
-    requestedPushId: String,
-) {
-    val expected = requireValidOversqliteSessionToken(requestedPushId)
-    val actual = requireValidOversqliteSessionToken(response.pushId)
-    require(actual == expected) {
-        "push chunk response push_id does not match requested session"
-    }
-}
-
-internal fun committedPushBundleFromCreateResponse(
-    response: PushSessionCreateResponse,
-    sourceId: String,
-    sourceBundleId: Long,
-): CommittedPushBundle {
-    validatePushSessionCreateResponse(response, sourceBundleId, response.rowCount, sourceId, response.canonicalRequestHash)
-    require(response.status == "already_committed") {
-        "unexpected push session status ${response.status}"
-    }
-    val committedSourceId = requireValidOversqliteSourceId(response.sourceId)
-    return CommittedPushBundle(
-        bundleSeq = response.bundleSeq,
-        sourceId = committedSourceId,
-        sourceBundleId = response.sourceBundleId,
-        rowCount = response.rowCount,
-		bundleHash = response.bundleHash,
-		canonicalRequestHash = response.canonicalRequestHash,
-    )
-}
-
-internal fun committedPushBundleFromCommitResponse(
-    response: PushSessionCommitResponse,
-    sourceId: String,
-    sourceBundleId: Long,
-): CommittedPushBundle {
-    val expectedSourceId = requireValidOversqliteSourceId(sourceId)
-    val committedSourceId = requireValidOversqliteSourceId(response.sourceId)
-    require(response.bundleSeq > 0) { "push commit response bundle_seq must be positive" }
-    require(committedSourceId == expectedSourceId) {
-        "push commit response source_id does not match expected source"
-    }
-    require(response.sourceBundleId == sourceBundleId) {
-        "push commit response source_bundle_id ${response.sourceBundleId} does not match requested $sourceBundleId"
-    }
-    require(response.rowCount >= 0) { "push commit response row_count must be non-negative" }
-	require(response.bundleHash.isNotBlank()) { "push commit response bundle_hash must be non-empty" }
-	require(isCanonicalSha256(response.canonicalRequestHash)) { "push commit response canonical_request_hash must be 64 lowercase hexadecimal characters" }
-    return CommittedPushBundle(
-        bundleSeq = response.bundleSeq,
-        sourceId = committedSourceId,
-        sourceBundleId = response.sourceBundleId,
-        rowCount = response.rowCount,
-		bundleHash = response.bundleHash,
-		canonicalRequestHash = response.canonicalRequestHash,
-    )
-}
-
 internal fun validatePushConflictDetails(details: PushConflictDetails) {
     require(details.schema.isNotBlank()) { "push conflict schema must be non-empty" }
     require(details.table.isNotBlank()) { "push conflict table must be non-empty" }
@@ -374,48 +324,19 @@ internal fun validatePushConflictDetails(details: PushConflictDetails) {
     require(details.serverRowVersion >= 0) {
         "push conflict server_row_version ${details.serverRowVersion} must be non-negative"
     }
-    if (details.serverRow != null && details.serverRow !is JsonNull) {
-        validateVisibleWirePayload(details.serverRow, "push conflict server_row")
+    val rowIsNull = details.serverRow == null || details.serverRow is JsonNull
+    when {
+        details.serverRowVersion == 0L -> require(rowIsNull && !details.serverRowDeleted) {
+            "absent push conflict state must have a null server_row and deleted=false"
+        }
+        details.serverRowDeleted -> require(rowIsNull) {
+            "deleted push conflict state must have a null server_row"
+        }
+        else -> require(!rowIsNull) { "live push conflict state must include server_row" }
     }
-}
-
-internal fun validateCommittedBundleRowsResponse(
-    response: CommittedBundleRowsResponse,
-    committed: CommittedPushBundle,
-    afterRowOrdinal: Long?,
-) {
-    val expectedSourceId = requireValidOversqliteSourceId(committed.sourceId)
-    val responseSourceId = requireValidOversqliteSourceId(response.sourceId)
-    require(response.bundleSeq == committed.bundleSeq) {
-        "committed bundle chunk response bundle_seq ${response.bundleSeq} does not match expected ${committed.bundleSeq}"
+    if (!rowIsNull) {
+        validateVisibleWirePayload(checkNotNull(details.serverRow), "push conflict server_row")
     }
-    require(responseSourceId == expectedSourceId) {
-        "committed bundle chunk response source_id does not match expected source"
-    }
-    require(response.sourceBundleId == committed.sourceBundleId) {
-        "committed bundle chunk response source_bundle_id ${response.sourceBundleId} does not match expected ${committed.sourceBundleId}"
-    }
-    require(response.rowCount == committed.rowCount) {
-        "committed bundle chunk response row_count ${response.rowCount} does not match expected ${committed.rowCount}"
-    }
-	require(response.bundleHash == committed.bundleHash) {
-        "committed bundle chunk response bundle_hash ${response.bundleHash} does not match expected ${committed.bundleHash}"
-	}
-	if (response.canonicalRequestHash != committed.canonicalRequestHash) {
-        throw SourceSequenceMismatchException(
-            "committed bundle chunk response canonical_request_hash ${response.canonicalRequestHash} does not match expected ${committed.canonicalRequestHash}",
-        )
-	}
-
-    val logicalAfter = afterRowOrdinal ?: -1L
-    val expectedNext = if (response.rows.isEmpty()) logicalAfter else logicalAfter + response.rows.size
-    require(response.nextRowOrdinal == expectedNext) {
-        "committed bundle chunk response next_row_ordinal ${response.nextRowOrdinal} does not match expected $expectedNext"
-    }
-    require(!response.hasMore || response.rows.isNotEmpty()) {
-        "committed bundle chunk response with has_more=true must include at least one row"
-    }
-    validateIndexedRows(response.rows, "committed bundle", ::validateBundleRow)
 }
 
 internal fun isCanonicalSha256(value: String): Boolean =
@@ -449,8 +370,8 @@ private fun validateVisibleWireKey(
     label: String,
 ) {
     require(key.isNotEmpty()) { "$label must be non-empty" }
-    require(hiddenSyncScopeColumnName !in key.keys) {
-        "$label must not include hidden server column $hiddenSyncScopeColumnName"
+    require(key.keys.none { it == hiddenSyncScopeColumnName || it == "__oversync_owner" }) {
+        "$label must not include a hidden server column"
     }
     require(key.values.all { it.isNotBlank() }) { "$label values must be non-empty strings" }
 }
@@ -461,7 +382,7 @@ private fun validateVisibleWirePayload(
 ) {
     val payloadObject = payload as? JsonObject
         ?: error("$label must be a JSON object")
-    require(hiddenSyncScopeColumnName !in payloadObject.keys) {
-        "$label must not include hidden server column $hiddenSyncScopeColumnName"
+    require(payloadObject.keys.none { it == hiddenSyncScopeColumnName || it == "__oversync_owner" }) {
+        "$label must not include a hidden server column"
     }
 }

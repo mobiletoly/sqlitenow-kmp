@@ -1,0 +1,1 @@
+ALTER TABLE notes ADD COLUMN details TEXT NULL;

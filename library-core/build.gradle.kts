@@ -261,6 +261,23 @@ listOf(
     }
 }
 
+// Generated fault assets belong only to test process-resource tasks.
+val boundWriteTestFixtureDir = layout.buildDirectory.dir("generated/bound-write-test-fixtures")
+val generateBoundWriteTestFixtures by tasks.registering(Exec::class) {
+    dependsOn(copySqliteWorkerPublicationAssets)
+    inputs.dir(layout.projectDirectory.dir("src/webTest/fixtures"))
+    inputs.dir(sqliteWorkerAuthoredResourceDir)
+    inputs.dir(sqliteWorkerResourceDir)
+    outputs.dir(boundWriteTestFixtureDir)
+    commandLine("node", project.file("src/webTest/fixtures/generate-bound-write-fixtures.mjs"))
+}
+listOf("jsTestProcessResources", "wasmJsTestProcessResources").forEach { taskName ->
+    tasks.named<ProcessResources>(taskName) {
+        dependsOn(generateBoundWriteTestFixtures)
+        from(boundWriteTestFixtureDir) { into("bound-write-test-fixtures") }
+    }
+}
+
 tasks.named<ProcessResources>("wasmJsTestProcessResources") {
     dependsOn(copySqlJsFixtureWasmForWasmTests)
     from(wasmSqlJsFixtureResourceDir)
@@ -510,6 +527,32 @@ val verifySqliteWorkerPublicationAssets by tasks.registering {
                 "$owner contains forbidden SQL.js runtime or dependency content: " +
                     forbiddenContent.sorted()
             }
+        }
+
+        // Fault fixtures must never appear in a main/publication artifact.
+        fun verifyBoundWriteFixtureAbsence(files: Set<java.io.File>, owner: String) {
+            val forbidden = files.filter { file ->
+                "bound-write-test-fixtures" in file.invariantSeparatorsPath ||
+                    "BOUND_WRITE_TEST_FIXTURE_ONLY" in String(file.readBytes(), Charsets.ISO_8859_1)
+            }
+            check(forbidden.isEmpty()) { "$owner contains bound-write fault fixtures: $forbidden" }
+        }
+        listOf("js", "wasmJs").forEach { target ->
+            verifyBoundWriteFixtureAbsence(
+                layout.buildDirectory.dir("processedResources/$target/main").get().asFileTree.files,
+                "$target processed main resources",
+            )
+        }
+        listOf("jsJar", "wasmJsJar").forEach { taskName ->
+            tasks.named(taskName).get().outputs.files.files.filter { it.extension == "klib" }
+                .forEach { verifyBoundWriteFixtureAbsence(zipTree(it).files, "$taskName main klib") }
+        }
+        verifyBoundWriteFixtureAbsence(layout.buildDirectory.dir("dist").get().asFileTree.files, "production distributions")
+        listOf("js", "wasm").forEach { target ->
+            verifyBoundWriteFixtureAbsence(
+                rootProject.layout.buildDirectory.dir("$target/packages/sqlitenow-kmp-library-core").get().asFileTree.files,
+                "$target generated production package",
+            )
         }
 
         listOf("js", "wasmJs").forEach { target ->

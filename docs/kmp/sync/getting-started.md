@@ -10,8 +10,8 @@ parent_url: /kmp/sync/
 
 This is the current oversqlite lifecycle:
 
-1. Create a client
-2. Call `open()` on every app launch
+1. Reserve the database with `openForSync(...)`
+2. Call `advance()` and retain its exact ready client
 3. Call `attach(userId)` whenever an authenticated session exists
 4. Use `sync()`, `pushPending()`, `pullToStable()`, `rebuild()`, or `syncThenDetach()`
 
@@ -24,10 +24,10 @@ You need:
 - a compatible oversqlite server
 - a Ktor `HttpClient` that already knows how to authenticate requests
 
-Web apps do not inject a separate SQLite provider. Generated
-`newOversqliteClient(...)` construction uses the ordinary database connection:
-the packaged direct-OPFS worker in supported JS/Wasm browsers and the transient
-worker in JS Node. Browser capability and COOP/COEP/CSP requirements are
+Web apps do not inject a separate SQLite provider. Generated `openForSync(...)` reserves the
+database; after `advance()` reaches ready, consume that opening's exact `readyOrNull()` database and
+client pair. The pair uses the packaged direct-OPFS worker in supported JS/Wasm browsers and the
+transient worker in JS Node. Browser capability and COOP/COEP/CSP requirements are
 described in the [KMP getting-started guide]({{ site.baseurl }}/kmp/getting-started/).
 
 ## Step 1: Add Runtime Dependencies
@@ -113,10 +113,10 @@ CREATE TABLE note (
 
 ### Key Requirements
 
-Sync-managed tables must expose exactly one visible primary-key column and it must hold UUID data:
+Sync-managed tables must expose exactly one visible primary-key column. The discovered server contract determines its wire type:
 
-- `TEXT` with canonical UUID strings
-- `BLOB` with UUID bytes
+- `text`: `TEXT` containing an ordinary text key
+- `uuid`: `TEXT` containing canonical UUID strings, or `BLOB` containing 16 UUID bytes
 
 Unsupported for sync-managed tables:
 
@@ -156,25 +156,43 @@ fun createSyncHttpClient(
 }
 ```
 
-## Step 6: Create the Client
+## Step 6: Coordinate Opening and Retrieve the Ready Client
 
 ```kotlin
-val client = db.newOversqliteClient(
-    schema = "myapp",
+val config = db.buildOversqliteConfig(
+    generationId = 1L,
+    databaseId = "AppDatabase",
+    serviceId = "myapp-sync",
+)
+val opening = db.openForSync(
+    config = config,
     httpClient = httpClient,
     resolver = ServerWinsResolver,
 )
+opening.advance()
+val ready = checkNotNull(opening.readyOrNull())
+val database = ready.database
+val client = ready.client
 ```
 
-The client is lifecycle-neutral until `open()` runs.
+Select the server's generation and keep `databaseId` and `serviceId` stable across launches.
+Fresh and unchanged opening works offline; first attachment
+discovers and validates the generation and pending values before installing its contract and
+connecting. Later opens use the retained contract. The SDK derives server schemas and conversions
+from discovery and supplies source and generation headers.
 
-## Step 7: Open on Every Launch
+Do not access application tables through the opening while it is pending. Database reads and writes become available only through the exact ready database/client pair.
+
+## Step 7: Inspect and Advance Explicit Upgrades
 
 ```kotlin
-client.open().getOrThrow()
+val status = opening.status()
+// Supply an explicit upgrade plan when status reports a version or generation edge.
+opening.advance()
 ```
 
-`open()` is local-only and safe to run repeatedly.
+Do not call the ordinary database `open()` first. Coordinated opening owns inspection, migration,
+publication, cancellation, and shutdown.
 
 ## Step 8: Attach the Authenticated User
 
@@ -218,8 +236,8 @@ client.pullToStable().getOrThrow()
 
 ## Step 10: Optional Automatic Downloads
 
-Automatic downloads are default-off. Start the worker only after `open()` and `attach(userId)` have
-completed.
+Automatic downloads are default-off. Start the worker only after `openForSync(...).advance()` has
+published the ready pair and `attach(userId)` has completed.
 
 ```kotlin
 val automaticDownloads = coroutineScope.launch {
@@ -234,8 +252,8 @@ val automaticDownloads = coroutineScope.launch {
 automaticDownloads.cancelAndJoin()
 ```
 
-Watch support is an optional latency optimization. When the server advertises
-`features.bundle_change_watch`, the worker uses `/sync/watch` only as a wake-up hint and still
+Watch support is an optional latency optimization. When the admitted discovery contract sets
+`watch_enabled`, the worker uses `/sync/watch` only as a wake-up hint and still
 downloads authoritative data through `pullToStable()`. If watch is unavailable, the worker falls
 back to polling.
 

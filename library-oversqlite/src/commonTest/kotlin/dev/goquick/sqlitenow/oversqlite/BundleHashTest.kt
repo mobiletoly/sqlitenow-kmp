@@ -7,6 +7,33 @@ import kotlin.test.assertNotEquals
 
 class BundleHashTest {
     @Test
+    fun incrementalSha256MatchesWholeBufferAtBlockBoundaries() {
+        listOf(0, 1, 55, 56, 63, 64, 65, 1_000_000).forEach { size ->
+            val bytes = ByteArray(size) { (it % 251).toByte() }
+            val digest = Sha256Accumulator()
+            var offset = 0
+            while (offset < size) {
+                val end = minOf(offset + 37, size)
+                digest.append(bytes.copyOfRange(offset, end))
+                offset = end
+            }
+            assertEquals(sha256Hex(bytes), digest.finishHex(), "size=$size")
+        }
+    }
+
+    @Test
+    fun incrementalCommittedBundleHashMatchesCanonicalWholeDocument() {
+        val rows = (1..71).map { index ->
+            BundleRow(
+                schema = "main", table = "users", key = mapOf("id" to "user-$index"),
+                op = "INSERT", rowVersion = index.toLong(),
+                payload = Json.parseToJsonElement("""{"id":"user-$index","name":"é-$index"}"""),
+            )
+        }
+        assertEquals(computeCommittedBundleHashForTest(rows), canonicalCommittedBundleHash(rows))
+    }
+
+    @Test
     fun sha256_knownVectors() {
         assertEquals(
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",

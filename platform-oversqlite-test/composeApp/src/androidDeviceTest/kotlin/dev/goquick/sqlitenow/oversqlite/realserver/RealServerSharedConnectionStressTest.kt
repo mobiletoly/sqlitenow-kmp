@@ -1,11 +1,8 @@
 package dev.goquick.sqlitenow.oversqlite.realserver
 
-import androidx.sqlite.SQLiteStatement
 import androidx.sqlite.async.step
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import dev.goquick.sqlitenow.core.BundledSqliteConnectionProvider
-import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.TransactionMode
 import dev.goquick.sqlitenow.core.sqlite.use
 import dev.goquick.sqlitenow.oversqlite.AttachResult
@@ -55,8 +52,7 @@ class RealServerSharedConnectionStressTest {
             },
         )
         val seedDb = newFileBackedDb()
-        val activeDbFile = createTempDbFile()
-        val activeDb = BundledSqliteConnectionProvider.openConnection(activeDbFile.absolutePath, debug = true)
+        val activeDb = newFileBackedDb(debug = true)
 
         try {
             createUsersStressSchema(seedDb)
@@ -67,19 +63,19 @@ class RealServerSharedConnectionStressTest {
                 db = seedDb,
                 config = config,
                 http = seedHttp,
-                uploadLimit = 4,
-                downloadLimit = 1,
+                maxPushRows = 4,
+                maxPullBundles = 1,
             )
             val activeClient = newRealServerClient(
                 db = activeDb,
                 config = config,
                 http = activeHttp,
-                uploadLimit = 4,
-                downloadLimit = 1,
+                maxPushRows = 4,
+                maxPullBundles = 1,
             )
 
             seedClient.awaitConnected(userId)
-            seedClient.pushPending().getOrThrow()
+            drainPendingLocalChanges(seedClient, seedDb)
             activeClient.awaitConnected(userId)
             activeClient.pullToStable().getOrThrow()
             assertEquals(stress.totalRowCount.toLong(), queryUsersWithAliasStar(activeDb))
@@ -160,64 +156,35 @@ class RealServerSharedConnectionStressTest {
             activeHttp.close()
             seedDb.close()
             activeDb.close()
-            deleteDbArtifacts(activeDbFile)
         }
     }
 
-    private suspend fun createUsersStressSchema(db: SafeSQLiteConnection) {
+    private suspend fun createUsersStressSchema(db: RealServerDatabase) {
         createBusinessSubsetTables(db)
     }
 
     private suspend fun seedUserRows(
-        db: SafeSQLiteConnection,
+        db: RealServerDatabase,
         stress: StressConfig,
-    ) = db.withExclusiveAccess {
-        db.prepare(
-            """
-            INSERT INTO users (
-                id,
-                name,
-                email,
-                created_at,
-                updated_at
-            ) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            """.trimIndent(),
-        ).use { statement ->
-            repeat(stress.localRowCount) { index ->
-                bindSeedUser(
-                    statement = statement,
-                    id = localRowId(index),
-                    name = "Local Seed $index",
-                    email = "local-seed-$index@example.com",
-                )
-            }
-            repeat(stress.remoteRowCount) { index ->
-                bindSeedUser(
-                    statement = statement,
-                    id = remoteRowId(index),
-                    name = "Remote Seed $index",
-                    email = "remote-seed-$index@example.com",
-                )
-            }
+    ) {
+        repeat(stress.localRowCount) { index ->
+            db.execSQL(
+                "INSERT INTO users(id, name, email, created_at, updated_at) " +
+                    "VALUES('${localRowId(index)}', 'Local Seed $index', " +
+                    "'local-seed-$index@example.com', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            )
+        }
+        repeat(stress.remoteRowCount) { index ->
+            db.execSQL(
+                "INSERT INTO users(id, name, email, created_at, updated_at) " +
+                    "VALUES('${remoteRowId(index)}', 'Remote Seed $index', " +
+                    "'remote-seed-$index@example.com', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            )
         }
     }
 
-    private suspend fun bindSeedUser(
-        statement: SQLiteStatement,
-        id: String,
-        name: String,
-        email: String,
-    ) {
-        statement.bindText(1, id)
-        statement.bindText(2, name)
-        statement.bindText(3, email)
-        statement.step()
-        statement.reset()
-        statement.clearBindings()
-    }
-
     private suspend fun incrementLocalOwnedRow(
-        db: SafeSQLiteConnection,
+        db: RealServerDatabase,
         rowIndex: Int,
         iteration: Int,
         transactionPauseMillis: Long,
@@ -247,7 +214,7 @@ class RealServerSharedConnectionStressTest {
     }
 
     private suspend fun incrementRemoteOwnedRow(
-        db: SafeSQLiteConnection,
+        db: RealServerDatabase,
         rowIndex: Int,
         round: Int,
     ) {
@@ -263,7 +230,7 @@ class RealServerSharedConnectionStressTest {
     }
 
     private suspend fun queryUsersWithAliasStar(
-        db: SafeSQLiteConnection,
+        db: RealServerDatabase,
     ): Long = db.withExclusiveAccess {
         db.prepare("SELECT u.* FROM users u ORDER BY u.id").use { statement ->
             var rowCount = 0L
@@ -284,7 +251,7 @@ class RealServerSharedConnectionStressTest {
     }
 
     private suspend fun readUserById(
-        db: SafeSQLiteConnection,
+        db: RealServerDatabase,
         id: String,
     ) = db.withExclusiveAccess {
         db.prepare("SELECT * FROM users WHERE id = ?").use { statement ->
@@ -304,7 +271,7 @@ class RealServerSharedConnectionStressTest {
     }
 
     private suspend fun assertExpectedUserStates(
-        db: SafeSQLiteConnection,
+        db: RealServerDatabase,
         stress: StressConfig,
     ) {
         repeat(stress.localRowCount) { index ->
@@ -355,7 +322,7 @@ class RealServerSharedConnectionStressTest {
 
     private suspend fun drainPendingLocalChanges(
         client: OversqliteClient,
-        db: SafeSQLiteConnection,
+        db: RealServerDatabase,
     ) {
         repeat(64) {
             client.pushPending().getOrThrow()
@@ -368,7 +335,7 @@ class RealServerSharedConnectionStressTest {
     }
 
     private suspend fun pendingLocalChangeCount(
-        db: SafeSQLiteConnection,
+        db: RealServerDatabase,
     ): Long {
         return scalarLong(db, "SELECT COUNT(*) FROM _sync_dirty_rows") +
             scalarLong(db, "SELECT COUNT(*) FROM _sync_outbox_rows")

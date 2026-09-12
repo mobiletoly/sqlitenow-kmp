@@ -17,6 +17,9 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.json.Json
@@ -33,6 +36,10 @@ internal data class RealServerConfig(
 )
 
 internal open class RealServerSupport : CrossTargetSyncTestSupport() {
+    // Network I/O and its deadlines must use wall time, not runTest's virtual clock.
+    protected fun runRealServerTest(testBody: suspend CoroutineScope.() -> Unit) =
+        runOwnedWebDatabaseTest { withContext(Dispatchers.Default, testBody) }
+
     private val realServerJson = Json { ignoreUnknownKeys = true }
     private val expectedRealServerAppName = "nethttp-server-example"
     protected val businessRichSyncTables = listOf(
@@ -377,19 +384,21 @@ internal open class RealServerSupport : CrossTargetSyncTestSupport() {
         db: SafeSQLiteConnection,
         http: HttpClient,
         syncTables: List<SyncTable> = businessRichSyncTables,
-        uploadLimit: Int = 8,
-        downloadLimit: Int = 8,
-        snapshotChunkRows: Int = 1000,
+        maxPushRows: Int = 8,
+        maxPullBundles: Int = 8,
+        maxSnapshotChunkRows: Int = 1000,
         transientRetryPolicy: OversqliteTransientRetryPolicy = OversqliteTransientRetryPolicy(),
     ): DefaultOversqliteClient {
-        return DefaultOversqliteClient(
+        return DefaultOversqliteClient.forTesting(
             db = db,
             config = OversqliteConfig(
-                schema = "business",
+                generationId = 1, databaseId = "fixture", serviceId = "business",
                 syncTables = syncTables,
-                uploadLimit = uploadLimit,
-                downloadLimit = downloadLimit,
-                snapshotChunkRows = snapshotChunkRows,
+                transferTargets = OversqliteTransferTargets(
+                    maxPushRows = maxPushRows,
+                    maxPullBundles = maxPullBundles,
+                    maxSnapshotChunkRows = maxSnapshotChunkRows,
+                ),
                 transientRetryPolicy = transientRetryPolicy,
             ),
             http = http,

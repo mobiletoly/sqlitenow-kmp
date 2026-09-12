@@ -32,15 +32,15 @@
       "path": "client.mjs",
       "role": "client",
       "origin": "SQLiteNow",
-      "size": 64080,
-      "sha256": "20028f7fb4424d8115813c1277dcf8d03b21074ce58f37f4222f871fc575b1a5"
+      "size": 65557,
+      "sha256": "db97732ffaf6a68ea059e9d685bdee265dfb9a2b23174583bb037ef22a1ba4d0"
     },
     {
       "path": "sqlite-3.53.0-build1/worker.mjs",
       "role": "worker",
       "origin": "SQLiteNow",
-      "size": 81820,
-      "sha256": "a50b96dc41e7f8a512ae561cce83c311604c701a0def52a1a7a272ea569746a1"
+      "size": 88076,
+      "sha256": "e8c8133f43d668ea827856fe8957c5b05d222c14bc9692620021ec39111a8531"
     },
     {
       "path": "sqlite-3.53.0-build1/vendor/index.mjs",

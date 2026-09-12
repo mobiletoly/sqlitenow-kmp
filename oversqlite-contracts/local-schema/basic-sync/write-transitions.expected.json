@@ -6,12 +6,12 @@
       "name": "insert",
       "dirtyRows": [
         {
-          "schemaName": "main",
+          "schemaName": "local",
           "tableName": "users",
           "keyJson": "{\"id\":\"user-insert\"}",
           "op": "INSERT",
           "baseRowVersion": 0,
-          "payload": "{\"id\":\"user-insert\",\"name\":\"Ada\",\"updated_at\":\"2026-01-01T00:00:00Z\"}",
+          "payload": "{\"id\":{\"storage\":\"text\",\"value\":\"user-insert\"},\"name\":{\"storage\":\"text\",\"value\":\"Ada\"},\"updated_at\":{\"storage\":\"text\",\"value\":\"2026-01-01T00:00:00Z\"}}",
           "dirtyOrdinal": 1
         }
       ],
@@ -23,12 +23,12 @@
       "name": "update",
       "dirtyRows": [
         {
-          "schemaName": "main",
+          "schemaName": "local",
           "tableName": "users",
           "keyJson": "{\"id\":\"user-update\"}",
           "op": "UPDATE",
           "baseRowVersion": 7,
-          "payload": "{\"id\":\"user-update\",\"name\":\"After\",\"updated_at\":\"2026-01-01T00:00:00Z\"}",
+          "payload": "{\"id\":{\"storage\":\"text\",\"value\":\"user-update\"},\"name\":{\"storage\":\"text\",\"value\":\"After\"},\"updated_at\":{\"storage\":\"text\",\"value\":\"2026-01-01T00:00:00Z\"}}",
           "dirtyOrdinal": 1
         }
       ],
@@ -40,7 +40,7 @@
       "name": "delete",
       "dirtyRows": [
         {
-          "schemaName": "main",
+          "schemaName": "local",
           "tableName": "users",
           "keyJson": "{\"id\":\"user-delete\"}",
           "op": "DELETE",
@@ -57,7 +57,7 @@
       "name": "key-changing-update",
       "dirtyRows": [
         {
-          "schemaName": "main",
+          "schemaName": "local",
           "tableName": "users",
           "keyJson": "{\"id\":\"user-key-old\"}",
           "op": "DELETE",
@@ -66,12 +66,12 @@
           "dirtyOrdinal": 1
         },
         {
-          "schemaName": "main",
+          "schemaName": "local",
           "tableName": "users",
           "keyJson": "{\"id\":\"user-key-new\"}",
           "op": "INSERT",
           "baseRowVersion": 0,
-          "payload": "{\"id\":\"user-key-new\",\"name\":\"Move Me\",\"updated_at\":\"2026-01-02T00:00:00Z\"}",
+          "payload": "{\"id\":{\"storage\":\"text\",\"value\":\"user-key-new\"},\"name\":{\"storage\":\"text\",\"value\":\"Move Me\"},\"updated_at\":{\"storage\":\"text\",\"value\":\"2026-01-02T00:00:00Z\"}}",
           "dirtyOrdinal": 2
         }
       ],

@@ -17,6 +17,7 @@ package dev.goquick.sqlitenow.oversqlite
 
 internal data class RuntimeState(
     val validated: ValidatedConfig,
+    val admittedContract: AdmittedOversqliteContract,
     val userId: String,
     val sourceId: String,
     val pendingInitializationId: String = "",
@@ -26,11 +27,14 @@ internal data class DirtySnapshotRow(
     val schemaName: String,
     val tableName: String,
     val keyJson: String,
+    val op: String,
     val baseRowVersion: Long,
     val payload: String?,
     val dirtyOrdinal: Long,
     val stateExists: Boolean,
     val stateDeleted: Boolean,
+    val base: HistoricalBase,
+    val serverKind: String,
 )
 
 internal data class DirtyRowCapture(
@@ -43,6 +47,7 @@ internal data class DirtyRowCapture(
     val baseRowVersion: Long,
     val localPayload: String?,
     val dirtyOrdinal: Long,
+    val base: HistoricalBase,
 )
 
 internal data class DirtyRowRef(
@@ -54,7 +59,9 @@ internal data class DirtyRowRef(
 internal data class PreparedPush(
     val sourceBundleId: Long,
     val rows: List<DirtyRowCapture>,
-    val discardedRows: List<DirtyRowRef> = emptyList(),
+    val unit: String,
+    val guard: String,
+    val decodedBytes: Long,
 )
 
 internal data class PushOutboundSnapshot(
@@ -62,20 +69,13 @@ internal data class PushOutboundSnapshot(
     val rows: List<DirtyRowCapture>,
     val canonicalRows: List<OversqliteOutboxRow>,
     val canonicalRequestHash: String,
-    val remoteBundleSeq: Long = 0,
-    val remoteBundleHash: String = "",
 )
-
-internal val PushOutboundSnapshot.isRemoteCommitted: Boolean
-    get() = remoteBundleSeq > 0L && remoteBundleHash.isNotBlank()
 
 internal data class CommittedPushBundle(
     val bundleSeq: Long,
-    val sourceId: String,
     val sourceBundleId: Long,
     val rowCount: Long,
 	val bundleHash: String,
-	val canonicalRequestHash: String,
 )
 
 internal data class CommittedReplayRow(
@@ -163,3 +163,5 @@ private fun checkCountSum(left: Long, right: Long): Long {
     require(left <= Long.MAX_VALUE - right) { "pending row count overflow" }
     return left + right
 }
+
+internal data class HistoricalBase(val kind: String, val payload: String?, val provenance: String)

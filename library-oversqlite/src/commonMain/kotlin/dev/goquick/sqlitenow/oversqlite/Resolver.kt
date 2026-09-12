@@ -25,11 +25,13 @@ import kotlinx.serialization.json.JsonElement
  * deleted flag, and the current server row payload when one exists.
  *
  * Implementations can either:
+ *  - return [MergeResult.DeferConflict] to persist the conflict for explicit resolution
  *  - return [MergeResult.AcceptServer] to accept server state and drop local pending change
  *  - return [MergeResult.KeepLocal] to retry the original local intent where that is valid
  *  - return [MergeResult.KeepMerged] to retry an explicit merged row payload where that is valid
  *
  * Current runtime behavior:
+ *  - [DeferConflictResolver] is the default and preserves the conflict for explicit resolution.
  *  - [ServerWinsResolver] is handled automatically from the structured conflict payload.
  *  - [ClientWinsResolver] is a convenience resolver that always returns [MergeResult.KeepLocal].
  *  - [MergeResult.KeepLocal] and [MergeResult.KeepMerged] are applied automatically only when the
@@ -44,6 +46,9 @@ fun interface Resolver {
 
 /** Outcome of conflict resolution. */
 sealed class MergeResult {
+    /** Preserve the frozen local intent and require an explicit caller decision. */
+    data object DeferConflict : MergeResult()
+
     /** Accept server’s version and drop local pending change. */
     data object AcceptServer : MergeResult()
 
@@ -73,7 +78,12 @@ data class ConflictContext(
     val serverRow: JsonElement?,
 )
 
-/** Default resolver: server wins. */
+/** Default resolver: preserve intent and require an explicit decision. */
+object DeferConflictResolver : Resolver {
+    override fun resolve(conflict: ConflictContext): MergeResult = MergeResult.DeferConflict
+}
+
+/** Explicit opt-in resolver: server wins. */
 object ServerWinsResolver : Resolver {
     override fun resolve(conflict: ConflictContext): MergeResult = MergeResult.AcceptServer
 }

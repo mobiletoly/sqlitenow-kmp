@@ -16,7 +16,24 @@
 package dev.goquick.sqlitenow.oversqlite
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.milliseconds
+
+private const val operationContentionRetryMillis = 250L
+
+suspend fun OversqliteClient.runAutomaticDownloads(
+    automaticDownloadConfig: OversqliteAutomaticDownloadConfig = OversqliteAutomaticDownloadConfig(),
+): Nothing {
+    val defaultClient = this as? DefaultOversqliteClient
+        ?: throw UnsupportedOperationException(
+            "automatic downloads require DefaultOversqliteClient or generated clients backed by DefaultOversqliteClient",
+        )
+    return defaultClient.runAutomaticDownloads(automaticDownloadConfig)
+}
 
 internal class OversqliteAutomaticDownloads(
     private val automaticDownloadConfig: OversqliteAutomaticDownloadConfig,
@@ -24,7 +41,6 @@ internal class OversqliteAutomaticDownloads(
     private val attachmentStateStore: OversqliteAttachmentStateStore,
     private val downloadsPaused: () -> Boolean,
     private val connectedRuntimeState: suspend (String) -> RuntimeState,
-    private val fetchCapabilities: suspend (String) -> CapabilitiesResponse,
     private val pullToStable: suspend () -> Result<RemoteSyncReport>,
     private val log: ((() -> String)) -> Unit,
 ) {
@@ -41,6 +57,9 @@ internal class OversqliteAutomaticDownloads(
             try {
                 if (shouldUseBundleChangeWatch()) {
                     runBundleChangeWatchIteration()
+                    if (!downloadsPaused()) {
+                        runAutomaticPullToStable("automatic downloads fallback after watch ended")
+                    }
                     backoff.delayNext()
                 } else {
                     runAutomaticPollingIteration()
@@ -57,7 +76,9 @@ internal class OversqliteAutomaticDownloads(
                     "oversqlite automatic downloads iteration failed " +
                         "error=${error::class.simpleName ?: "Throwable"}"
                 }
-                runAutomaticPullToStable("automatic downloads fallback after failure")
+                if (!downloadsPaused()) {
+                    runAutomaticPullToStable("automatic downloads fallback after failure")
+                }
                 backoff.delayNext()
             }
         }
@@ -68,9 +89,7 @@ internal class OversqliteAutomaticDownloads(
             return false
         }
         return try {
-            val state = automaticDownloadState("automatic downloads capability check")
-            val capabilities = fetchCapabilities(state.sourceId)
-            capabilities.bundleChangeWatchSupported
+            automaticDownloadState("automatic downloads watch check").watchEnabled
         } catch (error: Throwable) {
             if (error is CancellationException) {
                 throw error
@@ -79,7 +98,7 @@ internal class OversqliteAutomaticDownloads(
                 throw error
             }
             log {
-                "oversqlite automatic downloads capability check failed; polling fallback will run " +
+                "oversqlite automatic downloads admitted-contract check failed; polling fallback will run " +
                     "error=${error::class.simpleName ?: "Throwable"}"
             }
             false
@@ -94,20 +113,49 @@ internal class OversqliteAutomaticDownloads(
     }
 
     private suspend fun runBundleChangeWatchIteration() {
-        var pullFailed = false
         val state = automaticDownloadState("bundle change watch")
-        remoteApi.watchBundleChanges(
-            sourceId = state.sourceId,
-            afterBundleSeq = state.lastBundleSeqSeen,
-        ) { event ->
-            if (event.bundleSeq > 0 && !downloadsPaused()) {
-                if (!runAutomaticPullToStable("bundle change watch event")) {
-                    pullFailed = true
+        coroutineScope {
+            val signals = Channel<Long>(Channel.CONFLATED)
+            var announcedHighWater = state.lastBundleSeqSeen
+            val worker = launch {
+                var targetHighWater = state.lastBundleSeqSeen
+                for (signal in signals) {
+                    targetHighWater = maxOf(targetHighWater, signal)
+                    while (true) {
+                        val checkpoint = attachmentStateStore.loadState().lastBundleSeqSeen
+                        if (checkpoint >= targetHighWater) break
+                        if (!downloadsPaused()) {
+                            val outcome = runAutomaticPullToStable("bundle change watch high-water")
+                            val refreshed = attachmentStateStore.loadState().lastBundleSeqSeen
+                            if (refreshed >= targetHighWater) break
+                            if (outcome == AutomaticPullOutcome.SUCCEEDED && refreshed > checkpoint) continue
+                            if (outcome == AutomaticPullOutcome.CONTENDED) {
+                                delay(operationContentionRetryMillis.milliseconds)
+                                continue
+                            }
+                        }
+                        // Keep the high-water target when a pull is blocked, fails, or is paused.
+                        // The stream may remain open without another bundle event.
+                        delay(automaticDownloadConfig.automaticDownloadIntervalMillis.milliseconds)
+                    }
                 }
             }
-        }
-        if (!pullFailed && !downloadsPaused()) {
-            runAutomaticPullToStable("bundle change watch reconnect")
+            try {
+                remoteApi.watchBundleChanges(
+                    sourceId = state.sourceId,
+                    afterBundleSeq = state.lastBundleSeqSeen,
+                ) { event ->
+                    if (event.bundleSeq > announcedHighWater) {
+                        announcedHighWater = event.bundleSeq
+                        signals.trySend(announcedHighWater)
+                    }
+                }
+                val checkpoint = attachmentStateStore.loadState().lastBundleSeqSeen
+                if (announcedHighWater > checkpoint) signals.trySend(announcedHighWater)
+            } finally {
+                signals.close()
+                worker.cancelAndJoin()
+            }
         }
     }
 
@@ -120,12 +168,13 @@ internal class OversqliteAutomaticDownloads(
                 ?.let(::requireValidOversqliteSourceId)
                 ?: requireValidOversqliteSourceId(runtimeState.sourceId),
             lastBundleSeqSeen = attachment.lastBundleSeqSeen,
+            watchEnabled = runtimeState.admittedContract.watchEnabled,
         )
     }
 
-    private suspend fun runAutomaticPullToStable(operation: String): Boolean {
+    private suspend fun runAutomaticPullToStable(operation: String): AutomaticPullOutcome {
         val result = pullToStable()
-        val error = result.exceptionOrNull() ?: return true
+        val error = result.exceptionOrNull() ?: return AutomaticPullOutcome.SUCCEEDED
         if (error is CancellationException) {
             throw error
         }
@@ -138,13 +187,20 @@ internal class OversqliteAutomaticDownloads(
                 "expectedContention=$expectedContention " +
                 "error=${error::class.simpleName ?: "Throwable"}"
         }
-        return false
+        return if (expectedContention) AutomaticPullOutcome.CONTENDED else AutomaticPullOutcome.FAILED
     }
+}
+
+private enum class AutomaticPullOutcome {
+    SUCCEEDED,
+    CONTENDED,
+    FAILED,
 }
 
 private data class AutomaticDownloadState(
     val sourceId: String,
     val lastBundleSeqSeen: Long,
+    val watchEnabled: Boolean,
 )
 
 private class AutomaticDownloadBackoff(
@@ -160,7 +216,7 @@ private class AutomaticDownloadBackoff(
         } else {
             minOf(maxMillis, nextDelayMillis * 2)
         }
-        delay(delayMillis)
+        delay(delayMillis.milliseconds)
     }
 
     fun reset() {

@@ -34,7 +34,7 @@ private data class StagedSnapshotPageProgress(
 
 internal enum class SnapshotRebuildOutboxMode {
     CLEAR_ALL,
-    PRESERVE_COMMITTED_REMOTE,
+    PRESERVE_PREPARED,
     PRESERVE_SOURCE_RECOVERY,
 }
 
@@ -42,7 +42,6 @@ internal class OversqliteDownloadWorkflow(
     private val db: SafeSQLiteConnection,
     private val config: OversqliteConfig,
     private val remoteApi: OversqliteRemoteApi,
-    private val fetchCapabilities: suspend (String, String) -> CapabilitiesResponse,
     private val sourceStateStore: OversqliteSourceStateStore,
     private val outboxStateStore: OversqliteOutboxStateStore,
     private val attachmentStateStore: OversqliteAttachmentStateStore,
@@ -55,6 +54,7 @@ internal class OversqliteDownloadWorkflow(
     private val snapshotGate: OversqliteSnapshotGate,
     private val snapshotDiagnostics: () -> SnapshotDiagnosticsRecorder?,
     private val json: Json,
+    private val notifyUpdatedTables: (Set<String>) -> Unit = {},
     private val log: ((() -> String)) -> Unit,
 ) {
     suspend fun pullToStable(
@@ -107,15 +107,13 @@ internal class OversqliteDownloadWorkflow(
         sourceReplacementReason: String?,
         outboxMode: SnapshotRebuildOutboxMode = SnapshotRebuildOutboxMode.CLEAR_ALL,
         onPhaseChanged: suspend (OversqlitePhase) -> Unit = {},
+        finalizer: suspend () -> Unit = {},
     ): DownloadWorkflowResult {
         val diagnostics = requireNotNull(snapshotDiagnostics()) {
             "snapshot diagnostics scope is missing for rebuild"
         }
         diagnostics.markRestoreAttempt()
-        val limits = negotiateSnapshotLimits(
-            fetchCapabilities(state.sourceId, "snapshot rebuild capability negotiation"),
-            config,
-        )
+        val limits = negotiateSnapshotLimits(state.admittedContract, config)
         if (rotatedSourceId == null && outboxMode == SnapshotRebuildOutboxMode.CLEAR_ALL) {
             markCheckpointRecoveryRequired("explicit_rebuild")
         }
@@ -138,14 +136,15 @@ internal class OversqliteDownloadWorkflow(
             )
         }
         val session = remoteApi.createSnapshotSession(state.sourceId, sessionRequest)
+        val snapshotSourceId = rotatedSourceId ?: state.sourceId
         try {
-            val totals = downloadSnapshotSession(state, session, limits)
+            val totals = downloadSnapshotSession(state.copy(sourceId = snapshotSourceId), session, limits)
             diagnostics.recordStagedRows(totals.rows)
 
             onPhaseChanged(OversqlitePhase.APPLYING_REMOTE_STATE)
-            return applyStagedSnapshot(state, session, rotatedSourceId, outboxMode, guard)
+            return applyStagedSnapshot(state, session, rotatedSourceId, outboxMode, guard, finalizer)
         } finally {
-            remoteApi.deleteSnapshotSessionBestEffort(session.snapshotId, state.sourceId)
+            remoteApi.deleteSnapshotSessionBestEffort(session.snapshotId, snapshotSourceId)
         }
     }
 
@@ -153,39 +152,39 @@ internal class OversqliteDownloadWorkflow(
         state: RuntimeState,
         session: SnapshotSession,
         limits: SnapshotNegotiation,
+        initialTotals: SnapshotTransferTotals = SnapshotTransferTotals(),
         fetchChunk: (suspend (afterRowOrdinal: Long) -> SnapshotChunkResponse)? = null,
+        onChunkStaged: suspend (SnapshotTransferTotals) -> Unit = {},
     ): SnapshotTransferTotals {
-        var totals = SnapshotTransferTotals()
-        var afterRowOrdinal = 0L
+        var totals = initialTotals
+        var afterRowOrdinal = initialTotals.rows
         while (true) {
-            val chunk = fetchChunk?.invoke(afterRowOrdinal) ?: remoteApi.fetchSnapshotChunk(
-                snapshotId = session.snapshotId,
-                sourceId = state.sourceId,
-                snapshotBundleSeq = session.snapshotBundleSeq,
-                afterRowOrdinal = afterRowOrdinal,
-                maxRows = limits.maxRows,
-                maxBytes = limits.maxBytes,
+            val chunk = fetchChunk?.invoke(afterRowOrdinal) ?: fetchSnapshotChunkWithOneRowProgress(
+                state, session, afterRowOrdinal, limits,
             )
-            stageStore.stageSnapshotChunk(state, session, chunk, afterRowOrdinal)
-            totals = SnapshotTransferTotals(
+            val nextTotals = SnapshotTransferTotals(
                 rows = checkedAddSnapshotLong(totals.rows, chunk.rows.size.toLong()) {
                     "snapshot accumulated row count overflow"
                 },
-                bytes = checkedAddSnapshotLong(totals.bytes, chunk.byteCount) {
+                bytes = checkedAddSnapshotLong(totals.bytes, chunk.logicalByteCount) {
                     "snapshot accumulated byte count overflow"
                 },
             )
-            if (totals.rows > session.rowCount || totals.bytes > session.byteCount) {
+            stageStore.stageSnapshotChunk(state, session, chunk, afterRowOrdinal) {
+                onChunkStaged(nextTotals)
+            }
+            totals = nextTotals
+            if (totals.rows > session.rowCount || totals.bytes > session.logicalByteCount) {
                 throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK)
             }
             if (chunk.hasMore) {
-                if (totals.rows == session.rowCount || totals.bytes == session.byteCount) {
+                if (totals.rows == session.rowCount || totals.bytes == session.logicalByteCount) {
                     throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK)
                 }
                 afterRowOrdinal = chunk.nextRowOrdinal
                 continue
             }
-            if (totals.rows != session.rowCount || totals.bytes != session.byteCount) {
+            if (totals.rows != session.rowCount || totals.bytes != session.logicalByteCount) {
                 throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK)
             }
             return totals
@@ -197,13 +196,23 @@ internal class OversqliteDownloadWorkflow(
 
         val initialBundleSeq = attachmentStateStore.loadState().lastBundleSeqSeen
         var afterBundleSeq = initialBundleSeq
-        val maxBundles = config.downloadLimit.takeIf { it > 0 } ?: 1000
+        val maxBundles = minOf(config.transferTargets.maxPullBundles, state.admittedContract.limits.maxPullBundles)
         var targetBundleSeq = 0L
         val updatedTables = linkedSetOf<String>()
 
         while (true) {
-            val response = remoteApi.sendPullRequest(afterBundleSeq, maxBundles, targetBundleSeq, state.sourceId)
+            val response = remoteApi.sendPullRequest(
+                afterBundleSeq, maxBundles, targetBundleSeq, state.sourceId,
+                state.admittedContract.limits.maxPullDecodedBytes,
+            )
             validatePullResponse(response, afterBundleSeq)
+            response.bundles.forEach { bundle ->
+                bundle.rows.forEach { row ->
+                    require(row.schema == state.validated.schemaForTable(row.table)) {
+                        "bundle row schema ${row.schema} does not match client schema ${state.validated.schemaForTable(row.table)}"
+                    }
+                }
+            }
 
             if (targetBundleSeq == 0L) {
                 targetBundleSeq = response.stableBundleSeq
@@ -239,22 +248,50 @@ internal class OversqliteDownloadWorkflow(
         state: RuntimeState,
         bundle: Bundle,
     ): Set<String> {
-        return applyExecutor.inApplyModeTransaction(state) { statementCache ->
+        val updatedTables = applyExecutor.inApplyModeTransaction(
+            state,
+            beforeApplyMode = {
+                val outboundCount = outboxStateStore.countRows()
+                if (outboundCount > 0 || outboxStateStore.loadBundleState().state != outboxStateNone) {
+                    throw PendingPushReplayException(outboundCount)
+                }
+                val dirtyCount = syncStateStore.countDirtyRows()
+                if (dirtyCount > 0) throw DirtyStateRejectedException(dirtyCount)
+            },
+        ) { statementCache ->
             val updatedTables = linkedSetOf<String>()
-            for (row in bundle.rows) {
-                val (keyJson, localPk) = localStore.bundleRowKeyToLocalKey(state, row.table, row.key)
-                val current = syncStateStore.loadStructuredRowState(row.schema, row.table, keyJson, statementCache)
+            bundleApplier.survivors.prepare(state, applyUnit("pull", bundle.bundleSeq, bundle.bundleHash), bundle.rows.size, inputSequence = bundle.bundleSeq) { index ->
+                val row = bundle.rows[index]
+                val (key, pk) = localStore.bundleRowKeyToLocalKey(state, row.table, row.key)
+                val current = syncStateStore.loadStructuredRowState(state.validated.schemaForTable(row.table), row.table, key, statementCache)
                 if (current.exists && current.rowVersion >= row.rowVersion) {
+                    bundleApplier.survivors.capture(state, row.table, pk)
+                } else bundleApplier.survivors.wire(row.table, pk, row.payload)
+            }
+            for (row in bundle.rows) {
+                val schema = state.validated.schemaForTable(row.table)
+                val (keyJson, localPk) = localStore.bundleRowKeyToLocalKey(state, row.table, row.key)
+                val current = syncStateStore.loadStructuredRowState(schema, row.table, keyJson, statementCache)
+                if (current.exists && current.rowVersion >= row.rowVersion) {
+                    if(current.rowVersion==row.rowVersion) syncStateStore.installAuthoritativeBaseline(schema,row.table,keyJson,if(row.op=="DELETE") "deleted" else "live",row.rowVersion,(row.payload as? JsonObject)?.let { localStore.captureAuthoritativePayload(row.table,it,statementCache) },"pull",bundle.bundleSeq,statementCache)
                     continue
                 }
-                bundleApplier.applyAuthoritativeRow(state, row, localPk, keyJson, statementCache)
-                syncStateStore.deleteDirtyRow(row.schema, row.table, keyJson, statementCache)
+                bundleApplier.applyAuthoritativeRow(state, row, localPk, keyJson, statementCache,"pull",bundle.bundleSeq)
+                syncStateStore.deleteDirtyRow(schema, row.table, keyJson, statementCache)
                 updatedTables += row.table.lowercase()
             }
-
+            for (pass in 0 until 64) {
+                val restored = bundleApplier.survivors.restore(state, statementCache)
+                updatedTables += restored
+                if (restored.isEmpty()) break
+            }
+            bundleApplier.survivors.restore(state, statementCache, verifyOnly = true)
+            bundleApplier.survivors.finish()
             attachmentStateStore.markBundleSeen(bundle.bundleSeq, statementCache)
             updatedTables
         }
+        notifyUpdatedTables(updatedTables)
+        return updatedTables
     }
 
     internal suspend fun applyStagedSnapshot(
@@ -263,6 +300,7 @@ internal class OversqliteDownloadWorkflow(
         rotatedSourceId: String?,
         outboxMode: SnapshotRebuildOutboxMode,
         pinnedGuard: SnapshotApplyGuard? = null,
+        finalizer: suspend () -> Unit = {},
     ): DownloadWorkflowResult {
         if (rotatedSourceId != null) {
             requireFreshRotatedSourceState(rotatedSourceId)
@@ -270,10 +308,12 @@ internal class OversqliteDownloadWorkflow(
         val guard = pinnedGuard ?: snapshotGate.pin(outboxMode)
         val result = applyExecutor.inApplyModeTransaction(state) { statementCache ->
             snapshotGate.validateFinal(guard, session)
+            val lifecycle = OversqliteApplyLifecycle(db, config, localStore, bundleApplier.survivors, json)
+            val preserve = outboxMode != SnapshotRebuildOutboxMode.CLEAR_ALL
+            lifecycle.prepareSnapshot(state, session, preserve)
             var stagedRowCount = 0L
             var afterRowOrdinal = 0L
             var snapshotUpserts: SnapshotUpsertPlan? = null
-            var snapshotRowStates: SnapshotRowStatePlan? = null
             while (true) {
                 val progress = consumeNextStagedSnapshotPage(
                     state = state,
@@ -285,7 +325,6 @@ internal class OversqliteDownloadWorkflow(
                             "staged snapshot is missing its first declared row"
                         }
                         snapshotUpserts = localStore.prepareSnapshotUpsertPlan(statementCache)
-                        snapshotRowStates = syncStateStore.prepareSnapshotRowStatePlan(statementCache)
                         clearManagedTables(
                             state = state,
                             statementCache = statementCache,
@@ -293,7 +332,6 @@ internal class OversqliteDownloadWorkflow(
                         )
                     }
                     val upserts = checkNotNull(snapshotUpserts)
-                    val rowStates = checkNotNull(snapshotRowStates)
                     for (row in rows) {
                         try {
                             val payload = json.parseToJsonElement(row.payload) as? JsonObject
@@ -302,15 +340,18 @@ internal class OversqliteDownloadWorkflow(
                                         "${row.schemaName}.${row.tableName}",
                                 )
                             upserts.upsertAuthoritativeRow(row.tableName, payload)
-                            rowStates.update(
+                            syncStateStore.installAuthoritativeBaseline(
                                 schemaName = row.schemaName,
                                 tableName = row.tableName,
                                 keyJson = row.keyJson,
                                 rowVersion = row.rowVersion,
+                                kind = "live", payload = localStore.captureAuthoritativePayload(row.tableName,payload,statementCache),
+                                origin = "snapshot", bundleSeq = session.snapshotBundleSeq, statementCache = statementCache,
                             )
                             applyExecutor.afterAppliedRowForTest()
                         } catch (error: Throwable) {
-                            if (error is kotlinx.coroutines.CancellationException) throw error
+                            if (error is kotlinx.coroutines.CancellationException || error is SyncWorkspaceLimitException ||
+                                error is SyncWorkLimitException || error is FKReconciliationRequiredException || error is ResolutionBaseUnavailableException) throw error
                             throw SnapshotRowApplyException(
                                 rowOrdinal = row.rowOrdinal,
                                 schemaName = row.schemaName,
@@ -330,7 +371,6 @@ internal class OversqliteDownloadWorkflow(
                 throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK)
             }
             snapshotUpserts?.finish()
-            snapshotRowStates?.finish()
 
             val preservedOutbox = outboxStateStore.loadBundleState()
             if (rotatedSourceId != null) {
@@ -342,18 +382,25 @@ internal class OversqliteDownloadWorkflow(
             when (outboxMode) {
                 SnapshotRebuildOutboxMode.CLEAR_ALL -> Unit
 
-                SnapshotRebuildOutboxMode.PRESERVE_COMMITTED_REMOTE -> {
-                    if (preservedOutbox.state == outboxStateCommittedRemote && preservedOutbox.rowCount > 0L) {
-                        sourceStateStore.advanceAfterCommittedPush(
-                            sourceId = state.sourceId,
+                SnapshotRebuildOutboxMode.PRESERVE_PREPARED -> {
+                    if (preservedOutbox.state == outboxStatePrepared) {
+                        db.withPreparedStatement("""INSERT INTO _sync_row_state(schema_name,table_name,key_json,row_version,server_kind,server_payload,server_provenance,relationships_known)
+ SELECT o.schema_name,o.table_name,o.key_json,0,'absent',NULL,${baselineProvenanceSql("'snapshot'","0","?")},1 FROM _sync_outbox_rows o WHERE NOT EXISTS(SELECT 1 FROM _sync_row_state a WHERE a.schema_name=o.schema_name AND a.table_name=o.table_name AND a.key_json=o.key_json)""",statementCache) { st -> st.bindLong(1,session.snapshotBundleSeq); st.step() }
+
+                        replayPreparedOutboxIntent(
+                            state = state,
                             sourceBundleId = preservedOutbox.sourceBundleId,
+                            expectedRowCount = preservedOutbox.rowCount,
+                            statementCache = statementCache,
                         )
-                        outboxStateStore.clearBundleAndRows(statementCache)
                     }
                 }
 
                 SnapshotRebuildOutboxMode.PRESERVE_SOURCE_RECOVERY -> {
                     if (preservedOutbox.state == outboxStatePrepared) {
+                        db.withPreparedStatement("""INSERT INTO _sync_row_state(schema_name,table_name,key_json,row_version,server_kind,server_payload,server_provenance,relationships_known)
+ SELECT o.schema_name,o.table_name,o.key_json,0,'absent',NULL,${baselineProvenanceSql("'snapshot'","0","?")},1 FROM _sync_outbox_rows o WHERE NOT EXISTS(SELECT 1 FROM _sync_row_state a WHERE a.schema_name=o.schema_name AND a.table_name=o.table_name AND a.key_json=o.key_json)""",statementCache) { st -> st.bindLong(1,session.snapshotBundleSeq); st.step() }
+
                         replayPreparedOutboxIntent(
                             state = state,
                             sourceBundleId = preservedOutbox.sourceBundleId,
@@ -369,16 +416,21 @@ internal class OversqliteDownloadWorkflow(
                     }
                 }
             }
+            lifecycle.restoreAndVerify(state, statementCache)
+            lifecycle.verifySnapshot(state, session, preserve, statementCache)
+            bundleApplier.survivors.finish()
             attachmentStateStore.persistAttachedState(
                 sourceId = currentSourceId,
                 userId = state.userId,
-                schemaName = state.validated.schema,
+                schemaName = unconfirmedLocalSchema,
                 lastBundleSeqSeen = session.snapshotBundleSeq,
                 rebuildRequired = false,
                 pendingInitializationId = "",
                 statementCache = statementCache,
             )
             operationStateStore.persistState(OversqliteOperationState(), statementCache)
+
+            finalizer()
 
             stageStore.deleteSnapshotStage(session.snapshotId, statementCache)
             DownloadWorkflowResult(
@@ -392,6 +444,7 @@ internal class OversqliteDownloadWorkflow(
             )
         }
         snapshotDiagnostics()?.recordAppliedRows(session.rowCount)
+        notifyUpdatedTables(result.updatedTables)
         return result
     }
 
@@ -476,9 +529,12 @@ internal class OversqliteDownloadWorkflow(
         statementCache: StatementCache? = null,
         clearOutbox: Boolean = true,
     ) {
-        for (table in state.validated.tables) {
+        val reverseDependencyOrder = state.validated.tables.sortedByDescending {
+            state.validated.tableOrder[it.tableName.lowercase()] ?: Int.MIN_VALUE
+        }
+        for (table in reverseDependencyOrder) {
             db.execSQL("DELETE FROM ${quoteIdent(table.tableName)}")
-            syncStateStore.clearStructuredRowState(state.validated.schema, table.tableName, statementCache)
+            syncStateStore.clearStructuredRowState(state.validated.schemaForTable(table.tableName), table.tableName, statementCache)
         }
         syncStateStore.clearDirtyRows()
         if (clearOutbox) {
@@ -497,19 +553,19 @@ internal class OversqliteDownloadWorkflow(
         when (outboxMode) {
             SnapshotRebuildOutboxMode.CLEAR_ALL -> {
                 if (pendingOutboundCount > 0) {
-                    throw PendingPushReplayException(saturatingLegacyCount(pendingOutboundCount))
+                    throw PendingPushReplayException(pendingOutboundCount)
                 }
             }
 
-            SnapshotRebuildOutboxMode.PRESERVE_COMMITTED_REMOTE -> {
-                if (pendingOutboundCount > 0 && outboxState.state != outboxStateCommittedRemote) {
-                    throw PendingPushReplayException(saturatingLegacyCount(pendingOutboundCount))
+            SnapshotRebuildOutboxMode.PRESERVE_PREPARED -> {
+                if (pendingOutboundCount > 0 && outboxState.state != outboxStatePrepared) {
+                    throw PendingPushReplayException(pendingOutboundCount)
                 }
             }
 
             SnapshotRebuildOutboxMode.PRESERVE_SOURCE_RECOVERY -> {
                 if (pendingOutboundCount > 0 && outboxState.state == outboxStateNone) {
-                    throw PendingPushReplayException(saturatingLegacyCount(pendingOutboundCount))
+                    throw PendingPushReplayException(pendingOutboundCount)
                 }
             }
         }
@@ -548,7 +604,40 @@ internal class OversqliteDownloadWorkflow(
         }
     }
 
-    private fun snapshotChunkRows(): Int = config.snapshotChunkRows.takeIf { it > 0 } ?: 1000
+    private suspend fun fetchSnapshotChunkWithOneRowProgress(
+        state: RuntimeState,
+        session: SnapshotSession,
+        afterRowOrdinal: Long,
+        limits: SnapshotNegotiation,
+    ): SnapshotChunkResponse = try {
+        remoteApi.fetchSnapshotChunk(
+            snapshotId = session.snapshotId,
+            sourceId = state.sourceId,
+            snapshotBundleSeq = session.snapshotBundleSeq,
+            afterRowOrdinal = afterRowOrdinal,
+            maxRows = limits.maxRows,
+            maxBytes = limits.maxBytes,
+            admittedMaxBytes = state.admittedContract.limits.maxSnapshotDecodedBytesPerChunk,
+        )
+    } catch (tooSmall: SnapshotChunkTooSmallException) {
+        val hardLimit = state.admittedContract.limits.maxSnapshotDecodedBytesPerChunk
+        if (tooSmall.requiredBytes > hardLimit) {
+            throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK)
+        }
+        try {
+            remoteApi.fetchSnapshotChunk(
+                snapshotId = session.snapshotId,
+                sourceId = state.sourceId,
+                snapshotBundleSeq = session.snapshotBundleSeq,
+                afterRowOrdinal = afterRowOrdinal,
+                maxRows = 1,
+                maxBytes = tooSmall.requiredBytes,
+                admittedMaxBytes = hardLimit,
+            )
+        } catch (_: SnapshotChunkTooSmallException) {
+            throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK)
+        }
+    }
 
     private suspend fun requireFreshRotatedSourceState(rotatedSourceId: String) {
         val sourceState = sourceStateStore.loadState(rotatedSourceId)

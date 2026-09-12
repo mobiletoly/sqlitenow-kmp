@@ -1,0 +1,255 @@
+{
+  "format": "sqlitenow-client-upgrade-corpus/v1",
+  "go_scenarios": [
+    {
+      "id": "CU-N01",
+      "go_tests": [
+        "TestClientUpgradeConformance_I12SparseUpgradePreviewUsesProductionCapabilities"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-N02",
+      "go_tests": [
+        "TestUpgradeCoordinator_I01ResumeRevalidatesVersionAndPhysicalContract",
+        "TestUpgradeCoordinator_I01GenerationUnavailableResponsesRemainTyped",
+        "TestUpgradeRegression_ManagedReadyClientRequiresCompleteContractAndIdentity",
+        "TestUpgradeRegression_DelayedGenerationLossRemainsTyped",
+        "TestUpgradeRegression_UpgradePlansRejectLocalOnlySynchronizedOverlap",
+        "TestUpgradeRegression_NewClientDeepClonesReadyConfiguration"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-N03",
+      "go_tests": [
+        "TestUpgradeRegression_GenerationErrorsAreTypedAtEveryReader",
+        "TestUpgradeRegression_GenerationErrorStatusMappingMustBeExact"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-N04",
+      "go_tests": [
+        "TestUpgradeRegression_GenerationErrorsAreTypedAtEveryReader",
+        "TestUpgradeRegression_GenerationErrorStatusMappingMustBeExact"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-D01",
+      "go_tests": [
+        "TestUpgrade_ProductionRemoteCommitProcessDeath"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-D02",
+      "go_tests": [
+        "TestPushSessions_CreateResumesPartialStagingUntilExpiry",
+        "TestPushPending_PreservesDirtyExtraEffectKeyDuringSettlement",
+        "TestPushPending_ClearsUncapturedNoOpAcrossWireNormalization",
+        "TestPushPending_PreservesNewerIntentEqualToNormalizedAuthoritativeEffect",
+        "TestUpgradeCoordinator_I03PermanentRejectionRequiresBoundResolution",
+        "TestUpgradeCoordinator_I03DiscardResolvesLivePushSessionBeforeDrain",
+        "TestUpgradeRegression_AuthoritativePullRejectsApplicationTriggerFKViolationBeforeAcknowledgement"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-D03",
+      "go_tests": [
+        "TestPushPending_StructuredConflictClientWinsResolverAutoRetriesAndWins",
+        "TestPushPending_StructuredConflictKeepMergedRetriesMergedPayload"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-C01",
+      "go_tests": [
+        "TestUpgradeCoordinator_I02CancellationKeepsDurableFreeze",
+        "TestClientUpgradeConformance_TrackerRejectsDeclaredButUnconsumedItems",
+        "TestClientUpgradeConformance_CancellationEvidenceRejectsMissingSnapshotStage",
+        "TestClientUpgradeConformance_CancellationEvidenceRejectsReplacementTupleSubstitution"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-P01",
+      "go_tests": [
+        "TestPushPending_CreateHistoryPrunedRequiresSourceRecoveryAndRotatePreservesOutbox",
+        "TestUpgradeCoordinator_I04HistoryPrunedRecoveryCompletesUnderFrozenCoordinator",
+        "TestUpgradeRegression_CoordinatorPhysicalClientLogsCheckpointRecovery"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-M01",
+      "go_tests": [
+        "TestUpgradeCoordinator_I05AtomicMigrationFailureMatrix",
+        "TestUpgradeMigrationCapabilityRejectsEscapesAndExpires",
+        "TestUpgradeCoordinator_I06PostMigrationVersionReaderIsReadOnly",
+        "TestUpgradeCoordinator_I06MigrationCanTransformExistingSynchronizedRows",
+        "TestUpgradeCoordinator_I07ValidatesForeignKeysWithoutDeclarationTiming",
+        "TestUpgradeCoordinator_I07RejectsForeignKeyCodecRepresentationMismatch",
+        "TestUpgradeCoordinator_I07ReopenedWriterEnforcesForeignKeysBeforeReady",
+        "TestUpgradeRegression_ApplicationTriggerCollisionRollsBackFreshMigration",
+        "TestUpgradeRegression_PhysicalContractRejectsGeneratedAndAsyncTables",
+        "TestUpgradeRegression_UpgradePlansRejectLocalOnlySynchronizedOverlap",
+        "TestUpgradeRegression_MigrationCleanupErrorsPreservePrimaryCause"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-R01",
+      "go_tests": [
+        "TestUpgrade_ProductionRemoteCommitProcessDeath",
+        "TestClientUpgradeConformance_I12WireResponsesUseProductionReaders",
+        "TestUpgradeRegression_JournalCorruptionFailsBeforeRemoteDispatch",
+        "TestUpgradeRegression_ResignedJournalCannotContradictImmutablePlan"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-S01",
+      "go_tests": [
+        "TestUpgradeCoordinator_I09GenerationRebuildReady",
+        "TestUpgradeCoordinator_I09ProductionSnapshotNotFoundIsRestartable",
+        "TestUpgradeCoordinator_I10FinalReadyProcessDeath",
+        "TestUpgradeRegression_LocalOnlyDigestIncludesImplicitRowIdentity",
+        "TestUpgradeRegression_DelayedGenerationLossRemainsTyped",
+        "TestClientUpgradeConformance_I12ProtocolHashFixturesUseProductionFraming"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-F01",
+      "go_tests": [
+        "TestUpgradeCoordinator_FreshCreationPublishesReadyAtomically",
+        "TestUpgradeCoordinator_I10FreshBootstrapProcessRecovery"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-L01",
+      "go_tests": [
+        "TestUpgradeCoordinator_LocalOnlyPreservesSyncStateAndAdvancesVersion",
+        "TestUpgradeCoordinator_I11AnonymousDatabaseAllowsOfflineLocalOnlyMigration",
+        "TestUpgradeCoordinator_I10CompletedAnonymousPlanReopensAfterNormalAttachment",
+        "TestUpgradeRegression_LocalOnlyDigestIncludesImplicitRowIdentity"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-X01",
+      "go_tests": [
+        "TestMobileFlow_UpgradeProductionServerSameFileProcessDeathJourney",
+        "TestMobileFlow_UpgradeControlledFailureRestartJourney",
+        "TestUpgradeCoordinator_I02ExclusiveProcessOwnershipAndDeathRelease",
+        "TestUpgradeCoordinator_I02CloseRetainsOwnershipUntilActiveMigrationStops"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-U0",
+      "go_tests": [
+        "TestUpgradeCoordinator_I10EveryLocalBoundaryProcessDeath"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-U1",
+      "go_tests": [
+        "TestUpgradeCoordinator_I10EveryLocalBoundaryProcessDeath"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-U2",
+      "go_tests": [
+        "TestUpgradeCoordinator_I10EveryLocalBoundaryProcessDeath",
+        "TestUpgradeCoordinator_I03DiscardResolvesLivePushSessionBeforeDrain",
+        "TestUpgradeCoordinator_I03PermanentRejectionRequiresBoundResolution",
+        "TestUpgradeRegression_AuthoritativePullRejectsApplicationTriggerFKViolationBeforeAcknowledgement",
+        "TestUpgradeRegression_CoordinatorPhysicalClientLogsCheckpointRecovery",
+        "TestUpgradeRegression_U2DrainWitnessResumesWithoutOldGenerationIO"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-U3",
+      "go_tests": [
+        "TestUpgradeCoordinator_I10EveryLocalBoundaryProcessDeath",
+        "TestUpgradeCoordinator_I02ReadAvailabilityCoversCompletePhaseMatrix"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-U4",
+      "go_tests": [
+        "TestUpgradeCoordinator_I10FreshProcessRecovery",
+        "TestUpgradeCoordinator_I06MigrationCanTransformExistingSynchronizedRows",
+        "TestUpgradeCoordinator_I07ReopenedWriterEnforcesForeignKeysBeforeReady",
+        "TestUpgradeCodec_I07RealLocalWritePreservesBinary64ThroughUpload"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-U5",
+      "go_tests": [
+        "TestUpgradeCoordinator_I10EveryLocalBoundaryProcessDeath"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-U6",
+      "go_tests": [
+        "TestUpgrade_ProductionRemoteCommitProcessDeath"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-U7",
+      "go_tests": [
+        "TestUpgradeCoordinator_I10EveryLocalBoundaryProcessDeath",
+        "TestUpgradeCodec_I09UUIDBlobSnapshotTotalsUseWireKeyBytes",
+        "TestUpgradeCodec_I09SnapshotTotalsPageWithoutWholeSnapshotMaterialization"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    },
+    {
+      "id": "CU-U8",
+      "go_tests": [
+        "TestUpgradeCoordinator_I10FinalReadyProcessDeath",
+        "TestUpgradeCoordinator_I01CompletedPlanRevalidatesVersionAndPhysicalContract"
+      ],
+      "executor_package": "./oversqlite",
+      "executor_test": "TestClientUpgradeConformance_ExecutePortableScenario"
+    }
+  ],
+  "corpus_revision": null,
+  "manifest_sha256": null
+}

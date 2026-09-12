@@ -69,8 +69,7 @@ SQLiteNow/databases/AppDatabase/
   queries/person/selectAll.sql
 ```
 
-SQLiteNow uses the same SQL folder names for Swift, Kotlin Multiplatform, and
-Flutter/Dart:
+SQLiteNow uses the same SQL folder names for Swift and Kotlin Multiplatform:
 
 - `schema`: schema objects such as tables, indexes, and views
 - `init`: data or setup SQL for a fresh database

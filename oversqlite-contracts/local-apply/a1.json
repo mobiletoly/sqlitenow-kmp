@@ -1,0 +1,118 @@
+{
+  "formatVersion": 1,
+  "defaults": {
+    "entries": 100000,
+    "bytes": 268435456,
+    "work": 1000000
+  },
+  "results": [
+    {
+      "reason": "sync_work_limit",
+      "dimension": "work",
+      "resumable": true,
+      "advancesCheckpoint": false
+    },
+    {
+      "reason": "sync_workspace_limit",
+      "dimension": "entries",
+      "resumable": false,
+      "advancesCheckpoint": false
+    },
+    {
+      "reason": "sync_workspace_limit",
+      "dimension": "bytes",
+      "resumable": false,
+      "advancesCheckpoint": false
+    },
+    {
+      "reason": "sync_workspace_limit",
+      "dimension": "atomic_apply_work",
+      "resumable": false,
+      "advancesCheckpoint": false
+    }
+  ],
+  "revisionCases": [
+    {
+      "saved": 3,
+      "current": 3,
+      "resume": true
+    },
+    {
+      "saved": 3,
+      "current": 4,
+      "resume": false
+    }
+  ],
+  "survivorWitness": {
+    "before": {
+      "P": null,
+      "Q": null,
+      "C": "P",
+      "D": "C"
+    },
+    "wire": [
+      {
+        "key": "P",
+        "op": "DELETE"
+      },
+      {
+        "key": "C",
+        "op": "UPDATE",
+        "parent": "Q"
+      }
+    ],
+    "after": {
+      "Q": null,
+      "C": "Q",
+      "D": "C"
+    }
+  },
+  "persistedFormat": {
+    "tables": [
+      "_sync_apply_plan",
+      "_sync_apply_rows",
+      "_sync_apply_edges"
+    ],
+    "phases": [
+      "clear",
+      "roots",
+      "index",
+      "walk",
+      "ready"
+    ],
+    "guardBindsRegistrationOrder": true,
+    "allRootsExpand": true,
+    "relationshipBuildPassesPerUnit": 1
+  },
+  "allocationCases": [
+    {
+      "payload": {
+        "id": "C",
+        "name": "plain"
+      },
+      "encodedBytes": 25
+    },
+    {
+      "payload": {
+        "id": "C",
+        "name": "雪🙂 \"\\\n"
+      },
+      "encodedBytes": 34
+    },
+    {
+      "payload": {
+        "id": "C",
+        "json": {
+          "array": [
+            true,
+            null,
+            {
+              "x": "\t\u0001"
+            }
+          ]
+        }
+      },
+      "encodedBytes": 56
+    }
+  ]
+}

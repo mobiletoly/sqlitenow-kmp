@@ -7,8 +7,8 @@ import kotlin.test.assertFalse
 
 internal class RealServerRichSchemaTest : RealServerSupport() {
     @Test
-    fun businessRichV0Schema_pushPullAndRebuild_workAgainstRealServer() = runOwnedWebDatabaseTest {
-        val config = requireRealServerConfig() ?: return@runOwnedWebDatabaseTest
+    fun businessRichV0Schema_pushPullAndRebuild_workAgainstRealServer() = runRealServerTest {
+        val config = requireRealServerConfig() ?: return@runRealServerTest
         resetRealServerState(config.baseUrl)
 
         val userId = randomRealServerId("realserver-rich-user")
@@ -61,7 +61,10 @@ internal class RealServerRichSchemaTest : RealServerSupport() {
             )
 
             val fixture = insertBusinessRichGraph(seedDb, "business-rich-v0")
-            assertEquals(PushOutcome.COMMITTED, seedClient.pushPending().getOrThrow().outcome)
+            repeat(2) {
+                assertEquals(PushOutcome.COMMITTED, seedClient.pushPending().getOrThrow().outcome)
+            }
+            assertFalse(seedClient.syncStatus().getOrThrow().pending.hasPendingSyncData)
             pullClient.pullToStable().getOrThrow()
             hydrateClient.rebuild().getOrThrow()
 
