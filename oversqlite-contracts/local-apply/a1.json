@@ -1,7 +1,7 @@
 {
   "formatVersion": 1,
   "defaults": {
-    "entries": 100000,
+    "entries": 131072,
     "bytes": 268435456,
     "work": 1000000
   },
@@ -21,12 +21,6 @@
     {
       "reason": "sync_workspace_limit",
       "dimension": "bytes",
-      "resumable": false,
-      "advancesCheckpoint": false
-    },
-    {
-      "reason": "sync_workspace_limit",
-      "dimension": "atomic_apply_work",
       "resumable": false,
       "advancesCheckpoint": false
     }

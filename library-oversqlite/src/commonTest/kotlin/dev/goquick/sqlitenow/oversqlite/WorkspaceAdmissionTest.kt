@@ -4,6 +4,30 @@ import kotlinx.coroutines.CancellationException
 import kotlin.test.*
 
 internal class WorkspaceAdmissionTest : SurvivorTestSupport() {
+    @Test fun retainedValidationCompletesAboveSoftWorkTarget() = runOwnedWebDatabaseTest {
+        withSurvivorFixture { _, db, http, seed ->
+            for (ordinal in 1..32) {
+                db.execSQL("INSERT INTO _sync_snapshot_stage(snapshot_id,row_ordinal,schema_name,table_name,key_json,row_version,payload) " +
+                    "VALUES('retained',${ordinal},'main','nodes','{\"id\":\"retained-${ordinal}\"}',1,'{}')")
+            }
+            val config = OversqliteConfig(1, nodeTables, "fixture", "main", maxSyncWorkUnitsPerInvocation = 1)
+            val workspace = OversqliteWorkspace(db, config)
+            workspace.reconcileRetainedOwners()
+            seed.closeFromCoordinatedOwner()
+            val reopened = newClient(db, http, syncTables = nodeTables, workUnits = 1)
+            reopened.open().getOrThrow()
+            assertEquals(32L, scalarLong(db, "SELECT count(*) FROM _sync_snapshot_stage"))
+            reopened.closeFromCoordinatedOwner()
+            val used = workspace.usage(applyUnit("reopen", 0, "retained"))
+            assertEquals(32L, scalarLong(db, "SELECT snapshot_stage_entries FROM _sync_operation_state"))
+            assertFailsWith<SyncWorkspaceLimitException> {
+                OversqliteWorkspace(db, config.copy(maxSyncWorkspaceEntries = used.entries - 1)).check("reopen")
+            }
+            db.execSQL("UPDATE _sync_snapshot_stage SET charge=charge+1 WHERE row_ordinal=17")
+            assertFails { workspace.reconcileRetainedOwners() }
+        }
+    }
+
     @Test fun boundaries() = runOwnedWebDatabaseTest {
         withSurvivorFixture { _,db,http,_ ->
             db.execSQL("INSERT INTO _sync_snapshot_stage(snapshot_id,row_ordinal,schema_name,table_name,key_json,row_version,payload) VALUES('snapshot',1,'main','nodes','{\"id\":\"X\"}',1,'{}')")
@@ -22,11 +46,11 @@ internal class WorkspaceAdmissionTest : SurvivorTestSupport() {
             for (work in listOf(16L,17L,18L)) {
                 val owner=OversqliteClientOperationController(config.copy(maxSyncWorkUnitsPerInvocation=17),
                     OversqliteClientResourceOwner(db,http),SnapshotDiagnosticsState()) {}
-                if (work>17) {
-                    val failure=assertFailsWith<SyncWorkspaceLimitException> {owner.reserveSyncWork(unit,work)}
-                    assertEquals("atomic_apply_work",failure.dimension)
-                    assertEquals(0L,owner.usedSyncWork())
-                } else {owner.reserveSyncWork(unit,work);assertEquals(work,owner.usedSyncWork())}
+                owner.reserveSyncWork(unit, work)
+                assertEquals(work, owner.usedSyncWork())
+                if (work == 16L) owner.reserveSyncWork(unit, 1)
+                val pending = assertFailsWith<SyncWorkLimitException> { owner.reserveSyncWork(unit, 1) }
+                assertEquals(17L, pending.limit)
             }
             db.execSQL("UPDATE _sync_snapshot_stage SET charge=charge+1")
             assertFails {workspace.reconcileRetainedOwners()}
@@ -58,17 +82,16 @@ internal class WorkspaceAdmissionTest : SurvivorTestSupport() {
             db.execSQL("UPDATE nodes SET name='changed parent' WHERE id='P'")
             server.beforePushCommit={throw CancellationException("frozen original")}
             assertFailsWith<CancellationException> {seed.pushPending().getOrThrow()}
-            val hash=scalarText(db,"SELECT canonical_request_hash FROM _sync_outbox_bundle")
             seed.closeFromCoordinatedOwner()
             val limited=newClient(db,http,syncTables=nodeTables,workUnits=1000)
             limited.openAndConnect("user-1").getOrThrow()
             server.normalizePushEffects={effects()}
-            val protected=protectedPrimaryVector(db)
             val failure=limited.pushPending().exceptionOrNull()
             assertTrue(failure is SyncWorkLimitException || failure is SyncWorkspaceLimitException,"$failure")
-            assertEquals(protected,protectedPrimaryVector(db),"complete primary vector at atomic refusal")
-            assertEquals(hash,scalarText(db,"SELECT canonical_request_hash FROM _sync_outbox_bundle"))
-            assertEquals(1L,scalarLong(db,"SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
+            requireSurvivors(db)
+            assertEquals(3L,scalarLong(db,"SELECT next_source_bundle_id FROM _sync_source_state"))
+            assertEquals(0L,scalarLong(db,"SELECT count(*) FROM _sync_outbox_rows"))
+            assertEquals(2L,scalarLong(db,"SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
             assertEquals(0L,scalarLong(db,"SELECT reserved_entries FROM _sync_operation_state"))
             limited.closeFromCoordinatedOwner()
             val resumed=newClient(db,http,syncTables=nodeTables)

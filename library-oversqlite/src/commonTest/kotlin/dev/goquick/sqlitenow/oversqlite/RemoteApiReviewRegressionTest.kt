@@ -23,6 +23,41 @@ class RemoteApiReviewRegressionTest {
         }
     }
 
+    @Test
+    fun nonJsonSnapshotErrorsRetainHttpStatusAndCategory() = runTest {
+        for (status in listOf(HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden, HttpStatusCode.BadGateway)) {
+            val http = client(status, "Invalid token\n")
+            try {
+                val remote = api(http)
+                val failures = listOf(
+                    assertFailsWith<SnapshotHttpException> { remote.createSnapshotSession("source-a") },
+                    assertFailsWith<SnapshotHttpException> {
+                        remote.fetchSnapshotChunk("session", "source-a", 1, 0, 1, 4096, 4096)
+                    },
+                )
+                for (error in failures) {
+                    assertEquals(status, error.status)
+                    assertEquals(if (status == HttpStatusCode.BadGateway) OversqliteErrorCategory.NETWORK
+                        else OversqliteErrorCategory.AUTH, error.category)
+                    assertFalse(error.message.orEmpty().contains("Invalid token"))
+                }
+            } finally { http.close() }
+        }
+    }
+
+    @Test
+    fun malformedSnapshotJsonRemainsProtocolFailure() = runTest {
+        for (status in listOf(HttpStatusCode.OK, HttpStatusCode.Unauthorized)) {
+            for (body in listOf("{\"error\":oops}", "[]", "{\"error\":\"a\",\"error\":\"b\"}")) {
+                val http = client(status, body)
+                try {
+                    val error = runCatching { api(http).createSnapshotSession("source-a") }.exceptionOrNull()
+                    assertEquals(OversqliteErrorCategory.PROTOCOL, (error as? OversqliteCategorizedException)?.category)
+                } finally { http.close() }
+            }
+        }
+    }
+
     private fun client(status: HttpStatusCode, body: String): HttpClient = HttpClient(MockEngine {
         respond(body, status)
     }) {

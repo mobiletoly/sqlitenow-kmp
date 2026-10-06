@@ -39,7 +39,7 @@ public extension SQLiteNowError {
                     let result = try decoder.decode(SQLiteNowSyncWorkspaceLimit.self, from: data)
                     guard payload.category == "state", !payload.remoteContract,
                           result.reason == "sync_workspace_limit", validPlanningUnit(result.unit),
-                          ["entries", "bytes", "atomic_apply_work"].contains(result.dimension),
+                          ["entries", "bytes"].contains(result.dimension),
                           result.limit > 0, result.used >= 0, result.reserved >= 0, validPlanningProgress(result.progress),
                           validPlanningFields(data, ["reason", "unit", "dimension", "limit", "used", "reserved", "resumable", "progress"])
                     else { return .protocol(message: "invalid local planning result") }
@@ -311,7 +311,7 @@ public struct SQLiteNowSyncConfig: Equatable, Sendable {
         generationId: Int64,
         databaseId: String,
         serviceId: String,
-        maxSyncWorkspaceEntries: Int64 = 100_000,
+        maxSyncWorkspaceEntries: Int64 = 131_072,
         maxSyncWorkspaceBytes: Int64 = 256 * 1_024 * 1_024,
         maxSyncWorkUnitsPerInvocation: Int64 = 1_000_000,
         transferTargets: SQLiteNowTransferTargets = .init(),

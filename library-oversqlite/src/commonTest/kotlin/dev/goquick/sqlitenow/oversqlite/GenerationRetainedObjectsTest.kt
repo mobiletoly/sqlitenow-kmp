@@ -10,6 +10,19 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 internal class GenerationRetainedObjectsTest : CrossTargetSyncTestSupport() {
+    @Test fun previousSnapshotProgressLayoutIsRejectedWithoutRepair() = runOwnedWebDatabaseTest {
+        val db = newDb(); val server = MockSyncServer(); val http = server.newHttpClient()
+        try {
+            createUsersAndPostsTables(db)
+            val client = newClient(db, http)
+            client.openAndConnect("user-1").getOrThrow(); client.closeFromCoordinatedOwner()
+            db.execSQL("ALTER TABLE _sync_operation_state DROP COLUMN snapshot_stage_guard")
+            val before = scalarText(db, "SELECT sql FROM sqlite_schema WHERE name='_sync_operation_state'")
+            assertFails { inspectRetainedRuntime(db) }
+            assertEquals(before, scalarText(db, "SELECT sql FROM sqlite_schema WHERE name='_sync_operation_state'"))
+        } finally { http.close(); db.close() }
+    }
+
     @Test
     fun applicationTriggerInternalReferenceRejectsBeforeMutation() = runOwnedWebDatabaseTest {
         val db = newDb()

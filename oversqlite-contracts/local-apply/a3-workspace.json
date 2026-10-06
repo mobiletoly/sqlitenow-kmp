@@ -38,6 +38,20 @@
         "charge:INTEGER:NONNEGATIVE:DEFAULT_ZERO"
       ]
     },
+    "kotlinOnly": {
+      "_sync_apply_plan": [
+        "source_snapshot_id:TEXT:NOT_NULL:DEFAULT_EMPTY"
+      ],
+      "_sync_apply_rows": [
+        "role:TEXT:ADDITIONAL_snapshot_ref",
+        "source_ordinal:INTEGER:POSITIVE_FOR_snapshot_ref"
+      ],
+      "_sync_operation_state": [
+        "snapshot_staged_row_count:INTEGER:NONNEGATIVE:DEFAULT_ZERO",
+        "snapshot_staged_byte_count:INTEGER:NONNEGATIVE:DEFAULT_ZERO",
+        "snapshot_stage_guard:TEXT:NOT_NULL:DEFAULT_EMPTY"
+      ]
+    },
     "indexes": [
       "_sync_apply_rows_role_ordinal_idx(role,ordinal)"
     ],
@@ -87,7 +101,12 @@
       "next_source_bundle_id",
       "outbox_identity",
       "effective_limits"
-    ]
+    ],
+    "snapshotPayloadOwnership": {
+      "kotlin": "completed _sync_snapshot_stage owns authoritative payload; _sync_apply_rows holds payload-free snapshot references and distinct local overrides or exceptions; _sync_apply_plan binds the stage id",
+      "go": "implementation-specific retained representation; no physical parity implied",
+      "shared": "original snapshot input remains authoritative for A; local preservation may override business view"
+    }
   },
   "cases": [
     {
@@ -312,14 +331,15 @@
         "limit": 100,
         "used": 70,
         "required": 40,
-        "cancelled": false
+        "cancelled": false,
+        "firstReady": false
       },
       "expected": {
-        "result": "sync_work_limit",
-        "used": 70,
+        "result": "fits",
+        "used": 110,
         "reserved": 40,
         "ready": true,
-        "businessChanged": false
+        "businessChanged": true
       }
     },
     {
@@ -329,14 +349,15 @@
         "limit": 100,
         "used": 0,
         "required": 101,
-        "cancelled": false
+        "cancelled": false,
+        "firstReady": true
       },
       "expected": {
-        "result": "atomic_apply_work",
-        "used": 0,
+        "result": "fits",
+        "used": 101,
         "reserved": 101,
-        "ready": false,
-        "businessChanged": false
+        "ready": true,
+        "businessChanged": true
       }
     },
     {
@@ -346,7 +367,8 @@
         "limit": 100,
         "used": 60,
         "required": 40,
-        "cancelled": false
+        "cancelled": false,
+        "firstReady": false
       },
       "expected": {
         "result": "fits",
@@ -363,7 +385,8 @@
         "limit": 100,
         "used": 70,
         "required": 40,
-        "cancelled": true
+        "cancelled": true,
+        "firstReady": true
       },
       "expected": {
         "result": "cancelled",
@@ -371,6 +394,60 @@
         "reserved": 40,
         "ready": true,
         "businessChanged": false
+      }
+    },
+    {
+      "id": "work-ready-after-validation",
+      "kind": "work",
+      "input": {
+        "limit": 100,
+        "used": 120,
+        "required": 300,
+        "cancelled": false,
+        "firstReady": true
+      },
+      "expected": {
+        "result": "fits",
+        "used": 420,
+        "reserved": 300,
+        "ready": true,
+        "businessChanged": true
+      }
+    },
+    {
+      "id": "work-after-overshoot",
+      "kind": "work",
+      "input": {
+        "limit": 100,
+        "used": 420,
+        "required": 1,
+        "cancelled": false,
+        "firstReady": false
+      },
+      "expected": {
+        "result": "sync_work_limit",
+        "used": 420,
+        "reserved": 1,
+        "ready": true,
+        "businessChanged": false
+      }
+    },
+    {
+      "id": "work-saturates",
+      "kind": "work",
+      "input": {
+        "limit": 100,
+        "used": 9223372036854775802,
+        "required": 10,
+        "cancelled": false,
+        "firstReady": true
+      },
+      "expected": {
+        "result": "fits",
+        "used": 9223372036854775807,
+        "reserved": 10,
+        "ready": true,
+        "businessChanged": true
       }
     },
     {

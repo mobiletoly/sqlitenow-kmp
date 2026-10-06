@@ -114,6 +114,32 @@ class BundleHashTest {
     }
 
     @Test
+    fun canonicalizeJsonElement_keepsExactIntegersAndNumericStringsDistinct() {
+        val inputs = listOf("0", "1", "13", "-13", "2147483648", "-2147483649",
+            "9007199254740990", "-9007199254740990", "9007199254740991", "-9007199254740991")
+        for (input in inputs) {
+            assertEquals(input, canonicalizeJsonElement(Json.parseToJsonElement(input)), input)
+            assertEquals("\"$input\"", canonicalizeJsonElement(Json.parseToJsonElement("\"$input\"")), "numeric string $input")
+        }
+    }
+
+    @Test
+    fun canonicalizeJsonElement_preservesRoundingAndAlternateIntegerLexemes() {
+        val vectors = listOf(
+            "9007199254740992" to "9007199254740992",
+            "9007199254740993" to "9007199254740992",
+            "-9007199254740993" to "-9007199254740992",
+            "9223372036854775807" to "9223372036854776000",
+            "-9223372036854775808" to "-9223372036854776000",
+            "1.0" to "1", "13e0" to "13", "-0" to "0", "-0.00" to "0",
+            "1e21" to "1e+21", "1e-7" to "1e-7",
+        )
+        for ((input, expected) in vectors) {
+            assertEquals(expected, canonicalizeJsonElement(Json.parseToJsonElement(input)), input)
+        }
+    }
+
+    @Test
     fun canonicalizeJsonElement_sortsKeys_andNormalizesDeleteStyleNullPayload() {
         val json = Json
 

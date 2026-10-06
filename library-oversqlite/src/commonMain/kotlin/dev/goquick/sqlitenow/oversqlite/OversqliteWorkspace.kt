@@ -77,7 +77,7 @@ internal class OversqliteWorkspace(
     }
 
     private suspend fun loadReservations(): List<Reservation> {
-        validateReservationMetadata(chargeWork=false)
+        validateReservationMetadata()
         val snapshot=checkNotNull(one("SELECT reserved_entries,reserved_bytes,workspace_context FROM _sync_operation_state WHERE singleton_key=1") {
             Triple(it.getLong(0),it.getLong(1),it.getText(2))
         })
@@ -127,7 +127,7 @@ internal class OversqliteWorkspace(
         db.execSQL("UPDATE _sync_operation_state SET workspace_context='',reserved_entries=0,reserved_bytes=0 WHERE singleton_key=1")
     }
 
-    private suspend fun validateReservationMetadata(chargeWork: Boolean = true) {
+    private suspend fun validateReservationMetadata() {
         val snapshot=checkNotNull(one("""SELECT reserved_entries,reserved_bytes,workspace_context='',
             CASE WHEN workspace_context='' THEN 1 ELSE json_valid(workspace_context) END FROM _sync_operation_state WHERE singleton_key=1""") {
             listOf(it.getLong(0),it.getLong(1),it.getLong(2),it.getLong(3))
@@ -143,7 +143,6 @@ internal class OversqliteWorkspace(
             FROM _sync_operation_state o,json_each(o.workspace_context) j WHERE singleton_key=1""") { st ->
             while(st.step()) {
                 currentCoroutineContext().ensureActive()
-                if(chargeWork && count>=config.maxSyncWorkUnitsPerInvocation/16) throw SyncWorkLimitException(ReplayFixedUnits.reservationReconciliation,config.maxSyncWorkUnitsPerInvocation,count*16)
                 require(st.getText(0)=="object" && st.getLong(1)==5L && (2..4).all {st.getLong(it)==64L} &&
                     st.getText(5)=="integer" && st.getText(6)=="integer" && (9..11).all {st.getLong(it)==1L}) {"invalid reservation record"}
                 total=add(ReplayFixedUnits.reservationReconciliation,total,WorkspaceCharge(st.getLong(7),st.getLong(8))); count++
@@ -155,11 +154,10 @@ internal class OversqliteWorkspace(
         require(count>0 && total.entries==snapshot[0] && total.bytes==snapshot[1]) { "invalid reservation scalar totals" }
     }
     // Only scalar lengths are loaded, one indexed row per cancellable step.
-    // This independent opening budget covers the complete retained-owner walk.
+    // Opening must complete retained validation even above the invocation target.
     suspend fun reconcileRetainedOwners() {
         validateReservationMetadata()
         val unit=ReplayFixedUnits.retainedReconciliation
-        var work=0L
         val owners=listOf(
             listOf("_sync_snapshot_stage","charge","64+6*(length(CAST(snapshot_id AS BLOB))+length(CAST(schema_name AS BLOB))+length(CAST(table_name AS BLOB))+length(CAST(key_json AS BLOB)))+length(CAST(COALESCE(payload,'') AS BLOB))","SELECT snapshot_stage_entries,snapshot_stage_bytes FROM _sync_operation_state WHERE singleton_key=1"),
             listOf("_sync_apply_rows","bytes","64+6*(length(CAST(table_name AS BLOB))+length(CAST(local_pk AS BLOB)))+length(CAST(COALESCE(payload,'') AS BLOB))","SELECT entries,bytes FROM _sync_apply_plan WHERE singleton_key=1"),
@@ -169,8 +167,6 @@ internal class OversqliteWorkspace(
             var cursor=Long.MIN_VALUE; var total=WorkspaceCharge()
             while(true) {
                 currentCoroutineContext().ensureActive()
-                if(work>config.maxSyncWorkUnitsPerInvocation-8) throw SyncWorkLimitException(unit,config.maxSyncWorkUnitsPerInvocation,work)
-                work+=8
                 val row=db.withPreparedStatement("SELECT rowid,${owner[1]},${owner[2]},typeof(${owner[1]}) FROM ${owner[0]} WHERE rowid>? ORDER BY rowid LIMIT 1") { st ->
                     st.bindLong(1,cursor)
                     if(st.step()) { require(st.getText(3)=="integer" && st.getLong(1)==st.getLong(2)) { "invalid retained charge in ${owner[0]}" }; st.getLong(0) to st.getLong(1) } else null
@@ -209,7 +205,8 @@ internal class OversqliteWorkspace(
     // One current scalar snapshot, at most one row per owner; never scan payload tables.
     suspend fun usage(unit: String, apply: WorkspaceCharge? = null, push: WorkspaceCharge? = null, statementCache: StatementCache? = null): WorkspaceCharge {
         val applyColumns = if (apply != null) "NULL,0,0,0,0,0" else """a.singleton_key,a.entries,a.bytes,a.edge_entries,a.edge_bytes,
-            length(CAST(a.unit AS BLOB))+length(CAST(a.guard AS BLOB))+length(CAST(COALESCE(a.row_cursor,'') AS BLOB))+
+            length(CAST(a.unit AS BLOB))+length(CAST(a.guard AS BLOB))+length(CAST(a.source_snapshot_id AS BLOB))+
+            length(CAST(COALESCE(a.row_cursor,'') AS BLOB))+
             length(CAST(a.preserve_schema AS BLOB))+length(CAST(a.preserve_table AS BLOB))+length(CAST(a.preserve_key AS BLOB))"""
         val pushColumns = if (push != null) "NULL,0,0,0" else """p.singleton_key,p.entries,p.bytes,
             length(CAST(p.unit AS BLOB))+length(CAST(p.guard AS BLOB))+length(CAST(p.state AS BLOB))"""
@@ -217,7 +214,8 @@ internal class OversqliteWorkspace(
             o.snapshot_stage_entries,o.snapshot_stage_bytes,
             ${if (abandonedReservations) "0" else "length(CAST(o.workspace_context AS BLOB))"}+length(CAST(o.kind AS BLOB))+
             length(CAST(o.target_user_id AS BLOB))+length(CAST(o.reason AS BLOB))+
-            length(CAST(o.replacement_source_id AS BLOB))+length(CAST(o.staged_snapshot_id AS BLOB)),
+            length(CAST(o.replacement_source_id AS BLOB))+length(CAST(o.staged_snapshot_id AS BLOB))+
+            length(CAST(o.snapshot_stage_guard AS BLOB)),
             $applyColumns,$pushColumns
             FROM _sync_operation_state o
             ${if (apply == null) "LEFT JOIN _sync_apply_plan a ON a.singleton_key=1" else ""}
@@ -247,8 +245,9 @@ internal class OversqliteWorkspace(
         }
     }
 
-    suspend fun check(unit: String, extra: WorkspaceCharge = WorkspaceCharge(), apply: WorkspaceCharge? = null, push: WorkspaceCharge? = null) {
-        val used = usage(unit, apply, push)
+    suspend fun check(unit: String, extra: WorkspaceCharge = WorkspaceCharge(), apply: WorkspaceCharge? = null,
+        push: WorkspaceCharge? = null, statementCache: StatementCache? = null) {
+        val used = usage(unit, apply, push, statementCache)
         checkDimension(unit, "entries", config.maxSyncWorkspaceEntries, used.entries, extra.entries)
         checkDimension(unit, "bytes", config.maxSyncWorkspaceBytes, used.bytes, extra.bytes)
     }

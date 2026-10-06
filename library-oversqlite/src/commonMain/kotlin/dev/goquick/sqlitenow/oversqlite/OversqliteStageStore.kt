@@ -572,7 +572,10 @@ internal class OversqliteStageStore(
     suspend fun preparePush(state: RuntimeState,p: PushPlan, reservationToken: String? = null): PreparedPush {
         check(p.phase=="ready") { "push plan is not ready" }
         if(pushGuard(state,p).first!=p.guard) throw SyncWorkLimitException(p.unit,config.maxSyncWorkUnitsPerInvocation,operations.usedSyncWork())
-        operations.reserveSyncWork(p.unit,checkedPushAdd(32,checkedPushMultiply(p.candidateRows,pushStepWork(state,p),p),p))
+        val perRowWork = pushStepWork(state, p)
+        val readyWork = if (p.candidateRows > (Long.MAX_VALUE - 32) / perRowWork) Long.MAX_VALUE
+            else 32 + p.candidateRows * perRowWork
+        operations.reserveSyncWork(p.unit, readyWork, readyAtomic = true)
         var copyBytes=0L
         for(ordinal in 1..p.selectedNext) {
             val size=checkNotNull(planOne("""SELECT 2048+64*(length(CAST(COALESCE(d.payload,'') AS BLOB))+
@@ -610,7 +613,7 @@ internal class OversqliteStageStore(
                 if(onlyInvalid && p.phase!="clear") return@transaction true
                 if(clearingUnit==null) clearingUnit=p.unit
                 if(clearingUnit!=p.unit) return@transaction true
-                repeat(8) {operations.reserveSyncWork(p.unit,1)}
+                operations.reserveSyncWork(p.unit, 8)
                 p.phase="clear"
                 if(diagnosticId!=null) p.cleanupDiagnosticId=diagnosticId
                 val complete=clearPushStep(p)
@@ -685,7 +688,7 @@ internal class OversqliteStageStore(
             var after=parsePushCursor(p,id,cursor ?: "");var bytes=0L;var next: String?=null
             val refs=mutableListOf<PushDependencyRecordRef>()
             while(refs.size<pageSize) {
-                repeat(8) { operations.reserveSyncWork(p.unit,1) }
+                operations.reserveSyncWork(p.unit, 8)
                 val row=planOne("""SELECT ordinal,512+12*(length(CAST(schema_name AS BLOB))+length(CAST(table_name AS BLOB))+
                     length(CAST(key_json AS BLOB))) FROM _sync_push_nodes WHERE unit=? AND diagnostic_id=?
                     AND diagnostic_ordinal>? ORDER BY diagnostic_ordinal LIMIT 1""",p.unit,id,after) { it.getLong(0) to it.getLong(1) } ?: break
@@ -697,6 +700,11 @@ internal class OversqliteStageStore(
                     throw SyncWorkspaceLimitException(p.unit,"bytes",state.admittedContract.limits.maxRowDecodedBytes,0,size,false)
                 refs+=ref;bytes+=size
                 after=checkNotNull(planOne("SELECT diagnostic_ordinal FROM _sync_push_nodes WHERE unit=? AND ordinal=?",p.unit,row.first) { it.getLong(0) })
+                if (operations.usedSyncWork() >= config.maxSyncWorkUnitsPerInvocation) {
+                    if (planOne("SELECT 1 FROM _sync_push_nodes WHERE unit=? AND diagnostic_id=? AND diagnostic_ordinal>? LIMIT 1",p.unit,id,after) { true } == true)
+                        next = pushDiagnosticCursor(p, id, after)
+                    break
+                }
             }
             if(refs.size==pageSize && planOne("SELECT 1 FROM _sync_push_nodes WHERE unit=? AND diagnostic_id=? AND diagnostic_ordinal>? LIMIT 1",p.unit,id,after) { it.getLong(0) }!=null)
                 next=pushDiagnosticCursor(p,id,after)
@@ -711,6 +719,11 @@ internal class OversqliteStageStore(
 
     fun recordConfirmedBundle(source: String, id: Long) = operations.recordConfirmedBundle(source,id)
 
+    internal suspend fun ensureSnapshotWorkAvailable(unit: String) = operations.ensureSyncWorkAvailable(unit)
+
+    internal suspend fun <T> withSnapshotTransportRetry(label: String, block: suspend () -> T): T =
+        operations.withTransientRetry(label, block)
+
     suspend fun chargeBufferWork(unit: String, work: Long) = operations.reserveSyncWork(unit,work)
 
     suspend fun stageSnapshotChunk(
@@ -720,62 +733,67 @@ internal class OversqliteStageStore(
         afterRowOrdinal: Long,
         finalizer: suspend () -> Unit = {},
     ) {
+        val unit = applyUnit("snapshot-stage", session.snapshotBundleSeq, session.snapshotId)
+        // A chunk and its progress receipt are one bounded durable step.
+        operations.reserveSyncWork(unit, 8L * chunk.rows.size)
         db.transaction(TransactionMode.IMMEDIATE) {
-            db.withPreparedStatement(
-                sql = """
-                    INSERT INTO _sync_snapshot_stage (
-                      snapshot_id, row_ordinal, schema_name, table_name, key_json, row_version, payload
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """.trimIndent(),
-                closeStatement = { statement ->
-                    snapshotStatementCloseForTest?.invoke(statement) ?: statement.close()
-                },
-            ) { st ->
-                var rowOrdinal = afterRowOrdinal
-                var statementUsed = false
-                for (row in chunk.rows) {
-                    validateSnapshotRow(row)
-                    require(row.table in state.validated.tableInfoByName) {
-                        "snapshot row ${safeSyncTableDiagnosticIdentifier(row.schema, row.table)} " +
-                            "is not configured for sync"
-                    }
-                    require(row.schema == state.validated.schemaForTable(row.table)) {
-                        "snapshot row ${safeSyncTableDiagnosticIdentifier(row.schema, row.table)} " +
-                            "does not match configured schema " +
-                            safeSnapshotDiagnosticIdentifier(state.validated.schemaForTable(row.table))
-                    }
-                    val payload = row.payload as? JsonObject
-                        ?: error(
-                            "snapshot row payload must be a JSON object for " +
-                                safeSyncTableDiagnosticIdentifier(row.schema, row.table),
+            db.withStatementCache { workspaceStatementCache ->
+                db.withPreparedStatement(
+                    sql = """
+                        INSERT INTO _sync_snapshot_stage (
+                          snapshot_id, row_ordinal, schema_name, table_name, key_json, row_version, payload
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """.trimIndent(),
+                    closeStatement = { statement ->
+                        snapshotStatementCloseForTest?.invoke(statement) ?: statement.close()
+                    },
+                ) { st ->
+                    var rowOrdinal = afterRowOrdinal
+                    var statementUsed = false
+                    for (row in chunk.rows) {
+                        currentCoroutineContext().ensureActive()
+                        validateSnapshotRow(row)
+                        require(row.table in state.validated.tableInfoByName) {
+                            "snapshot row ${safeSyncTableDiagnosticIdentifier(row.schema, row.table)} " +
+                                "is not configured for sync"
+                        }
+                        require(row.schema == state.validated.schemaForTable(row.table)) {
+                            "snapshot row ${safeSyncTableDiagnosticIdentifier(row.schema, row.table)} " +
+                                "does not match configured schema " +
+                                safeSnapshotDiagnosticIdentifier(state.validated.schemaForTable(row.table))
+                        }
+                        val payload = row.payload as? JsonObject
+                            ?: error(
+                                "snapshot row payload must be a JSON object for " +
+                                    safeSyncTableDiagnosticIdentifier(row.schema, row.table),
+                            )
+                        val normalizedPayload = localStore.validateAndNormalizeSnapshotPayload(
+                            state = state,
+                            tableName = row.table,
+                            key = row.key,
+                            payload = payload,
                         )
-                    val normalizedPayload = localStore.validateAndNormalizeSnapshotPayload(
-                        state = state,
-                        tableName = row.table,
-                        key = row.key,
-                        payload = payload,
-                    )
-                    val (keyJson, _) = localStore.bundleRowKeyToLocalKey(state, row.table, row.key)
-                    val unit = applyUnit("snapshot-stage", session.snapshotBundleSeq, session.snapshotId)
-                    val workspace = OversqliteWorkspace(db, config)
-                    val charge = workspace.stageCharge(unit, encodedJsonSize(normalizedPayload), session.snapshotId, row.schema, row.table, keyJson)
-                    workspace.check(unit, workspace.add(unit, charge, WorkspaceCharge(5, workspace.scale(unit, charge.bytes, 5))))
-                    operations.reserveSyncWork(unit, 8)
-                    rowOrdinal++
-                    if (statementUsed) {
-                        (reusableStatementCleanupForTest ?: DefaultReusableStatementCleanup)(st)
-                    } else {
-                        statementUsed = true
-                    }
+                        val (keyJson, _) = localStore.bundleRowKeyToLocalKey(state, row.table, row.key)
+                        val workspace = OversqliteWorkspace(db, config)
+                        val charge = workspace.stageCharge(unit, encodedJsonSize(normalizedPayload), session.snapshotId, row.schema, row.table, keyJson)
+                        workspace.check(unit, workspace.add(unit, charge, WorkspaceCharge(5, workspace.scale(unit, charge.bytes, 5))),
+                            statementCache = workspaceStatementCache)
+                        rowOrdinal++
+                        if (statementUsed) {
+                            (reusableStatementCleanupForTest ?: DefaultReusableStatementCleanup)(st)
+                        } else {
+                            statementUsed = true
+                        }
 
-                    st.bindText(1, session.snapshotId)
-                    st.bindLong(2, rowOrdinal)
-                    st.bindText(3, row.schema)
-                    st.bindText(4, row.table)
-                    st.bindText(5, keyJson)
-                    st.bindLong(6, row.rowVersion)
-                    st.bindText(7, normalizedPayload.toString())
-                    st.step()
+                        st.bindText(1, session.snapshotId)
+                        st.bindLong(2, rowOrdinal)
+                        st.bindText(3, row.schema)
+                        st.bindText(4, row.table)
+                        st.bindText(5, keyJson)
+                        st.bindLong(6, row.rowVersion)
+                        st.bindText(7, normalizedPayload.toString())
+                        st.step()
+                    }
                 }
             }
             finalizer()

@@ -15,30 +15,50 @@ internal class OversqliteApplyLifecycle(
     private val local: OversqliteLocalStore,
     private val survivors: OversqliteApplySurvivors,
     private val json: Json,
+    private val statementCache: StatementCache? = null,
 ) {
     private val workspace = OversqliteWorkspace(db, config)
 
     suspend fun prepareSnapshot(state: RuntimeState, session: SnapshotSession, preserve: Boolean) {
         val outbox = if (preserve) db.scalarLong("SELECT count(*) FROM _sync_outbox_rows") else 0
-        val unit = applyUnit("snapshot", session.snapshotBundleSeq,
-            "${session.snapshotId}/${session.rowCount}/${session.logicalByteCount}/$preserve")
+        val unit = snapshotUnit(session, preserve)
         val roots = workspace.add(unit, WorkspaceCharge(session.rowCount, 0), WorkspaceCharge(outbox, 0)).entries
-        if (roots > Int.MAX_VALUE) throw SyncWorkspaceLimitException(unit, "atomic_apply_work",
-            config.maxSyncWorkUnitsPerInvocation, 0, Long.MAX_VALUE, false)
+        if (roots > Int.MAX_VALUE) throw SyncWorkspaceLimitException(unit, "entries",
+            config.maxSyncWorkspaceEntries, 0, roots, false)
         check(one("SELECT count(*) FROM _sync_snapshot_stage WHERE snapshot_id=?", session.snapshotId) { it.getLong(0) } == session.rowCount) {
             "staged snapshot row count mismatch"
         }
-        survivors.prepare(state, unit, roots.toInt(), "snapshot", session.snapshotBundleSeq) { index ->
+        survivors.prepare(state, unit, roots.toInt(), "snapshot", session.snapshotBundleSeq,
+            sourceSnapshotId = session.snapshotId,
+            workspaceStatementCache = statementCache, replayStatementCache = statementCache) { index ->
             // Frozen L overrides only the business view, never snapshot A.
             if (index.toLong() < outbox) readOutbox(state, index.toLong(), unit)
             else readSnapshot(state, session.snapshotId, index.toLong() - outbox + 1, unit).second
         }
     }
 
-    private suspend fun readOutbox(state: RuntimeState, ordinal: Long, unit: String): ApplySurvivor {
-        val size = checkNotNull(one("SELECT 64+6*(length(CAST(table_name AS BLOB))+length(CAST(key_json AS BLOB)))+length(CAST(COALESCE(local_payload,'') AS BLOB)) FROM _sync_outbox_rows WHERE row_ordinal=?", ordinal) { it.getLong(0) })
-        workspace.check(unit, WorkspaceCharge(8, workspace.scale(unit, size, 8)))
-        return checkNotNull(one("SELECT table_name,key_json,local_payload FROM _sync_outbox_rows WHERE row_ordinal=?", ordinal) {
+    suspend fun canResumeSnapshot(state: RuntimeState, session: SnapshotSession, preserve: Boolean): Boolean =
+        survivors.hasMatchingSnapshotPlan(state, snapshotUnit(session, preserve), session.snapshotId)
+
+    suspend fun snapshotStageGuard(state: RuntimeState, session: SnapshotSession, preserve: Boolean): String =
+        workspace.contextGuard(state, snapshotUnit(session, preserve))
+
+    private suspend fun snapshotUnit(session: SnapshotSession, preserve: Boolean): String {
+        val operation = OversqliteOperationStateStore(db).loadState()
+        // Bind preparation to the recovery intent as well as the immutable stage.
+        // The workspace guard owns source, checkpoint, revisions and frozen outbox.
+        val identity = buildJsonArray {
+            add(session.snapshotId); add(session.rowCount); add(session.logicalByteCount); add(preserve)
+            add(operation.kind); add(operation.targetUserId)
+            add(operation.reason); add(operation.replacementSourceId)
+        }
+        return applyUnit("snapshot", session.snapshotBundleSeq, identity.toString())
+    }
+
+    private suspend fun readOutbox(state: RuntimeState, ordinal: Long, unit: String, cache: StatementCache? = statementCache): ApplySurvivor {
+        val size = checkNotNull(one("SELECT 64+6*(length(CAST(table_name AS BLOB))+length(CAST(key_json AS BLOB)))+length(CAST(COALESCE(local_payload,'') AS BLOB)) FROM _sync_outbox_rows WHERE row_ordinal=?", ordinal, cache = cache) { it.getLong(0) })
+        workspace.check(unit, WorkspaceCharge(8, workspace.scale(unit, size, 8)), statementCache = cache)
+        return checkNotNull(one("SELECT table_name,key_json,local_payload FROM _sync_outbox_rows WHERE row_ordinal=?", ordinal, cache = cache) {
             Triple(it.getText(0), it.getText(1), if (it.isNull(2)) null else it.getText(2))
         }).let { (table, key, payload) ->
             val (pk, _) = local.decodeDirtyKeyForPush(state, table, key)
@@ -46,11 +66,11 @@ internal class OversqliteApplyLifecycle(
         }
     }
 
-    private suspend fun readSnapshot(state: RuntimeState, id: String, ordinal: Long, unit: String): Pair<Long, ApplySurvivor> {
+    internal suspend fun readSnapshot(state: RuntimeState, id: String, ordinal: Long, unit: String, cache: StatementCache? = statementCache): Triple<Long, ApplySurvivor, Long> {
         currentCoroutineContext().ensureActive()
-        val size = checkNotNull(one("SELECT charge FROM _sync_snapshot_stage WHERE snapshot_id=? AND row_ordinal=?", id, ordinal) { it.getLong(0) })
-        workspace.check(unit, WorkspaceCharge(8, workspace.scale(unit, size, 8)))
-        val row = checkNotNull(one("SELECT table_name,key_json,payload,row_version FROM _sync_snapshot_stage WHERE snapshot_id=? AND row_ordinal=?", id, ordinal) {
+        val size = checkNotNull(one("SELECT charge FROM _sync_snapshot_stage WHERE snapshot_id=? AND row_ordinal=?", id, ordinal, cache = cache) { it.getLong(0) })
+        workspace.check(unit, WorkspaceCharge(8, workspace.scale(unit, size, 8)), statementCache = cache)
+        val row = checkNotNull(one("SELECT table_name,key_json,payload,row_version FROM _sync_snapshot_stage WHERE snapshot_id=? AND row_ordinal=?", id, ordinal, cache = cache) {
             Triple(it.getText(0), it.getText(1), it.getText(2)) to it.getLong(3)
         })
         val (table, key, payload) = row.first
@@ -58,15 +78,15 @@ internal class OversqliteApplyLifecycle(
         val (pk, wireKey) = local.decodeDirtyKeyForPush(state, table, key)
         val normalized = local.validateAndNormalizeSnapshotPayload(state, table, wireKey,
             json.parseToJsonElement(payload) as JsonObject)
-        return row.second to ApplySurvivor(table, pk, normalized.toString(), wire = true, role = "intended")
+        return Triple(row.second, ApplySurvivor(table, pk, normalized.toString(), wire = true,
+            role = "snapshot_ref", stageOrdinal = ordinal), size)
     }
 
     suspend fun atomicWork(state: RuntimeState, kind: String, unit: String, entries: Long, base: Long): Long {
         var work = base
         fun add(count: Long, weight: Long) {
-            if (count < 0 || count > (Long.MAX_VALUE - work) / weight)
-                throw SyncWorkspaceLimitException(unit, "atomic_apply_work", config.maxSyncWorkUnitsPerInvocation, 0, Long.MAX_VALUE, false)
-            work += count * weight
+            require(count >= 0 && weight > 0)
+            work = if (count > (Long.MAX_VALUE - work) / weight) Long.MAX_VALUE else work + count * weight
         }
         var maxFKs = 0L
         for (table in state.validated.tables) {
@@ -80,15 +100,12 @@ internal class OversqliteApplyLifecycle(
         var blocker: FKReconciliationRequiredException? = null
         for (ordinal in 1..entries) {
             currentCoroutineContext().ensureActive()
-            val size = checkNotNull(one("SELECT bytes FROM _sync_apply_rows WHERE ordinal=?", ordinal) { it.getLong(0) })
-            workspace.check(guard, workspace.add(guard, WorkspaceCharge(if(blocker==null) 8 else 16, if(blocker==null) 0 else 16*4096), WorkspaceCharge(bytes=workspace.scale(guard,size,8))))
-            val row = checkNotNull(one("SELECT table_name,local_pk,payload,wire FROM _sync_apply_rows WHERE ordinal=?", ordinal) {
-                ApplySurvivor(it.getText(0), it.getText(1), if(it.isNull(2)) null else it.getText(2), it.getLong(3)!=0L)
-            })
+            val (row, size) = survivors.loadPlannedRow(state, ordinal, workspaceStatementCache = statementCache, replayStatementCache = statementCache)
+            workspace.check(guard, workspace.add(guard, WorkspaceCharge(if(blocker==null) 8 else 16, if(blocker==null) 0 else 16*4096), WorkspaceCharge(bytes=workspace.scale(guard,size,8))), statementCache = statementCache)
             try { validateRowDependencies(state, kind, guard, row, inputSequence) }
             catch (pending: FKReconciliationRequiredException) {
                 val first = blocker
-                if(first==null) workspace.check(guard, WorkspaceCharge(8,16*4096))
+                if(first==null) workspace.check(guard, WorkspaceCharge(8,16*4096), statementCache = statementCache)
                 blocker = if(first == null) pending else FKReconciliationRequiredException(first.detail, first.unit, first.sample, true)
             }
         }
@@ -122,7 +139,7 @@ internal class OversqliteApplyLifecycle(
     }
 
     private suspend fun validateParent(state: RuntimeState, kind: String, guard: String, child: ApplySurvivor, table: String, pk: String, inputSequence: Long?) {
-        val selected = one("SELECT payload IS NOT NULL FROM _sync_apply_rows WHERE table_name=? AND local_pk=?", table, pk) { it.getLong(0) != 0L }
+        val selected = one("SELECT role='snapshot_ref' OR payload IS NOT NULL FROM _sync_apply_rows WHERE table_name=? AND local_pk=?", table, pk) { it.getLong(0) != 0L }
         if (selected == true) return
         if (selected == false || kind == "snapshot") pending(state, guard, child, "dependency_unavailable")
         val key = keyJson(state, table, pk)
@@ -155,31 +172,32 @@ internal class OversqliteApplyLifecycle(
             put("key", JsonObject(key.mapValues { JsonPrimitive(it.value) }))
         }
         val size = encodedJsonSize(encoded)
-        workspace.check(guard, WorkspaceCharge(4, workspace.scale(guard, size, 4)))
+        workspace.check(guard, WorkspaceCharge(4, workspace.scale(guard, size, 4)), statementCache = statementCache)
         throw FKReconciliationRequiredException(detail, guard, if (size + 2 <= 4096) listOf(ref) else emptyList(), size + 2 > 4096)
     }
 
     suspend fun restoreAndVerify(state: RuntimeState, cache: StatementCache) : Set<String> {
         val updated = linkedSetOf<String>()
         for (pass in 0 until 64) {
-            val changed = survivors.restore(state, cache) + survivors.restorePrimaryIntent(state, cache)
+            val changed = survivors.restore(state, cache, workspaceStatementCache = cache, replayStatementCache = cache) +
+                survivors.restorePrimaryIntent(state, cache, workspaceStatementCache = cache, replayStatementCache = cache)
             updated += changed
             if (changed.isEmpty()) break
         }
-        survivors.restore(state, cache, verifyOnly = true)
-        survivors.restorePrimaryIntent(state, cache, verifyOnly = true)
+        survivors.restore(state, cache, verifyOnly = true, workspaceStatementCache = cache, replayStatementCache = cache)
+        survivors.restorePrimaryIntent(state, cache, verifyOnly = true, workspaceStatementCache = cache, replayStatementCache = cache)
         return updated
     }
 
     suspend fun verifySnapshot(state: RuntimeState, session: SnapshotSession, preserve: Boolean, cache: StatementCache) {
         val unit = applyUnit("snapshot-final", session.snapshotBundleSeq, session.snapshotId)
         for (ordinal in 1..session.rowCount) {
-            val (version, row) = readSnapshot(state, session.snapshotId, ordinal, unit)
+            val (version, row, _) = readSnapshot(state, session.snapshotId, ordinal, unit, cache)
             val expected = local.captureAuthoritativePayload(row.table, json.parseToJsonElement(checkNotNull(row.payload)) as JsonObject, cache)
             val observed = checkNotNull(one("SELECT row_version,server_kind,server_payload FROM _sync_row_state WHERE schema_name=? AND table_name=? AND key_json=?", state.validated.schemaForTable(row.table), row.table, keyJson(state, row.table, row.pk)) {
                 Triple(it.getLong(0), it.getText(1), if (it.isNull(2)) null else it.getText(2))
             })
-            local.validateStoredServerProjection(state.validated.schemaForTable(row.table),row.table,keyJson(state,row.table,row.pk))
+            local.validateStoredServerProjection(state.validated.schemaForTable(row.table),row.table,keyJson(state,row.table,row.pk), cache)
             check(one("SELECT json_extract(server_provenance,'$.origin')='snapshot' AND json_extract(server_provenance,'$.authoritative_version')=? AND json_extract(server_provenance,'$.bundle_sequence')=? FROM _sync_row_state WHERE schema_name=? AND table_name=? AND key_json=?", version,session.snapshotBundleSeq,state.validated.schemaForTable(row.table),row.table,keyJson(state,row.table,row.pk)) { it.getLong(0)!=0L } == true) { "snapshot A provenance differs from S" }
             check(observed.first == version && observed.second == "live" && observed.third != null &&
                 OversqliteValueCodec.equivalentPayloadTexts(state.validated.tableInfoByName.getValue(row.table), expected, observed.third,
@@ -187,7 +205,7 @@ internal class OversqliteApplyLifecycle(
         }
         if(preserve) check(one("SELECT count(*) FROM _sync_outbox_rows o JOIN _sync_row_state a ON (a.schema_name,a.table_name,a.key_json)=(o.schema_name,o.table_name,o.key_json) WHERE NOT EXISTS(SELECT 1 FROM _sync_snapshot_stage s WHERE s.snapshot_id=? AND (s.schema_name,s.table_name,s.key_json)=(o.schema_name,o.table_name,o.key_json)) AND (a.server_kind<>'absent' OR a.row_version<>0 OR a.server_payload IS NOT NULL OR a.relationships_known<>1 OR json_extract(a.server_provenance,'$.origin') IS NOT 'snapshot' OR json_extract(a.server_provenance,'$.authoritative_version') IS NOT 0 OR json_extract(a.server_provenance,'$.bundle_sequence') IS NOT ?)",session.snapshotId,session.snapshotBundleSeq) { it.getLong(0) } == 0L) { "excluded prepared intent has fabricated snapshot A" }
         for (table in state.validated.tables) {
-            val desired = checkNotNull(one("SELECT count(*) FROM _sync_apply_rows WHERE table_name=? AND payload IS NOT NULL", table.tableName) { it.getLong(0) })
+            val desired = checkNotNull(one("SELECT count(*) FROM _sync_apply_rows WHERE table_name=? AND (role='snapshot_ref' OR payload IS NOT NULL)", table.tableName) { it.getLong(0) })
             val live = db.scalarLong("SELECT count(*) FROM ${quoteIdent(table.tableName)}")
             val a = checkNotNull(one("SELECT count(*) FROM _sync_row_state WHERE table_name=?", table.tableName) { it.getLong(0) })
             val staged = checkNotNull(one("SELECT count(*) FROM _sync_snapshot_stage WHERE snapshot_id=? AND table_name=?", session.snapshotId, table.tableName) { it.getLong(0) })
@@ -199,7 +217,7 @@ internal class OversqliteApplyLifecycle(
     private fun keyJson(state: RuntimeState, table: String, pk: String): String =
         buildJsonObject { put(state.validated.keyByTable.getValue(table).single().lowercase(), pk) }.toString()
 
-    private suspend fun <T> one(sql: String, vararg args: Any?, read: (SQLiteStatement) -> T): T? = db.withPreparedStatement(sql) { st ->
+    private suspend fun <T> one(sql: String, vararg args: Any?, cache: StatementCache? = statementCache, read: (SQLiteStatement) -> T): T? = db.withPreparedStatement(sql, cache) { st ->
         args.forEachIndexed { i, value -> when (value) {
             is String -> st.bindText(i + 1, value)
             is Long -> st.bindLong(i + 1, value)

@@ -105,8 +105,14 @@ internal class OversqliteClientLifecycleCoordinator(
                     throw ConnectBindingConflictException(state.attachedUserId, requestedUserId)
                 }
 
+                // Snapshot creation retires the old source remotely before local
+                // atomic publication. Reattach through its reserved replacement
+                // to resume its owned recovery stage after reopening the file.
+                val connectSourceId = if (state.isAttached && state.operation.isSourceRecoveryRequired() &&
+                    state.operation.stagedSnapshotId.isNotBlank()
+                ) state.operation.replacementSourceId else sourceId
                 val response = operations.withTransientRetry("attach() transport") {
-                    remoteApi.connect(sourceId, session.pendingLocalChangeCount() > 0L)
+                    remoteApi.connect(connectSourceId, session.pendingLocalChangeCount() > 0L)
                 }
                 if (response.resolution == "retry_later") {
                     session.sessionConnected = false
@@ -431,74 +437,14 @@ internal class OversqliteClientLifecycleCoordinator(
             "snapshot diagnostics scope is missing for remote replacement"
         }
         diagnostics.markRestoreAttempt()
-        var nextOperation = state.operation
-        if (nextOperation.stagedSnapshotId.isNotBlank()) {
-            val stagedCount = countSnapshotStageRows(nextOperation.stagedSnapshotId)
-            if (nextOperation.snapshotStageComplete &&
-                nextOperation.snapshotByteCount >= 0L &&
-                stagedCount == nextOperation.snapshotRowCount
-            ) {
-                diagnostics.recordStagedRows(stagedCount)
-                return state.copy(operation = nextOperation)
-            }
-            stageStore.clearAllSnapshotStages()
-            nextOperation = nextOperation.copy(
-                stagedSnapshotId = "",
-                snapshotBundleSeq = 0,
-                snapshotRowCount = 0,
-                snapshotByteCount = 0,
-                snapshotStageComplete = false,
-            )
-            operationStateStore.persistState(nextOperation)
-        }
-
         operations.setProgress(operation, OversqlitePhase.STAGING_REMOTE_STATE)
-        val sourceId = session.resolveSourceIdOrCurrent(state.sourceId)
-        val contract = session.requireAdmittedContract()
-        val limits = negotiateSnapshotLimits(contract, config)
-        val snapshotSession = operations.withTransientRetry("remote_replace snapshot create") {
-            remoteApi.createSnapshotSession(sourceId)
-        }
-        try {
-            stageStore.clearAllSnapshotStages()
-            nextOperation = nextOperation.copy(
-                stagedSnapshotId = snapshotSession.snapshotId,
-                snapshotBundleSeq = snapshotSession.snapshotBundleSeq,
-                snapshotRowCount = snapshotSession.rowCount,
-                snapshotByteCount = snapshotSession.logicalByteCount,
-                snapshotStageComplete = false,
-            )
-            operationStateStore.persistState(nextOperation)
-            val totals = downloadWorkflow.downloadSnapshotSession(
-                state = RuntimeState(
-                    session.requireValidatedConfig(),
-                    contract,
-                    nextOperation.targetUserId,
-                    sourceId,
-                ),
-                session = snapshotSession,
-                limits = limits,
-                fetchChunk = { afterRowOrdinal ->
-                    operations.withTransientRetry("remote_replace snapshot fetch") {
-                        remoteApi.fetchSnapshotChunk(
-                            snapshotId = snapshotSession.snapshotId,
-                            sourceId = sourceId,
-                            snapshotBundleSeq = snapshotSession.snapshotBundleSeq,
-                            afterRowOrdinal = afterRowOrdinal,
-                            maxRows = limits.maxRows,
-                            maxBytes = limits.maxBytes,
-                            admittedMaxBytes = contract.limits.maxSnapshotDecodedBytesPerChunk,
-                        )
-                    }
-                },
-            )
-            diagnostics.recordStagedRows(totals.rows)
-            nextOperation = nextOperation.copy(snapshotStageComplete = true)
-            operationStateStore.persistState(nextOperation)
-            return state.copy(operation = nextOperation)
-        } finally {
-            remoteApi.deleteSnapshotSessionBestEffort(snapshotSession.snapshotId, sourceId)
-        }
+        val source = session.resolveSourceIdOrCurrent(state.sourceId)
+        val (snapshot, _) = downloadWorkflow.ensureOperationSnapshotStaged(
+            RuntimeState(session.requireValidatedConfig(), session.requireAdmittedContract(),
+                state.operation.targetUserId, source), SnapshotRebuildOutboxMode.CLEAR_ALL,
+            remoteReplace = true)
+        diagnostics.recordStagedRows(snapshot.rowCount)
+        return state.copy(operation = operationStateStore.loadState())
     }
 
     private suspend fun persistConnectedLifecycleState(userId: String, initializationId: String) {

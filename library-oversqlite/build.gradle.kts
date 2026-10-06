@@ -277,8 +277,12 @@ tasks.register<Test>("oversqliteSnapshotMemorySamplerControl") {
 val snapshotMemoryClosureProfiles = listOf(
     SnapshotMemoryProfile("oversqliteSnapshotMemoryClosure10k256", 10_000, 256, "closure-10k-256", "closure"),
     SnapshotMemoryProfile("oversqliteSnapshotMemoryClosure10k1k", 10_000, 1024, "closure-10k-1k", "closure"),
-    SnapshotMemoryProfile("oversqliteSnapshotMemoryClosure100k256", 100_000, 256, "closure-100k-256", "closure"),
-    SnapshotMemoryProfile("oversqliteSnapshotMemoryClosure100k1k", 100_000, 1024, "closure-100k-1k", "closure"),
+    SnapshotMemoryProfile("oversqliteSnapshotMemoryClosure50k256", 50_000, 256, "closure-50k-256", "closure"),
+    SnapshotMemoryProfile("oversqliteSnapshotMemoryClosure50k1k", 50_000, 1024, "closure-50k-1k", "closure"),
+)
+val snapshotMemoryFutureProfiles = listOf(
+    SnapshotMemoryProfile("oversqliteSnapshotMemoryClosure100k256", 100_000, 256, "closure-100k-256", "future"),
+    SnapshotMemoryProfile("oversqliteSnapshotMemoryClosure100k1k", 100_000, 1024, "closure-100k-1k", "future"),
 )
 val snapshotMemoryExtendedProfiles = listOf(
     SnapshotMemoryProfile("oversqliteSnapshotMemory10k256", 10_000, 256, "representative-10k-256", "extended"),
@@ -290,7 +294,7 @@ val snapshotMemoryExtendedProfiles = listOf(
     SnapshotMemoryProfile("oversqliteSnapshotMemory100k1k", 100_000, 1024, "measured-100k-1k", "extended"),
     SnapshotMemoryProfile("oversqliteSnapshotMemory1m256", 1_000_000, 256, "measured-1m-256", "extended"),
 )
-val snapshotMemoryProfiles = snapshotMemoryClosureProfiles + snapshotMemoryExtendedProfiles
+val snapshotMemoryProfiles = snapshotMemoryClosureProfiles + snapshotMemoryFutureProfiles + snapshotMemoryExtendedProfiles
 val snapshotMemoryResultDirectory = layout.buildDirectory.dir("snapshot-memory-results")
 
 val previousSnapshotMemoryTaskBySet = mutableMapOf<String, String>()

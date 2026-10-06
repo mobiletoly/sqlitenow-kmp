@@ -219,16 +219,24 @@ internal open class ReplaySqlStructuralTest : SurvivorTestSupport() {
         assertEquals(expectedSql.keys, actualSql.keys, "no SQL shape added or removed")
         expectedSql.forEach { (sql, raw) ->
             val before = raw.jsonObject
-            // Each selected helper executes step once per lease. All selected calls
-            // belong to the same settlement transaction; typed live reads share its
-            // pre-existing handle. The original literal oracle remains unchanged.
+            // Initial + two roots + roots-to-index + ready + preservation-complete.
+            // Private progress does not need a write when the next charge fits.
+            // Keep the original literal oracle and every non-checkpoint field.
+            val checkpointSteps = if (sql.startsWith("INSERT INTO _sync_apply_plan(")) {
+                assertEquals(28L + 4L * size, before.getValue("steps").jsonPrimitive.long,
+                    "independent original checkpoint model")
+                6L
+            } else before.getValue("steps").jsonPrimitive.long
+            // Each selected helper executes step once per lease in this transaction;
+            // typed live reads share the pre-existing handle.
             val after = if (replayOwnerCaches(sql)) JsonObject(before.toMutableMap().apply {
                 // validateDependencies deliberately remains uncached and reads each
                 // of the fixture's three saved survivors once through these same SQLs.
                 val uncached = if (sql == "SELECT bytes FROM _sync_apply_rows WHERE ordinal=?" ||
                     sql == "SELECT table_name,local_pk,payload,wire FROM _sync_apply_rows WHERE ordinal=?") 3L else 0L
                 put("prepares", JsonPrimitive(1 + uncached)); put("closes", JsonPrimitive(1 + uncached))
-                val leases = before.getValue("steps").jsonPrimitive.long - uncached
+                put("steps", JsonPrimitive(checkpointSteps))
+                val leases = checkpointSteps - uncached
                 put("resets", JsonPrimitive(leases)); put("clears", JsonPrimitive(leases))
             }) else before
             assertEquals(after, actualSql[sql], "physical lifetime model size=$size SQL=$sql")

@@ -241,8 +241,8 @@ internal object SnapshotMemoryResultVerifier {
     private val closureProfiles: Map<String, Pair<Int, Int>> = linkedMapOf(
         "closure-10k-256" to (10_000 to 256),
         "closure-10k-1k" to (10_000 to 1024),
-        "closure-100k-256" to (100_000 to 256),
-        "closure-100k-1k" to (100_000 to 1024),
+        "closure-50k-256" to (50_000 to 256),
+        "closure-50k-1k" to (50_000 to 1024),
     )
     private val extendedProfiles: Map<String, Pair<Int, Int>> = linkedMapOf(
         "representative-10k-256" to (10_000 to 256),

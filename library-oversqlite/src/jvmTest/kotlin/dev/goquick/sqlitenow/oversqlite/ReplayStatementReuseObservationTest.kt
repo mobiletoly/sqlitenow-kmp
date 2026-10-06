@@ -32,8 +32,9 @@ internal class ReplayStatementReuseObservationTest : SurvivorTestSupport() {
                         try { client.pushPending().getOrThrow() }
                         finally { client.setSnapshotApplyFaultInjectorForTest(null); raw.restore() }
                         handles.assertClosed()
-                        assertEquals(405L + 39L * size, raw.counts.values.sumOf { it.steps }, "unchanged logical SQL work")
-                        assertEquals(28L + 4L * size, raw.counts.entries.single { it.key.startsWith("INSERT INTO _sync_apply_plan(") }.value.steps)
+                        // Remove only the independently modeled 22 + 4*N private plan writes.
+                        assertEquals(383L + 35L * size, raw.counts.values.sumOf { it.steps }, "SQL API checkpoint model")
+                        assertEquals(6L, raw.counts.entries.single { it.key.startsWith("INSERT INTO _sync_apply_plan(") }.value.steps)
                         val stats = client.workspaceDiagnostics()
                         if (size <= 1000) ReplaySqlStructuralTest().assertReplayOracle(size, buildJsonObject {
                             put("bindingTrace", raw.bindingTraceHash())

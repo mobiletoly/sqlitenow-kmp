@@ -289,7 +289,7 @@ limits/page sizes are positive and checked before narrowing. No new HTTP fields/
 | `PushDependencyGroupExceedsAdmittedLimitError` / `PushDependencyGroupExceedsAdmittedLimitException` | `reason=push_dependency_group_exceeds_admitted_limit`, `dimension=rows|decoded_bytes`, `limit`, `actual` (exact, complete SCC), `componentRows`, `componentDecodedBytes` (complete standalone envelope at guarded next ID), `diagnosticId` (opaque 64 lowercase hex), `sample` (bounded record refs), `hasMore`, `progress`. Use this shape for both dimensions; no separate Kotlin row-only exception or compatibility alias. |
 | `FKReconciliationRequiredError` / `FKReconciliationRequiredException` | `reason=fk_reconciliation_required`, `detail=relationship_unknown|dependency_unavailable|historical_repair_required`, `unit` (64-hex guarded plan identity), bounded `sample`, `hasMore`, `progress`. No busy retry, no claim of completed reconciliation. This pending result is a prerequisite for safe dependency planning. |
 | `ResolutionBaseUnavailableError` / `ResolutionBaseUnavailableException` | `reason=resolution_base_unavailable`, `unit`, bounded `sample`, `hasMore`, `progress`. Missing/corrupt full B for a required transition; no inference from current S. This base-error prerequisite does not define automatic merging. |
-| Existing `SyncWorkLimitError/Exception`, `SyncWorkspaceLimitError/Exception` | Preserve the existing fields/reasons described below; extend `unit` to the guarded push plan and attach the same `progress`. Entry/byte and `atomic_apply_work` semantics stay unchanged, including final freeze preflight. |
+| Existing `SyncWorkLimitError/Exception`, `SyncWorkspaceLimitError/Exception` | Preserve the existing fields/reasons described below; extend `unit` to the guarded push plan and attach the same `progress`. Entry/byte limits remain hard; work becomes a soft invocation target under the snapshot-capacity amendment. |
 | `SyncProgress` (both) | `dirtyRows`, `outboundRows`, `committedBundles`, measured at the final guarded local read; committedBundles counts unique confirmed bundles in this public invocation, not HTTP attempts. Earlier committed prefix is never rolled back or hidden by a later planner error. |
 | `PushDependencyDiagnosticPage` (both) | `diagnosticId`, `identities`, optional `nextCursor`; entries ordered by canonical schema/table/key, no payload. |
 | `Client.ReadPushDependencyDiagnostic(ctx,id,cursor,pageSize)` / `readPushDependencyDiagnostic(id,cursor,pageSize)` | Local paged read; default 64 entries, maximum 128, soft target 64 KiB encoded identities. A larger single identity uses a one-entry page only within the admitted expanded-row maximum and reserved aggregate workspace; otherwise return typed workspace bytes capacity with its bounded hash. Never truncate a key or allocate it unreserved. |
@@ -317,8 +317,8 @@ wire bytes, clear its B, reserve another ID, or block its settlement behind irre
 
 Go options are `MaxSyncWorkspaceEntries`, `MaxSyncWorkspaceBytes` and
 `MaxSyncWorkUnitsPerInvocation`; Kotlin/Swift use `maxSyncWorkspaceEntries`,
-`maxSyncWorkspaceBytes` and `maxSyncWorkUnitsPerInvocation`. Defaults are 100,000 entries,
-268,435,456 bytes (256 MiB) and 1,000,000 work units. Values are positive; omitted zero-valued
+`maxSyncWorkspaceBytes` and `maxSyncWorkUnitsPerInvocation`. Current defaults are 131,072 entries,
+268,435,456 bytes (256 MiB) and a soft target of 1,000,000 work units. Values are positive; omitted zero-valued
 Go options select defaults. Limits aggregate per database across all simultaneously retained
 working state. Primary business, dirty/outbox and ordinary per-record baseline storage is exempt;
 every temporary copy is charged. Existing snapshot and wire limits also apply; the strictest wins.
@@ -326,12 +326,12 @@ every temporary copy is charged. Existing snapshot and wire limits also apply; t
 `SyncWorkLimitError` / `SyncWorkLimitException` carries `unit`, `limit`, `used`, reason
 `sync_work_limit` and the progress defined above. It denotes resumable local work, not transport retry.
 `SyncWorkspaceLimitError` / `SyncWorkspaceLimitException` additionally carries `dimension`,
-`reserved`, `resumable` and reason `sync_workspace_limit`. Dimensions are `entries`, `bytes` and
-`atomic_apply_work`. The bounded unit hash identifies the guarded operation. Neither failure consumes
-a source sequence or checkpoint. If the final atomic operation exceeds the configured invocation
-maximum, return intrinsic `atomic_apply_work` capacity failure; if only the remaining invocation
-allowance is insufficient, retain safe progress for a later invocation. Never split a committed bundle
-to bypass its atomic bound. Stale cleanup does not refund work already spent during the invocation.
+`reserved`, `resumable` and reason `sync_workspace_limit`. Current dimensions are `entries` and `bytes`.
+The bounded unit hash identifies the guarded operation. Neither incomplete result consumes a source
+sequence or checkpoint. Preparation yields only at a durable boundary. An otherwise admissible first
+ready atomic operation runs even when it crosses the work target; crossing alone does not roll it back.
+After completion, later units may yield with retained progress. Never split a committed bundle to fit
+the work target. Stale cleanup does not refund work already spent during the invocation.
 
 ## Synchronization ownership
 
@@ -499,12 +499,12 @@ without splitting its commit. No new public page-size option is introduced.
 `sync_work_limit` retains useful safe staging/cleanup progress. `sync_workspace_limit` with dimension
 `entries` or `bytes` stops before the refused allocation, freeze or destructive apply. `resumable=true`
 means retained charged progress can advance without changing intent or limits (for example bounded
-obsolete-state cleanup can release capacity); it does not promise automatic retry. Intrinsic capacity,
-including a required final atomic operation exceeding the configured work maximum, is non-resumable
-until explicit data/limit action. For `atomic_apply_work`, `reserved` is the complete required atomic
-allowance and `used` is work already charged this invocation. If the operation fits a fresh allowance
-but not the remaining allowance, return `sync_work_limit` and retain the ready plan. Preparation must
-not be repeated on every resume merely to exhaust the same allowance again.
+obsolete-state cleanup can release capacity); it does not promise automatic retry. Intrinsic entry or
+byte capacity remains non-resumable until explicit data/limit action. The historical
+`atomic_apply_work` preflight is removed. `used` is approximate work charged this invocation and may
+exceed the target after a ready atomic unit. A prepared ready unit runs on a fresh invocation despite
+its size; if earlier durable preparation exhausted the target, retain the ready plan and dispatch it
+on the next invocation. Preparation must not repeat merely to exhaust the same target again.
 
 At open, validate format before any mutation, then validate aggregate retained charges with checked
 arithmetic under the existing admission rules. Lower limits below retained use reject before changes;

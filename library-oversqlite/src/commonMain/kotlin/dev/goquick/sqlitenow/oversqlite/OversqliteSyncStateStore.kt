@@ -287,8 +287,9 @@ internal class OversqliteSyncStateStore(
         schemaName: String, tableName: String, keyJson: String, kind: String,
         rowVersion: Long, payload: String?, origin: String, bundleSeq: Long?,
         statementCache: StatementCache? = null,
+        projectionStatementCache: StatementCache? = null,
     ) {
-        localStore().validateStoredServerProjection(schemaName, tableName, keyJson)
+        localStore().validateStoredServerProjection(schemaName, tableName, keyJson, projectionStatementCache)
         if(rowVersion>0) {
             val old = loadBySchemaTableKey("SELECT row_version,server_kind,server_payload FROM _sync_row_state WHERE schema_name=? AND table_name=? AND key_json=?",schemaName,tableName,keyJson,statementCache,{null}) { st ->
                 Triple(st.getLong(0),st.getText(1),if(st.isNull(2)) null else st.getText(2))

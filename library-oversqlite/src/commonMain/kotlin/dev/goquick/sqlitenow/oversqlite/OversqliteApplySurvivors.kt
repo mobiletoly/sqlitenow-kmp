@@ -39,14 +39,17 @@ internal const val applyPlanDdl = """CREATE TABLE IF NOT EXISTS _sync_apply_plan
     entries INTEGER NOT NULL, bytes INTEGER NOT NULL,
     edge_entries INTEGER NOT NULL DEFAULT 0, edge_bytes INTEGER NOT NULL DEFAULT 0,
     operation_kind TEXT NOT NULL DEFAULT 'pull' CHECK(operation_kind IN ('pull','settlement','snapshot','conflict')),
+    source_snapshot_id TEXT NOT NULL DEFAULT '',
     preserve_schema TEXT NOT NULL DEFAULT '', preserve_table TEXT NOT NULL DEFAULT '', preserve_key TEXT NOT NULL DEFAULT '',
     atomic_work INTEGER NOT NULL DEFAULT 0 CHECK(typeof(atomic_work)='integer' AND atomic_work>=0),
     preservation_complete INTEGER NOT NULL DEFAULT 0 CHECK(preservation_complete IN (0,1)))"""
 internal const val applyRowsDdl = """CREATE TABLE IF NOT EXISTS _sync_apply_rows (
     ordinal INTEGER PRIMARY KEY, table_name TEXT NOT NULL, local_pk TEXT NOT NULL,
     payload TEXT, wire INTEGER NOT NULL, pending INTEGER NOT NULL, bytes INTEGER NOT NULL,
-    role TEXT NOT NULL DEFAULT 'survivor' CHECK(role IN ('intended','survivor','exception')),
+    role TEXT NOT NULL DEFAULT 'survivor' CHECK(role IN ('intended','survivor','exception','snapshot_ref')),
     owner_revision INTEGER NOT NULL DEFAULT 0 CHECK(typeof(owner_revision)='integer' AND owner_revision>=0),
+    source_ordinal INTEGER CHECK((role='snapshot_ref')=(source_ordinal IS NOT NULL)
+        AND (role<>'snapshot_ref' OR (source_ordinal>0 AND payload IS NULL AND wire=1))),
     UNIQUE(table_name,local_pk))"""
 internal const val applyEdgesDdl = """CREATE TABLE IF NOT EXISTS _sync_apply_edges (
     ordinal INTEGER PRIMARY KEY, parent_table TEXT NOT NULL, parent_pk TEXT NOT NULL,
@@ -60,6 +63,7 @@ internal const val applyPendingIndexDdl =
 internal data class ApplySurvivor(
     val table: String, val pk: String, val payload: String?, val wire: Boolean = false,
     val role: String = if (wire) "intended" else "survivor",
+    val stageOrdinal: Long? = null,
 )
 
 private data class ApplyPlan(
@@ -68,7 +72,7 @@ private data class ApplyPlan(
     var cursor: String? = null, var entries: Long = 0, var bytes: Long = 0,
     var edgeEntries: Long = 0, var edgeBytes: Long = 0,
     var kind: String = "pull", var preserveSchema: String = "", var preserveTable: String = "", var preserveKey: String = "",
-    var atomicWork: Long = 0, var preservationComplete: Boolean = false,
+    var atomicWork: Long = 0, var preservationComplete: Boolean = false, var sourceSnapshotId: String = "",
 )
 
 internal fun applyUnit(kind: String, sequence: Long, hash: String): String =
@@ -81,6 +85,7 @@ internal class OversqliteApplySurvivors(
     private val operations: OversqliteClientOperationController,
     private val json: Json,
 ) {
+    private val snapshotLifecycle by lazy { OversqliteApplyLifecycle(db, config, local, this, json) }
     suspend fun reservationCharge(token: String): WorkspaceCharge = OversqliteWorkspace(db,config).reserved(token)
 
     suspend fun reserveDecisionCopies(state: RuntimeState, token: String?, base: WorkspaceCharge, held: WorkspaceCharge,
@@ -96,82 +101,64 @@ internal class OversqliteApplySurvivors(
         return next
     }
 
-    suspend fun prepare(state: RuntimeState, unit: String, roots: Int, operationKind: String = "pull", inputSequence: Long? = null, workspaceStatementCache: StatementCache? = null, replayStatementCache: StatementCache? = null, seed: suspend (Int) -> ApplySurvivor) {
+    suspend fun prepare(state: RuntimeState, unit: String, roots: Int, operationKind: String = "pull", inputSequence: Long? = null, workspaceStatementCache: StatementCache? = null, replayStatementCache: StatementCache? = null, sourceSnapshotId: String = "", seed: suspend (Int) -> ApplySurvivor) {
         try {
-            preparePlan(state, unit, roots, operationKind, inputSequence, workspaceStatementCache, replayStatementCache, seed)
+            preparePlan(state, unit, roots, operationKind, inputSequence, workspaceStatementCache, replayStatementCache, sourceSnapshotId, seed)
         } catch (limit: SyncWorkLimitException) {
             throw ApplyProgressPending(limit)
         }
     }
 
-    private suspend fun preparePlan(state: RuntimeState, unit: String, roots: Int, operationKind: String, inputSequence: Long?, workspaceStatementCache: StatementCache?, replayStatementCache: StatementCache?, seed: suspend (Int) -> ApplySurvivor) {
+    suspend fun hasMatchingSnapshotPlan(state: RuntimeState, unit: String, snapshotId: String): Boolean {
+        val plan = load() ?: return false
+        return plan.kind == "snapshot" && plan.unit == unit && plan.sourceSnapshotId == snapshotId &&
+            plan.guard == OversqliteWorkspace(db, config).contextGuard(state, unit)
+    }
+
+    private suspend fun preparePlan(state: RuntimeState, unit: String, roots: Int, operationKind: String, inputSequence: Long?, workspaceStatementCache: StatementCache?, replayStatementCache: StatementCache?, sourceSnapshotId: String, seed: suspend (Int) -> ApplySurvivor) {
         val guard = OversqliteWorkspace(db, config).contextGuard(state, unit)
-        val plan = load(replayStatementCache = replayStatementCache) ?: ApplyPlan(unit, guard, kind = operationKind)
+        val plan = load(replayStatementCache = replayStatementCache) ?: ApplyPlan(unit, guard, kind = operationKind, sourceSnapshotId = sourceSnapshotId)
         checkSpace(plan, workspaceStatementCache = workspaceStatementCache)
-        if (plan.unit != unit || plan.guard != guard || plan.kind != operationKind) {
+        if (plan.unit != unit || plan.guard != guard || plan.kind != operationKind || plan.sourceSnapshotId != sourceSnapshotId) {
             plan.unit = unit; plan.guard = guard; plan.phase = "clear"
-            plan.kind = operationKind
+            plan.kind = operationKind; plan.sourceSnapshotId = sourceSnapshotId
         }
-        // Older snapshot plans skipped this traversal; completed counts retain
-        // the exhausted table cursor under the existing guarded plan owner.
-        if (operationKind == "snapshot" && plan.phase == "ready" && plan.table < state.validated.tables.size) {
-            plan.phase = "index"; plan.table = 0; plan.fk = -1; plan.cursor = null; plan.atomicWork = 0
+        require(operationKind != "snapshot" || plan.phase !in setOf("index", "walk")) {
+            "obsolete snapshot count phase requires fresh installation"
         }
         save(plan, replayStatementCache = replayStatementCache)
         while (plan.phase != "ready") {
             operations.reserveSyncWork(unit, 16)
+            val phaseBefore = plan.phase
             when (plan.phase) {
                 "clear" -> clearStep(plan, replayStatementCache = replayStatementCache)
                 "roots" -> if (plan.root == roots.toLong()) {
-                    plan.phase = "index"; plan.fk = -1
+                    plan.phase = if (operationKind == "snapshot") "ready" else "index"; plan.fk = -1
                 } else {
                     put(plan, seed(plan.root.toInt()), workspaceStatementCache, replayStatementCache = replayStatementCache); plan.root++
                 }
-                "index" -> if (operationKind == "snapshot") countSnapshotBusinessStep(state, plan) else indexStep(state, plan, workspaceStatementCache, replayStatementCache = replayStatementCache)
-                "walk" -> if (operationKind == "snapshot") countSnapshotBaselineStep(state, plan) else walk(state, plan, workspaceStatementCache, replayStatementCache = replayStatementCache)
+                "index" -> indexStep(state, plan, workspaceStatementCache, replayStatementCache = replayStatementCache)
+                "walk" -> walk(state, plan, workspaceStatementCache, replayStatementCache = replayStatementCache)
                 else -> error("invalid survivor plan phase")
             }
             checkSpace(plan, workspaceStatementCache = workspaceStatementCache)
-            save(plan, replayStatementCache = replayStatementCache)
+            // Root callbacks reload the retained plan. Publish ready state and the
+            // last completed private step before the next work reservation refuses.
+            if (phaseBefore == "roots" || plan.phase == "roots" || plan.phase == "ready" ||
+                16 > config.maxSyncWorkUnitsPerInvocation - operations.usedSyncWork()) {
+                save(plan, replayStatementCache = replayStatementCache)
+            }
         }
         if (operationKind == "settlement" || operationKind == "conflict") prepareSettlementIntent(state, plan, workspaceStatementCache, replayStatementCache = replayStatementCache)
-        val lifecycle = OversqliteApplyLifecycle(db, config, local, this, json)
-        operations.reserveSyncWork(unit, lifecycle.atomicWork(state, plan.kind, unit, plan.entries, atomicApplyWork(plan, roots.toLong())))
+        val lifecycle = OversqliteApplyLifecycle(db, config, local, this, json,
+            if (operationKind == "snapshot") replayStatementCache else null)
+        operations.reserveSyncWork(unit, lifecycle.atomicWork(state, plan.kind, unit, plan.entries, atomicApplyWork(plan, roots.toLong())), readyAtomic = true)
         // Preflight simultaneous intended/live copies before business mutation.
         for (ordinal in 1..plan.entries) {
-            val (row, bytes) = loadRow(plan, ordinal, workspaceStatementCache, replayStatementCache = replayStatementCache)
+            val (row, bytes) = loadRow(state, plan, ordinal, workspaceStatementCache, replayStatementCache = replayStatementCache)
             capture(state, plan, row.table, row.pk, heldEntries = 6, heldBytes = 6 * bytes, workspaceStatementCache = workspaceStatementCache, replayStatementCache = replayStatementCache)
         }
         lifecycle.validateDependencies(state, plan.kind, plan.guard, plan.entries, inputSequence)
-    }
-
-    // Each step's 16 work units are admitted by preparePlan before either
-    // indexed lookup. The saved allowance counts old scope exactly once.
-    private suspend fun countSnapshotBusinessStep(state: RuntimeState, p: ApplyPlan) {
-        if (p.table >= state.validated.tables.size) {
-            p.phase = "walk"; p.table = 0; p.fk = 0; p.cursor = null
-            return
-        }
-        val before = p.table
-        val table = state.validated.tables[p.table.toInt()].tableName
-        nextIndexKey(state, p, table, state.validated.tableInfoByName.getValue(table))
-        if (p.table == before) p.atomicWork = addAtomicWork(p, p.atomicWork, 1, 32)
-    }
-
-    private suspend fun countSnapshotBaselineStep(state: RuntimeState, p: ApplyPlan) {
-        if (p.table >= state.validated.tables.size) { p.phase = "ready"; return }
-        val table = state.validated.tables[p.table.toInt()].tableName
-        var tail = " FROM _sync_row_state WHERE schema_name=? AND table_name=?"
-        val args = mutableListOf<Any?>(state.validated.schemaForTable(table), table)
-        p.cursor?.let { tail += " AND key_json>?"; args += it }
-        tail += " ORDER BY key_json LIMIT 1"
-        val size = one("SELECT length(CAST(key_json AS BLOB))$tail", *args.toTypedArray()) { it.getLong(0) }
-        if (size == null) { p.table++; p.cursor = null; return }
-        val workspace = OversqliteWorkspace(db, config)
-        val charge = workspace.add(p.unit, WorkspaceCharge(3, workspace.scale(p.unit, size, 18)), WorkspaceCharge(bytes = 128))
-        checkSpace(p, charge.entries, charge.bytes)
-        p.cursor = checkNotNull(one("SELECT key_json$tail", *args.toTypedArray()) { it.getText(0) })
-        p.atomicWork = addAtomicWork(p, p.atomicWork, 1, 32)
     }
 
     suspend fun capture(state: RuntimeState, table: String, pk: String, workspaceStatementCache: StatementCache? = null, replayStatementCache: StatementCache? = null): ApplySurvivor =
@@ -197,13 +184,25 @@ internal class OversqliteApplySurvivors(
 
     // The caller retains this reservation while capturing/comparing the live
     // row. Neither simultaneous encoded copy receives sharing credit.
-    private suspend fun loadRow(plan: ApplyPlan, ordinal: Long, workspaceStatementCache: StatementCache?, replayStatementCache: StatementCache?): Pair<ApplySurvivor, Long> {
+    suspend fun loadPlannedRow(state: RuntimeState, ordinal: Long, workspaceStatementCache: StatementCache? = null,
+        replayStatementCache: StatementCache? = null): Pair<ApplySurvivor, Long> =
+        loadRow(state, checkNotNull(load(replayStatementCache)), ordinal, workspaceStatementCache, replayStatementCache)
+
+    private suspend fun loadRow(state: RuntimeState, plan: ApplyPlan, ordinal: Long, workspaceStatementCache: StatementCache?, replayStatementCache: StatementCache?): Pair<ApplySurvivor, Long> {
         currentCoroutineContext().ensureActive()
         val bytes = checkNotNull(one("SELECT bytes FROM _sync_apply_rows WHERE ordinal=?", ordinal, replayStatementCache = replayStatementCache) { it.getLong(0) })
         checkSpace(plan, 6, 6 * bytes, workspaceStatementCache)
-        val row = checkNotNull(one("SELECT table_name,local_pk,payload,wire FROM _sync_apply_rows WHERE ordinal=?", ordinal, replayStatementCache = replayStatementCache) {
-            ApplySurvivor(it.getText(0), it.getText(1), it.nullText(2), it.getLong(3) != 0L)
+        val row = checkNotNull(one("SELECT table_name,local_pk,payload,wire,role,source_ordinal FROM _sync_apply_rows WHERE ordinal=?", ordinal, replayStatementCache = replayStatementCache) {
+            ApplySurvivor(it.getText(0), it.getText(1), it.nullText(2), it.getLong(3) != 0L,
+                it.getText(4), if (it.isNull(5)) null else it.getLong(5))
         })
+        if (row.role == "snapshot_ref") {
+            check(plan.sourceSnapshotId.isNotEmpty()) { "snapshot source is not bound to the plan" }
+            val (_, staged, charge) = snapshotLifecycle.readSnapshot(state, plan.sourceSnapshotId, checkNotNull(row.stageOrdinal), plan.unit, replayStatementCache)
+            check(staged.table == row.table && staged.pk == row.pk) { "snapshot reference identity differs from stage" }
+            checkSpace(plan, 6, 6 * charge, workspaceStatementCache)
+            return staged to charge
+        }
         return row to bytes
     }
 
@@ -212,7 +211,7 @@ internal class OversqliteApplySurvivors(
         val changed = linkedSetOf<String>()
         for (ordinal in 1..plan.entries) {
             currentCoroutineContext().ensureActive()
-            val (row, bytes) = loadRow(plan, ordinal, workspaceStatementCache, replayStatementCache = replayStatementCache)
+            val (row, bytes) = loadRow(state, plan, ordinal, workspaceStatementCache, replayStatementCache = replayStatementCache)
             val live = capture(state, plan, row.table, row.pk, heldEntries = 6, heldBytes = 6 * bytes, workspaceStatementCache = workspaceStatementCache, replayStatementCache = replayStatementCache)
             val matches = when {
                 row.payload == null -> live.payload == null
@@ -323,9 +322,10 @@ internal class OversqliteApplySurvivors(
     private suspend fun put(p: ApplyPlan, row: ApplySurvivor, workspaceStatementCache: StatementCache?, replayStatementCache: StatementCache?) {
         val pending = one("SELECT pending FROM _sync_apply_rows WHERE table_name=? AND local_pk=?", row.table, row.pk, replayStatementCache = replayStatementCache) { it.getLong(0) }
         if (pending != null) return
-        val size = utf8Size(row.payload.orEmpty()) + 6 * utf8Size(row.table) + 6 * utf8Size(row.pk) + 64
+        val retainedPayload = if (row.stageOrdinal == null) row.payload else null
+        val size = utf8Size(retainedPayload.orEmpty()) + 6 * utf8Size(row.table) + 6 * utf8Size(row.pk) + 64
         checkSpace(p, 7, 6 * size, workspaceStatementCache)
-        exec("INSERT INTO _sync_apply_rows(ordinal,table_name,local_pk,payload,wire,pending,bytes,role,owner_revision) VALUES(?,?,?,?,?,?,?,?,(SELECT dirty_revision FROM _sync_conflict_state WHERE singleton_key=1))", p.entries + 1, row.table, row.pk, row.payload, row.wire, if(row.role=="exception") 0L else 1L, size, row.role, replayStatementCache = replayStatementCache)
+        exec("INSERT INTO _sync_apply_rows(ordinal,table_name,local_pk,payload,wire,pending,bytes,role,owner_revision,source_ordinal) VALUES(?,?,?,?,?,?,?,?,(SELECT dirty_revision FROM _sync_conflict_state WHERE singleton_key=1),?)", p.entries + 1, row.table, row.pk, retainedPayload, row.wire, if(row.role=="exception") 0L else 1L, size, row.role, row.stageOrdinal, replayStatementCache = replayStatementCache)
         p.entries++; p.bytes += size
         operations.a3Stats.savedCopies=maxOf(operations.a3Stats.savedCopies,p.entries)
         operations.a3Stats.savedBytes=maxOf(operations.a3Stats.savedBytes,p.bytes)
@@ -362,26 +362,26 @@ internal class OversqliteApplySurvivors(
             return a+b
         }
         check("entries", config.maxSyncWorkspaceEntries, add(add(add(p.entries,p.edgeEntries,"entries"),1,"entries"),push.first,"entries"), entries)
-        check("bytes", config.maxSyncWorkspaceBytes, add(add(add(p.bytes,p.edgeBytes,"bytes"),512+6*(utf8Size(p.unit)+utf8Size(p.guard)+utf8Size(p.cursor.orEmpty())+utf8Size(p.preserveSchema)+utf8Size(p.preserveTable)+utf8Size(p.preserveKey)),"bytes"),push.second,"bytes"), bytes)
+        check("bytes", config.maxSyncWorkspaceBytes, add(add(add(p.bytes,p.edgeBytes,"bytes"),512+6*(utf8Size(p.unit)+utf8Size(p.guard)+utf8Size(p.sourceSnapshotId)+utf8Size(p.cursor.orEmpty())+utf8Size(p.preserveSchema)+utf8Size(p.preserveTable)+utf8Size(p.preserveKey)),"bytes"),push.second,"bytes"), bytes)
     }
 
-    private suspend fun load(replayStatementCache: StatementCache? = null): ApplyPlan? = one("SELECT unit,guard,phase,root_cursor,visit_cursor,table_cursor,fk_cursor,row_cursor,entries,bytes,edge_entries,edge_bytes,operation_kind,preserve_schema,preserve_table,preserve_key,atomic_work,preservation_complete FROM _sync_apply_plan WHERE singleton_key=1", replayStatementCache = replayStatementCache) {
-        ApplyPlan(it.getText(0),it.getText(1),it.getText(2),it.getLong(3),it.getLong(4),it.getLong(5),it.getLong(6),it.nullText(7),it.getLong(8),it.getLong(9),it.getLong(10),it.getLong(11),it.getText(12),it.getText(13),it.getText(14),it.getText(15),it.getLong(16),it.getLong(17)!=0L)
+    private suspend fun load(replayStatementCache: StatementCache? = null): ApplyPlan? = one("SELECT unit,guard,phase,root_cursor,visit_cursor,table_cursor,fk_cursor,row_cursor,entries,bytes,edge_entries,edge_bytes,operation_kind,preserve_schema,preserve_table,preserve_key,atomic_work,preservation_complete,source_snapshot_id FROM _sync_apply_plan WHERE singleton_key=1", replayStatementCache = replayStatementCache) {
+        ApplyPlan(it.getText(0),it.getText(1),it.getText(2),it.getLong(3),it.getLong(4),it.getLong(5),it.getLong(6),it.nullText(7),it.getLong(8),it.getLong(9),it.getLong(10),it.getLong(11),it.getText(12),it.getText(13),it.getText(14),it.getText(15),it.getLong(16),it.getLong(17)!=0L,it.getText(18))
     }
 
     private suspend fun save(p: ApplyPlan, replayStatementCache: StatementCache?) {
         currentCoroutineContext().ensureActive()
-        exec("""INSERT INTO _sync_apply_plan(singleton_key,unit,guard,phase,root_cursor,visit_cursor,table_cursor,fk_cursor,row_cursor,entries,bytes,edge_entries,edge_bytes,operation_kind,preserve_schema,preserve_table,preserve_key,atomic_work,preservation_complete)
-        VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        exec("""INSERT INTO _sync_apply_plan(singleton_key,unit,guard,phase,root_cursor,visit_cursor,table_cursor,fk_cursor,row_cursor,entries,bytes,edge_entries,edge_bytes,operation_kind,preserve_schema,preserve_table,preserve_key,atomic_work,preservation_complete,source_snapshot_id)
+        VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(singleton_key) DO UPDATE SET unit=excluded.unit,guard=excluded.guard,
         phase=excluded.phase,root_cursor=excluded.root_cursor,visit_cursor=excluded.visit_cursor,
         table_cursor=excluded.table_cursor,fk_cursor=excluded.fk_cursor,row_cursor=excluded.row_cursor,
         entries=excluded.entries,bytes=excluded.bytes,edge_entries=excluded.edge_entries,edge_bytes=excluded.edge_bytes,
-        operation_kind=excluded.operation_kind,preserve_schema=excluded.preserve_schema,
+        operation_kind=excluded.operation_kind,source_snapshot_id=excluded.source_snapshot_id,preserve_schema=excluded.preserve_schema,
         preserve_table=excluded.preserve_table,preserve_key=excluded.preserve_key,
         atomic_work=excluded.atomic_work,preservation_complete=excluded.preservation_complete""",
             p.unit,p.guard,p.phase,p.root,p.visit,p.table,p.fk,p.cursor,p.entries,p.bytes,p.edgeEntries,p.edgeBytes,
-            p.kind,p.preserveSchema,p.preserveTable,p.preserveKey,p.atomicWork,p.preservationComplete, replayStatementCache = replayStatementCache)
+            p.kind,p.preserveSchema,p.preserveTable,p.preserveKey,p.atomicWork,p.preservationComplete,p.sourceSnapshotId, replayStatementCache = replayStatementCache)
         currentCoroutineContext().ensureActive()
     }
 
@@ -427,14 +427,17 @@ internal class OversqliteApplySurvivors(
             }
             p.atomicWork=addAtomicWork(p,p.atomicWork,1,1024)
             p.preserveSchema=ref.schema; p.preserveTable=ref.table; p.preserveKey=ref.key
-            save(p, replayStatementCache = replayStatementCache)
+            // Preserve the original save-before-refusal failure order. The final
+            // null-reference branch still publishes preservation completion.
+            if (32 > config.maxSyncWorkUnitsPerInvocation - operations.usedSyncWork()) {
+                save(p, replayStatementCache = replayStatementCache)
+            }
         }
     }
 
     private fun addAtomicWork(p: ApplyPlan, used: Long, count: Long, weight: Long): Long {
-        if (used<0 || count<0 || count>(Long.MAX_VALUE-used)/weight) throw SyncWorkspaceLimitException(
-            p.unit,"atomic_apply_work",config.maxSyncWorkUnitsPerInvocation,operations.usedSyncWork(),Long.MAX_VALUE,false)
-        return used+count*weight
+        require(used >= 0 && count >= 0 && weight > 0)
+        return if (count > (Long.MAX_VALUE - used) / weight) Long.MAX_VALUE else used + count * weight
     }
 
     private fun atomicApplyWork(p: ApplyPlan, roots: Long): Long {

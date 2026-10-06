@@ -49,6 +49,7 @@ internal class SharedLocalApplyFixtureTest : CrossTargetSyncTestSupport() {
         assertEquals(defaults.getValue("entries").jsonPrimitive.long, config.maxSyncWorkspaceEntries)
         assertEquals(defaults.getValue("bytes").jsonPrimitive.long, config.maxSyncWorkspaceBytes)
         assertEquals(defaults.getValue("work").jsonPrimitive.long, config.maxSyncWorkUnitsPerInvocation)
+        assertEquals(3, fixture.getValue("results").jsonArray.size)
         for (entry in fixture.getValue("results").jsonArray) {
             val row = entry.jsonObject
             val work = row.getValue("reason").jsonPrimitive.content == "sync_work_limit"

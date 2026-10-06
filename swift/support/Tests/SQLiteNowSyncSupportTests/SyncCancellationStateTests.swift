@@ -39,15 +39,6 @@ final class SyncCancellationStateTests: XCTestCase, @unchecked Sendable {
         try await withLiveFixture { fixture in
             try await withConnection(fixture, work: 1000) { core, client in
                 let before = try await client.syncStatus()
-                do { _ = try await client.rebuild(); XCTFail("Snapshot should refuse atomic admission") }
-                catch let error as SQLiteNowError {
-                    guard case let .syncWorkspaceLimit(limit) = error else { throw error }
-                    XCTAssertEqual(limit.dimension,"atomic_apply_work")
-                    XCTAssertGreaterThan(limit.reserved,limit.limit)
-                    XCTAssertEqual(limit.progress.dirtyRows,0)
-                    XCTAssertEqual(limit.progress.outboundRows,0)
-                    XCTAssertEqual(limit.progress.committedBundles,0)
-                }
                 let box = CancellationClientBox(client)
                 let gate = CancellationStartGate()
                 let operation = Task { await gate.wait(); _ = try await box.client.rebuild() }
@@ -57,6 +48,7 @@ final class SyncCancellationStateTests: XCTestCase, @unchecked Sendable {
                 catch is CancellationError {}
                 let after = try await client.syncStatus()
                 XCTAssertEqual(before.pending.pendingRowCount,after.pending.pendingRowCount)
+                try await finishRebuildAfterWorkYields(client)
                 let rows = try await core.query(sql:"SELECT name FROM users WHERE id='11111111-1111-4111-8111-111111111111'",bindValues:[],columnTypes:["text"])
                 XCTAssertEqual(rows.rowAt(index:0).cellAt(index:0).textValue,"original")
             }
@@ -69,13 +61,6 @@ final class SyncCancellationStateTests: XCTestCase, @unchecked Sendable {
             try await withConnection(fixture, work: 1000) { limitedCore, limited in
                 let retained = try await limited.pendingConflict();let pending = try XCTUnwrap(retained)
                 let before = try await persistentVector(limitedCore)
-                do { try await limited.resolveConflict(pending,result:.acceptServer);XCTFail("Conflict should refuse atomic admission") }
-                catch let error as SQLiteNowError {
-                    guard case let .syncWorkspaceLimit(limit) = error else { throw error }
-                    XCTAssertEqual(limit.dimension,"atomic_apply_work")
-                    XCTAssertEqual(limit.progress.outboundRows,1)
-                }
-                let current = try await persistentVector(limitedCore);XCTAssertEqual(before,current)
                 let gate = CancellationStartGate()
                 let box = CancellationClientBox(limited)
                 let decision = Task { await gate.wait();try await box.client.resolveConflict(pending,result:.acceptServer) }
@@ -84,8 +69,33 @@ final class SyncCancellationStateTests: XCTestCase, @unchecked Sendable {
                 do { try await decision.value;XCTFail("Cancelled conflict returned success") } catch is CancellationError {}
                 let cancelledPending = try await limited.pendingConflict();XCTAssertEqual(pending,cancelledPending)
                 let cancelledVector = try await persistentVector(limitedCore);XCTAssertEqual(before,cancelledVector)
+                try await finishConflictResolutionAfterWorkYields(limited, pending: pending)
+                let resolved = try await limited.pendingConflict()
+                XCTAssertNil(resolved)
             }
         }
+    }
+
+    private func finishRebuildAfterWorkYields(_ client: SQLiteNowSyncClient) async throws {
+        for _ in 0..<32 {
+            do { _ = try await client.rebuild(); return }
+            catch let error as SQLiteNowError {
+                guard case .syncWorkLimit = error else { throw error }
+            }
+        }
+        XCTFail("rebuild made no completion progress after 32 bounded invocations")
+    }
+
+    private func finishConflictResolutionAfterWorkYields(
+        _ client: SQLiteNowSyncClient, pending: SQLiteNowPendingConflict
+    ) async throws {
+        for _ in 0..<32 {
+            do { try await client.resolveConflict(pending, result: .acceptServer); return }
+            catch let error as SQLiteNowError {
+                guard case .syncWorkLimit = error else { throw error }
+            }
+        }
+        XCTFail("conflict resolution made no completion progress after 32 bounded invocations")
     }
 
     func testReachedConflictCancellationRollsBackOwnedState() async throws {

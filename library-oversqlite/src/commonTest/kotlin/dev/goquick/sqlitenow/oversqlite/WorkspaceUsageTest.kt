@@ -130,6 +130,17 @@ internal class WorkspaceUsageTest : CrossTargetSyncTestSupport() {
         assertFalse(error.resumable)
     }
 
+    @Test fun snapshotProgressGuardIsChargedBeforeAdmission() = runOwnedWebDatabaseTest {
+        withMetadata { db, workspace ->
+            val before = workspace.usage(unit)
+            db.execSQL("UPDATE _sync_operation_state SET staged_snapshot_id='stage',snapshot_stage_guard='${"a".repeat(64)}'")
+            assertEquals(WorkspaceCharge(before.entries, before.bytes + 414), workspace.usage(unit))
+            val limited = OversqliteWorkspace(db, config.copy(maxSyncWorkspaceBytes = before.bytes + 413))
+            val error = assertFailsWith<SyncWorkspaceLimitException> { limited.check(unit) }
+            assertEquals("bytes", error.dimension)
+        }
+    }
+
     private suspend fun insertApply(db: SafeSQLiteConnection) = db.execSQL("""INSERT INTO _sync_apply_plan
         (singleton_key,unit,guard,phase,root_cursor,visit_cursor,table_cursor,fk_cursor,row_cursor,entries,bytes,edge_entries,edge_bytes)
         VALUES(1,'u','g','ready',0,0,0,0,NULL,2,10,3,20)""")

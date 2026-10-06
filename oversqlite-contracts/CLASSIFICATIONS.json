@@ -67,7 +67,7 @@
     {
       "path": "local-apply/a3-workspace.json",
       "contract": "a3-workspace",
-      "coverage": "Independent pure local decision/arithmetic and exact physical-inventory checks. No SQLite execution or runtime qualification.",
+      "coverage": "Independent pure local decision/arithmetic, soft bounded-step overshoot and first-ready work outcomes, and classified physical-inventory checks. Snapshot payload reuse is Kotlin-specific; no identical Go/Kotlin retained representation is asserted. No SQLite execution or runtime qualification.",
       "goConsumer": "oversync/contract_a3_test.go:TestContractCorpus_A3Workspace",
       "jvmConsumer": "SharedWorkspaceContractTest.contract",
       "runtimeOwners": [

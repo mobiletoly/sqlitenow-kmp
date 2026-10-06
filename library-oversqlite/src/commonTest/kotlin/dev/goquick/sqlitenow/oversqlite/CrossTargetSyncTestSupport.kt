@@ -195,6 +195,7 @@ internal open class CrossTargetSyncTestSupport {
         workspaceEntries: Long = 100000, workspaceBytes: Long = 256L * 1024 * 1024,
         workUnits: Long = 1000000,
         leaseGroup: Any = Any(),
+        maxSnapshotChunkRows: Int = 1000,
     ): DefaultOversqliteClient {
         return DefaultOversqliteClient.forOpening(
             db = db,
@@ -207,6 +208,7 @@ internal open class CrossTargetSyncTestSupport {
                     maxPushRows = maxPushRows,
                     maxPushDecodedBytes = maxPushDecodedBytes,
                     maxPullBundles = maxPullBundles,
+                    maxSnapshotChunkRows = maxSnapshotChunkRows,
                 ),
             ),
             http = http,
@@ -288,6 +290,8 @@ internal open class CrossTargetSyncTestSupport {
         internal var beforePullResponse: (suspend () -> Unit)? = null
         internal var remainingTransientPullFailures: Int = 0
         internal var beforeSnapshotChunkResponse: (suspend () -> Unit)? = null
+        internal var beforeSnapshotCreateRequest: (suspend () -> Unit)? = null
+        internal var beforeSnapshotCreateResponse: (suspend () -> Unit)? = null
         internal var extraPushEffects: ((List<PushRequestRow>, Long) -> List<BundleRow>)? = null
         internal var normalizePushEffects: ((List<BundleRow>) -> List<BundleRow>)? = null
         private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -308,6 +312,7 @@ internal open class CrossTargetSyncTestSupport {
         var bundleChangeWatchSupported: Boolean = false
         var protocolVersion: String = "v1"
         val discoverySourceIds = mutableListOf<String>()
+        val connectSourceIds = mutableListOf<String>()
         val requestTrace = mutableListOf<String>()
         val pushBodies = mutableListOf<String>()
 
@@ -317,6 +322,9 @@ internal open class CrossTargetSyncTestSupport {
         var connectRequestCount: Int = 0
         var pullRequestCount: Int = 0
         var pushRequestCount: Int = 0
+        val snapshotChunkRequests = mutableListOf<Pair<String, Long>>()
+        fun expireSnapshotSessionForTest(id: String) { snapshotSessions.remove(id) }
+        fun snapshotSessionIdsForTest(): Set<String> = snapshotSessions.keys.toSet()
         var snapshotSessionCreateRequestCount: Int = 0
         var cancelNextPush: Boolean = false
         var watchCloseCount: Int = 0
@@ -334,6 +342,9 @@ internal open class CrossTargetSyncTestSupport {
         fun newHttpClient(): HttpClient {
             return HttpClient(MockEngine { request ->
                 requestTrace += "${request.method.value} ${request.url.encodedPath}"
+                if (request.method.value == "POST" && request.url.encodedPath == "/sync/snapshot-sessions") {
+                    beforeSnapshotCreateRequest?.let { hook -> beforeSnapshotCreateRequest = null; hook() }
+                }
                 handle(request)
             }) {
                 install(ContentNegotiation) {
@@ -395,6 +406,16 @@ internal open class CrossTargetSyncTestSupport {
             )
             scopeInitialized = true
             return bundleSeq
+        }
+
+        fun pruneBundleHistoryForSnapshotTest() {
+            check(snapshotSessions.isEmpty()) { "finish the prior snapshot before pruning mock history" }
+            val latest = bundles.lastOrNull() ?: error("no bundle history to prune")
+            // Snapshot sessions read liveRows. Keep the stable sequence and a
+            // pruned-history response without retaining obsolete bundle trees.
+            retainedBundleFloor = latest.bundleSeq
+            bundles.clear()
+            bundles += latest.copy(rows = emptyList())
         }
 
         suspend fun addRemoteBundleAndNotifyForTest(rows: List<BundleRow>) {
@@ -467,6 +488,7 @@ internal open class CrossTargetSyncTestSupport {
             try {
                 val connect = json.decodeFromString(ConnectRequest.serializer(), request.bodyText())
                 val sourceId = request.headers[sourceIdHeaderName].orEmpty()
+                connectSourceIds += sourceId
                 when {
                     scopeInitialized || bundles.isNotEmpty() -> {
                         scopeInitialized = true
@@ -706,6 +728,7 @@ internal open class CrossTargetSyncTestSupport {
                 sourceId = createRequest?.sourceReplacement?.newSourceId ?: request.headers[sourceIdHeaderName].orEmpty(),
                 rows = snapshotRows,
             )
+            beforeSnapshotCreateResponse?.let { hook -> beforeSnapshotCreateResponse = null; hook() }
             jsonResponse(
                 json.encodeToString(
                     SnapshotSession.serializer(),
@@ -726,9 +749,10 @@ internal open class CrossTargetSyncTestSupport {
             return try {
                 val snapshotId = request.url.encodedPath.removePrefix("/sync/snapshot-sessions/")
                 val session = snapshotSessions[snapshotId]
-                    ?: return errorResponse("snapshot_not_found", "unknown snapshot", HttpStatusCode.NotFound)
+                    ?: return errorResponse("snapshot_session_not_found", "unknown snapshot", HttpStatusCode.NotFound)
                 require(session.sourceId == request.headers[sourceIdHeaderName]) { "snapshot chunks require effective source" }
                 val afterRowOrdinal = request.url.parameters["after_row_ordinal"]?.toLongOrNull() ?: 0L
+                snapshotChunkRequests += snapshotId to afterRowOrdinal
                 val maxRows = request.url.parameters["max_rows"]?.toIntOrNull() ?: 1000
                 val startIndex = afterRowOrdinal.toInt()
                 val rows = session.rows.drop(startIndex).take(maxRows)

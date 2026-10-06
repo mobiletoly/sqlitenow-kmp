@@ -15,6 +15,7 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
+import androidx.sqlite.async.step
 import dev.goquick.sqlitenow.core.SafeSQLiteConnection
 import dev.goquick.sqlitenow.core.TransactionMode
 import kotlinx.serialization.json.Json
@@ -57,6 +58,16 @@ internal class OversqliteDownloadWorkflow(
     private val notifyUpdatedTables: (Set<String>) -> Unit = {},
     private val log: ((() -> String)) -> Unit,
 ) {
+    // One bounded identity avoids repeating best-effort retirement on each work yield.
+    // A reopened owner may retry retirement; no prepared handle or payload is retained.
+    private var retiredSnapshotId: String? = null
+
+    private suspend fun retireOperationSnapshot(id: String, source: String) {
+        if (retiredSnapshotId == id) return
+        remoteApi.deleteSnapshotSessionBestEffort(id, source)
+        retiredSnapshotId = id
+    }
+
     suspend fun pullToStable(
         state: RuntimeState,
         onPhaseChanged: suspend (OversqlitePhase) -> Unit = {},
@@ -113,38 +124,141 @@ internal class OversqliteDownloadWorkflow(
             "snapshot diagnostics scope is missing for rebuild"
         }
         diagnostics.markRestoreAttempt()
-        val limits = negotiateSnapshotLimits(state.admittedContract, config)
         if (rotatedSourceId == null && outboxMode == SnapshotRebuildOutboxMode.CLEAR_ALL) {
             markCheckpointRecoveryRequired("explicit_rebuild")
         }
         requireSnapshotRebuildState(outboxMode)
-        val guard = snapshotGate.pin(outboxMode)
-
         onPhaseChanged(OversqlitePhase.STAGING_REMOTE_STATE)
-        stageStore.clearAllSnapshotStages()
-        val sessionRequest = rotatedSourceId?.let { replacementSourceId ->
-            val reason = sourceReplacementReason?.trim()
-            check(!reason.isNullOrBlank()) {
-                "rotated rebuild requires a non-blank source replacement reason"
-            }
-            SnapshotSessionCreateRequest(
-                sourceReplacement = SnapshotSourceReplacement(
-                    previousSourceId = state.sourceId,
-                    newSourceId = replacementSourceId,
-                    reason = reason,
-                ),
-            )
-        }
-        val session = remoteApi.createSnapshotSession(state.sourceId, sessionRequest)
-        val snapshotSourceId = rotatedSourceId ?: state.sourceId
-        try {
-            val totals = downloadSnapshotSession(state.copy(sourceId = snapshotSourceId), session, limits)
-            diagnostics.recordStagedRows(totals.rows)
+        val (session, guard) = ensureOperationSnapshotStaged(state, outboxMode,
+            rotatedSourceId, sourceReplacementReason)
+        diagnostics.recordStagedRows(session.rowCount)
+        onPhaseChanged(OversqlitePhase.APPLYING_REMOTE_STATE)
+        return applyStagedSnapshot(state, session, rotatedSourceId, outboxMode, guard, finalizer)
+    }
 
-            onPhaseChanged(OversqlitePhase.APPLYING_REMOTE_STATE)
-            return applyStagedSnapshot(state, session, rotatedSourceId, outboxMode, guard, finalizer)
-        } finally {
-            remoteApi.deleteSnapshotSessionBestEffort(session.snapshotId, snapshotSourceId)
+    internal suspend fun ensureOperationSnapshotStaged(
+        state: RuntimeState,
+        mode: SnapshotRebuildOutboxMode,
+        rotatedSourceId: String? = null,
+        replacementReason: String? = null,
+        remoteReplace: Boolean = false,
+        allowSessionRefresh: Boolean = true,
+    ): Pair<SnapshotSession, SnapshotApplyGuard> {
+        var guard = snapshotGate.pin(mode, remoteReplace, if (remoteReplace) state.userId else "")
+        var operation = guard.lifecycle.operation
+        val source = rotatedSourceId ?: state.sourceId
+        val lifecycle = OversqliteApplyLifecycle(db, config, localStore, bundleApplier.survivors, json)
+        // A recorded recovery session proves replacement already happened remotely.
+        var replacementEstablished = rotatedSourceId != null && operation.stagedSnapshotId.isNotEmpty()
+        var session = operation.stagedSnapshotId.takeIf { it.isNotEmpty() }?.let {
+            SnapshotSession(it, operation.snapshotBundleSeq, operation.snapshotRowCount, operation.snapshotByteCount, "")
+        }
+        if (session != null) {
+            val retainedSession = session
+            val matches = db.transaction(TransactionMode.DEFERRED) {
+                snapshotGate.validateFinal(guard, retainedSession)
+                val currentGuard = lifecycle.snapshotStageGuard(state, retainedSession, mode != SnapshotRebuildOutboxMode.CLEAR_ALL)
+                if (currentGuard != operation.snapshotStageGuard) false else {
+                    validateOperationSnapshotCursor(operation)
+                    true
+                }
+            }
+            if (!matches) {
+                retireOperationSnapshot(retainedSession.snapshotId, source)
+                session = null
+            }
+        }
+        if (session == null) {
+            val request = if (rotatedSourceId != null && !replacementEstablished) {
+                val reason = replacementReason?.trim()
+                check(!reason.isNullOrBlank()) { "rotated rebuild requires a non-blank source replacement reason" }
+                SnapshotSessionCreateRequest(SnapshotSourceReplacement(state.sourceId, rotatedSourceId, reason))
+            } else null
+            session = if (remoteReplace) stageStore.withSnapshotTransportRetry("remote_replace snapshot create") {
+                remoteApi.createSnapshotSession(if (replacementEstablished) source else state.sourceId, request)
+            } else remoteApi.createSnapshotSession(if (replacementEstablished) source else state.sourceId, request)
+            val created = checkNotNull(session)
+            guard = publishSnapshotSession(state, mode, created, guard, source)
+            operation = guard.lifecycle.operation
+        }
+        val current = checkNotNull(session)
+        if (operation.snapshotStageComplete) {
+            retireOperationSnapshot(current.snapshotId, source)
+        } else {
+            try {
+                downloadSnapshotSession(state.copy(sourceId = source), current,
+                    negotiateSnapshotLimits(state.admittedContract, config),
+                    initialTotals = SnapshotTransferTotals(operation.snapshotStagedRowCount, operation.snapshotStagedByteCount),
+                    fetchChunk = if (remoteReplace) ({ after -> stageStore.withSnapshotTransportRetry("remote_replace snapshot fetch") {
+                        fetchSnapshotChunkWithOneRowProgress(state.copy(sourceId = source), current, after,
+                            negotiateSnapshotLimits(state.admittedContract, config))
+                    } }) else null) { totals ->
+                    snapshotGate.validateFinal(guard, current)
+                    val next = operation.copy(snapshotStagedRowCount = totals.rows, snapshotStagedByteCount = totals.bytes,
+                        snapshotStageComplete = totals.rows == current.rowCount && totals.bytes == current.logicalByteCount)
+                    operationStateStore.persistState(next)
+                    operation = next
+                    guard = guard.copy(lifecycle = guard.lifecycle.copy(operation = next))
+                }
+            } catch (error: SnapshotHttpException) {
+                if (!allowSessionRefresh || (error.errorCode != "snapshot_session_expired" && error.errorCode != "snapshot_session_not_found")) throw error
+                // Keep the durable replacement receipt and cursor until a fresh session is acquired.
+                // Expiry requests an ordinary snapshot, never another replacement of the retired source.
+                val fresh = remoteApi.createSnapshotSession(source)
+                publishSnapshotSession(state, mode, fresh, guard, source)
+                return ensureOperationSnapshotStaged(state, mode, rotatedSourceId, replacementReason,
+                    remoteReplace, allowSessionRefresh = false)
+            } catch (error: Throwable) {
+                if (error !is SyncWorkLimitException && error !is kotlinx.coroutines.CancellationException)
+                    retireOperationSnapshot(current.snapshotId, source)
+                throw error
+            }
+            retireOperationSnapshot(current.snapshotId, source)
+        }
+        return current to guard
+    }
+
+    private suspend fun publishSnapshotSession(state: RuntimeState, mode: SnapshotRebuildOutboxMode,
+        session: SnapshotSession, guard: SnapshotApplyGuard, source: String): SnapshotApplyGuard {
+        val lifecycle = OversqliteApplyLifecycle(db, config, localStore, bundleApplier.survivors, json)
+        try {
+            val operation = db.transaction(TransactionMode.IMMEDIATE) {
+                snapshotGate.validateFinal(guard, session)
+                stageStore.clearAllSnapshotStages()
+                val next = guard.lifecycle.operation.copy(stagedSnapshotId = session.snapshotId,
+                    snapshotBundleSeq = session.snapshotBundleSeq, snapshotRowCount = session.rowCount,
+                    snapshotByteCount = session.logicalByteCount, snapshotStageComplete = false,
+                    snapshotStagedRowCount = 0, snapshotStagedByteCount = 0,
+                    snapshotStageGuard = lifecycle.snapshotStageGuard(state, session, mode != SnapshotRebuildOutboxMode.CLEAR_ALL))
+                operationStateStore.persistState(next)
+                OversqliteWorkspace(db, config).check(applyUnit("snapshot-stage", session.snapshotBundleSeq, session.snapshotId))
+                next
+            }
+            return guard.copy(lifecycle = guard.lifecycle.copy(operation = operation))
+        } catch (error: Throwable) {
+            try {
+                retireOperationSnapshot(session.snapshotId, source)
+            } catch (cleanup: Throwable) {
+                if (cleanup !== error) error.addSuppressed(cleanup)
+            }
+            throw error
+        }
+    }
+
+    private suspend fun validateOperationSnapshotCursor(operation: OversqliteOperationState) {
+        operation.validateSnapshotStageMetadata()
+        db.withPreparedStatement("""SELECT snapshot_stage_entries,
+            (SELECT COALESCE(min(row_ordinal),0) FROM _sync_snapshot_stage WHERE snapshot_id=?),
+            (SELECT COALESCE(max(row_ordinal),0) FROM _sync_snapshot_stage WHERE snapshot_id=?),
+            EXISTS(SELECT 1 FROM _sync_snapshot_stage WHERE snapshot_id<? LIMIT 1),
+            EXISTS(SELECT 1 FROM _sync_snapshot_stage WHERE snapshot_id>? LIMIT 1)
+            FROM _sync_operation_state WHERE singleton_key=1""") { statement ->
+            for (index in 1..4) statement.bindText(index, operation.stagedSnapshotId)
+            check(statement.step())
+            require(statement.getLong(0) == operation.snapshotStagedRowCount &&
+                statement.getLong(1) == (if (operation.snapshotStagedRowCount == 0L) 0L else 1L) &&
+                statement.getLong(2) == operation.snapshotStagedRowCount && statement.getLong(3) == 0L &&
+                statement.getLong(4) == 0L) { "retained snapshot cursor differs from staged rows" }
         }
     }
 
@@ -159,6 +273,7 @@ internal class OversqliteDownloadWorkflow(
         var totals = initialTotals
         var afterRowOrdinal = initialTotals.rows
         while (true) {
+            stageStore.ensureSnapshotWorkAvailable(applyUnit("snapshot-stage", session.snapshotBundleSeq, session.snapshotId))
             val chunk = fetchChunk?.invoke(afterRowOrdinal) ?: fetchSnapshotChunkWithOneRowProgress(
                 state, session, afterRowOrdinal, limits,
             )
@@ -170,22 +285,20 @@ internal class OversqliteDownloadWorkflow(
                     "snapshot accumulated byte count overflow"
                 },
             )
-            stageStore.stageSnapshotChunk(state, session, chunk, afterRowOrdinal) {
-                onChunkStaged(nextTotals)
-            }
-            totals = nextTotals
-            if (totals.rows > session.rowCount || totals.bytes > session.logicalByteCount) {
+            if (nextTotals.rows > session.rowCount || nextTotals.bytes > session.logicalByteCount) {
                 throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK)
             }
+            if (chunk.hasMore && (nextTotals.rows == session.rowCount || nextTotals.bytes == session.logicalByteCount)) {
+                throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK)
+            }
+            if (!chunk.hasMore && (nextTotals.rows != session.rowCount || nextTotals.bytes != session.logicalByteCount)) {
+                throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK)
+            }
+            stageStore.stageSnapshotChunk(state, session, chunk, afterRowOrdinal) { onChunkStaged(nextTotals) }
+            totals = nextTotals
             if (chunk.hasMore) {
-                if (totals.rows == session.rowCount || totals.bytes == session.logicalByteCount) {
-                    throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK)
-                }
                 afterRowOrdinal = chunk.nextRowOrdinal
                 continue
-            }
-            if (totals.rows != session.rowCount || totals.bytes != session.logicalByteCount) {
-                throw SnapshotSemanticException(SnapshotSemanticFailure.INVALID_CHUNK)
             }
             return totals
         }
@@ -308,7 +421,7 @@ internal class OversqliteDownloadWorkflow(
         val guard = pinnedGuard ?: snapshotGate.pin(outboxMode)
         val result = applyExecutor.inApplyModeTransaction(state) { statementCache ->
             snapshotGate.validateFinal(guard, session)
-            val lifecycle = OversqliteApplyLifecycle(db, config, localStore, bundleApplier.survivors, json)
+            val lifecycle = OversqliteApplyLifecycle(db, config, localStore, bundleApplier.survivors, json, statementCache)
             val preserve = outboxMode != SnapshotRebuildOutboxMode.CLEAR_ALL
             lifecycle.prepareSnapshot(state, session, preserve)
             var stagedRowCount = 0L
@@ -347,6 +460,7 @@ internal class OversqliteDownloadWorkflow(
                                 rowVersion = row.rowVersion,
                                 kind = "live", payload = localStore.captureAuthoritativePayload(row.tableName,payload,statementCache),
                                 origin = "snapshot", bundleSeq = session.snapshotBundleSeq, statementCache = statementCache,
+                                projectionStatementCache = statementCache,
                             )
                             applyExecutor.afterAppliedRowForTest()
                         } catch (error: Throwable) {

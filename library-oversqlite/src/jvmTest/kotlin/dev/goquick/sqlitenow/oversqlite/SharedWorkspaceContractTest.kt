@@ -20,31 +20,31 @@ internal class SharedWorkspaceContractTest {
         val fixture = localApplyContractFixture("a3-workspace")
         fixture.assertContractFields("formatVersion classification family physicalInventory cases runtimeObligations runtimeExecuted")
         val physical = canonicalContractValue(fixture.getValue("physicalInventory")).toString().encodeToByteArray()
-        assertEquals("9d32f6a618ebc62691bbe78c138f7778f68df9ea7bc269dcf25347728ea98259",
+        assertEquals("8580a0f75f18fc4eebd3604bc9c2142b866eb85af07f40b368752f27f45117b0",
             MessageDigest.getInstance("SHA-256").digest(physical).joinToString("") { "%02x".format(it) })
         assertEquals(listOf("second-supported-handle", "live-buffer-cancellation", "physical-owner-death-and-reacquisition", "old-partial-tampered-format-rejection", "paged-settlement-backlog", "trigger-live-deviation-preservation"),
             fixture.getValue("runtimeObligations").jsonArray.map { it.jsonPrimitive.content })
-        executeContractCases(fixture, listOf("aggregate-exact", "aggregate-entries-first", "aggregate-bytes", "aggregate-below", "aggregate-overflow", "work-remaining", "work-intrinsic", "work-exact", "work-cancelled", "transfer-release-once", "page-row-cap", "page-byte-cap", "page-large-one", "guard-exact", "guard-changed-limits", "guard-changed-dirty", "guard-changed-baseline", "guard-changed-attachment", "guard-changed-input"), ::workspaceResult)
+        executeContractCases(fixture, listOf("aggregate-exact", "aggregate-entries-first", "aggregate-bytes", "aggregate-below", "aggregate-overflow", "work-remaining", "work-intrinsic", "work-exact", "work-cancelled", "work-ready-after-validation", "work-after-overshoot", "work-saturates", "transfer-release-once", "page-row-cap", "page-byte-cap", "page-large-one", "guard-exact", "guard-changed-limits", "guard-changed-dirty", "guard-changed-baseline", "guard-changed-attachment", "guard-changed-input"), ::workspaceResult)
     }
 
     private fun workspaceResult(kind: String, input: JsonObject): JsonObject = when (kind) {
         "aggregate" -> aggregate(input)
         "work" -> {
-            input.assertContractFields("limit used required cancelled")
+            input.assertContractFields("limit used required cancelled firstReady")
             val limit = input.contractNumber("limit")
             var used = input.contractNumber("used")
             val requested = input.contractNumber("required")
-            assertTrue(used <= limit)
+            assertTrue(limit > 0 && used >= 0 && requested >= 0)
             val cancelled = input.getValue("cancelled").jsonPrimitive.boolean
+            val firstReady = input.getValue("firstReady").jsonPrimitive.boolean
             val result = when {
                 cancelled -> "cancelled"
-                requested > limit -> "atomic_apply_work"
-                requested > limit - used -> "sync_work_limit"
+                !firstReady && used >= limit -> "sync_work_limit"
                 else -> "fits"
             }
-            if (result == "fits") used += requested
+            if (result == "fits") used = if (requested > Long.MAX_VALUE - used) Long.MAX_VALUE else used + requested
             buildJsonObject { put("result", result); put("used", used); put("reserved", requested)
-                put("ready", result != "atomic_apply_work"); put("businessChanged", result == "fits") }
+                put("ready", true); put("businessChanged", result == "fits") }
         }
         "reservation" -> reservation(input)
         "page" -> {

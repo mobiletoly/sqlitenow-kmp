@@ -305,7 +305,17 @@ private fun writeIntBigEndian(target: ByteArray, offset: Int, value: Int) {
 private fun Int.rotateRight(distance: Int): Int =
     (this ushr distance) or (this shl (32 - distance))
 
+private const val MAX_SAFE_JSON_INTEGER = 9_007_199_254_740_991L
+
 private fun canonicalizeJsonNumber(raw: String): String {
+    // Exact integers below2^53 already have their ECMAScript decimal spelling.
+    // Equality excludes alternate lexemes; their rounding and signed-zero rules stay on the general path.
+    if (raw.length <= 17) {
+        val integer = raw.toLongOrNull()
+        if (integer != null && integer in -MAX_SAFE_JSON_INTEGER..MAX_SAFE_JSON_INTEGER && integer.toString() == raw) {
+            return raw
+        }
+    }
     val number = raw.toDoubleOrNull()
         ?: throw IllegalArgumentException("invalid JSON number: $raw")
     require(number.isFinite()) { "JSON number must be finite: $raw" }

@@ -90,20 +90,20 @@ internal class OversqliteLocalStore(
     private fun provenanceInteger(value: JsonElement?): Long? =
         (value as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull
 
-    suspend fun validateStoredServerProjection(schema: String, table: String, key: String) {
-        val exists = db.withPreparedStatement("SELECT 1 FROM _sync_row_state WHERE schema_name=? AND table_name=? AND key_json=?") { st ->
+    suspend fun validateStoredServerProjection(schema: String, table: String, key: String, statementCache: StatementCache? = null) {
+        val exists = db.withPreparedStatement("SELECT 1 FROM _sync_row_state WHERE schema_name=? AND table_name=? AND key_json=?", statementCache) { st ->
             st.bindText(1,schema); st.bindText(2,table); st.bindText(3,key)
             st.step()
         }
-        if (exists) validateBaselineProjection(schema,table,key,"server",null)
+        if (exists) validateBaselineProjection(schema,table,key,"server",null,statementCache)
     }
 
     // Check only the bounded projection owned by this affected key, never business rows.
-    suspend fun validateBaselineProjection(schema: String,table: String,key: String,view: String,desired: String?) {
+    suspend fun validateBaselineProjection(schema: String,table: String,key: String,view: String,desired: String?, statementCache: StatementCache? = null) {
         val info=configuredTableInfo(table)
         var payload=desired
         var revision=if (view == "desired") db.scalarLong("SELECT dirty_revision FROM _sync_conflict_state WHERE singleton_key=1") else 0L
-        if(view=="server") db.withPreparedStatement("SELECT server_kind,server_payload,relationships_known,server_revision FROM _sync_row_state WHERE schema_name=? AND table_name=? AND key_json=?") { st ->
+        if(view=="server") db.withPreparedStatement("SELECT server_kind,server_payload,relationships_known,server_revision FROM _sync_row_state WHERE schema_name=? AND table_name=? AND key_json=?", statementCache) { st ->
             st.bindText(1,schema);st.bindText(2,table);st.bindText(3,key)
             check(st.step()) { "authoritative baseline missing" }
             check(st.getLong(2)==1L && st.getText(0)!="unknown") { "authoritative relationship evidence unavailable" }
@@ -121,10 +121,19 @@ internal class OversqliteLocalStore(
                 }
             }
         }
-        val actual=db.queryList("SELECT fk_column,parent_schema,parent_table,parent_key,owner_revision FROM _sync_relationships WHERE view=? AND child_schema=? AND child_table=? AND child_key=? LIMIT ${info.foreignKeys.size+1}",bind={st ->st.bindText(1,view);st.bindText(2,schema);st.bindText(3,table);st.bindText(4,key)}) { st ->
+        val sql = "SELECT fk_column,parent_schema,parent_table,parent_key,owner_revision FROM _sync_relationships WHERE view=? AND child_schema=? AND child_table=? AND child_key=? LIMIT ${info.foreignKeys.size+1}"
+        val bind: (SQLiteStatement) -> Unit = { st ->
+            st.bindText(1,view);st.bindText(2,schema);st.bindText(3,table);st.bindText(4,key)
+        }
+        val read: (SQLiteStatement) -> Pair<String, List<String>> = { st ->
             check(st.getLong(4)>0 && (if (view=="server") st.getLong(4)==revision else st.getLong(4)<=revision)) { "relationship owner revision mismatch" }
             st.getText(0) to listOf(st.getText(1),st.getText(2),st.getText(3))
-        }.toMap()
+        }
+        val actual = (if (statementCache == null) db.queryList(sql, bind, read)
+        else db.withPreparedStatement(sql, statementCache) { st ->
+            bind(st)
+            buildList { while (st.step()) add(read(st)) }
+        }).toMap()
         check(actual==expected) { "relationship projection differs from $view owner" }
     }
 

@@ -798,7 +798,19 @@ internal class OversqliteRemoteApi(
         )
         val raw = body.raw
         if (call.status != HttpStatusCode.OK) {
-            requireUniqueSnapshotJsonObjectMembers(raw)
+            if (!isJsonShapedErrorBody(raw)) {
+                throw SnapshotHttpException(call.status, "invalid_error_response")
+            }
+            try {
+                requireUniqueSnapshotJsonObjectMembers(raw)
+                json.parseToJsonElement(raw).jsonObject
+            } catch (error: SnapshotSemanticException) {
+                throw error
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: RuntimeException) {
+                throw SnapshotResponseDecodeException(operation)
+            }
             val error = runCatching { json.decodeFromString<ErrorResponse>(raw) }.getOrNull()
             if (error != null) {
                 onCompleteBody?.invoke(body.byteCount)
@@ -1116,11 +1128,7 @@ internal class OversqliteRemoteApi(
                 "oversqlite http non-ok op=$operation method=$method path=$path " +
                     "status=${call.status.value}"
             }
-            val trimmed = raw.trim()
-            val first = trimmed.firstOrNull()
-            val jsonShaped = first == '{' || first == '[' || first == '"' || first == '-' ||
-                (first != null && first in '0'..'9') || trimmed == "true" || trimmed == "false" || trimmed == "null"
-            if (jsonShaped) {
+            if (isJsonShapedErrorBody(raw)) {
                 try {
                     requireUniqueSnapshotJsonObjectMembers(raw)
                     json.parseToJsonElement(raw).jsonObject
@@ -1259,3 +1267,10 @@ private fun Throwable.withRedactedRemotePayload(): Throwable = when (this) {
 }
 
 private fun Throwable.logSummary(): String = this::class.simpleName ?: "Throwable"
+
+private fun isJsonShapedErrorBody(raw: String): Boolean {
+    val trimmed = raw.trim()
+    val first = trimmed.firstOrNull()
+    return first == '{' || first == '[' || first == '"' || first == '-' ||
+        (first != null && first in '0'..'9') || trimmed == "true" || trimmed == "false" || trimmed == "null"
+}

@@ -220,7 +220,7 @@ data class OversqliteConfig(
     val syncTables: List<SyncTable>,
     val databaseId: String,
     val serviceId: String,
-    val maxSyncWorkspaceEntries: Long = 100_000,
+    val maxSyncWorkspaceEntries: Long = 131_072,
     val maxSyncWorkspaceBytes: Long = 256L * 1024 * 1024,
     val maxSyncWorkUnitsPerInvocation: Long = 1_000_000,
     val transferTargets: OversqliteTransferTargets = OversqliteTransferTargets(),

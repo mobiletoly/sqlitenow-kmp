@@ -4,6 +4,12 @@ import Foundation
 import XCTest
 
 final class SyncConvergentMappingTests: XCTestCase {
+    func testDefaultWorkspaceEntriesReachRuntime() throws {
+        let config = SQLiteNowSyncConfig(generationId: 1, databaseId: "fixture", serviceId: "business")
+        XCTAssertEqual(config.maxSyncWorkspaceEntries, 131_072)
+        XCTAssertEqual(try config.runtimeConfig(syncTables: []).maxSyncWorkspaceEntries, 131_072)
+    }
+
     func testLocalPlannerMappingPreservesExactInt64ProgressAndIdentity() throws {
         let body = #"{"reason":"push_dependency_group_exceeds_admitted_limit","dimension":"rows","limit":1,"actual":2,"componentRows":2,"componentDecodedBytes":9007199254740993,"diagnosticId":"diagnostic","sample":[{"schema":"main","table":"records","key":{"id":"typed-key"}}],"hasMore":true,"progress":{"dirtyRows":9007199254740993,"outboundRows":0,"committedBundles":1}}"#
         let payload = SQLiteNowSyncRuntimeErrorPayload(
@@ -83,7 +89,9 @@ final class SyncConvergentMappingTests: XCTestCase {
             let body: [String: Any] = ["reason": "sync_workspace_limit", "unit": unit, "dimension": dimension,
                 "limit": Int64.max, "used": Int64(9007199254740993), "reserved": Int64.max, "resumable": false, "progress": progress]
             let mapped = SQLiteNowError.from(try payload(body, code: "SyncWorkspaceLimitException"))
-            if dimension == "other" { XCTAssertEqual(mapped, .protocol(message: "invalid local planning result")) }
+            if dimension == "other" || dimension == "atomic_apply_work" {
+                XCTAssertEqual(mapped, .protocol(message: "invalid local planning result"))
+            }
             else if case let .syncWorkspaceLimit(result) = mapped {
                 XCTAssertEqual(result.used, 9007199254740993); XCTAssertEqual(result.reserved, Int64.max); XCTAssertFalse(result.resumable)
             } else { XCTFail("lost workspace dimension") }

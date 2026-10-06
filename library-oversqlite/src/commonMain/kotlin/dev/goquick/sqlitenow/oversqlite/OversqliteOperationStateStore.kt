@@ -30,9 +30,28 @@ internal data class OversqliteOperationState(
     val snapshotRowCount: Long = 0,
     val snapshotByteCount: Long = 0,
     val snapshotStageComplete: Boolean = false,
+    val snapshotStagedRowCount: Long = 0,
+    val snapshotStagedByteCount: Long = 0,
+    val snapshotStageGuard: String = "",
     val reason: String = "",
     val replacementSourceId: String = "",
 )
+
+internal fun OversqliteOperationState.validateSnapshotStageMetadata() {
+    require(snapshotBundleSeq >= 0 && snapshotRowCount >= 0 && snapshotByteCount >= 0 &&
+        snapshotStagedRowCount in 0..snapshotRowCount && snapshotStagedByteCount in 0..snapshotByteCount) {
+        "invalid retained snapshot progress totals"
+    }
+    if (stagedSnapshotId.isBlank()) {
+        require(stagedSnapshotId.isEmpty() && snapshotBundleSeq == 0L && snapshotRowCount == 0L &&
+            snapshotByteCount == 0L && snapshotStagedRowCount == 0L && snapshotStagedByteCount == 0L &&
+            !snapshotStageComplete && snapshotStageGuard.isEmpty()) { "unowned retained snapshot progress" }
+    } else {
+        require(isCanonicalSha256(snapshotStageGuard)) { "invalid retained snapshot context guard" }
+        if (snapshotStageComplete) require(snapshotStagedRowCount == snapshotRowCount &&
+            snapshotStagedByteCount == snapshotByteCount) { "incomplete retained snapshot marked complete" }
+    }
+}
 
 internal fun OversqliteOperationState.isSourceRecoveryRequired(): Boolean {
     return kind == operationKindSourceRecovery
@@ -69,7 +88,8 @@ internal class OversqliteOperationStateStore(
         return db.queryRequiredSingle(
             sql = """
                 SELECT kind, target_user_id, staged_snapshot_id, snapshot_bundle_seq, snapshot_row_count,
-                       snapshot_byte_count, snapshot_stage_complete, reason, replacement_source_id
+                       snapshot_byte_count, snapshot_stage_complete, reason, replacement_source_id,
+                       snapshot_staged_row_count, snapshot_staged_byte_count, snapshot_stage_guard
                 FROM _sync_operation_state
                 WHERE singleton_key = 1
             """.trimIndent(),
@@ -82,7 +102,10 @@ internal class OversqliteOperationStateStore(
                 snapshotBundleSeq = st.getLong(3),
                 snapshotRowCount = st.getLong(4),
                 snapshotByteCount = st.getLong(5),
-                snapshotStageComplete = st.getLong(6) == 1L,
+                snapshotStageComplete = st.getLong(6).also { require(it in 0L..1L) }.let { it == 1L },
+                snapshotStagedRowCount = st.getLong(9),
+                snapshotStagedByteCount = st.getLong(10),
+                snapshotStageGuard = st.getText(11),
                 reason = st.getText(7),
                 replacementSourceId = st.getText(8).let { sourceId ->
                     if (st.getText(0) == operationKindSourceRecovery) {
@@ -91,7 +114,7 @@ internal class OversqliteOperationStateStore(
                         requireValidOptionalOversqliteSourceId(sourceId)
                     }
                 },
-            )
+            ).also { it.validateSnapshotStageMetadata() }
         }
     }
 
@@ -99,6 +122,7 @@ internal class OversqliteOperationStateStore(
         state: OversqliteOperationState,
         statementCache: StatementCache? = null,
     ) {
+        state.validateSnapshotStageMetadata()
         if (state.kind == operationKindSourceRecovery) {
             requireValidOversqliteSourceId(state.replacementSourceId)
         } else {
@@ -115,7 +139,10 @@ internal class OversqliteOperationStateStore(
                     snapshot_byte_count = ?,
                     snapshot_stage_complete = ?,
                     reason = ?,
-                    replacement_source_id = ?
+                    replacement_source_id = ?,
+                    snapshot_staged_row_count = ?,
+                    snapshot_staged_byte_count = ?,
+                    snapshot_stage_guard = ?
                 WHERE singleton_key = 1
             """.trimIndent(),
             statementCache = statementCache,
@@ -129,6 +156,9 @@ internal class OversqliteOperationStateStore(
             st.bindLong(7, if (state.snapshotStageComplete) 1L else 0L)
             st.bindText(8, state.reason)
             st.bindText(9, state.replacementSourceId)
+            st.bindLong(10, state.snapshotStagedRowCount)
+            st.bindLong(11, state.snapshotStagedByteCount)
+            st.bindText(12, state.snapshotStageGuard)
             st.step()
         }
     }

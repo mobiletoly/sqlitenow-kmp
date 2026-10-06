@@ -40,6 +40,7 @@ internal class OversqliteClientOperationController(
     private val progressState = MutableStateFlow<OversqliteProgress>(OversqliteProgress.Idle)
     private val operationGate = Mutex()
     private var syncWorkUsed = 0L
+    private var readyAtomicUnitDispatched = false
     var a3Stats=A3AccountingStats()
         private set
     private val confirmedBundles = linkedSetOf<Pair<String,Long>>()
@@ -49,13 +50,23 @@ internal class OversqliteClientOperationController(
 
     fun usedSyncWork(): Long = syncWorkUsed
 
-    suspend fun reserveSyncWork(unit: String, work: Long) {
+    suspend fun ensureSyncWorkAvailable(unit: String) {
+        currentCoroutineContext().ensureActive()
+        if (syncWorkUsed >= config.maxSyncWorkUnitsPerInvocation) {
+            throw SyncWorkLimitException(unit, config.maxSyncWorkUnitsPerInvocation, syncWorkUsed)
+        }
+    }
+
+    suspend fun reserveSyncWork(unit: String, work: Long, readyAtomic: Boolean = false) {
         currentCoroutineContext().ensureActive()
         val limit = config.maxSyncWorkUnitsPerInvocation
-        require(work>=0 && syncWorkUsed>=0 && syncWorkUsed<=limit) { "invalid sync work accounting" }
-        if (work > limit) throw SyncWorkspaceLimitException(unit, "atomic_apply_work", limit, syncWorkUsed, work, false)
-        if (work > limit - syncWorkUsed) throw SyncWorkLimitException(unit, limit, syncWorkUsed)
-        syncWorkUsed += work
+        require(work >= 0 && syncWorkUsed >= 0) { "invalid sync work accounting" }
+        if (work == 0L) return
+        if (syncWorkUsed >= limit && (!readyAtomic || readyAtomicUnitDispatched)) {
+            throw SyncWorkLimitException(unit, limit, syncWorkUsed)
+        }
+        if (readyAtomic) readyAtomicUnitDispatched = true
+        syncWorkUsed = if (work > Long.MAX_VALUE - syncWorkUsed) Long.MAX_VALUE else syncWorkUsed + work
     }
 
     @Volatile
@@ -123,6 +134,7 @@ internal class OversqliteClientOperationController(
             }
             try {
                 syncWorkUsed = 0
+                readyAtomicUnitDispatched = false
                 a3Stats=A3AccountingStats()
                 confirmedBundles.clear()
                 try {
