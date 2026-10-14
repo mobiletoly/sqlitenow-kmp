@@ -222,6 +222,7 @@ data class OversqliteConfig(
     val serviceId: String,
     val maxSyncWorkspaceEntries: Long = 131_072,
     val maxSyncWorkspaceBytes: Long = 256L * 1024 * 1024,
+    // Retained source-compatible name: internal computation slice target.
     val maxSyncWorkUnitsPerInvocation: Long = 1_000_000,
     val transferTargets: OversqliteTransferTargets = OversqliteTransferTargets(),
     val snapshotApplyBatchRows: Int = 256,

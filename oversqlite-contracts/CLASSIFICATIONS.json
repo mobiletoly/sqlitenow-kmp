@@ -11,7 +11,80 @@
   ],
   "contractConsumerCoverage": {
     "go": "Semantic execution of every current wire family against normative Go codecs, hashes, HTTP boundaries, and declared invariants.",
-    "jvm": "Independent pure-contract semantic execution of every current wire family; this is not SQLiteNow K0 runtime implementation."
+    "jvm": "Independent pure-contract semantic execution of every current wire family; this is not SQLiteNow K0 runtime implementation.",
+    "localExecutionContract": {
+      "scope": "internal-work-slice",
+      "publicSchedulingYield": false,
+      "fixtures": [
+        "local-apply/a1.json",
+        "local-apply/a3-workspace.json"
+      ],
+      "runtimeQualification": "paired work-slice completion profile; independent pure-contract checks are not runtime evidence",
+      "deviceLoadQualification": {
+        "userIsolation": "process",
+        "defaultSimulatorMode": "process",
+        "retainedSdkStressMode": "goroutine",
+        "activeUsersBound": "concurrency",
+        "childVerifierConnections": 1,
+        "childCompleteScenario": true,
+        "parentFinalVerification": true,
+        "deadlinesSeconds": {
+          "rehearsal": 600,
+          "acceptance": 1200
+        },
+        "sdkDefaultsUnchanged": true
+      },
+      "historyProjectionRetryTiming": {
+        "response": {
+          "httpStatus": 503,
+          "error": "history_projection_capacity_exceeded",
+          "retryAfterDeltaSeconds": 1
+        },
+        "minimumDelayMillis": 1000,
+        "transportAttemptsUnchanged": true,
+        "defaultsUnchanged": true,
+        "cancellationInterruptsWait": true,
+        "noLocalSliceTransportBackoff": true
+      },
+      "writerReservationBinding": {
+        "scope": "one-read-only-decision-building-phase-in-one-writer",
+        "entries": 8,
+        "bytes": 1024,
+        "freshBindingEveryWriter": true,
+        "keepLedgerValidationAndRowWork": true,
+        "capacityFallback": "uncached",
+        "noWorkWeightOrSliceQuantumChange": true,
+        "sharedWith": "guardedReplayDecisionContinuation"
+      },
+      "guardedReplayDecisionContinuation": {
+        "entries": 8,
+        "bytes": 1024,
+        "freshFullGuardEachWriter": true,
+        "invalidateBeforeBusinessMutation": true,
+        "retainedDecisionCopiesCharged": true,
+        "recordWeightsUnchanged": true,
+        "noQuantumOrDefaultChange": true,
+        "includesWriterBindingCharge": true
+      },
+      "emptyDependencyTraversal": {
+        "completedIndexRequired": true,
+        "physicalAbsenceRequired": true,
+        "onePendingRootPerBoundedStep": true,
+        "nonemptyPathUnchanged": true,
+        "workWeightsAndQuantaUnchanged": true,
+        "noWireChange": true,
+        "pendingRootExistenceRequired": true
+      },
+      "independentPushPlanning": {
+        "completedZeroEdges": true,
+        "physicalAbsenceRequired": true,
+        "onePristineNodePerStep": true,
+        "sameReadyOrderingAndCharge": true,
+        "partialAndNonemptyDfsUnchanged": true,
+        "rawKernelsUnchanged": true,
+        "workWeightsAndQuantumUnchanged": true
+      }
+    }
   },
   "historicalFixtureInputs": [
     {
@@ -67,7 +140,7 @@
     {
       "path": "local-apply/a3-workspace.json",
       "contract": "a3-workspace",
-      "coverage": "Independent pure local decision/arithmetic, soft bounded-step overshoot and first-ready work outcomes, and classified physical-inventory checks. Snapshot payload reuse is Kotlin-specific; no identical Go/Kotlin retained representation is asserted. No SQLite execution or runtime qualification.",
+      "coverage": "Independent pure local decision/arithmetic, soft bounded-step overshoot and first-ready work outcomes, and classified physical-inventory checks. Snapshot payload reuse is Kotlin-specific; no identical Go/Kotlin retained representation is asserted. No SQLite execution or runtime qualification. Work-limit cases execute internal-slice decisions; ordinary public operations complete without scheduling-yield failures. Paired consumers also assert the charged 2-entry/256-byte writer-scoped scalar snapshot and release-before-continuation contract. The optional guard snapshot declares4entries/8192bytes,1024-byte initialization ceiling, writer-only reuse and SDK-delete invalidation. Decision-copy allowance uses one captured outer base and a conservative maximum across slices, with once-only outer release. Fresh-database completion excludes older-format upgrade compatibility while requiring current-format reopen and restart/replay. Writer-owned descriptor reuse retains the same admitted current state, validates NONE once, invalidates deletion and never crosses writers; per-step current workspace remains charged. Go ready atomic statements use the same admitted pool and prepaid credits with16-argument/64KiB bounds and original one-shot fallback; no Go/Kotlin representation identity is asserted.",
       "goConsumer": "oversync/contract_a3_test.go:TestContractCorpus_A3Workspace",
       "jvmConsumer": "SharedWorkspaceContractTest.contract",
       "runtimeOwners": [

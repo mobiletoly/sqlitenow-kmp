@@ -87,7 +87,8 @@ class DefaultOversqliteClient private constructor(
         snapshotDiagnosticsState = snapshotDiagnosticsState,
         log = ::verboseLog,
     )
-    internal fun workspaceDiagnostics(): A3AccountingStats = operationController.a3Stats.copy(work=operationController.usedSyncWork())
+    internal fun workspaceDiagnostics(): A3AccountingStats = operationController.a3Stats.copy(work=operationController.workSliceDiagnostics.totalWork)
+    internal fun workSliceDiagnostics(): WorkSliceDiagnostics = operationController.workSliceDiagnostics.copy()
     private val sessionState = OversqliteClientSessionState(
         db = db,
         config = config,
@@ -127,7 +128,7 @@ class DefaultOversqliteClient private constructor(
     private val bundleApplier = OversqliteBundleApplier(localStore, syncStateStore,
         OversqliteApplySurvivors(db, localStore, config, operationController, json))
     private val stageStore = OversqliteStageStore(db, localStore, syncStateStore, json, config, operationController)
-    private val applyExecutor = OversqliteApplyExecutor(db, applyStateStore)
+    private val applyExecutor = OversqliteApplyExecutor(db, applyStateStore, operationController)
     private val snapshotGate = OversqliteSnapshotGate(
         db = db,
         syncStateStore = syncStateStore,

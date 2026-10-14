@@ -24,7 +24,7 @@ internal class SnapshotStagingResumeTest : SurvivorTestSupport() {
                     client.openAndConnect("user-1").getOrThrow()
                     markSourceRecoveryRequired(db, SourceRecoveryReason.HISTORY_PRUNED)
                     val before = baselineQualificationVector(db, listOf("nodes"))
-                    assertIs<SyncWorkLimitException>(client.rebuild().exceptionOrNull())
+                    interruptAfterOneChunk(client)
                     val retained = OversqliteOperationStateStore(db).loadState()
                     val replacements = server.requestedSnapshotSourceReplacements.size
                     assertEquals(2L, retained.snapshotStagedRowCount)
@@ -38,11 +38,8 @@ internal class SnapshotStagingResumeTest : SurvivorTestSupport() {
                     client = newClient(db, http, syncTables = nodeTables, workUnits = 1, maxSnapshotChunkRows = 2)
                     client.openAndConnect("user-1").getOrThrow()
                     assertEquals(retained.replacementSourceId, server.connectSourceIds.last())
-                    var yields = 0
-                    while (true) {
-                        val failure = client.rebuild().exceptionOrNull() ?: break
-                        assertIs<SyncWorkLimitException>(failure); assertTrue(++yields < 20)
-                    }
+                    client.rebuild().getOrThrow()
+                    assertTrue(client.workSliceDiagnostics().workSlices > 0)
                     assertEquals(replacements, server.requestedSnapshotSourceReplacements.size)
                     val after = baselineQualificationVector(db, listOf("nodes"))
                     assertEquals(before.rows("nodes"), after.rows("nodes"))
@@ -70,13 +67,17 @@ internal class SnapshotStagingResumeTest : SurvivorTestSupport() {
                 client.openAndConnect("user-1").getOrThrow()
                 if (refresh) {
                     markSourceRecoveryRequired(db, SourceRecoveryReason.HISTORY_PRUNED)
-                    assertIs<SyncWorkLimitException>(client.rebuild().exceptionOrNull())
+                    interruptAfterOneChunk(client)
                     server.expireSnapshotSessionForTest(OversqliteOperationStateStore(db).loadState().stagedSnapshotId)
                 }
                 val retained = OversqliteOperationStateStore(db).loadState()
                 val sessions = server.snapshotSessionIdsForTest()
                 server.beforeSnapshotCreateResponse = { db.execSQL("UPDATE _sync_attachment_state SET attachment_epoch=attachment_epoch+1") }
-                assertIs<SnapshotFinalApplyGateException>(client.rebuild().exceptionOrNull())
+                // Retirement has a real cleanup deadline. Keep it off runTest's
+                // virtual clock while MockEngine dispatches on a real worker.
+                assertIs<SnapshotFinalApplyGateException>(kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    client.rebuild().exceptionOrNull()
+                })
                 assertEquals(sessions, server.snapshotSessionIdsForTest(), "unpublished session must be retired")
                 if (refresh) assertEquals(retained, OversqliteOperationStateStore(db).loadState())
                 assertEquals(4L, scalarLong(db, "SELECT count(*) FROM nodes"))
@@ -104,28 +105,19 @@ internal class SnapshotStagingResumeTest : SurvivorTestSupport() {
                 val creates = server.snapshotSessionCreateRequestCount
                 val requestStart = server.snapshotChunkRequests.size
                 val replacements = server.requestedSnapshotSourceReplacements.size
-                var attempts = 0
-                var stageId = ""
-                var cursor = -1L to -1L
-                while (true) {
-                    val failure = client.rebuild().exceptionOrNull() ?: break
-                    assertIs<SyncWorkLimitException>(failure)
-                    assertTrue(++attempts < 20, "each invocation must advance")
+                val interrupted = reopen || invalidate || expire
+                if (interrupted) {
+                    interruptAfterOneChunk(client)
                     val state = OversqliteOperationStateStore(db).loadState()
                     val staged = scalarLong(db, "SELECT count(*) FROM _sync_snapshot_stage")
                     assertEquals(staged, state.snapshotStagedRowCount)
-                    assertTrue(staged > 0, "a work yield must preserve a committed staging chunk")
-                    assertTrue(state.snapshotStagedByteCount > 0)
-                    val root = scalarLong(db, "SELECT COALESCE((SELECT root_cursor FROM _sync_apply_plan),-1)")
-                    if (stageId == state.stagedSnapshotId) assertTrue(staged > cursor.first || root > cursor.second,
-                        "same-stage durable progress must advance")
-                    stageId = state.stagedSnapshotId; cursor = staged to root
+                    assertTrue(staged > 0 && state.snapshotStagedByteCount > 0)
                     val after = baselineQualificationVector(db, listOf("nodes"))
                     for (table in listOf("nodes", "_sync_row_state", "_sync_relationships", "_sync_outbox_rows", "_sync_outbox_bundle"))
                         assertEquals(before.rows(table), after.rows(table), table)
                     assertEquals(1L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
-                    if (attempts == 1 && invalidate) db.execSQL("UPDATE _sync_conflict_state SET baseline_revision=baseline_revision+1")
-                    if (attempts == 1 && expire) server.expireSnapshotSessionForTest(stageId)
+                    if (invalidate) db.execSQL("UPDATE _sync_conflict_state SET baseline_revision=baseline_revision+1")
+                    if (expire) server.expireSnapshotSessionForTest(state.stagedSnapshotId)
                     if (reopen) {
                         client.closeFromCoordinatedOwner(); db.close()
                         db = newFileBackedDb(checkNotNull(path))
@@ -133,11 +125,13 @@ internal class SnapshotStagingResumeTest : SurvivorTestSupport() {
                         client.openAndConnect("user-1").getOrThrow()
                     }
                 }
-                assertTrue(attempts > 0)
+                client.rebuild().getOrThrow()
+                assertTrue(client.workSliceDiagnostics().workSlices > 0, "tiny-target operation actually crosses slices")
                 assertEquals(creates + if (invalidate || expire) 2 else 1, server.snapshotSessionCreateRequestCount)
                 if (preserve) assertEquals(replacements + 1, server.requestedSnapshotSourceReplacements.size)
                 val requests = server.snapshotChunkRequests.drop(requestStart)
-                assertEquals(requests.distinct(), requests, "no committed cursor is downloaded twice")
+                val committedRequests = if (interrupted) requests.filterIndexed { index, _ -> index != 1 } else requests
+                assertEquals(committedRequests.distinct(), committedRequests, "only the explicitly cancelled, uncommitted chunk may repeat")
                 assertEquals(before.rows("nodes"), baselineQualificationVector(db, listOf("nodes")).rows("nodes"))
                 assertEquals(4L, scalarLong(db, "SELECT count(*) FROM _sync_row_state"))
                 assertEquals(0L, scalarLong(db, "SELECT count(*) FROM pragma_foreign_key_check"))
@@ -155,14 +149,8 @@ internal class SnapshotStagingResumeTest : SurvivorTestSupport() {
             try {
                 client.open().getOrThrow()
                 val creates = server.snapshotSessionCreateRequestCount
-                var attempts = 0
-                while (true) {
-                    val failure = client.attach("user-1").exceptionOrNull() ?: break
-                    assertIs<SyncWorkLimitException>(failure)
-                    assertTrue(++attempts < 20)
-                    assertEquals(0L, scalarLong(db, "SELECT count(*) FROM nodes"))
-                    assertTrue(scalarLong(db, "SELECT count(*) FROM _sync_snapshot_stage") > 0)
-                }
+                client.attach("user-1").getOrThrow()
+                assertTrue(client.workSliceDiagnostics().workSlices > 0)
                 assertEquals(creates + 1, server.snapshotSessionCreateRequestCount)
                 assertEquals(4L, scalarLong(db, "SELECT count(*) FROM nodes"))
                 assertEquals(4L, scalarLong(db, "SELECT count(*) FROM _sync_row_state"))
@@ -180,7 +168,10 @@ internal class SnapshotStagingResumeTest : SurvivorTestSupport() {
                 val before = baselineQualificationVector(db, listOf("nodes"))
                 val fault = if (cancel) CancellationException("cancel stage close") else IllegalStateException("stage close failed")
                 client.setSnapshotStageStatementCloseForTest { it.close(); throw fault }
-                val failure = try { client.rebuild().getOrThrow(); error("fault did not fire") } catch (error: Throwable) { error }
+                val failure = try {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { client.rebuild().getOrThrow() }
+                    error("fault did not fire")
+                } catch (error: Throwable) { error }
                 assertSame(fault, generateSequence(failure) { it.cause }.last(),
                     "primary stage fault survives coroutine stack recovery")
                 client.setSnapshotStageStatementCloseForTest(null)
@@ -192,7 +183,7 @@ internal class SnapshotStagingResumeTest : SurvivorTestSupport() {
                 for (table in listOf("nodes", "_sync_row_state", "_sync_outbox_rows", "_sync_outbox_bundle"))
                     assertEquals(before.rows(table), after.rows(table))
                 val creates = server.snapshotSessionCreateRequestCount
-                client.rebuild().getOrThrow()
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { client.rebuild().getOrThrow() }
                 assertEquals(creates + if (cancel) 0 else 1, server.snapshotSessionCreateRequestCount)
             } finally { client.closeFromCoordinatedOwner() }
         }
@@ -204,13 +195,26 @@ internal class SnapshotStagingResumeTest : SurvivorTestSupport() {
             val client = newClient(db, http, syncTables = nodeTables, workUnits = 1, maxSnapshotChunkRows = 2)
             try {
                 client.openAndConnect("user-1").getOrThrow()
-                assertIs<SyncWorkLimitException>(client.rebuild().exceptionOrNull())
+                interruptAfterOneChunk(client)
                 val requests = server.snapshotChunkRequests.size
                 db.execSQL("UPDATE _sync_operation_state SET snapshot_staged_row_count=1")
                 assertIs<IllegalArgumentException>(client.rebuild().exceptionOrNull())
                 assertEquals(requests, server.snapshotChunkRequests.size)
                 assertEquals(4L, scalarLong(db, "SELECT count(*) FROM nodes"))
             } finally { client.closeFromCoordinatedOwner() }
+        }
+    }
+
+    private suspend fun interruptAfterOneChunk(client: DefaultOversqliteClient) {
+        var closes = 0
+        client.setSnapshotStageStatementCloseForTest {
+            it.close()
+            if (++closes == 2) throw CancellationException("interrupt after one durable snapshot chunk")
+        }
+        try {
+            assertFailsWith<CancellationException> { client.rebuild().getOrThrow() }
+        } finally {
+            client.setSnapshotStageStatementCloseForTest(null)
         }
     }
 

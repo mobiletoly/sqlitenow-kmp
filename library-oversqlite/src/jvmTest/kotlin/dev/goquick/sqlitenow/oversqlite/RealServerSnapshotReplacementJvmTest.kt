@@ -27,7 +27,7 @@ import kotlinx.serialization.json.jsonPrimitive
 /** File-backed replacement through the separate, real Go capacity authority. */
 internal class RealServerSnapshotReplacementJvmTest : RealServerSupport() {
     @Test
-    fun replacesFiftyThousandRowsAndRetainsPreparedIntent(): Unit = runBlocking {
+    fun replacesConfiguredRowsAndRetainsPreparedIntent(): Unit = runBlocking {
         check(System.getenv("GITHUB_ACTIONS") != "true") { "capacity replacement is local-heavy" }
         require(System.getenv("OVERSQLITE_REALSERVER_HEAVY") == "true")
         val controlUrl = requireNotNull(System.getenv("OVERSQLITE_CAPACITY_CONTROL_URL"))
@@ -74,24 +74,10 @@ internal class RealServerSnapshotReplacementJvmTest : RealServerSupport() {
                     initialClient.open().getOrThrow()
                     phases.next("initial_install")
                     memory?.capture("before_initial_sync")
-                    var initialYields = 0
-                    while (true) {
-                        val result = runCatching {
-                            SnapshotStatementObservation.ifEnabled(initialDb, initialClient, "initial-$initialYields") {
-                                initialClient.attach(user).getOrThrow()
-                            }
-                        }
-                        val failure = result.exceptionOrNull()
-                        if (failure == null) {
-                            assertIs<AttachResult.Connected>(result.getOrThrow())
-                            break
-                        }
-                        assertIs<SyncWorkLimitException>(failure, "unexpected initial install failure: $failure")
-                        initialYields++
-                        assertTrue(initialYields <= 64)
-                        assertEquals(0L, SnapshotCapacityFixture.totalBusinessRows(initialDb))
-                        assertEquals(0L, scalarLong(initialDb, "SELECT count(*) FROM _sync_row_state"))
+                    val attachment = SnapshotStatementObservation.ifEnabled(initialDb, initialClient, "initial") {
+                        initialClient.attach(user).getOrThrow()
                     }
+                    assertIs<AttachResult.Connected>(attachment)
                     println("capacity_diagnostics initial=${initialClient.snapshotRestoreDiagnosticsForTest()}")
                     memory?.capture("after_initial_sync")
                     progress.cancel()
@@ -170,69 +156,16 @@ internal class RealServerSnapshotReplacementJvmTest : RealServerSupport() {
                         replacementSource)
                     phases.next("replacement_rebuild")
                     memory?.capture("before_rebuild")
-                    var yields = 0
-                    var retainedSnapshotId: String? = null
-                    var previousRoot = -1L
-                    var previousStagedRows = -1L
-                    while (true) {
-                        val activeClient = checkNotNull(client)
-                        val failure = runCatching {
-                            SnapshotStatementObservation.ifEnabled(db, activeClient, "replacement-$yields") {
-                                activeClient.rebuild().getOrThrow()
-                            }
-                        }.exceptionOrNull() ?: break
-                        if (failure !is SyncWorkLimitException) failure.printStackTrace()
-                        assertIs<SyncWorkLimitException>(failure,
-                            "unexpected replacement failure: $failure")
-                        yields++
-                        val retained = OversqliteOperationStateStore(db).loadState()
-                        retainedSnapshotId?.let { assertEquals(it, retained.stagedSnapshotId) }
-                        retainedSnapshotId = retained.stagedSnapshotId
-                        val stagedRows = scalarLong(db, "SELECT count(*) FROM _sync_snapshot_stage")
-                        assertEquals(stagedRows, retained.snapshotStagedRowCount)
-                        val root = scalarLong(db, "SELECT COALESCE((SELECT root_cursor FROM _sync_apply_plan),-1)")
-                        assertTrue(stagedRows > previousStagedRows || root > previousRoot,
-                            "retained staging or preparation must advance")
-                        if (retained.snapshotStageComplete) assertEquals(rowCount.toLong(), stagedRows)
-                        else assertTrue(root == -1L && stagedRows in 1 until rowCount.toLong())
-                        previousRoot = root
-                        previousStagedRows = stagedRows
-                        println("capacity_yield attempt=$yields diagnostics=${activeClient.snapshotRestoreDiagnosticsForTest()} " +
-                            "plan_rows=${scalarLong(db, "SELECT count(*) FROM _sync_apply_rows")} " +
-                            "stage_rows=${scalarLong(db, "SELECT count(*) FROM _sync_snapshot_stage")}")
-                        val diagnosticLimit = System.getenv("OVERSQLITE_CAPACITY_MAX_YIELDS")?.toInt()
-                        check(diagnosticLimit == null || yields < diagnosticLimit) { "diagnostic yield limit reached" }
-                        assertTrue(yields <= 64, "replacement did not finish after 64 yields")
-                        assertEquals(rowCount.toLong(),
-                            SnapshotCapacityFixture.totalBusinessRows(db))
-                        assertEquals(rowCount.toLong(),
-                            scalarLong(db, "SELECT count(*) FROM _sync_row_state"))
-                        assertEquals("local-intent", scalarText(db,
-                            "SELECT name FROM records_13 WHERE id='row-00049'"))
-                        assertEquals(initialBundle,
-                            scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
-                        if (System.getenv("OVERSQLITE_CAPACITY_REOPEN_EACH_YIELD") == "true") {
-                            progress.cancel()
-                            activeClient.closeFromCoordinatedOwner()
-                            db.close()
-                            db = BundledSqliteConnectionProvider.openConnection(path.toString(), debug = false)
-                            client = capacityClient(db, http,
-                                System.getenv("OVERSQLITE_CAPACITY_REBUILD_WORK")?.toLong() ?: 1_000_000)
-                            client.open().getOrThrow()
-                            assertIs<AttachResult.Connected>(client.attach(user).getOrThrow())
-                            val reopenedClient = client
-                            progress = launch(start = CoroutineStart.UNDISPATCHED) {
-                                reopenedClient.progress.collect { println("capacity_progress replacement=$it epoch_ms=${System.currentTimeMillis()}") }
-                            }
-                            println("capacity_reopened yield=$yields snapshot=${retained.stagedSnapshotId}")
-                        }
+                    val activeClient = checkNotNull(client)
+                    SnapshotStatementObservation.ifEnabled(db, activeClient, "replacement") {
+                        activeClient.rebuild().getOrThrow()
                     }
                     println("capacity_diagnostics replacement=${checkNotNull(client).snapshotRestoreDiagnosticsForTest()}")
                     memory?.capture("after_rebuild")
                     progress.cancel()
                     phases.next("replacement_readback")
                     if (rowCount == SnapshotCapacityFixture.rows) {
-                        assertTrue(yields > 0, "large replacement must exercise durable preparation")
+                        assertTrue(activeClient.workSliceDiagnostics().workSlices > 0, "large replacement must exercise internal durable slices")
                     }
                     assertEquals(rowCount.toLong(),
                         SnapshotCapacityFixture.totalBusinessRows(db))
@@ -257,7 +190,7 @@ internal class RealServerSnapshotReplacementJvmTest : RealServerSupport() {
                         firstBundle = initialBundle + 1, replacement = true, localIntent = true, rowCount = rowCount)
                     println("real_snapshot_replacement rows=$rowCount tables=14 " +
                         "initial_bundle=$initialBundle final_bundle=$finalBundle " +
-                        "prepared_outbox=${retainedRows.size} yields=$yields")
+                        "prepared_outbox=${retainedRows.size} internal_slices=${activeClient.workSliceDiagnostics().workSlices}")
                 } finally {
                     phases.next("final_close")
                     client?.closeFromCoordinatedOwner()

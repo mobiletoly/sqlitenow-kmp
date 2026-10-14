@@ -132,6 +132,17 @@ internal class OversqliteReplayPlanner(
     }
 }
 
+internal class ReplayDecisionContinuation {
+    var plans: Map<DirtyRowRef, UploadedReplayPlan>? = null
+    var guard: String? = null
+    var state: RuntimeState? = null
+    var token: String? = null
+    var held = WorkspaceCharge()
+    fun clear() { plans = null; guard = null; state = null; token = null; held = WorkspaceCharge() }
+}
+
+private data class ReplayDecisionSet(val plans: Map<DirtyRowRef, UploadedReplayPlan>, val held: WorkspaceCharge)
+
 internal class OversqlitePushReplayExecutor(
     private val syncStateStore: OversqliteSyncStateStore,
     private val bundleApplier: OversqliteBundleApplier,
@@ -151,18 +162,27 @@ internal class OversqlitePushReplayExecutor(
         committed: CommittedPushBundle,
         statementCache: StatementCache,
         reservationToken: String? = null,
+        reservationBase: WorkspaceCharge? = null,
+        decisionContinuation: ReplayDecisionContinuation? = null,
     ): Set<String> {
         require(committedRows.size.toLong() == committed.rowCount) {
             "committed push replay row count ${committedRows.size} does not match expected row_count ${committed.rowCount}"
         }
         requireCommittedEffectCoverage(uploadedRows, committedRows)
 
-        val plans = buildReplayPlans(state, uploadedRows, committedRows, statementCache,reservationToken)
+        val decisions = buildReplayPlans(state, uploadedRows, committedRows, statementCache,reservationToken,reservationBase,decisionContinuation)
+        val plans = decisions.plans
         bundleApplier.survivors.prepare(state, applyUnit("push", committed.bundleSeq, committed.bundleHash), committedRows.size, operationKind = "settlement", workspaceStatementCache = statementCache, replayStatementCache = statementCache) { index ->
             val row = committedRows[index]
             if (plans[row.toRowRef()]?.action is ReplayRowAction.PreserveLocal) {
                 bundleApplier.survivors.capture(state, row.tableName, row.localPk, workspaceStatementCache = statementCache, replayStatementCache = statementCache)
             } else ApplySurvivor(row.tableName, row.localPk, row.payload, wire = true)
+        }
+        // Preparation is ready. No decision cache may survive authoritative mutation.
+        if (decisionContinuation?.plans != null && reservationToken != null) {
+            decisionContinuation.clear()
+            val base = reservationBase ?: bundleApplier.survivors.reservationCharge(reservationToken)
+            bundleApplier.survivors.finishDecisionBinding(reservationToken, base, decisions.held, statementCache)
         }
         val updatedTables = linkedSetOf<String>()
         for (row in committedRows) {
@@ -250,17 +270,50 @@ internal class OversqlitePushReplayExecutor(
         committedRows: List<CommittedReplayRow>,
         statementCache: StatementCache,
         reservationToken: String?,
-    ): Map<DirtyRowRef, UploadedReplayPlan> {
-        val base=if(reservationToken!=null) bundleApplier.survivors.reservationCharge(reservationToken) else WorkspaceCharge()
+        reservationBase: WorkspaceCharge?,
+        continuation: ReplayDecisionContinuation?,
+    ): ReplayDecisionSet {
+        val base=reservationBase ?: if(reservationToken!=null) bundleApplier.survivors.reservationCharge(reservationToken) else WorkspaceCharge()
+        if (continuation?.plans != null && reservationToken != null) {
+            require(continuation.state === state && continuation.token == reservationToken) { "replay decision continuation belongs to another operation" }
+            try {
+                val current = bundleApplier.survivors.currentDecisionBinding(state,reservationToken,base,continuation.held,statementCache)
+                if (current.context == continuation.guard) {
+                    return ReplayDecisionSet(checkNotNull(continuation.plans), continuation.held).also {
+                        bundleApplier.survivors.recordDecisionContinuationHit()
+                    }
+                }
+            } catch (capacity: SyncWorkspaceLimitException) {
+                if (capacity.suppressedExceptions.isNotEmpty()) throw capacity
+            }
+            val previous = continuation.held
+            continuation.clear()
+            bundleApplier.survivors.finishDecisionBinding(reservationToken,base,previous,statementCache)
+            bundleApplier.survivors.recordDecisionContinuationInvalidation()
+        }
         var held=WorkspaceCharge()
-        return buildMap {
+        var binding: WorkspaceReservationBinding? = null
+        var memoizeBinding = true
+        var bindingCharged = false
+        var primaryFailure: Throwable? = null
+        var transferred = false
+        suspend fun holdDecision(schema: String, table: String, key: String, pk: String) {
+            val reserved = bundleApplier.survivors.reserveDecisionCopies(state,reservationToken,base,held,
+                schema,table,key,pk,binding,statementCache,memoizeBinding)
+            held = reserved.held
+            binding = reserved.binding
+            if (binding != null) bindingCharged = true
+            if (reservationToken != null && binding == null) memoizeBinding = false
+        }
+        return try {
+            val plans = buildMap<DirtyRowRef, UploadedReplayPlan> {
             for (uploaded in uploadedRows) {
                 val tableInfo = state.validated.tableInfoByName[uploaded.tableName.lowercase()]
                     ?: error(
                         "missing validated table info for " +
                             safeSnapshotDiagnosticIdentifier(uploaded.tableName),
                     )
-                held=bundleApplier.survivors.reserveDecisionCopies(state,reservationToken,base,held,uploaded.schemaName,uploaded.tableName,uploaded.keyJson,uploaded.localPk)
+                holdDecision(uploaded.schemaName,uploaded.tableName,uploaded.keyJson,uploaded.localPk)
                 val currentDirty = syncStateStore.loadDirtyUploadState(
                     schemaName = uploaded.schemaName,
                     tableName = uploaded.tableName,
@@ -284,7 +337,7 @@ internal class OversqlitePushReplayExecutor(
             for (effect in committedRows) {
                 val ref = effect.toRowRef()
                 if (ref in this) continue
-                held=bundleApplier.survivors.reserveDecisionCopies(state,reservationToken,base,held,effect.schemaName,effect.tableName,effect.keyJson,effect.localPk)
+                holdDecision(effect.schemaName,effect.tableName,effect.keyJson,effect.localPk)
                 val dirty = syncStateStore.loadDirtyUploadState(
                     effect.schemaName, effect.tableName, effect.keyJson, statementCache,
                 )
@@ -305,6 +358,29 @@ internal class OversqlitePushReplayExecutor(
                         diagnostics = ReplayPlanDiagnostics(true, false, desired, false, dirty.payload),
                     ),
                 )
+            }
+            }
+            if (binding != null && continuation != null) {
+                continuation.plans = plans
+                continuation.guard = binding?.context
+                continuation.state = state
+                continuation.token = reservationToken
+                continuation.held = held
+                transferred = true
+            }
+            bundleApplier.survivors.recordDecisionContinuationBuild()
+            ReplayDecisionSet(plans,held)
+        } catch (failure: Throwable) {
+            primaryFailure = failure
+            throw failure
+        } finally {
+            binding = null
+            if (bindingCharged && !transferred && reservationToken != null) try {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    bundleApplier.survivors.finishDecisionBinding(reservationToken, base, held, statementCache)
+                }
+            } catch (cleanup: Throwable) {
+                if (primaryFailure != null) primaryFailure.addSuppressed(cleanup) else throw cleanup
             }
         }
     }

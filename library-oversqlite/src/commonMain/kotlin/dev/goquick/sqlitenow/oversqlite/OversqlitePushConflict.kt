@@ -34,6 +34,7 @@ internal class OversqliteConflictExecutor(
         plan: ConflictResolutionPlan,
         statementCache: StatementCache,
         reservationToken: String,
+        reservationBase: WorkspaceCharge,
     ): Set<String> {
         val updatedTables = linkedSetOf(tableName.lowercase())
 
@@ -47,7 +48,7 @@ internal class OversqliteConflictExecutor(
         val unitInput = "${snapshot.canonicalRequestHash}/${conflictingRow.keyJson}/${observed?.rowVersion}/${observed?.deleted}/${plan.requeueIntent}"
         val size = upsert?.payload?.let(::encodedJsonSize) ?: 0
         val unit = applyUnit("conflict", snapshot.sourceBundleId, unitInput)
-        workspace.resizeInWriter(state, reservationToken, workspace.add(unit, workspace.reserved(reservationToken), WorkspaceCharge(32, workspace.scale(unit, size, 16))))
+        workspace.resizeInWriter(state, reservationToken, workspace.add(unit, reservationBase, WorkspaceCharge(32, workspace.scale(unit, size, 16))))
         val desiredText = upsert?.payload?.toString()
         val selectedUnit = applyUnit("conflict", snapshot.sourceBundleId, "$unitInput/$desiredText/$hasNewerIntent")
         survivors.prepare(state, selectedUnit, 1, "conflict", observed?.rowVersion) {

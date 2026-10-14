@@ -18,7 +18,42 @@ internal class SharedWorkspaceContractTest {
     @Test
     fun contract() {
         val fixture = localApplyContractFixture("a3-workspace")
-        fixture.assertContractFields("formatVersion classification family physicalInventory cases runtimeObligations runtimeExecuted")
+        fixture.assertContractFields("formatVersion classification family physicalInventory cases runtimeObligations runtimeExecuted executionContract")
+        assertEquals("internal-work-slice", fixture.getValue("executionContract").jsonObject.contractText("workLimitScope"))
+        assertFalse(fixture.getValue("executionContract").jsonObject.getValue("publicSchedulingYield").jsonPrimitive.boolean)
+        val compatibility = fixture.getValue("executionContract").jsonObject.getValue("databaseCompatibility").jsonObject
+        assertEquals(mapOf("olderDatabaseCompatibilityRequired" to false, "recreationPermitted" to true,
+            "currentDatabaseReopenRequired" to true, "currentDatabaseRestartReplayRequired" to true,
+            "legacyUpgradeQualificationRequired" to false), compatibility.mapValues { it.value.jsonPrimitive.boolean })
+        val atomic = fixture.getValue("executionContract").jsonObject.getValue("goReadyAtomicStatements").jsonObject
+        assertEquals(16L, atomic.getValue("maxArguments").jsonPrimitive.long)
+        assertEquals(65536L, atomic.getValue("maxEncodedArgumentBytes").jsonPrimitive.long)
+        for (field in listOf("sameReservedPool", "debitPrepaidCredits", "retainOriginalWriteCharges", "unsupportedOrOversizedOneShot", "cleanupBeforePublication")) assertTrue(atomic.getValue(field).jsonPrimitive.boolean)
+        val memo = fixture.getValue("executionContract").jsonObject.getValue("planningDescriptorReuse").jsonObject
+        for (field in listOf("writerScoped", "sameAdmittedMutableDescriptor", "validateOutboxOnce", "invalidateAfterOwnerDeletion", "currentPushWorkspaceCheckedPerStep")) assertTrue(memo.getValue(field).jsonPrimitive.boolean)
+        assertFalse(memo.getValue("retainAcrossWriters").jsonPrimitive.boolean)
+        assertEquals(2L, memo.getValue("holderEntries").jsonPrimitive.long)
+        assertEquals(256L, memo.getValue("holderBytes").jsonPrimitive.long)
+        val cleanup = fixture.getValue("executionContract").jsonObject.getValue("boundedCleanupWriter").jsonObject
+        assertEquals(32L, cleanup.getValue("maximumRecords").jsonPrimitive.long)
+        assertEquals(8L, cleanup.getValue("workPerRecord").jsonPrimitive.long)
+        assertEquals(1L, cleanup.getValue("rawKernelMaximumRecords").jsonPrimitive.long)
+        assertTrue(cleanup.getValue("fixedOuterIdentity").jsonPrimitive.boolean)
+        assertTrue(cleanup.getValue("cleanupBeforeCommit").jsonPrimitive.boolean)
+        val snapshot = fixture.getValue("executionContract").jsonObject.getValue("planningScalarSnapshot").jsonObject
+        assertEquals(2L, snapshot.getValue("entries").jsonPrimitive.long)
+        assertEquals(256L, snapshot.getValue("bytes").jsonPrimitive.long)
+        for (field in listOf("writerScoped", "immutableNonPushOwnersOnly", "releaseBeforeContinuation")) assertTrue(snapshot.getValue(field).jsonPrimitive.boolean)
+        val guard = fixture.getValue("executionContract").jsonObject.getValue("planningGuardSnapshot").jsonObject
+        assertEquals(4L,guard.getValue("entries").jsonPrimitive.long)
+        assertEquals(8192L,guard.getValue("bytes").jsonPrimitive.long)
+        assertEquals(1024L,guard.getValue("maxInitializationUtf8Bytes").jsonPrimitive.long)
+        for (field in listOf("writerScoped", "invalidateAfterOwnedDelete", "optionalCapacityFallback")) assertTrue(guard.getValue(field).jsonPrimitive.boolean)
+        val decision = fixture.getValue("executionContract").jsonObject.getValue("decisionCopyReservation").jsonObject
+        assertEquals("outer-operation",decision.contractText("baseScope"))
+        assertEquals("complete-simultaneous-copies",decision.contractText("sliceCharge"))
+        assertEquals("maximum-not-sum",decision.contractText("growthAcrossSlices"))
+        assertEquals("outer-operation",decision.contractText("releaseScope"))
         val physical = canonicalContractValue(fixture.getValue("physicalInventory")).toString().encodeToByteArray()
         assertEquals("8580a0f75f18fc4eebd3604bc9c2142b866eb85af07f40b368752f27f45117b0",
             MessageDigest.getInstance("SHA-256").digest(physical).joinToString("") { "%02x".format(it) })

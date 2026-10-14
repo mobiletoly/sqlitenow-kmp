@@ -179,6 +179,32 @@ internal open class CrossTargetSyncTestSupport {
         )
     }
 
+    // Internal bounded kernels remain testable without making customers drive slices.
+    protected suspend fun preparePushSlice(db: SafeSQLiteConnection, http: HttpClient, work: Long,
+        tables: List<SyncTable> = listOf(SyncTable("users", "id"), SyncTable("posts", "id"))): Result<PushPlan?> {
+        val config = OversqliteConfig(1, tables, "fixture", "main", maxSyncWorkUnitsPerInvocation = work)
+        val generation = OversqliteContractStore(db).readGeneration(1)
+        val validated = SyncRuntimeInitializer(config, TableInfoCache()).validateConfig(db).withGeneration(generation)
+        val state = RuntimeState(validated, AdmittedOversqliteContract("v1", generation, testWireLimits(), false),
+            "user-1", scalarText(db, "SELECT current_source_id FROM _sync_attachment_state"))
+        val operations = OversqliteClientOperationController(config, OversqliteClientResourceOwner(db, http), SnapshotDiagnosticsState()) {}
+        val local = OversqliteLocalStore(db, json) { validated }
+        val stage = OversqliteStageStore(db, local, OversqliteSyncStateStore(db) { local }, json, config, operations)
+        val step = 32L + validated.tables.sumOf { table ->
+            val info=validated.tableInfoByName.getValue(table.tableName)
+            4L+16L*info.columns.size+32L*info.foreignKeys.size
+        }
+        return operations.runExclusiveOperation { stage.preparePushPlanSlice(state) { step } }
+    }
+
+    protected suspend fun releasePushSlice(db: SafeSQLiteConnection, http: HttpClient, diagnostic: String): Result<Unit> {
+        val config = OversqliteConfig(1, listOf(SyncTable("users", "id")), "fixture", "main", maxSyncWorkUnitsPerInvocation = 8)
+        val operations = OversqliteClientOperationController(config, OversqliteClientResourceOwner(db, http), SnapshotDiagnosticsState()) {}
+        val local = OversqliteLocalStore(db, json) { error("cleanup does not read payloads") }
+        val stage = OversqliteStageStore(db, local, OversqliteSyncStateStore(db) { local }, json, config, operations)
+        return operations.runExclusiveOperation { stage.clearPushPlanForLifecycleSlice(false, diagnostic, OversqliteStageStore.PushCleanupIdentity()) }
+    }
+
     protected fun newClient(
         db: SafeSQLiteConnection,
         http: HttpClient,

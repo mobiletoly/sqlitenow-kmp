@@ -42,26 +42,22 @@ internal class SurvivorApplyTest : SurvivorTestSupport() {
             db.execSQL("UPDATE _sync_apply_state SET apply_mode=0")
             seed.closeFromCoordinatedOwner()
             server.addRemoteBundleForTest(effects())
-            var interruptions = 0
-            var completed = false
-            repeat(12) {
-                if (!completed) {
-                    val client = newClient(db, http, syncTables = nodeTables, workUnits = 1800)
+            repeat(2) {
+                val client = newClient(db, http, syncTables = nodeTables, workUnits = 1800)
+                try {
                     client.openAndConnect("user-1").getOrThrow()
-                    val result = client.pullToStable()
-                    if (result.isSuccess) completed = true else {
-                        assertIs<SyncWorkLimitException>(result.exceptionOrNull())
-                        interruptions++
-                        assertEquals(1L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
-                        assertEquals(3L, scalarLong(db, "SELECT count(*) FROM nodes WHERE id IN ('P','C','D')"))
-                        assertEquals(0L, scalarLong(db, "SELECT apply_mode FROM _sync_apply_state"))
-                        assertTrue(scalarLong(db, "SELECT count(*) FROM _sync_apply_rows") > 0)
-                    }
-                    client.closeFromCoordinatedOwner()
-                }
+                    interruptApplyAfterCommittedSlice(client) { client.pullToStable().getOrThrow() }
+                    assertEquals(1L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
+                    assertEquals(3L, scalarLong(db, "SELECT count(*) FROM nodes WHERE id IN ('P','C','D')"))
+                    assertEquals(0L, scalarLong(db, "SELECT apply_mode FROM _sync_apply_state"))
+                    assertTrue(scalarLong(db, "SELECT count(*) FROM _sync_apply_rows") > 0)
+                } finally { client.closeFromCoordinatedOwner() }
             }
-            assertTrue(completed)
-            assertTrue(interruptions > 1)
+            val completed = newClient(db, http, syncTables = nodeTables, workUnits = 1800)
+            try {
+                completed.openAndConnect("user-1").getOrThrow()
+                completed.pullToStable().getOrThrow()
+            } finally { completed.closeFromCoordinatedOwner() }
             requireSurvivors(db)
             assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_apply_plan"))
         }
@@ -69,23 +65,17 @@ internal class SurvivorApplyTest : SurvivorTestSupport() {
 
     @Test
     fun capacityFailurePreservesState() = runOwnedWebDatabaseTest {
-        for (dimension in listOf("entries", "bytes", "atomic_apply_work")) {
+        for (dimension in listOf("entries", "bytes")) {
             withSurvivorFixture { server, db, http, seed ->
                 seed.closeFromCoordinatedOwner()
                 val client = newClient(db, http, syncTables = nodeTables,
                     workspaceEntries = if (dimension == "entries") 2 else 100000,
                     workspaceBytes = if (dimension == "bytes") 600 else 256L * 1024 * 1024,
-                    workUnits = if (dimension == "atomic_apply_work") 100 else 1000000)
+                    workUnits = 1000000)
                 client.openAndConnect("user-1").getOrThrow()
                 server.addRemoteBundleForTest(effects())
-                var capacity: SyncWorkspaceLimitException? = null
-                repeat(8) {
-                    if (capacity == null) {
-                        val failure = client.pullToStable().exceptionOrNull()
-                        if (failure !is SyncWorkLimitException) capacity = assertIs<SyncWorkspaceLimitException>(failure)
-                    }
-                }
-                assertEquals(dimension, capacity?.dimension)
+                val capacity = assertIs<SyncWorkspaceLimitException>(client.pullToStable().exceptionOrNull())
+                assertEquals(dimension, capacity.dimension)
                 assertEquals(4L, scalarLong(db, "SELECT count(*) FROM nodes"))
                 assertEquals(1L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
                 assertEquals(0L, scalarLong(db, "SELECT apply_mode FROM _sync_apply_state"))
@@ -120,10 +110,10 @@ internal class SurvivorApplyTest : SurvivorTestSupport() {
             val client = newClient(db, http, syncTables = nodeTables, workUnits = 1800)
             client.openAndConnect("user-1").getOrThrow()
             server.addRemoteBundleForTest(effects())
-            assertIs<SyncWorkLimitException>(client.pullToStable().exceptionOrNull())
+            interruptApplyAfterCommittedSlice(client) { client.pullToStable().getOrThrow() }
             val before = scalarText(db, "SELECT guard FROM _sync_apply_plan")
             db.execSQL("UPDATE _sync_conflict_state SET dirty_revision=dirty_revision+1")
-            assertIs<SyncWorkLimitException>(client.pullToStable().exceptionOrNull())
+            interruptApplyAfterCommittedSlice(client) { client.pullToStable().getOrThrow() }
             assertTrue(before != scalarText(db, "SELECT guard FROM _sync_apply_plan"))
             assertEquals(1L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
             client.closeFromCoordinatedOwner()
@@ -342,13 +332,13 @@ internal class SurvivorApplyTest : SurvivorTestSupport() {
             ))
             val first = newClient(db, http, syncTables = tables, workUnits = 1800)
             first.openAndConnect("user-1").getOrThrow()
-            assertIs<SyncWorkLimitException>(first.pullToStable().exceptionOrNull())
+            interruptApplyAfterCommittedSlice(first) { first.pullToStable().getOrThrow() }
             val guard = scalarText(db, "SELECT guard FROM _sync_apply_plan")
             first.closeFromCoordinatedOwner()
             val reordered = listOf(tables[1], tables[0], tables[2])
             val resumed = newClient(db, http, syncTables = reordered, workUnits = 1800)
             resumed.openAndConnect("user-1").getOrThrow()
-            assertIs<SyncWorkLimitException>(resumed.pullToStable().exceptionOrNull())
+            interruptApplyAfterCommittedSlice(resumed) { resumed.pullToStable().getOrThrow() }
             assertTrue(guard != scalarText(db, "SELECT guard FROM _sync_apply_plan"))
             assertEquals(1L, scalarLong(db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
             resumed.closeFromCoordinatedOwner()

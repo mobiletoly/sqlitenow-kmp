@@ -63,6 +63,7 @@ class OversqliteRemoteContractException internal constructor(
     val generationId: Long?,
     message: String,
 ) : RuntimeException(message), OversqliteCategorizedException {
+    internal var retryAfterMillis: Long? = null
     override val category: OversqliteErrorCategory =
         if (retryable) OversqliteErrorCategory.NETWORK else OversqliteErrorCategory.PROTOCOL
 }

@@ -195,8 +195,8 @@ internal class ReplayStatementCleanupTest : SurvivorTestSupport() {
         } finally { deleteTempSqliteNowTestDbArtifacts(path) }
     }
 
-    // Only reserveSyncWork produces the pending signal here. No statement callback fabricates it.
-    // Reset/clear/prepare failures precede that signal; pending crosses successful release and close.
+    // The first bounded slice commits after release and close. A caller cancellation
+    // before the next commit exposes its durable cursor without returning a work yield.
     private fun pendingCase(target: Target, failClose: Boolean) = runOwnedWebDatabaseTest(timeout = 180.seconds) {
         val path = createTempSqliteNowTestDbPath("replay-natural-progress")
         try {
@@ -212,7 +212,21 @@ internal class ReplayStatementCleanupTest : SurvivorTestSupport() {
                     limited.openAndConnect("user-1").getOrThrow()
                     val before = completeVector(db)
                     val probe = CleanupProbe(target, if (failClose) Cleanup.CLOSE else Cleanup.NONE, Body.SUCCESS)
-                    limited.setSnapshotApplyFaultInjectorForTest(probe.injector())
+                    val injector = probe.injector()
+                    var commits = 0
+                    val operations = assertNotNull(injector.statementCacheOperations)
+                    limited.setSnapshotApplyFaultInjectorForTest(if (failClose) injector else SnapshotApplyFaultInjector(
+                        beforeCommit = {
+                            if (++commits == 2) throw CancellationException("cancel after the first committed slice")
+                            injector.beforeCommit?.invoke()
+                        },
+                        statementCacheOperations = StatementCacheOperations(
+                            prepare = { connection, sql ->
+                                if (commits == 0) operations.prepare(connection, sql) else connection.prepare(sql)
+                            },
+                            reset = operations.reset, clearBindings = operations.clearBindings, close = operations.close,
+                        ),
+                    ))
                     val failure = assertNotNull(invoke(limited))
                     limited.setSnapshotApplyFaultInjectorForTest(null)
                     probe.assertReached()
@@ -227,9 +241,8 @@ internal class ReplayStatementCleanupTest : SurvivorTestSupport() {
                         assertEquals(before, completeVector(db), "failed close rolls back useful staged progress")
                         before
                     } else {
-                        val pending = assertIs<SyncWorkLimitException>(failure)
-                        assertEquals(1800L, pending.limit)
-                        assertTrue(pending.used > 0 && pending.used <= pending.limit)
+                        assertIs<CancellationException>(failure)
+                        assertEquals(2, commits)
                         assertTrue(probe.beforeCommit, "ordinary pending staging passes the existing commit barrier")
                         assertTrue(scalarLong(db, "SELECT count(*) FROM _sync_apply_rows") > 0)
                         assertTrue(scalarLong(db, "SELECT root_cursor FROM _sync_apply_plan") > 0)
@@ -475,13 +488,13 @@ internal class ReplayStatementCleanupTest : SurvivorTestSupport() {
     }
 
     // Independent fixture SQL pins: do not derive these selectors from production SQL builders.
-    private val planSaveSql = """INSERT INTO _sync_apply_plan(singleton_key,unit,guard,phase,root_cursor,visit_cursor,table_cursor,fk_cursor,row_cursor,entries,bytes,edge_entries,edge_bytes,operation_kind,preserve_schema,preserve_table,preserve_key,atomic_work,preservation_complete)
-        VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    private val planSaveSql = """INSERT INTO _sync_apply_plan(singleton_key,unit,guard,phase,root_cursor,visit_cursor,table_cursor,fk_cursor,row_cursor,entries,bytes,edge_entries,edge_bytes,operation_kind,preserve_schema,preserve_table,preserve_key,atomic_work,preservation_complete,source_snapshot_id)
+        VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(singleton_key) DO UPDATE SET unit=excluded.unit,guard=excluded.guard,
         phase=excluded.phase,root_cursor=excluded.root_cursor,visit_cursor=excluded.visit_cursor,
         table_cursor=excluded.table_cursor,fk_cursor=excluded.fk_cursor,row_cursor=excluded.row_cursor,
         entries=excluded.entries,bytes=excluded.bytes,edge_entries=excluded.edge_entries,edge_bytes=excluded.edge_bytes,
-        operation_kind=excluded.operation_kind,preserve_schema=excluded.preserve_schema,
+        operation_kind=excluded.operation_kind,source_snapshot_id=excluded.source_snapshot_id,preserve_schema=excluded.preserve_schema,
         preserve_table=excluded.preserve_table,preserve_key=excluded.preserve_key,
         atomic_work=excluded.atomic_work,preservation_complete=excluded.preservation_complete"""
 

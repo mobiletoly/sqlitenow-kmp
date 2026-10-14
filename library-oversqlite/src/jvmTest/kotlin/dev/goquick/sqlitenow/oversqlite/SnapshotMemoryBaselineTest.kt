@@ -41,7 +41,7 @@ class SnapshotMemoryBaselineTest {
         requireFreshWorker()
         val rows = rawRows.toInt()
         val rowBytes = System.getenv("OVERSQLITE_MEMORY_ROW_BYTES")!!.toInt()
-        require(rows in setOf(10_000, 50_000, 100_000, 1_000_000))
+        require(rows in setOf(1_000, 10_000, 50_000, 100_000, 1_000_000))
         require(rowBytes in setOf(256, 1024))
         val label = System.getenv("OVERSQLITE_MEMORY_RUN_LABEL") ?: "manual"
         lateinit var metrics: JvmMemoryMetrics
@@ -79,23 +79,20 @@ class SnapshotMemoryBaselineTest {
                 ),
             )
             defer(SnapshotMemoryCleanupPhase.CLIENT, "oversqlite client") { client.close() }
-            var incomplete = 0
-            var durableProgress = -1L
-            while (true) {
-                val failure = client.openAndConnect("user-1").exceptionOrNull() ?: break
-                assertTrue(failure is SyncWorkLimitException, "unexpected snapshot failure: $failure")
-                incomplete++
-                assertTrue(incomplete <= 64, "snapshot did not complete after 64 useful yields")
-                val staged = db.scalarLong("SELECT count(*) FROM _sync_snapshot_stage")
-                val prepared = db.scalarLong("SELECT COALESCE((SELECT root_cursor FROM _sync_apply_plan WHERE singleton_key=1),0)")
-                assertTrue(staged + prepared > durableProgress, "work yield must retain useful stage or plan progress")
-                durableProgress = staged + prepared
-                assertEquals(0L, db.scalarLong("SELECT count(*) FROM users"), "business state changed before atomic install")
-                assertEquals(0L, db.scalarLong("SELECT count(*) FROM _sync_row_state"), "A changed before atomic install")
-                assertEquals(0L, db.scalarLong("SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
-                maximumBodyBytes = maxOf(maximumBodyBytes,
-                    client.snapshotRestoreDiagnosticsForTest().maxCompletelyDecodedChunkBodyBytes)
-            }
+            var stagingCommits = 0
+            client.setSnapshotApplyFaultInjectorForTest(SnapshotApplyFaultInjector(beforeCommit = {
+                val businessRows = db.scalarLong("SELECT count(*) FROM users")
+                val authoritativeRows = db.scalarLong("SELECT count(*) FROM _sync_row_state")
+                assertTrue(businessRows == 0L || businessRows == rows.toLong(), "snapshot never publishes a partial business state")
+                if (businessRows == 0L) {
+                    assertEquals(0L, authoritativeRows, "authoritative state waits for atomic installation")
+                    assertEquals(0L, db.scalarLong("SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
+                    stagingCommits++
+                } else assertEquals(rows.toLong(), authoritativeRows)
+            }))
+            client.openAndConnect("user-1").getOrThrow()
+            assertTrue(stagingCommits > 0, "one public call crosses durable staging boundaries")
+            client.setSnapshotApplyFaultInjectorForTest(null)
             appliedRows = db.scalarLong("SELECT COUNT(*) FROM users")
             assertEquals(rows.toLong(), appliedRows)
             assertEquals(0L, db.scalarLong("SELECT COUNT(*) FROM _sync_snapshot_stage"))
@@ -105,7 +102,7 @@ class SnapshotMemoryBaselineTest {
             maximumBodyBytes = maxOf(maximumBodyBytes, diagnostics.maxCompletelyDecodedChunkBodyBytes)
             assertTrue(maximumBodyBytes in 1..(4L * 1024L * 1024L))
         }
-        assertTrue(fixtureFinal.chunkCount > 1L)
+        assertTrue(fixtureFinal.chunkCount >= (rows + 999L) / 1000L, "all rows use the configured bounded chunks")
         recordResult(label, rows, rowBytes, metrics)
         println("snapshot_memory_mapping protocol=compact rows=$rows target_row_bytes=$rowBytes " +
             "applied_rows=$appliedRows chunks=${fixtureFinal.chunkCount} " +

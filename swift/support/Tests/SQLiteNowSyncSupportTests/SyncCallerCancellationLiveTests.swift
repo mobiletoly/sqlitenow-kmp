@@ -22,6 +22,7 @@ final class SyncCallerCancellationLiveTests: XCTestCase, @unchecked Sendable {
         )
         let config = SQLiteNowSyncConfig(
             generationId: 1, databaseId: "fixture", serviceId: "business",
+            maxSyncWorkUnitsPerInvocation: 1,
             transferTargets: .init(maxPushRows: 1, maxPullBundles: 8, maxSnapshotChunkRows: 8)
         )
         let runtime = try await SQLiteNowSyncRuntimeKt.sqliteNowSyncRuntimeOpenForSync(

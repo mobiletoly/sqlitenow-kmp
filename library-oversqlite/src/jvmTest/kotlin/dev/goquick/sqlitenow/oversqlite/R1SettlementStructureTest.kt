@@ -41,7 +41,7 @@ internal class R1SettlementStructureTest : SurvivorTestSupport() {
                     assertEquals(1, selected.size, "one activated workspace SQL shape")
                     val count = selected.single()
                     assertTrue(count.executions > 1, "fixture traverses repeated workspace checks")
-                    assertEquals(if (baseline) count.executions else 1, count.preparations)
+                    assertEquals(if (baseline) count.executions else 4, count.preparations, "one cached owning handle plus three uncached dependency validation checks")
                     assertEquals(if (baseline) 0 else 1, cachedShapes.size, "fresh statement in each writer transaction")
                     assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_outbox_rows"))
                     assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_dirty_rows"))

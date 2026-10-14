@@ -1855,14 +1855,11 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     config().copy(maxSyncWorkUnitsPerInvocation = 17),
                     OversqliteClientResourceOwner(db.connection(), http), SnapshotDiagnosticsState(),
                 ) {}
-                if (work > 17) {
-                    val failure = assertFailsWith<SyncWorkspaceLimitException> { owner.reserveSyncWork(unit, work) }
-                    assertEquals("atomic_apply_work", failure.dimension)
-                    assertEquals(0L, owner.usedSyncWork())
-                } else {
-                    owner.reserveSyncWork(unit, work)
-                    assertEquals(work, owner.usedSyncWork())
-                }
+                owner.reserveSyncWork(unit, work)
+                assertEquals(work, owner.usedSyncWork(), "a bounded first unit can exceed the soft target")
+                if (work < 17) owner.reserveSyncWork(unit, 17 - work)
+                assertFailsWith<SyncWorkLimitException> { owner.reserveSyncWork(unit, 1) }
+                assertTrue(owner.usedSyncWork() >= 17, "the next internal unit yields without refunding work")
             }
             assertEquals(before, databaseStateVector(db.connection(), listOf("users", "posts")),
                 "entry/byte/work refusals preserve complete typed primary and retained stage vector")
@@ -1877,7 +1874,6 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
             "entries-only" to config().copy(maxSyncWorkspaceEntries = 1),
             "bytes-only" to config().copy(maxSyncWorkspaceBytes = 1),
             "entries-and-bytes" to config().copy(maxSyncWorkspaceEntries = 1, maxSyncWorkspaceBytes = 1),
-            "work" to config().copy(maxSyncWorkUnitsPerInvocation = 8),
         )) {
             var used: WorkspaceCharge? = null
             val failure = sameLifetimeRetainedRefusal(lowered) { connection, _, seedHttp ->
@@ -1887,8 +1883,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     assertTrue(assertNotNull(used).entries > 1 && assertNotNull(used).bytes > 1)
                 }
             }
-            if (tag == "work") assertIs<SyncWorkLimitException>(failure)
-            else {
+            run {
                 val limit = assertIs<SyncWorkspaceLimitException>(failure)
                 val dimension = if (tag == "bytes-only") "bytes" else "entries"
                 assertEquals(dimension, limit.dimension)
@@ -1939,13 +1934,11 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                 assertEquals(0, migrationCalls, "$dimension refusal preceded migration callback")
                 println("ORDINARY_SCENARIO " + webRuntimeKind() + " lowerRetainedWorkspaceLimitsRefuseOpeningWithoutMutation " + tag + "/full-retained-census")
             }
-            assertFailsWith<SyncWorkLimitException> {
-                db.openClient(config().copy(maxSyncWorkUnitsPerInvocation = 8), http, ServerWinsResolver)
-            }
-            assertEquals(before, observed(), "work refusal preserves complete retained census")
-            assertEquals(requestsBefore, server.requestCounts, "work refusal made no HTTP request")
-            assertEquals(0, migrationCalls, "work refusal preceded migration callback")
-            println("ORDINARY_SCENARIO " + webRuntimeKind() + " lowerRetainedWorkspaceLimitsRefuseOpeningWithoutMutation work/full-retained-census")
+            db.openClient(config().copy(maxSyncWorkUnitsPerInvocation = 8), http, ServerWinsResolver)
+            assertEquals(before, retainedDatabaseVector(db.connection()), "tiny work target permits reopening without modifying retained state")
+            assertEquals(requestsBefore, server.requestCounts, "ready reopening made no HTTP request")
+            assertEquals(0, migrationCalls, "ready reopening needed no migration callback")
+            println("ORDINARY_SCENARIO " + webRuntimeKind() + " lowerRetainedWorkspaceLimitsRefuseOpeningWithoutMutation tiny-work-completion/full-retained-census")
         } finally { http.close(); db.close(); cleanupOwnedWorkerStorage() }
     }
 
@@ -2810,10 +2803,10 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
         }
         withFrozenIntent { db, http, server, _, request ->
             val before = databaseStateVector(db.connection(), listOf("users", "posts"), ignoreDerivedCharges = true)
-            val limited = db.openClient(config(work = 1000), http, ServerWinsResolver)
+            val limited = db.openClient(config().copy(maxSyncWorkspaceEntries = 128), http, ServerWinsResolver)
             limited.attach("user-1").getOrThrow()
             val failure = assertFailsWith<SyncWorkspaceLimitException> { limited.pushPending().getOrThrow() }
-            assertEquals("atomic_apply_work", failure.dimension)
+            assertEquals("entries", failure.dimension)
             assertEquals(before, databaseStateVector(db.connection(), listOf("users", "posts"), ignoreDerivedCharges = true))
             assertEquals(0L, scalarLong(db, "SELECT reserved_entries+reserved_bytes+length(workspace_context) FROM _sync_operation_state"))
             val retry = db.openClient(config(), http, ServerWinsResolver)
@@ -3215,7 +3208,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                 val http = server.newHttpClient()
                 try {
                     createUsersAndPostsTables(db)
-                    val cfg = referenceConfig.copy(maxSyncWorkUnitsPerInvocation = budget)
+                    val cfg = referenceConfig.copy(maxSyncWorkUnitsPerInvocation = 1)
                     val client = db.openClient(cfg, http, ServerWinsResolver)
                     client.attach("user-1").getOrThrow()
                     repeat(6) { insertUser(db, "U00$it", "complete payload $it") }
@@ -3227,16 +3220,19 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     val fields = "json_object('schema',schema_name,'table',table_name,'key',key_json,'op',op,'version',base_row_version,'kind',base_kind,'B',base_payload,'provenance',base_provenance,'L',payload)"
                     val originalIntents = Json.parseToJsonElement(scalarText(db, "SELECT json_group_array($fields) FROM (SELECT * FROM _sync_dirty_rows ORDER BY key_json)")).jsonArray
                     val pulls = server.requestCounts["/sync/pull"] ?: 0
-                    val stopped = assertIs<SyncWorkLimitException>(when (operation) {
-                        "sync" -> client.sync().exceptionOrNull()
-                        else -> client.syncThenDetach().exceptionOrNull()
-                    }, "$operation each unit fits fresh capacity; remaining invocation work is exhausted")
-                    assertEquals(budget, stopped.limit)
-                    assertEquals(client.workspaceDiagnostics().work, stopped.used)
-                    assertTrue(stopped.used > freshWork[0] && stopped.used <= budget)
-                    assertTrue(Regex("[0-9a-f]{64}").matches(stopped.unit))
-                    assertEquals(SyncProgress(dirtyRows = 2, outboundRows = 2, committedBundles = 2), stopped.progress,
-                        "confirmed second remote commit counts while its local settlement is still staged")
+                    var secondBundleCommitCuts = 0
+                    client.setSnapshotApplyFaultInjectorForTest(SnapshotApplyFaultInjector(beforeCommit = {
+                        if (server.pushRequestCount == 2 && ++secondBundleCommitCuts == 2)
+                            throw CancellationException("interrupted second bundle after a durable staging slice")
+                    }))
+                    assertFailsWith<CancellationException> {
+                        when (operation) {
+                            "sync" -> client.sync().getOrThrow()
+                            else -> client.syncThenDetach().getOrThrow()
+                        }
+                    }
+                    client.setSnapshotApplyFaultInjectorForTest(null)
+                    assertTrue(client.workspaceDiagnostics().work > freshWork[0], "first bundle and second preparation work remain accounted")
                     assertEquals(2, server.pushRequestCount)
                     assertEquals(pulls, server.requestCounts["/sync/pull"] ?: 0)
                     assertEquals(0, server.requestCounts["/sync/snapshot-sessions"] ?: 0)
@@ -3259,9 +3255,9 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                     val retained = databaseStateVector(db.connection(), listOf("users", "posts"), predicates = mapOf("_sync_row_state" to "json_extract(key_json,'$.id')>='U002'"))
                     assertEquals(before.getValue("_sync_row_state").drop(2), retained.getValue("_sync_row_state"), "$operation complete unsettled A unchanged")
                     for (table in listOf("users", "posts", "_sync_relationships", "_sync_opening_state", "_sync_contract_identity", "_sync_admitted_contracts", "_sync_managed_tables")) assertEquals(before.getValue(table), retained.getValue(table), "$operation exact primary/recovery identity $table")
-                    assertEquals("ready", scalarText(db, "SELECT phase FROM _sync_apply_plan"))
-                    assertTrue(retained.getValue("_sync_apply_rows").isNotEmpty(), "$operation useful charged ready input retained")
-                    val usage = OversqliteWorkspace(db.connection(), cfg).usage(stopped.unit)
+                    assertContains(listOf("roots", "index", "walk", "ready"), scalarText(db, "SELECT phase FROM _sync_apply_plan"))
+                    assertTrue(retained.getValue("_sync_apply_rows").isNotEmpty(), "$operation useful charged staging input retained")
+                    val usage = OversqliteWorkspace(db.connection(), cfg).usage(applyUnit("interrupted-drain", 0, source))
                     assertTrue(usage.entries <= cfg.maxSyncWorkspaceEntries && usage.bytes <= cfg.maxSyncWorkspaceBytes)
                     assertEquals(0L, scalarLong(db, "SELECT reserved_entries+reserved_bytes+length(workspace_context) FROM _sync_operation_state"))
                     val provenance = buildJsonObject {
@@ -3287,7 +3283,7 @@ internal class OrdinarySafetyPlatformTest : PlatformCrossTargetTestSupport() {
                         }
                     }
                     assertPublished(db, 2)
-                    println("ORDINARY_SCENARIO ${webRuntimeKind()} onePublicInvocationSharesWorkMeterAndRetainsUsefulFrozenProgress $operation/work-limit")
+                    println("ORDINARY_SCENARIO ${webRuntimeKind()} onePublicInvocationSharesWorkMeterAndRetainsUsefulFrozenProgress $operation/cancellation")
                     val resumed = client.sync().getOrThrow()
                     assertEquals(PushOutcome.COMMITTED, resumed.pushOutcome)
                     assertFalse(resumed.status.pending.hasPendingSyncData)

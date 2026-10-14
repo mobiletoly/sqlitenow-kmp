@@ -10,7 +10,7 @@ internal open class SettlementTest : SurvivorTestSupport() {
     }
     @Test fun backlogBound() = runOwnedWebDatabaseTest(timeout=kotlin.time.Duration.parse("480s")) {
         for(n in listOf(1000,10000)) for(width in listOf(16,1024)) {
-            withSurvivorFixture(workUnits=100000000) { server,db,_,client ->
+            withSurvivorFixture(workUnits=1_000_000) { server,db,_,client ->
                 db.execSQL("UPDATE nodes SET name='changed parent' WHERE id='P'")
                 server.beforePushCommit={throw CancellationException("freeze exact original outbox")}
                 assertFailsWith<CancellationException> { client.pushPending().getOrThrow() }

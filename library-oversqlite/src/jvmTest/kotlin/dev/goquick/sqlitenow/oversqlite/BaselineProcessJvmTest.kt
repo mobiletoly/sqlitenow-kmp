@@ -44,15 +44,14 @@ internal class BaselineProcessJvmTest : CrossTargetSyncTestSupport() {
                         return raw.prepare(sql)
                     }
                 })
-                val result=operations.runExclusiveOperation {stages.preparePushPlan(state)}
+                val result=runCatching {stages.preparePushPlanSlice(state) { step }}
                 rawField.set(db,raw)
-                if(!oneStep) assertEquals("atomic_apply_work",assertIs<SyncWorkspaceLimitException>(result.exceptionOrNull()).dimension)
-                else if(count==0) {assertTrue(result.isSuccess);assertEquals(null,result.getOrThrow())}
+                if(count==0) {assertTrue(result.isSuccess);assertEquals(null,result.getOrThrow())}
                 else assertTrue(result.exceptionOrNull() is SyncWorkLimitException)
-                assertEquals(if(oneStep) step else 0,operations.usedSyncWork())
-                assertEquals(if(!oneStep) 0 else if(count==0) 1 else 3,dirtyQueries.size)
+                assertEquals(step,operations.usedSyncWork())
+                assertEquals(if(count==0) 1 else 3,dirtyQueries.size)
                 assertEquals(before,baselineQualificationVector(db));assertEquals(0,server.pushRequestCount)
-                assertEquals(if(oneStep && count>0) 1L else 0L,scalarLong(db,"SELECT COUNT(*) FROM _sync_push_nodes"))
+                assertEquals(if(count>0) 1L else 0L,scalarLong(db,"SELECT COUNT(*) FROM _sync_push_nodes"))
                 if(oneStep) {
                     val opcodes=mutableListOf<String>()
                     db.withPreparedStatement("EXPLAIN "+dirtyQueries.first()) {st -> while(st.step()) opcodes+=st.getText(1)}
@@ -75,7 +74,7 @@ internal class BaselineProcessJvmTest : CrossTargetSyncTestSupport() {
             for(table in listOf("users","posts")) {val metadata=cache.get(db,table);step+=4+16*metadata.columns.size+32*metadata.foreignKeys.size}
             client.closeFromCoordinatedOwner();client=newClient(db,http,workUnits=2*step);client.openAndConnect("user-1").getOrThrow()
             val before=baselineQualificationVector(db)
-            assertTrue(client.pushPending().exceptionOrNull() is SyncWorkLimitException)
+            assertTrue(preparePushSlice(db,http,2*step).exceptionOrNull() is SyncWorkLimitException)
             assertEquals(before,baselineQualificationVector(db));assertEquals(2L,scalarLong(db,"SELECT COUNT(*) FROM _sync_push_nodes"))
             val oldUnit=scalarText(db,"SELECT unit FROM _sync_push_plan")
             val other=newFileBackedDb(path)
@@ -111,7 +110,7 @@ internal class BaselineProcessJvmTest : CrossTargetSyncTestSupport() {
             val cache=TableInfoCache();var step=32L
             for(table in listOf("users","posts")) {val metadata=cache.get(db,table);step+=4+16*metadata.columns.size+32*metadata.foreignKeys.size}
             client.closeFromCoordinatedOwner();client=newClient(db,http,workUnits=2*step);client.openAndConnect("user-1").getOrThrow()
-            assertTrue(client.pushPending().exceptionOrNull() is SyncWorkLimitException)
+            assertTrue(preparePushSlice(db,http,2*step).exceptionOrNull() is SyncWorkLimitException)
             assertEquals(before,baselineQualificationVector(db));assertEquals(2L,scalarLong(db,"SELECT COUNT(*) FROM _sync_push_nodes"));assertEquals(0,server.pushRequestCount)
             val expected=root.resolve("expected.json")
             Files.writeString(expected,buildJsonObject {put("vector",Json.parseToJsonElement(before.encoded()));put("unit",JsonPrimitive(scalarText(db,"SELECT unit FROM _sync_push_plan")));put("step",JsonPrimitive(step))}.toString())
@@ -198,7 +197,7 @@ internal object DependencyPlanProcessReader : CrossTargetSyncTestSupport() {
             val unit=expected.getValue("unit").jsonPrimitive.content
             assertEquals(unit,scalarText(db,"SELECT unit FROM _sync_push_plan"))
             client.openAndConnect("user-1").getOrThrow()
-            val error=client.pushPending().exceptionOrNull();assertTrue(error is SyncWorkLimitException);assertEquals(unit,error.unit)
+            val error=preparePushSlice(db,http,2*expected.getValue("step").jsonPrimitive.long).exceptionOrNull();assertTrue(error is SyncWorkLimitException);assertEquals(unit,error.unit)
             assertEquals(4L,scalarLong(db,"SELECT COUNT(*) FROM _sync_push_nodes"))
             assertEquals(expected.getValue("vector"),Json.parseToJsonElement(baselineQualificationVector(db).encoded()));assertEquals(0,server.pushRequestCount)
             client.closeFromCoordinatedOwner();client=newClient(db,http);client.openAndConnect("user-1").getOrThrow();client.pushPending().getOrThrow()

@@ -78,6 +78,8 @@ private data class ApplyPlan(
 internal fun applyUnit(kind: String, sequence: Long, hash: String): String =
     sha256Hex("$kind:$sequence:$hash".encodeToByteArray())
 
+internal data class DecisionReservationCharge(val held: WorkspaceCharge, val binding: WorkspaceReservationBinding?)
+
 internal class OversqliteApplySurvivors(
     private val db: SafeSQLiteConnection,
     private val local: OversqliteLocalStore,
@@ -88,17 +90,53 @@ internal class OversqliteApplySurvivors(
     private val snapshotLifecycle by lazy { OversqliteApplyLifecycle(db, config, local, this, json) }
     suspend fun reservationCharge(token: String): WorkspaceCharge = OversqliteWorkspace(db,config).reserved(token)
 
+    fun recordDecisionContinuationBuild() { operations.workSliceDiagnostics.replayDecisionBuilds++ }
+    fun recordDecisionContinuationHit() { operations.workSliceDiagnostics.replayDecisionReuses++ }
+    fun recordDecisionContinuationInvalidation() { operations.workSliceDiagnostics.replayDecisionInvalidations++ }
+
+    suspend fun currentDecisionBinding(state: RuntimeState, token: String, base: WorkspaceCharge, held: WorkspaceCharge, writer: StatementCache): WorkspaceReservationBinding {
+        operations.reserveSyncWork(ReplayFixedUnits.settlementDecisions, 16)
+        val workspace = OversqliteWorkspace(db, config)
+        val requested = workspace.add(ReplayFixedUnits.settlementDecisions, workspace.add(ReplayFixedUnits.settlementDecisions, base, held), decisionReservationBindingCharge)
+        return checkNotNull(workspace.resizeInWriter(state, token, requested, writer = writer))
+    }
+
+    suspend fun finishDecisionBinding(token: String, base: WorkspaceCharge, held: WorkspaceCharge, writer: StatementCache) {
+        val workspace = OversqliteWorkspace(db, config)
+        workspace.finishDecisionBindingInWriter(token, workspace.add(ReplayFixedUnits.settlementDecisions, base, held), writer)
+    }
+
     suspend fun reserveDecisionCopies(state: RuntimeState, token: String?, base: WorkspaceCharge, held: WorkspaceCharge,
-        schema: String, table: String, key: String, pk: String): WorkspaceCharge {
-        if(token==null) return held // Unconverted conflict work belongs to A3-03.
+        schema: String, table: String, key: String, pk: String,
+        binding: WorkspaceReservationBinding? = null, writer: StatementCache? = null, memoizeBinding: Boolean = false,
+    ): DecisionReservationCharge {
+        if(token==null) return DecisionReservationCharge(held,null) // Unconverted conflict work belongs to A3-03.
         val unit=ReplayFixedUnits.settlementDecisions
         operations.reserveSyncWork(unit,16)
         val sql=state.validated.replaySql.table(table).decisionCopySize
         val bytes=checkNotNull(one(sql,physicalKey(state,table,pk),schema,table,key) { it.getLong(0) })
         val workspace=OversqliteWorkspace(db,config)
         val next=workspace.add(unit,held,WorkspaceCharge(32,workspace.scale(unit,bytes,64)))
-        workspace.resizeInWriter(state,token,workspace.add(unit,base,next))
-        return next
+        val requested=workspace.add(unit,base,next)
+        if (!memoizeBinding) {
+            workspace.resizeInWriter(state,token,requested)
+            return DecisionReservationCharge(next,null)
+        }
+        try {
+            val charged=workspace.add(unit,requested,decisionReservationBindingCharge)
+            val captured=workspace.resizeInWriter(state,token,charged,binding,checkNotNull(writer))
+            if (binding == null) operations.workSliceDiagnostics.reservationBindingCacheBuilds++
+            else operations.workSliceDiagnostics.reservationBindingCacheHits++
+            return DecisionReservationCharge(next,captured)
+        } catch (capacity: SyncWorkspaceLimitException) {
+            if (capacity.suppressedExceptions.isNotEmpty()) throw capacity
+            // A later row can need the optional holder's capacity. Drop it before
+            // the original admission; the monotonic previous prefix is smaller
+            // than the next complete record charge.
+            operations.workSliceDiagnostics.reservationBindingCacheFallbacks++
+            workspace.resizeInWriter(state,token,requested)
+            return DecisionReservationCharge(next,null)
+        }
     }
 
     suspend fun prepare(state: RuntimeState, unit: String, roots: Int, operationKind: String = "pull", inputSequence: Long? = null, workspaceStatementCache: StatementCache? = null, replayStatementCache: StatementCache? = null, sourceSnapshotId: String = "", seed: suspend (Int) -> ApplySurvivor) {
@@ -148,6 +186,7 @@ internal class OversqliteApplySurvivors(
                 16 > config.maxSyncWorkUnitsPerInvocation - operations.usedSyncWork()) {
                 save(plan, replayStatementCache = replayStatementCache)
             }
+            checkpointWorkStep()
         }
         if (operationKind == "settlement" || operationKind == "conflict") prepareSettlementIntent(state, plan, workspaceStatementCache, replayStatementCache = replayStatementCache)
         val lifecycle = OversqliteApplyLifecycle(db, config, local, this, json,
@@ -284,6 +323,19 @@ internal class OversqliteApplySurvivors(
             p.visit = one("SELECT ordinal FROM _sync_apply_rows WHERE pending=1 ORDER BY ordinal LIMIT 1", replayStatementCache = replayStatementCache) { it.getLong(0) }
                 ?: run { p.phase = "ready"; return }
         }
+        if (p.edgeEntries == 0L) {
+            require(one("SELECT 1 FROM _sync_apply_rows WHERE ordinal=? AND pending=1", p.visit, replayStatementCache = replayStatementCache) { true } == true) {
+                "pending dependency root is missing"
+            }
+            // The completed index has no child relationships. Confirm the
+            // retained counter before skipping every table's empty lookup.
+            require(p.edgeBytes == 0L && one("SELECT 1 FROM _sync_apply_edges LIMIT 1", replayStatementCache = replayStatementCache) { true } != true) {
+                "empty dependency index contradicts retained edges"
+            }
+            exec("UPDATE _sync_apply_rows SET pending=2 WHERE ordinal=?", p.visit, replayStatementCache = replayStatementCache)
+            p.visit = 0; p.table = 0; p.fk = 0; p.cursor = null
+            return
+        }
         if (p.table >= state.validated.tables.size) {
             exec("UPDATE _sync_apply_rows SET pending=2 WHERE ordinal=?", p.visit, replayStatementCache = replayStatementCache)
             p.visit = 0; p.table = 0; p.fk = 0; p.cursor = null
@@ -419,7 +471,7 @@ internal class OversqliteApplySurvivors(
         while (!p.preservationComplete) {
             operations.reserveSyncWork(p.unit,32)
             val ref = nextIntent(state,p,p.preserveSchema,p.preserveTable,p.preserveKey,workspaceStatementCache, replayStatementCache = replayStatementCache)
-            if (ref==null) { p.preservationComplete=true; save(p, replayStatementCache = replayStatementCache); return }
+            if (ref==null) { p.preservationComplete=true; save(p, replayStatementCache = replayStatementCache); checkpointWorkStep(); return }
             operations.a3Stats.duplicateChecks++
             if (!contains(ref.table,ref.row.pk, replayStatementCache = replayStatementCache)) {
                 val live=capture(state,p,ref.table,ref.row.pk,8,OversqliteWorkspace(db,config).scale(p.unit,ref.bytes,8),workspaceStatementCache, replayStatementCache = replayStatementCache)
@@ -432,6 +484,7 @@ internal class OversqliteApplySurvivors(
             if (32 > config.maxSyncWorkUnitsPerInvocation - operations.usedSyncWork()) {
                 save(p, replayStatementCache = replayStatementCache)
             }
+            checkpointWorkStep()
         }
     }
 

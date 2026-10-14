@@ -143,7 +143,11 @@ internal class OversqlitePushWorkflow(
                 "rowCount=${result.committed.rowCount} sourceBundleId=${result.committed.sourceBundleId}"
         }
         stageStore.recordConfirmedBundle(state.sourceId,result.committed.sourceBundleId)
-        val updatedTables = applyExecutor.inApplyModeTransaction(state) { statementCache ->
+        // This buffer owner survives continuation. Decision copies reuse its
+        // captured base instead of adding a preceding slice's temporary charge.
+        val decisionReservationBase = token?.let { workspace.reserved(it) }
+        val decisionContinuation = ReplayDecisionContinuation()
+        val updatedTables = try { applyExecutor.inApplyModeTransaction(state) { statementCache ->
             openingMutationAuthority()?.beforeMutation(
                 OversqliteOpeningMutationKind.APPLY_PUSH_RESPONSE,
             )
@@ -154,8 +158,10 @@ internal class OversqlitePushWorkflow(
                 committed = result.committed,
                 statementCache = statementCache,
                 reservationToken=token,
+                reservationBase=decisionReservationBase,
+                decisionContinuation=decisionContinuation,
             )
-        }
+        } } finally { decisionContinuation.clear() }
         db.reportExternalTableChanges(updatedTables)
         log { "oversqlite pushPending finished updatedTables=$updatedTables" }
         return PushWorkflowResult(
@@ -210,6 +216,7 @@ internal class OversqlitePushWorkflow(
         if (decision is ConflictPlanDecision.Invalid) {
             throw InvalidConflictResolutionException(selected.conflict, result, decision.message)
         }
+        val reservationBase = workspace.reserved(token)
         return applyExecutor.inApplyModeTransaction(state) { statementCache ->
             val openingRecord = openingMutationAuthority()?.beforeMutation(
                 OversqliteOpeningMutationKind.RESOLVE_CONFLICT,
@@ -218,7 +225,7 @@ internal class OversqlitePushWorkflow(
             requireMatchingPendingOutbox(selected)
             val updated = conflictExecutor.applyConflictResolutionPlan(
                 state, snapshot, row, stored.details.table,
-                (decision as ConflictPlanDecision.Apply).plan, statementCache, token,
+                (decision as ConflictPlanDecision.Apply).plan, statementCache, token, reservationBase,
             )
             conflictStateStore.clear()
             if (openingRecord != null) {
@@ -245,7 +252,10 @@ internal class OversqlitePushWorkflow(
         ) throw StaleConflictResolutionException()
     }
 
-    private suspend fun ensurePushOutboundSnapshot(state: RuntimeState, reservationToken: String?): PushOutboundSnapshot {
+    private suspend fun ensurePushOutboundSnapshot(state: RuntimeState, reservationToken: String?): PushOutboundSnapshot =
+        stageStore.completeWorkPhase("outbox freeze") { ensurePushOutboundSnapshotSlice(state, reservationToken) }
+
+    private suspend fun ensurePushOutboundSnapshotSlice(state: RuntimeState, reservationToken: String?): PushOutboundSnapshot {
         val outboxState = outboxStateStore.loadBundleState()
         if (outboxState.state != outboxStateNone) {
             val existing = loadPersistedOutboxSnapshot(state, outboxState,reservationToken)
@@ -296,9 +306,11 @@ internal class OversqlitePushWorkflow(
             maxRequestDecodedBytes = state.admittedContract.limits.maxPushDecodedBytes,
             maxResponseDecodedBytes = state.admittedContract.limits.maxPushDecodedBytes,
             onBufferGrowth = { bytes,entries ->
+                stageStore.completeWorkPhase("HTTP buffer admission") {
                 if(reservationToken!=null) workspace.resize(state,reservationToken,workspace.add(applyUnit("push-buffers",0,state.sourceId),base,
                     WorkspaceCharge(entries,workspace.scale(applyUnit("push-buffers",0,state.sourceId),bytes,64))))
                 stageStore.chargeBufferWork(applyUnit("push-buffers",0,state.sourceId),16)
+                }
             },
         )
         require(canonicalCommittedBundleHash(response.rows) == response.bundleHash) {
@@ -351,6 +363,14 @@ internal class OversqlitePushWorkflow(
     }
 
     private suspend fun loadPersistedOutboxSnapshot(
+        state: RuntimeState,
+        outboxState: OversqliteOutboxBundleState,
+        reservationToken: String? = null,
+    ): PushOutboundSnapshot = stageStore.completeWorkPhase("outbox read") {
+        loadPersistedOutboxSnapshotSlice(state, outboxState, reservationToken)
+    }
+
+    private suspend fun loadPersistedOutboxSnapshotSlice(
         state: RuntimeState,
         outboxState: OversqliteOutboxBundleState,
         reservationToken: String? = null,
@@ -592,23 +612,28 @@ internal class OversqlitePushWorkflow(
             expectedColumns = expectedColumns,
         )
         return when (decision) {
-            is ConflictPlanDecision.Apply -> applyExecutor.inApplyModeTransaction(state) { statementCache ->
-                val openingRecord = openingMutationAuthority()?.beforeMutation(
-                    OversqliteOpeningMutationKind.RESOLVE_CONFLICT,
-                )
-                conflictStateStore.requireCurrent(pending.pending)
-                conflictExecutor.applyConflictResolutionPlan(
-                    state = state,
-                    snapshot = snapshot,
-                    conflictingRow = conflictingRow,
-                    tableName = context.table,
-                    plan = decision.plan,
-                    statementCache = statementCache,
-                    reservationToken = reservationToken,
-                ).also {
-                    conflictStateStore.clear()
-                    if (openingRecord != null) {
-                        openingMutationAuthority()?.completeConflictDecision(openingRecord)
+            is ConflictPlanDecision.Apply -> {
+                // Capture before the driver: each slice reconstructs the same buffers.
+                val reservationBase = OversqliteWorkspace(db, config).reserved(reservationToken)
+                applyExecutor.inApplyModeTransaction(state) { statementCache ->
+                    val openingRecord = openingMutationAuthority()?.beforeMutation(
+                        OversqliteOpeningMutationKind.RESOLVE_CONFLICT,
+                    )
+                    conflictStateStore.requireCurrent(pending.pending)
+                    conflictExecutor.applyConflictResolutionPlan(
+                        state = state,
+                        snapshot = snapshot,
+                        conflictingRow = conflictingRow,
+                        tableName = context.table,
+                        plan = decision.plan,
+                        statementCache = statementCache,
+                        reservationToken = reservationToken,
+                        reservationBase = reservationBase,
+                    ).also {
+                        conflictStateStore.clear()
+                        if (openingRecord != null) {
+                            openingMutationAuthority()?.completeConflictDecision(openingRecord)
+                        }
                     }
                 }
             }

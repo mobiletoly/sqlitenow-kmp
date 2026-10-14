@@ -72,8 +72,11 @@ internal class ReplayCheckpointContractTest : ReplayCheckpointSupport() {
                 var previous: List<Any?>?=null;var previousVector: BaselineQualificationVector?=null;var ready=false;var callbacks=0
                 repeat(120) {
                     if(!ready) {
-                        val refusal=assertFailsWith<SyncWorkLimitException> { prepareCheckpoint(db,http,state,config,unit,kind,budget=32,seed={ i,owner -> callbacks++;owner.capture(state,"nodes",listOf("P","Q")[i]) }) }
-                        assertEquals(unit,refusal.unit);assertEquals(config.maxSyncWorkUnitsPerInvocation,refusal.limit);assertTrue(refusal.used in (config.maxSyncWorkUnitsPerInvocation-32)..config.maxSyncWorkUnitsPerInvocation)
+                        val result=runCatching { prepareCheckpoint(db,http,state,config,unit,kind,budget=32,seed={ i,owner -> callbacks++;owner.capture(state,"nodes",listOf("P","Q")[i]) }) }
+                        result.exceptionOrNull()?.let { error ->
+                            val refusal=assertIs<SyncWorkLimitException>(error)
+                            assertEquals(unit,refusal.unit);assertEquals(config.maxSyncWorkUnitsPerInvocation,refusal.limit);assertTrue(refusal.used in (config.maxSyncWorkUnitsPerInvocation-32)..(config.maxSyncWorkUnitsPerInvocation+31), "kind=$kind used=${refusal.used} phase=${readCheckpoint(db)[2]}")
+                        } ?: assertEquals("ready", readCheckpoint(db)[2], "first ready atomic reservation may cross the soft target")
                         val plan=readCheckpoint(db);assertCheckpointTotals(db,plan);assertEquals(unit,plan[0]);assertEquals(kind,plan[12]);assertEquals(OversqliteWorkspace(db,config).contextGuard(state,unit),plan[1])
                         phases+=plan[2] as String
                         val progressVector=fullCheckpointVector(db)
@@ -84,7 +87,7 @@ internal class ReplayCheckpointContractTest : ReplayCheckpointSupport() {
                     }
                 }
                 assertTrue(ready,"bounded preparation must complete $kind: $previous")
-                assertTrue(phases.containsAll(listOf("clear","roots","index","walk","ready")),"$kind phases $phases")
+                assertTrue(phases.containsAll(if(kind=="snapshot") listOf("clear","roots","ready") else listOf("clear","roots","index","walk","ready")),"$kind phases $phases")
                 assertEquals(2,callbacks,"completed roots do not repeat after reopen-like resume")
                 prepareCheckpoint(db,http,state,config,unit,kind,seed={ _,_->error("ready checkpoint must skip seeds") })
                 assertEquals(previous,readCheckpoint(db));assertEquals(primary,primaryCheckpointVector(db))
@@ -99,8 +102,9 @@ internal class ReplayCheckpointContractTest : ReplayCheckpointSupport() {
                 db.execSQL("DELETE FROM _sync_apply_edges");db.execSQL("DELETE FROM _sync_apply_rows");db.execSQL("DELETE FROM _sync_apply_plan")
                 val unit="ready-$kind";prepareCheckpoint(db,http,state,config,unit,kind)
                 val before=fullCheckpointVector(db)
-                val refusal=assertFailsWith<SyncWorkLimitException> { prepareCheckpoint(db,http,state,config,unit,kind,budget=0,seed={ _,_->error("ready resume called seed") }) }
-                assertEquals(config.maxSyncWorkUnitsPerInvocation,refusal.used);assertEquals(before,fullCheckpointVector(db))
+                val aboveTarget=prepareCheckpoint(db,http,state,config,unit,kind,budget=0,seed={ _,_->error("ready resume called seed") })
+                assertTrue(aboveTarget.usedSyncWork()>config.maxSyncWorkUnitsPerInvocation)
+                assertEquals(before,fullCheckpointVector(db))
                 val operations=prepareCheckpoint(db,http,state,config,unit,kind,seed={ _,_->error("ready retry called seed") })
                 assertEquals(0L,operations.a3Stats.primaryReads);assertEquals(0L,operations.a3Stats.indexedVisits);assertEquals(before,fullCheckpointVector(db))
             }

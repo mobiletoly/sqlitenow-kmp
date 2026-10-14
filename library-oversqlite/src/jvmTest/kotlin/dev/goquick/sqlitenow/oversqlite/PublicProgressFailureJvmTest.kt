@@ -22,9 +22,9 @@ internal class PublicProgressFailureJvmTest : CrossTargetSyncTestSupport() {
             val stageConfig = stages.field("config") as OversqliteConfig
             val unit = scalarText(db, "SELECT unit FROM _sync_push_plan")
             try {
-                for (exit in listOf("readWork", "readWorkspace", "releaseWork", "pushWorkspace", "syncWorkspace")) {
+                for (exit in listOf("legacyWork", "readWorkspace", "pushWorkspace", "syncWorkspace")) {
                     operations.setField("config", operationConfig.copy(maxSyncWorkUnitsPerInvocation = if (exit == "readWorkspace") 1000000 else 1))
-                    stages.setField("config", if (exit == "readWorkspace") stageConfig.copy(maxSyncWorkspaceBytes = 1) else stageConfig)
+                    stages.setField("config", stageConfig.copy(maxSyncWorkspaceBytes = 1))
                     for (query in listOf("BEGIN IMMEDIATE", "SELECT COUNT(*) FROM _sync_dirty_rows", "SELECT COUNT(*) FROM _sync_outbox_rows")) {
                         val readFailure = IllegalStateException("injected final progress failure: $query")
                         var rolledBack = false
@@ -43,8 +43,8 @@ internal class PublicProgressFailureJvmTest : CrossTargetSyncTestSupport() {
                             }
                         })
                         val error = when (exit) {
-                            "readWork", "readWorkspace" -> client.readPushDependencyDiagnostic(diagnostic.diagnosticId).exceptionOrNull()
-                            "releaseWork" -> client.releasePushDependencyDiagnostic(diagnostic.diagnosticId).exceptionOrNull()
+                            "legacyWork" -> operations.runExclusiveOperation<Unit> { db.transaction(dev.goquick.sqlitenow.core.TransactionMode.IMMEDIATE) { throw SyncWorkLimitException(unit,1,1) } }.exceptionOrNull()
+                            "readWorkspace" -> client.readPushDependencyDiagnostic(diagnostic.diagnosticId).exceptionOrNull()
                             "pushWorkspace" -> client.pushPending().exceptionOrNull()
                             else -> client.sync().exceptionOrNull()
                         }
@@ -60,7 +60,7 @@ internal class PublicProgressFailureJvmTest : CrossTargetSyncTestSupport() {
                             val workspace = assertIs<SyncWorkspaceLimitException>(error, "$exit / $query")
                             assertEquals(unit, workspace.unit)
                             assertEquals(1L, workspace.limit)
-                            assertEquals(if (exit == "readWorkspace") "bytes" else "atomic_apply_work", workspace.dimension)
+                            assertEquals("bytes", workspace.dimension)
                             assertTrue(workspace.reserved > 0)
                             assertFalse(workspace.resumable)
                         }
@@ -112,8 +112,11 @@ internal class PublicProgressFailureJvmTest : CrossTargetSyncTestSupport() {
                                         return raw.prepare(sql)
                                     }
                                 })
-                                if (release) client.releasePushDependencyDiagnostic(diagnostic.diagnosticId)
-                                else client.readPushDependencyDiagnostic(diagnostic.diagnosticId)
+                                operations.runExclusiveOperation<Unit> {
+                                    db.transaction(dev.goquick.sqlitenow.core.TransactionMode.IMMEDIATE) {
+                                        throw SyncWorkLimitException("legacy-diagnostic", 1, 1)
+                                    }
+                                }
                             }.await()
                         }
                     }

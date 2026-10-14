@@ -44,6 +44,10 @@ internal class SharedLocalApplyFixtureTest : CrossTargetSyncTestSupport() {
     @Test
     fun localApplyContractExecutesDefaultsResultsAndSurvivorWitness() {
         val fixture = Json.parseToJsonElement(oversqliteContractFixture("local-apply/a1.json").readText()).jsonObject
+        val compatibility = fixture.getValue("executionContract").jsonObject.getValue("databaseCompatibility").jsonObject
+        assertEquals(mapOf("olderDatabaseCompatibilityRequired" to false, "recreationPermitted" to true,
+            "currentDatabaseReopenRequired" to true, "currentDatabaseRestartReplayRequired" to true,
+            "legacyUpgradeQualificationRequired" to false), compatibility.mapValues { it.value.jsonPrimitive.boolean })
         val defaults = fixture.getValue("defaults").jsonObject
         val config = OversqliteConfig(1, listOf(SyncTable("nodes", "id")), "fixture", "main")
         assertEquals(defaults.getValue("entries").jsonPrimitive.long, config.maxSyncWorkspaceEntries)
@@ -55,6 +59,7 @@ internal class SharedLocalApplyFixtureTest : CrossTargetSyncTestSupport() {
             val work = row.getValue("reason").jsonPrimitive.content == "sync_work_limit"
             assertEquals(work, row.getValue("resumable").jsonPrimitive.boolean)
             assertFalse(row.getValue("advancesCheckpoint").jsonPrimitive.boolean)
+            assertEquals(if (work) "internal-slice" else "public-operation", row.getValue("executionScope").jsonPrimitive.content)
             if (work) assertEquals("work", row.getValue("dimension").jsonPrimitive.content)
             else {
                 val error = SyncWorkspaceLimitException("unit", row.getValue("dimension").jsonPrimitive.content, 1, 1, 1, false)

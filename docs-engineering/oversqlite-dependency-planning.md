@@ -324,13 +324,13 @@ working state. Primary business, dirty/outbox and ordinary per-record baseline s
 every temporary copy is charged. Existing snapshot and wire limits also apply; the strictest wins.
 
 `SyncWorkLimitError` / `SyncWorkLimitException` carries `unit`, `limit`, `used`, reason
-`sync_work_limit` and the progress defined above. It denotes resumable local work, not transport retry.
+`sync_work_limit` and the progress defined above. This is internal bounded-slice/compatibility evidence. Ordinary public operations resume local work inside the library; customers do not retry a scheduling yield.
 `SyncWorkspaceLimitError` / `SyncWorkspaceLimitException` additionally carries `dimension`,
 `reserved`, `resumable` and reason `sync_workspace_limit`. Current dimensions are `entries` and `bytes`.
 The bounded unit hash identifies the guarded operation. Neither incomplete result consumes a source
 sequence or checkpoint. Preparation yields only at a durable boundary. An otherwise admissible first
 ready atomic operation runs even when it crosses the work target; crossing alone does not roll it back.
-After completion, later units may yield with retained progress. Never split a committed bundle to fit
+After completion, later units may cross internal slice boundaries with retained progress. Never split a committed bundle to fit
 the work target. Stale cleanup does not refund work already spent during the invocation.
 
 ## Synchronization ownership
@@ -496,7 +496,7 @@ existing expanded-row limits still apply. Do not allocate a complete key/payload
 its byte lengths. A complete atomic wire unit can exceed a page; page its durable input/decisions
 without splitting its commit. No new public page-size option is introduced.
 
-`sync_work_limit` retains useful safe staging/cleanup progress. `sync_workspace_limit` with dimension
+The internal `sync_work_limit` signal retains useful safe staging/cleanup progress and is consumed by the same public operation. `sync_workspace_limit` with dimension
 `entries` or `bytes` stops before the refused allocation, freeze or destructive apply. `resumable=true`
 means retained charged progress can advance without changing intent or limits (for example bounded
 obsolete-state cleanup can release capacity); it does not promise automatic retry. Intrinsic entry or
@@ -504,7 +504,7 @@ byte capacity remains non-resumable until explicit data/limit action. The histor
 `atomic_apply_work` preflight is removed. `used` is approximate work charged this invocation and may
 exceed the target after a ready atomic unit. A prepared ready unit runs on a fresh invocation despite
 its size; if earlier durable preparation exhausted the target, retain the ready plan and dispatch it
-on the next invocation. Preparation must not repeat merely to exhaust the same target again.
+on the next internal slice of the same public operation. Preparation must not repeat merely to exhaust the same target again.
 
 At open, validate format before any mutation, then validate aggregate retained charges with checked
 arithmetic under the existing admission rules. Lower limits below retained use reject before changes;
@@ -595,3 +595,27 @@ Preserve exact Int64 counters above 2^53, the closed detail/dimension values, sa
 resumability. Invalid local bridge data fails closed as protocol error. Caller-owned task cancellation
 must remain Swift `CancellationError`, keep the operation lease until rollback/cleanup is finished,
 and never become a retryable pending result. Test real Swift calls as well as JSON mapping.
+
+
+## Library-owned work slices — 2026-10-13
+
+This owner-authorized amendment supersedes public work-yield behavior in earlier sections. Ordinary push, pull, sync, rebuild, attachment/recovery, conflict resolution and local lifecycle operations complete their existing semantic unit inside the library. Push handles one logical bundle; sync drains successive bundles before pulling. The existing work-limit field and its 1,000,000 default now select an internal computation slice, not a customer-visible completion cap. No new SDK operation timeout is introduced: caller cancellation/deadlines and existing convergence guards remain authoritative. Entry/byte, wire, snapshot and dependency-group hard limits remain unchanged.
+
+Continuation resumes the current local phase after a useful safe checkpoint and successful cleanup, under the same outer operation owner. It preserves exact frozen request, snapshot/replacement, pull ceiling, retry budgets, attempt/round allowances and accumulated uniquely confirmed effects. Slice accounting and the first-ready-atomic allowance may reset only at a safe boundary. Every positive target must allow a bounded useful step or admissible ready atomic unit; setup must not starve progress. A slice that yields without actual progress fails explicitly rather than spinning. Mixed work/cleanup failures, cancellation and actionable errors retain precedence. Scheduling yields do not escape ordinary public APIs or enter transport backoff. Historical work-error types remain available; internal bounded-step tests may observe them. No local format or HTTP change is authorized by this amendment.
+
+The scoped qualification profile is the paired work-slice completion program, not a routine-maintenance exemption or full protocol/release acceptance. Fresh evidence requires paired corpus/boundary consumers; Go owning-client and nested-module tests with Go 1.25.12 and focused race instrumentation; KMP common/JVM comprehensive coverage; affected Android/JVM/iOS/macOS/JS Node/browser/Wasm and Swift cancellation/mapping; isolated live multi-batch, replay/restart, snapshot and cancellation; default-budget 100-user/50-concurrency complex scenario with verification; and current 1,000/10,000-row resource evidence. Add a synthetic 14-table/3,399-row witness for the historical DayTempo shape. Do not schedule retired 50,000-row replay campaigns. Existing per-command deadlines, failure diagnosis, candidate freezes and evidence invalidation rules remain.
+
+Implementation ledger: Go `.artifacts/work-slice-completion-20261013/ledger.txt`, with immutable paired baselines/preimages and a current execution ledger. Specification and corpus changes alone do not assert runtime qualification. Delivery remains separately authorized.
+
+
+### Seed-stage unpublished-delete pruning
+
+During initial root seeding, a delete already validated as unpublished/absent/deleted may be pruned without discarding unchanged roots seeded earlier in that same guarded traversal. Charge its validation and the additional guard refresh. Under the same writer transaction, advance the seed cursor and rebind the existing guard after only this SDK-owned deletion; dependency/edge traversal has not begun and the deleted key was never inserted as a root. Per-node intent revisions remain their capture revisions. Any external relevant revision change still takes the normal bounded invalidation/cleanup path. No new persistent field, phase discriminator or wire behavior is introduced. Required witnesses compare seed visits for 125 live roots plus 10 unpublished deletes, retain malformed-base refusal and second-writer invalidation, and execute the mixed-CRUD complex workload.
+
+Bounded planning transaction refinement (2026-10-13): public push preparation may run at most 32 existing planning steps in one writer transaction. Work admission, guards, capacity checks, cursor persistence and cancellation checks remain per step. A normal work refusal after successful steps commits their already saved private frontier only after cleanup succeeds; other failures roll back the entire group. Tiny targets still admit one useful step. Transaction-owned schema metadata may be reused within that writer snapshot and is released before continuation. Raw bounded-kernel tests keep one-step transaction entry points. No configured target, accounting weight, hard quota, public operation unit or stored representation changes.
+
+Writer-scoped planning admission snapshots (2026-10-13): while a bounded push-planning writer transaction owns the database, operation/reservation/snapshot and apply-owner scalar charges are immutable. They may be read once and reused for that transaction. Every planning allocation still adds its current push-plan charge and requested temporary charge and applies the unchanged hard limits; no retained push workspace is discounted. The finite scalar snapshot is charged as 2 entries and 256 bytes, released before the writer is released, and never reused across a transaction or work slice. No payloads or live SQL handles are retained. Guard checks and per-step work charges remain unchanged. Raw kernels and non-planning operations retain uncached admission. Required structural witnesses compare metadata SQL reads, steps, charged work, hard refusals and cleanup, separately from timing.
+
+Writer-scoped planning guard snapshots (2026-10-14): a guard hash, source-bundle ordinal, initialization identity and their previously admitted context-size bounds may be reused only inside the same bounded planning writer transaction. Every step still checks its plan guard and current workspace against those bounds and receives the unchanged full work charge. The cache is charged as 4 entries/8192 bytes in addition to the scalar-owner snapshot; initialization identities over 1024 UTF8 bytes or insufficient optional cache capacity use fresh reads instead. SDK-owned no-op deletion invalidates the cached guard before rebinding. Other guard inputs cannot change under this writer; external changes are read at the next writer and final freeze gate. Release before continuation; no persistence or wire change. Required witnesses retain identical planning steps/work and demonstrate fewer guard reconstructions plus external-write, no-op, hard-limit and cancellation safety.
+
+Decision-copy reservation continuation correction (2026-10-14): capture the operation-owned buffer reservation base once before replay continuation. Each slice admits its complete simultaneous decision-copy workspace relative to that same base, never relative to a previous slice's temporary charge. The decision allowance may conservatively retain its maximum for the one outer operation; it is reused, not accumulated, and the existing once-only outer release remains mandatory. Statement pools remain slice-owned and close/release before progress commit. Retained apply inputs stay fully charged. A paired125-row/8-table/max-push40/default-and-target1 fixture must complete without growing reservation entries as slice count increases. No weights, quotas, public signatures or stored layout change.

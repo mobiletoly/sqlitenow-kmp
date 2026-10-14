@@ -15,7 +15,7 @@ internal class PushPlanCleanupProgressTest : SurvivorTestSupport() {
                 val operations = OversqliteClientOperationController(config, OversqliteClientResourceOwner(db, http), SnapshotDiagnosticsState()) {}
                 val local = OversqliteLocalStore(db, json) { error("cleanup never loads payloads") }
                 val stage = OversqliteStageStore(db, local, OversqliteSyncStateStore(db) { local }, json, config, operations)
-                val failure = runCatching { stage.clearPushPlanForLifecycle() }.exceptionOrNull()
+                val failure = runCatching { stage.clearPushPlanForLifecycleSlice(false, null, OversqliteStageStore.PushCleanupIdentity(unit)) }.exceptionOrNull()
                 val remaining = scalarLong(db, "SELECT count(*) FROM _sync_push_nodes")
                 assertEquals(maxOf(0, previous - 1), remaining)
                 if (previous > 0) assertIs<SyncWorkLimitException>(failure) else assertEquals(null, failure)

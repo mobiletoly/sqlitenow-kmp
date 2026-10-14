@@ -22,6 +22,18 @@ import kotlinx.serialization.json.add
 /** Independently retained representation, aggregated in the existing operation owner. */
 internal data class WorkspaceCharge(val entries: Long = 0, val bytes: Long = 0)
 
+/** Retained only by read-only replay decision construction in one live writer. */
+internal data class WorkspaceReservationBinding(
+    val db: SafeSQLiteConnection,
+    val state: RuntimeState,
+    val writer: StatementCache,
+    val token: String,
+    val unit: String,
+    val context: String,
+)
+
+internal val decisionReservationBindingCharge = WorkspaceCharge(8, 1024)
+
 internal class OversqliteWorkspace(
     private val db: SafeSQLiteConnection,
     private val config: OversqliteConfig,
@@ -55,25 +67,52 @@ internal class OversqliteWorkspace(
 
     suspend fun resize(state: RuntimeState, token: String, requested: WorkspaceCharge) = db.transaction(TransactionMode.IMMEDIATE) {
         resizeInWriter(state,token,requested)
+        Unit
     }
 
-    suspend fun resizeInWriter(state: RuntimeState, token: String, requested: WorkspaceCharge) {
+    suspend fun resizeInWriter(
+        state: RuntimeState, token: String, requested: WorkspaceCharge,
+        binding: WorkspaceReservationBinding? = null, writer: StatementCache? = null,
+    ): WorkspaceReservationBinding? {
         currentCoroutineContext().ensureActive()
         check(ReplayFixedUnits.reservation)
         val records=loadReservations().toMutableList()
         val index=records.indexOfFirst {it.token==token}
         check(index>=0) { "live reservation is missing" }
         val old=records[index]
+        writer?.requireOpenForReservationBinding()
+        if (binding != null) {
+            require(binding.db === db && binding.state === state && binding.writer === writer &&
+                binding.token == token && binding.unit == old.unit && isCanonicalSha256(binding.context)) {
+                "reservation binding belongs to a different writer or owner"
+            }
+        }
         val proposed=add(old.unit,requested,WorkspaceCharge(1,4096))
         val next=WorkspaceCharge(maxOf(old.entries,proposed.entries),maxOf(old.bytes,proposed.bytes))
         check(old.unit,WorkspaceCharge(maxOf(0,next.entries-old.entries),maxOf(0,next.bytes-old.bytes)))
-        records[index]=old.copy(context=contextGuard(state,old.unit),entries=next.entries,bytes=next.bytes)
+        val context = binding?.context ?: contextGuard(state,old.unit)
+        records[index]=old.copy(context=context,entries=next.entries,bytes=next.bytes)
         storeReservations(records)
         check(old.unit)
+        return binding ?: writer?.let { WorkspaceReservationBinding(db,state,it,token,old.unit,context) }
     }
 
     suspend fun reserved(token: String): WorkspaceCharge = checkNotNull(loadReservations().find {it.token==token}).let {
         WorkspaceCharge(it.entries-1,it.bytes-4096)
+    }
+
+    // The decision map remains live; only its separate binding holder has ended.
+    suspend fun finishDecisionBindingInWriter(token: String, retained: WorkspaceCharge, writer: StatementCache) {
+        writer.requireOpenForReservationBinding()
+        val records = loadReservations().toMutableList()
+        val index = records.indexOfFirst { it.token == token }
+        check(index >= 0) { "live decision reservation is missing" }
+        val old = records[index]
+        val charge = add(old.unit, retained, WorkspaceCharge(1, 4096))
+        require(charge.entries <= old.entries && charge.bytes <= old.bytes) { "binding release cannot grow a reservation" }
+        records[index] = old.copy(entries = charge.entries, bytes = charge.bytes)
+        storeReservations(records)
+        check(old.unit)
     }
 
     private suspend fun loadReservations(): List<Reservation> {
@@ -204,6 +243,21 @@ internal class OversqliteWorkspace(
 
     // One current scalar snapshot, at most one row per owner; never scan payload tables.
     suspend fun usage(unit: String, apply: WorkspaceCharge? = null, push: WorkspaceCharge? = null, statementCache: StatementCache? = null): WorkspaceCharge {
+        val snapshot = currentCoroutineContext()[PushPlanningWorkspaceSnapshot]?.takeIf { it.db === db }
+        if (snapshot == null) return usageUncached(unit, apply, push, statementCache)
+        val cacheCharge = if (snapshot.guard == null) pushPlanningWorkspaceCharge
+            else add(unit, pushPlanningWorkspaceCharge, pushPlanningGuardCharge)
+        if (apply == null && !abandonedReservations) {
+            val base = snapshot.base ?: usageUncached(unit, push = WorkspaceCharge(), statementCache = statementCache).also { snapshot.base = it }
+            val currentPush = push ?: one("SELECT entries,bytes,length(CAST(unit AS BLOB))+length(CAST(guard AS BLOB))+length(CAST(state AS BLOB)) FROM _sync_push_plan WHERE singleton_key=1") {
+                add(unit, WorkspaceCharge(it.getLong(0), it.getLong(1)), WorkspaceCharge(1, checkedAdd(unit, "bytes", 2048, scale(unit, it.getLong(2), 6))))
+            } ?: WorkspaceCharge()
+            return add(unit, add(unit, base, currentPush), cacheCharge)
+        }
+        return add(unit, usageUncached(unit, apply, push, statementCache), cacheCharge)
+    }
+
+    private suspend fun usageUncached(unit: String, apply: WorkspaceCharge? = null, push: WorkspaceCharge? = null, statementCache: StatementCache? = null): WorkspaceCharge {
         val applyColumns = if (apply != null) "NULL,0,0,0,0,0" else """a.singleton_key,a.entries,a.bytes,a.edge_entries,a.edge_bytes,
             length(CAST(a.unit AS BLOB))+length(CAST(a.guard AS BLOB))+length(CAST(a.source_snapshot_id AS BLOB))+
             length(CAST(COALESCE(a.row_cursor,'') AS BLOB))+
@@ -247,9 +301,16 @@ internal class OversqliteWorkspace(
 
     suspend fun check(unit: String, extra: WorkspaceCharge = WorkspaceCharge(), apply: WorkspaceCharge? = null,
         push: WorkspaceCharge? = null, statementCache: StatementCache? = null) {
-        val used = usage(unit, apply, push, statementCache)
-        checkDimension(unit, "entries", config.maxSyncWorkspaceEntries, used.entries, extra.entries)
-        checkDimension(unit, "bytes", config.maxSyncWorkspaceBytes, used.bytes, extra.bytes)
+        try {
+            val used = usage(unit, apply, push, statementCache)
+            checkDimension(unit, "entries", config.maxSyncWorkspaceEntries, used.entries, extra.entries)
+            checkDimension(unit, "bytes", config.maxSyncWorkspaceBytes, used.bytes, extra.bytes)
+        } catch (capacity: SyncWorkspaceLimitException) {
+            val snapshot = currentCoroutineContext()[PushPlanningWorkspaceSnapshot]?.takeIf { it.db === db }
+            if (snapshot?.guard == null || capacity.suppressedExceptions.isNotEmpty()) throw capacity
+            snapshot.guard = null
+            check(unit, extra, apply, push, statementCache)
+        }
     }
 
     private fun checkDimension(unit: String, dimension: String, limit: Long, used: Long, requested: Long) {

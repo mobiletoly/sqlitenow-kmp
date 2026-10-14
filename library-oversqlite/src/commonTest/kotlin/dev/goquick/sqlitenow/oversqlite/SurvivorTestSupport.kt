@@ -36,6 +36,19 @@ internal abstract class SurvivorTestSupport : CrossTargetSyncTestSupport() {
         } finally { http.close(); db.close() }
     }
 
+    protected suspend fun interruptApplyAfterCommittedSlice(client: DefaultOversqliteClient, operation: suspend () -> Unit) {
+        var commits = 0
+        client.setSnapshotApplyFaultInjectorForTest(SnapshotApplyFaultInjector(beforeCommit = {
+            if (++commits == 2) throw kotlinx.coroutines.CancellationException("interrupt after a durable preparation slice")
+        }))
+        try {
+            kotlin.test.assertFailsWith<kotlinx.coroutines.CancellationException> { operation() }
+        } finally {
+            client.setSnapshotApplyFaultInjectorForTest(null)
+        }
+        kotlin.test.assertEquals(2, commits)
+    }
+
     protected suspend fun requireSurvivors(db: SafeSQLiteConnection) {
         assertEquals("Q", scalarText(db, "SELECT parent_id FROM nodes WHERE id='C'"))
         assertEquals("child", scalarText(db, "SELECT name FROM nodes WHERE id='C'"))

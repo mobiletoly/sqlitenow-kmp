@@ -325,7 +325,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             }
             client.closeFromCoordinatedOwner()
             client=newClient(db,http,workUnits=2*stepWork);client.openAndConnect("user-1").getOrThrow()
-            val error=client.pushPending().exceptionOrNull()
+            val error=preparePushSlice(db,http,2*stepWork).exceptionOrNull()
             assertTrue(error is SyncWorkLimitException);assertEquals(SyncProgress(dirtyRows=8),error.progress)
             assertEquals(before,baselineQualificationVector(db));assertEquals(2L,scalarLong(db,"SELECT COUNT(*) FROM _sync_push_nodes"))
             assertEquals(0,server.pushRequestCount)
@@ -333,7 +333,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
             client.closeFromCoordinatedOwner();db.close();db=newFileBackedDb(path)
             client=newClient(db,http,workUnits=2*stepWork);client.openAndConnect("user-1").getOrThrow()
             assertEquals(before,baselineQualificationVector(db))
-            val resumed=client.pushPending().exceptionOrNull()
+            val resumed=preparePushSlice(db,http,2*stepWork).exceptionOrNull()
             assertTrue(resumed is SyncWorkLimitException);assertEquals(error.unit,resumed.unit)
             assertEquals(unit,scalarText(db,"SELECT unit FROM _sync_push_plan"))
             assertEquals(4L,scalarLong(db,"SELECT COUNT(*) FROM _sync_push_nodes"))
@@ -463,7 +463,7 @@ internal class CrossTargetSyncIntegrationTest : CrossTargetSyncTestSupport() {
                 client.closeFromCoordinatedOwner()
                 client=newClient(db,http,maxPushRows=1,syncTables=tables,workspaceEntries=1,workspaceBytes=1,workUnits=8)
                 assertTrue(client.open().isFailure)
-                val released=client.releasePushDependencyDiagnostic(error.diagnosticId)
+                val released=releasePushSlice(db,http,error.diagnosticId)
                 val remaining=scalarLong(db,"SELECT (SELECT COUNT(*) FROM _sync_push_nodes)+(SELECT COUNT(*) FROM _sync_push_edges)")
                 if(released.isFailure) {
                     val work=released.exceptionOrNull();assertTrue(work is SyncWorkLimitException);assertEquals(8L,work.used)

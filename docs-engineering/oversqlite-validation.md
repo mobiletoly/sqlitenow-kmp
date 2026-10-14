@@ -6,6 +6,22 @@ product candidate, replace independent review, or authorize delivery. The ignore
 paired protocol and convergent-sync specifications carry matching amendments;
 historical campaign records retain their original requirements and results.
 
+## Work-slice completion on fresh databases
+
+The 2026-10-14 owner-authorized completion profile permits database recreation on both server and clients. Older-format migration and table-retirement compatibility journeys are outside this profile; preserve their failed attempts and historical requirements without reporting the broader suite as passing. No migration or dual-format compatibility implementation is required. New-format reopen/restart/replay, pending intent, cancellation, hard bounds and cleanup remain mandatory.
+
+The work-slice amendment in the paired specifications names the required client, corpus, platform, Swift, live, load and resource lanes. Refresh invalidated leaves and independently mandatory aggregates. Full load follows measured structural correction, three smaller complete-scenario timings and a verified 50-user rehearsal within 10 minutes; final 100-user/50-concurrency completion retains the existing 20-minute window. Delivery and downstream database recreation require separate authorization.
+
+### Reservation remediation and retained-database audit (2026-10-15)
+
+The owner-authorized remediation profile fixes stable reservation bases for Go settlement and Kotlin automatic/explicit conflict resolution. Temporary buffers from returned HTTP/previous slice scopes may be retired at the safe settlement boundary; frozen inputs, current host copies, statements and retained database workspace remain charged. Keep public APIs, numeric defaults, work weights, hard limits and wire unchanged.
+
+The remediation ledger is `../go-oversync/.artifacts/review-remediation-20261015/ledger.md`; it overlays the preserved original baselines and failed attempts. Required fresh evidence includes Go eight-table125-row/upload40 completion at targets1/8/17/default plus default1000, Kotlin common64-row4096-entry conflict cases at all targets and JVM2000-row self-FK automatic/explicit cases at target1/default limits, affected cancellation/live/Swift paths, owning/race checks, and the comprehensive command under its existing240-second wrapper. Execute the ten previously misclassified snapshot leaves: three each macOS/iOS/browser and one Node. Native framework pass totals must be reported separately from opt-in bodies that returned without executing; a successful framework testcase is not body-execution evidence.
+
+Retain fresh synthetic writer/follower SQLite files for Go/Kotlin at default/1 across ten125-key update/delete/sync/reinsert cycles, one rebuild and cancellation/reopen/recovery. Census every `_sync_*` table, inspect closed copies read-only (integrity/FKs, row and counter reconciliation, relationships/checkpoints), and separate logical state from pages/free pages/database/WAL sizes. Preserve SQL reports and isolated PostgreSQL replay/retention relationships before cleanup. No VACUUM or manual internal-row cleanup. Unexplained accumulation blocks completion.
+
+Reuse unaffected snapshot/resource and measured performance evidence with dependency justification. Do not repeat the three-timing campaign or50-user rehearsal. Run the final verified100-user/50-concurrency acceptance once under1200 seconds after the stable Go fix, then obtain independent remediation/evidence review. Failed attempts remain retained; diagnose before retrying. Delivery remains separately authorized.
+
 ## Current replay workload roster
 
 The owner retired the 50,000-row replay workloads on 2026-10-04. Active mock,
@@ -218,3 +234,37 @@ tests, then one Go direct-sync and one Swift cancellation smoke sequentially. It
 does not qualify the pending convergent-sync candidate. Independent review and owner
 acceptance follow separately. Full campaign redesign, automatic lane selection,
 cache redesign and multi-hour historical campaign reconstruction are deferred.
+
+
+### Device-load process ownership amendment — 2026-10-14
+
+The owner authorizes one operating-system process per simulated user for device-load qualification. Each child executes the complete existing scenario, including mixed CRUD, laptop recovery, both crash hooks, replay/restart and final verification, with unchanged SDK defaults and transport policies. The parent runs at most `--concurrency` children, requires a successful child result and independent per-user final verification, and owns cancellation, termination and reaping. Child verification uses a bounded single-connection PostgreSQL pool; credentials travel through private process input rather than command arguments or reports.
+
+Parallel mobile_flow uses process workers by default; `--parallel-mode=goroutine` retains the original shared-process SDK stress mode. Previously failed shared-process attempts remain failed stress evidence and are not relabeled as device-load passes. The library completion/cancellation/resource contract applies in both modes. Device-load qualification still requires three smaller verified runs, then 50/50 within 600 seconds and 100/50 within 1,200 seconds, against the same freshly isolated authority with unchanged budgets, verification and workload. Parent cancellation stops queued work and joins every owned child; incomplete, malformed, missing or failing child results fail the run. No global SQLite configuration or SDK throttle is introduced.
+
+
+### History-projection retry timing correction (2026-10-14)
+
+A validated HTTP 503 `history_projection_capacity_exceeded` response with a positive delta-seconds `Retry-After` must postpone the next transport attempt by at least that delay. Both clients retain their existing generic attempt limit, backoff configuration and numeric defaults; this correction neither introduces another retry budget nor restarts a public operation. Invalid, absent, overflowing or nonpositive headers retain existing backoff. Caller cancellation interrupts the wait, and terminal/malformed responses retain error precedence. Local work slices never create transport delay. Server history-projection permits, workspace limits and wire shapes remain unchanged. Qualify header propagation, unchanged request identities/attempt count, cancellation, terminal errors and the existing public-call platform/live gates.
+
+
+### Writer-owned replay reservation binding reuse (2026-10-14)
+
+Kotlin may reuse the reservation context binding only while building replay decisions inside one apply writer. During that phase, reads and reservation-ledger updates do not modify any input of `contextGuard`; actual authoritative/business mutations begin after the decision map returns. The binding must match the database, runtime state, token, unit and writer-owned statement-cache identity. Recompute it in every resumed writer, and retain all ledger validation, per-row size measurement, row work charging and admission checks. A bounded binding holder is charged as four entries and512bytes against the existing stable outer reservation base; repeated slices must not add preceding slices' temporary charge. If this optional holder cannot fit, discard it and use the existing uncached path without concealing cleanup, cancellation or integrity failures. The holder does not escape the decision-building phase.
+
+No work weight, public configuration default, wire field, database layout, atomic-dispatch allowance or slice quantum changes. Qualification requires a structural before/after binding-reconstruction witness, unchanged per-row accounting and committed results, ordinary timings separate from reservation observation, and fresh affected cleanup/workspace/replay/native/live lanes. Go implementation is unchanged by this Kotlin optimization; paired authority/corpus consumers must refresh, while intact Go runtime/load evidence may be reused by dependency.
+
+
+### Guarded replay decisions across local slices (2026-10-14)
+
+A Kotlin push may retain its already constructed replay-decision map under the same outer reservation while private apply preparation publishes prefixes. Before reuse in each new writer, reconstruct the complete existing reservation context guard, validate the ledger and exact operation owner, and compare the guard. Registered external business writes advance the guarded dirty revision; baseline/attachment/source/outbox/configuration inputs remain in the guard. A mismatch discards decisions before reconstructing them. No decision reuse is permitted after authoritative business mutation begins. Cancellation and failures clear the holder before outer release.
+
+All decision copies remain fully charged against the stable original base between slices. Charge a bounded eight-entry/1,024-byte combined binding/continuation holder; if optional retention cannot fit, use the uncached construction path. Per-record16-work-unit,32-copy-entry and64-byte-scaling charges remain unchanged when a decision is actually reconstructed. Reuse charges guard bookkeeping and retains the already admitted copies; it does not charge a traversal that no longer occurs. Planning slice quanta and all hard limits/defaults remain unchanged. Qualify stale/external-write invalidation, frozen identities, cleanup precedence, constant reservation peaks, once-only outer release and separate ordinary timing. This does not change Go runtime or the wire.
+
+### Empty dependency graph traversal
+
+Kotlin apply preparation may retire one pending root in one existing bounded walk step when the completed dependency index records zero edges and a current indexed absence query confirms the edge table is empty. A contradictory retained counter is an integrity failure. Skip per-table child traversal only under this proof; nonempty graphs retain the original walk. Preserve fresh writer guards, the16-unit step charge for each actual step, pending-row/cursor publication, hard workspace and dependency limits, and the unchanged slice quantum/defaults. This removes redundant empty traversal and writer commits; it does not enlarge a slice. Qualify empty/nonempty graphs, stale guards, cancellation/reopen, charged workspace, and browser tiny-target completion under the existing deadlines. Go runtime and wire remain unchanged.
+
+### Independent push components
+
+When completed push discovery records zero edges and a current indexed absence query confirms that result, Kotlin public planning may assign one pristine unvisited node directly to its singleton component. Preserve DFS/index/stack counters, component identity, blocked reason, ready ordering, encoded charge and guarded writer publication. A nonpristine or partially visited node uses the original DFS path. After packing a singleton in this proven empty graph, advance directly to component selection without traversing nonexistent dependency edges. Each transition remains bounded to one node and indexed scalar queries; original per-step work weights,32-step writer quantum, low-level kernel behavior and hard limits/defaults remain unchanged. Qualify exact wire order, independent/blocked/cyclic graphs, external writes, cancellation/reopen, workspace refusal and tiny browser/Wasm completion; no wire/layout change is introduced.

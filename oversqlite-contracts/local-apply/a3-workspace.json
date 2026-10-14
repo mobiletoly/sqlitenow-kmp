@@ -735,5 +735,71 @@
     "paged-settlement-backlog",
     "trigger-live-deviation-preservation"
   ],
-  "runtimeExecuted": false
+  "runtimeExecuted": false,
+  "executionContract": {
+    "workLimitScope": "internal-work-slice",
+    "publicSchedulingYield": false,
+    "sameOuterOwner": true,
+    "preserveSemanticUnit": true,
+    "callerCancellationOrDeadline": true,
+    "sdkDefaultOperationTimeout": false,
+    "hardWorkspaceLimitsUnchanged": true,
+    "firstUsefulStepRequired": true,
+    "cleanupBeforeContinuation": true,
+    "noProgressIsFailure": true,
+    "planningScalarSnapshot": {
+      "entries": 2,
+      "bytes": 256,
+      "writerScoped": true,
+      "immutableNonPushOwnersOnly": true,
+      "releaseBeforeContinuation": true
+    },
+    "planningGuardSnapshot": {
+      "entries": 4,
+      "bytes": 8192,
+      "maxInitializationUtf8Bytes": 1024,
+      "writerScoped": true,
+      "invalidateAfterOwnedDelete": true,
+      "optionalCapacityFallback": true
+    },
+    "decisionCopyReservation": {
+      "baseScope": "outer-operation",
+      "sliceCharge": "complete-simultaneous-copies",
+      "growthAcrossSlices": "maximum-not-sum",
+      "releaseScope": "outer-operation"
+    },
+    "databaseCompatibility": {
+      "olderDatabaseCompatibilityRequired": false,
+      "recreationPermitted": true,
+      "currentDatabaseReopenRequired": true,
+      "currentDatabaseRestartReplayRequired": true,
+      "legacyUpgradeQualificationRequired": false
+    },
+    "boundedCleanupWriter": {
+      "maximumRecords": 32,
+      "workPerRecord": 8,
+      "rawKernelMaximumRecords": 1,
+      "fixedOuterIdentity": true,
+      "cleanupBeforeCommit": true
+    },
+    "planningDescriptorReuse": {
+      "writerScoped": true,
+      "sameAdmittedMutableDescriptor": true,
+      "validateOutboxOnce": true,
+      "invalidateAfterOwnerDeletion": true,
+      "retainAcrossWriters": false,
+      "currentPushWorkspaceCheckedPerStep": true,
+      "holderEntries": 2,
+      "holderBytes": 256
+    },
+    "goReadyAtomicStatements": {
+      "maxArguments": 16,
+      "maxEncodedArgumentBytes": 65536,
+      "sameReservedPool": true,
+      "debitPrepaidCredits": true,
+      "retainOriginalWriteCharges": true,
+      "unsupportedOrOversizedOneShot": true,
+      "cleanupBeforePublication": true
+    }
+  }
 }

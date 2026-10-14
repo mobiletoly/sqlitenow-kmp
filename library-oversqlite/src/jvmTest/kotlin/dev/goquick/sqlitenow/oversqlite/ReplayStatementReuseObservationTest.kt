@@ -32,8 +32,17 @@ internal class ReplayStatementReuseObservationTest : SurvivorTestSupport() {
                         try { client.pushPending().getOrThrow() }
                         finally { client.setSnapshotApplyFaultInjectorForTest(null); raw.restore() }
                         handles.assertClosed()
-                        // Remove only the independently modeled 22 + 4*N private plan writes.
-                        assertEquals(383L + 35L * size, raw.counts.values.sumOf { it.steps }, "SQL API checkpoint model")
+                        // The immutable baseline has 389 + 35*N steps. One frozen root's
+                        // node and owner cleanup now share a writer: remove one BEGIN,
+                        // COMMIT and each of the two descriptor reads, independent of N.
+                        // Keep all row, checkpoint, work and cache-bound assertions.
+                        val groupedCleanupReduction = 4L * (2L - ((2L + 31L) / 32L))
+                        // Two decisions share one binding: remove two guard SQL calls.
+                        // The final binding release adds five single-step ledger calls
+                        // and one two-step record validation, independently of backlog.
+                        val bindingSqlDelta = (5L + 2L) - 2L
+                        assertEquals(389L + 35L * size - groupedCleanupReduction + bindingSqlDelta,
+                            raw.counts.values.sumOf { it.steps }, "SQL API checkpoint model with bounded cleanup and binding release")
                         assertEquals(6L, raw.counts.entries.single { it.key.startsWith("INSERT INTO _sync_apply_plan(") }.value.steps)
                         val stats = client.workspaceDiagnostics()
                         if (size <= 1000) ReplaySqlStructuralTest().assertReplayOracle(size, buildJsonObject {

@@ -36,6 +36,7 @@ internal class SnapshotApplyFaultInjector(
 internal class OversqliteApplyExecutor(
     private val db: SafeSQLiteConnection,
     private val applyStateStore: OversqliteApplyStateStore,
+    private val operations: OversqliteClientOperationController? = null,
 ) {
     internal var faultInjector: SnapshotApplyFaultInjector? = null
 
@@ -50,6 +51,17 @@ internal class OversqliteApplyExecutor(
     suspend fun <T> inApplyModeTransaction(
         state: RuntimeState,
         beforeApplyMode: suspend (StatementCache) -> Unit = {},
+        block: suspend (StatementCache) -> T,
+    ): T {
+        val owner = operations ?: return inApplyModeTransactionSlice(state, beforeApplyMode, block)
+        return owner.completeWorkPhase("local apply") {
+            inApplyModeTransactionSlice(state, beforeApplyMode, block)
+        }
+    }
+
+    private suspend fun <T> inApplyModeTransactionSlice(
+        state: RuntimeState,
+        beforeApplyMode: suspend (StatementCache) -> Unit,
         block: suspend (StatementCache) -> T,
     ): T {
         db.execSQL("PRAGMA foreign_keys = ON")
@@ -123,6 +135,7 @@ internal class OversqliteApplyExecutor(
             injector?.beforeCommit?.invoke()
             result
         }
+        commitWorkStep()
         incomplete?.let { throw it }
         @Suppress("UNCHECKED_CAST")
         return transactionResult as T

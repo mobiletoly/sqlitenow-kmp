@@ -10,19 +10,22 @@
       "reason": "sync_work_limit",
       "dimension": "work",
       "resumable": true,
-      "advancesCheckpoint": false
+      "advancesCheckpoint": false,
+      "executionScope": "internal-slice"
     },
     {
       "reason": "sync_workspace_limit",
       "dimension": "entries",
       "resumable": false,
-      "advancesCheckpoint": false
+      "advancesCheckpoint": false,
+      "executionScope": "public-operation"
     },
     {
       "reason": "sync_workspace_limit",
       "dimension": "bytes",
       "resumable": false,
-      "advancesCheckpoint": false
+      "advancesCheckpoint": false,
+      "executionScope": "public-operation"
     }
   ],
   "revisionCases": [
@@ -108,5 +111,24 @@
       },
       "encodedBytes": 56
     }
-  ]
+  ],
+  "executionContract": {
+    "workLimitScope": "internal-work-slice",
+    "publicSchedulingYield": false,
+    "sameOuterOwner": true,
+    "preserveSemanticUnit": true,
+    "callerCancellationOrDeadline": true,
+    "sdkDefaultOperationTimeout": false,
+    "hardWorkspaceLimitsUnchanged": true,
+    "firstUsefulStepRequired": true,
+    "cleanupBeforeContinuation": true,
+    "noProgressIsFailure": true,
+    "databaseCompatibility": {
+      "olderDatabaseCompatibilityRequired": false,
+      "recreationPermitted": true,
+      "currentDatabaseReopenRequired": true,
+      "currentDatabaseRestartReplayRequired": true,
+      "legacyUpgradeQualificationRequired": false
+    }
+  }
 }

@@ -77,6 +77,10 @@ internal class StatementCache(
     private val statements = linkedMapOf<String, SQLiteStatement>()
     private var closed = false
 
+    internal suspend fun requireOpenForReservationBinding() = db.withExclusiveAccess {
+        check(!closed) { "reservation binding writer is already closed" }
+    }
+
     suspend fun get(sql: String): SQLiteStatement {
         return db.withExclusiveAccess {
             check(!closed) { "statement cache is already closed" }

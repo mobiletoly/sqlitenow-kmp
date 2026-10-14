@@ -23,6 +23,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -43,6 +45,8 @@ internal class OversqliteClientOperationController(
     private var readyAtomicUnitDispatched = false
     var a3Stats=A3AccountingStats()
         private set
+    var workSliceDiagnostics = WorkSliceDiagnostics(); private set
+
     private val confirmedBundles = linkedSetOf<Pair<String,Long>>()
 
     fun recordConfirmedBundle(source: String, id: Long) { confirmedBundles += source to id }
@@ -62,11 +66,47 @@ internal class OversqliteClientOperationController(
         val limit = config.maxSyncWorkUnitsPerInvocation
         require(work >= 0 && syncWorkUsed >= 0) { "invalid sync work accounting" }
         if (work == 0L) return
-        if (syncWorkUsed >= limit && (!readyAtomic || readyAtomicUnitDispatched)) {
+        val slice = currentCoroutineContext()[OversqliteWorkSlice]
+        val firstUsefulStep = slice != null && !slice.checkpointed
+        if (syncWorkUsed >= limit && !firstUsefulStep && (!readyAtomic || readyAtomicUnitDispatched)) {
             throw SyncWorkLimitException(unit, limit, syncWorkUsed)
         }
         if (readyAtomic) readyAtomicUnitDispatched = true
         syncWorkUsed = if (work > Long.MAX_VALUE - syncWorkUsed) Long.MAX_VALUE else syncWorkUsed + work
+        workSliceDiagnostics.totalWork = if (work > Long.MAX_VALUE - workSliceDiagnostics.totalWork) Long.MAX_VALUE else workSliceDiagnostics.totalWork + work
+    }
+
+    suspend fun nextWorkSliceIfNeeded() {
+        currentCoroutineContext().ensureActive()
+        if (syncWorkUsed >= config.maxSyncWorkUnitsPerInvocation) nextWorkSlice()
+    }
+
+    private suspend fun nextWorkSlice() {
+        currentCoroutineContext().ensureActive()
+        workSliceDiagnostics.workSlices++
+        workSliceDiagnostics.peakSliceWork = maxOf(workSliceDiagnostics.peakSliceWork, syncWorkUsed)
+        syncWorkUsed = 0
+        readyAtomicUnitDispatched = false
+        yield()
+    }
+
+    suspend fun <T> completeWorkPhase(phase: String, block: suspend () -> T): T {
+        nextWorkSliceIfNeeded()
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            val slice = OversqliteWorkSlice()
+            try {
+                val result = withContext(slice) { block() }
+                checkpointWorkStep()
+                commitWorkStep()
+                return result
+            } catch (failure: SyncWorkLimitException) {
+                currentCoroutineContext().ensureActive()
+                if (failure.suppressedExceptions.isNotEmpty()) throw failure
+                if (!slice.durable) throw SyncWorkNoProgressException(phase)
+                nextWorkSlice()
+            }
+        }
     }
 
     @Volatile
@@ -136,6 +176,7 @@ internal class OversqliteClientOperationController(
                 syncWorkUsed = 0
                 readyAtomicUnitDispatched = false
                 a3Stats=A3AccountingStats()
+                workSliceDiagnostics = WorkSliceDiagnostics()
                 confirmedBundles.clear()
                 try {
                     Result.success(resources.trackOwnedOperation(block))
@@ -239,13 +280,13 @@ internal class OversqliteClientOperationController(
                     "oversqlite transient retry op=$operation attempt=${attemptIndex + 1}/$maxAttempts " +
                         "error=${error::class.simpleName ?: "Throwable"}"
                 }
-                maybeRetryTransportFailure(attemptIndex + 1)
+                maybeRetryTransportFailure(attemptIndex + 1, (error as? OversqliteRemoteContractException)?.retryAfterMillis)
             }
         }
         throw IllegalStateException("oversqlite retry state is invalid")
     }
 
-    private suspend fun maybeRetryTransportFailure(attempt: Int) {
+    private suspend fun maybeRetryTransportFailure(attempt: Int, retryAfterMillis: Long?) {
         if (attempt <= 0) {
             return
         }
@@ -254,8 +295,10 @@ internal class OversqliteClientOperationController(
         repeat(attempt - 1) {
             backoff = minOf(backoff * 2, policy.maxBackoffMillis)
         }
+        backoff = maxOf(backoff, retryAfterMillis ?: 0L)
         val jitterSpan = (backoff * policy.jitterRatio).toLong().coerceAtLeast(0L)
-        val jitter = if (jitterSpan == 0L) 0L else Random.nextLong(0L, jitterSpan + 1)
+        val safeJitterSpan = minOf(jitterSpan, Long.MAX_VALUE - backoff)
+        val jitter = if (safeJitterSpan == 0L) 0L else Random.nextLong(0L, safeJitterSpan + 1)
         delay(backoff + jitter)
     }
 

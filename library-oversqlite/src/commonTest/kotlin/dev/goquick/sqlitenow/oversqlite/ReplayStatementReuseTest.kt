@@ -117,8 +117,8 @@ internal class ReplayStatementReuseTest : SurvivorTestSupport() {
                     it.message?.contains("actual SQLite storage integer does not match its declared affinity") == true
                 })
                 assertEquals(before, baselineQualificationVector(db, listOf("nodes") + oversqliteRetainedTableDdl.keys))
-                assertEquals(1, observed.prepares.getValue("SELECT table_name,local_pk,payload,wire FROM _sync_apply_rows WHERE ordinal=?"))
-                assertTrue(observed.resets.getValue("SELECT table_name,local_pk,payload,wire FROM _sync_apply_rows WHERE ordinal=?") > 1)
+                assertEquals(1, observed.prepares.getValue("SELECT table_name,local_pk,payload,wire,role,source_ordinal FROM _sync_apply_rows WHERE ordinal=?"))
+                assertTrue(observed.resets.getValue("SELECT table_name,local_pk,payload,wire,role,source_ordinal FROM _sync_apply_rows WHERE ordinal=?") > 1)
                 observed.assertClosed()
             } finally { client.closeFromCoordinatedOwner() }
         }
@@ -133,12 +133,12 @@ internal class ReplayStatementReuseTest : SurvivorTestSupport() {
                 val executor = OversqliteApplyExecutor(db, OversqliteApplyStateStore(db))
                 executor.faultInjector = SnapshotApplyFaultInjector(statementCacheOperations = observed.operations)
                 executor.inApplyModeTransaction(state) { cache ->
-                    suspend fun checkpoint(unit: String, kind: String, exhaust: Boolean = true) {
+                    suspend fun checkpoint(unit: String, kind: String, exhaust: Boolean = true, sourceSnapshot: String = "") {
                         val operations = OversqliteClientOperationController(config, OversqliteClientResourceOwner(db, http), SnapshotDiagnosticsState()) {}
                         if (exhaust) operations.reserveSyncWork(unit, 16)
                         val owner = OversqliteApplySurvivors(db, OversqliteLocalStore(db, json) { state.validated }, config, operations, json)
                         val pending = assertFailsWith<ApplyProgressPending> {
-                            owner.prepare(state, unit, 5, kind, replayStatementCache = cache) {
+                            owner.prepare(state, unit, 5, kind, replayStatementCache = cache, sourceSnapshotId = sourceSnapshot) {
                                 error("work refusal precedes root callback")
                             }
                         }
@@ -159,10 +159,10 @@ internal class ReplayStatementReuseTest : SurvivorTestSupport() {
                     for (cursor in listOf(null, "", "é🙂", null)) {
                         val values = listOf(unit, guard, "roots", Long.MAX_VALUE, 9_007_199_254_740_993L,
                             7L, Long.MIN_VALUE, cursor, 9L, 113L, 2L, 31L, "conflict", "schéma", "表",
-                            "{\"id\":\"🙂\"}", Long.MAX_VALUE, 1L)
+                            "{\"id\":\"🙂\"}", Long.MAX_VALUE, 1L, "snapshot-🙂")
                         replacePlan(db, values)
-                        checkpoint(unit, "conflict")
-                        assertEquals(values, readPlan(db), "all 18 typed fields survive reuse, including cursor=$cursor")
+                        checkpoint(unit, "conflict", sourceSnapshot = "snapshot-🙂")
+                        assertEquals(values, readPlan(db), "all 19 typed fields survive reuse, including cursor=$cursor")
                     }
                     val next = applyUnit("replacement-plan", 0, "")
                     val nextGuard = OversqliteWorkspace(db, config).contextGuard(state, next)
@@ -171,7 +171,7 @@ internal class ReplayStatementReuseTest : SurvivorTestSupport() {
                     val writes = observed.prepares.filterKeys { it.startsWith("INSERT INTO _sync_apply_plan(") }
                     assertEquals(1, writes.size)
                     val sql = writes.keys.single()
-                    assertEquals(18, sql.count { it == '?' })
+                    assertEquals(19, sql.count { it == '?' })
                     assertEquals(1, writes.getValue(sql), "one real prepared UPSERT across all payloads")
                     assertEquals(10, observed.resets.getValue(sql), "four initial, four loaded and two stale-clear saves")
                     db.execSQL("DELETE FROM _sync_apply_plan")
@@ -203,11 +203,11 @@ internal class ReplayStatementReuseTest : SurvivorTestSupport() {
 
     private val planColumns = listOf("unit", "guard", "phase", "root_cursor", "visit_cursor", "table_cursor",
         "fk_cursor", "row_cursor", "entries", "bytes", "edge_entries", "edge_bytes", "operation_kind",
-        "preserve_schema", "preserve_table", "preserve_key", "atomic_work", "preservation_complete")
+        "preserve_schema", "preserve_table", "preserve_key", "atomic_work", "preservation_complete", "source_snapshot_id")
     private val integerColumns = setOf(3, 4, 5, 6, 8, 9, 10, 11, 16, 17)
 
     private fun emptyPlan(unit: String, guard: String, kind: String): List<Any?> = listOf(
-        unit, guard, "roots", 0L, 0L, 0L, 0L, null, 0L, 0L, 0L, 0L, kind, "", "", "", 0L, 0L,
+        unit, guard, "roots", 0L, 0L, 0L, 0L, null, 0L, 0L, 0L, 0L, kind, "", "", "", 0L, 0L, "",
     )
 
     private suspend fun replacePlan(db: SafeSQLiteConnection, values: List<Any?>) {

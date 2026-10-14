@@ -87,7 +87,7 @@ internal class WorkspaceAdmissionTest : SurvivorTestSupport() {
             limited.openAndConnect("user-1").getOrThrow()
             server.normalizePushEffects={effects()}
             val failure=limited.pushPending().exceptionOrNull()
-            assertTrue(failure is SyncWorkLimitException || failure is SyncWorkspaceLimitException,"$failure")
+            assertNull(failure, "ready atomic work must complete inside the public operation")
             requireSurvivors(db)
             assertEquals(3L,scalarLong(db,"SELECT next_source_bundle_id FROM _sync_source_state"))
             assertEquals(0L,scalarLong(db,"SELECT count(*) FROM _sync_outbox_rows"))

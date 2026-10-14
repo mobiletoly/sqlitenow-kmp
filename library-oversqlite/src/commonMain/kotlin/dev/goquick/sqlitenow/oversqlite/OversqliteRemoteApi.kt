@@ -1153,7 +1153,12 @@ internal class OversqliteRemoteApi(
                 status = call.status.value,
                 raw = raw,
                 operation = operation,
-            )?.let { throw it }
+            )?.let { error ->
+                if (error is OversqliteRemoteContractException && error.code == "history_projection_capacity_exceeded") {
+                    error.retryAfterMillis = parseSnapshotRetryAfterMillis(call.headers[HttpHeaders.RetryAfter])
+                }
+                throw error
+            }
             decodeRemoteOperationErrorOrNull(
                 status = call.status.value,
                 raw = raw,

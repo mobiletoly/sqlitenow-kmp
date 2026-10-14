@@ -121,6 +121,7 @@ internal class OversqliteStageStore(
     }
 
     private fun pushStepWork(state: RuntimeState,p: PushPlan): Long {
+        operations.workSliceDiagnostics.pushMetadataMeasurements++
         var work=32L
         for(table in state.validated.tables) {
             val info=state.validated.tableInfoByName.getValue(table.tableName)
@@ -130,6 +131,11 @@ internal class OversqliteStageStore(
     }
 
     private suspend fun pushGuard(state: RuntimeState,p: PushPlan): Triple<String,Long,String> {
+        val snapshot = currentCoroutineContext()[PushPlanningWorkspaceSnapshot]?.takeIf { it.db === db }
+        snapshot?.guard?.let { guard ->
+            pushSpace(p,guard.entries,guard.bytes)
+            return guard.value
+        }
         var bytes=checkNotNull(planOne("""SELECT 8192+6*(length(CAST(i.database_id AS BLOB))+length(CAST(i.service_id AS BLOB))+
             length(CAST(i.physical_shape AS BLOB))+length(CAST(i.fingerprint AS BLOB))+length(CAST(a.current_source_id AS BLOB))+
             length(CAST(a.attached_user_id AS BLOB))+length(CAST(a.pending_initialization_id AS BLOB))+length(CAST(o.source_id AS BLOB))+
@@ -149,7 +155,7 @@ internal class OversqliteStageStore(
             }
         }
         pushSpace(p,entries,bytes)
-        return checkNotNull(planOne("""SELECT i.database_id,i.service_id,i.generation_id,i.local_version,i.physical_shape,
+        val value = checkNotNull(planOne("""SELECT i.database_id,i.service_id,i.generation_id,i.local_version,i.physical_shape,
             i.fingerprint,a.attachment_epoch,a.current_source_id,a.binding_state,a.attached_user_id,
             a.pending_initialization_id,a.last_bundle_seq_seen,f.dirty_revision,f.baseline_revision,
             s.next_source_bundle_id,o.state,o.source_id,o.source_bundle_id,o.canonical_request_hash
@@ -176,6 +182,15 @@ internal class OversqliteStageStore(
             }
             Triple(sha256Hex(context.toString().encodeToByteArray()),st.getLong(14),st.getText(10))
         })
+        if (snapshot != null && utf8Size(value.third) <= 1024) {
+            try {
+                pushSpace(p,checkedPushAdd(entries,pushPlanningGuardCharge.entries,p),checkedPushAdd(bytes,pushPlanningGuardCharge.bytes,p))
+                snapshot.guard = PushPlanningGuard(value,entries,bytes)
+            } catch (capacity: SyncWorkspaceLimitException) {
+                if (capacity.suppressedExceptions.isNotEmpty()) throw capacity
+            }
+        }
+        return value
     }
 
     @OptIn(kotlin.uuid.ExperimentalUuidApi::class)
@@ -187,7 +202,9 @@ internal class OversqliteStageStore(
             planExec("DELETE FROM $table WHERE unit=? AND ordinal=?",p.unit,row.first)
             p.entries--;p.bytes-=row.second;savePushPlan(p);return false
         }
-        planExec("DELETE FROM _sync_push_plan WHERE singleton_key=1");return true
+        planExec("DELETE FROM _sync_push_plan WHERE singleton_key=1")
+        currentCoroutineContext()[PushPlanningWorkspaceSnapshot]?.takeIf { it.db === db }?.let { it.plan = null; it.planLoaded = false }
+        return true
     }
 
     private suspend fun loadPushCapture(state: RuntimeState,p: PushPlan,schema: String,table: String,key: String): DirtyRowCapture {
@@ -212,13 +229,17 @@ internal class OversqliteStageStore(
         HistoricalBase(getText(9),if(isNull(10)) null else getText(10),getText(11)),getText(12),
     )
 
-    private suspend fun seedPushStep(state: RuntimeState,p: PushPlan) {
+    private suspend fun seedPushStep(state: RuntimeState,p: PushPlan, stepWork: Long) {
+        operations.workSliceDiagnostics.seedVisits++
         val args=arrayOf<Any?>(p.seedOrdinal,p.seedSchema,p.seedTable,p.seedKey)
         val tail=""" FROM _sync_dirty_rows d LEFT JOIN _sync_row_state rs ON rs.schema_name=d.schema_name AND
             rs.table_name=d.table_name AND rs.key_json=d.key_json WHERE (d.dirty_ordinal,d.schema_name,d.table_name,d.key_json)>(?,?,?,?)
             ORDER BY d.dirty_ordinal,d.schema_name,d.table_name,d.key_json LIMIT 1"""
         val size=planOne("SELECT 1024+12*(length(CAST(d.schema_name AS BLOB))+length(CAST(d.table_name AS BLOB))+length(CAST(d.key_json AS BLOB)))"+tail,*args) { it.getLong(0) }
-        if(size==null) {p.subphase="adjacency";p.visit=1;return}
+        if(size==null) {
+            if (p.nextNode == 0L) { p.phase="clear"; return }
+            p.subphase="adjacency";p.visit=1;return
+        }
         pushSpace(p,2,checkedPushMultiply(size,2,p))
         val row=checkNotNull(planOne("SELECT d.schema_name,d.table_name,d.key_json,d.op,d.base_kind,COALESCE(rs.server_kind,'unknown'),d.dirty_ordinal"+tail,*args) {
             PushSeed(it.getText(0),it.getText(1),it.getText(2),it.getText(3),it.getText(4),it.getText(5),it.getLong(6))
@@ -226,8 +247,12 @@ internal class OversqliteStageStore(
         if(row.op=="DELETE" && row.kind in setOf("unpublished","absent","deleted")) {
             val capture=loadPushCapture(state,p,row.schema,row.table,row.key)
             localStore.validateHistoricalBase(row.table,capture.baseRowVersion,capture.base)
+            operations.reserveSyncWork(p.unit, stepWork)
             syncStateStore.deleteDirtyRow(row.schema,row.table,row.key)
-            p.phase="clear";return
+            currentCoroutineContext()[PushPlanningWorkspaceSnapshot]?.guard = null
+            p.seedOrdinal=row.ordinal; p.seedSchema=row.schema; p.seedTable=row.table; p.seedKey=row.key
+            p.guard=pushGuard(state,p).first
+            return
         }
         var blocked=if(row.kind=="unknown") "relationship_unknown" else ""
         if(row.base=="unavailable" || row.base=="") blocked="base"
@@ -347,7 +372,8 @@ internal class OversqliteStageStore(
         if(p.subphase=="pop") {popPushScc(p);return}
         if(p.frame==0L) {
             val ordinal=planOne("SELECT ordinal FROM _sync_push_nodes WHERE unit=? AND status='scc' ORDER BY ordinal LIMIT 1",p.unit) { it.getLong(0) }
-            if(ordinal==null) {p.phase="pack";p.subphase="counts";p.cursor=0} else enterPushDfs(p,ordinal)
+            if(ordinal==null) {p.phase="pack";p.subphase="counts";p.cursor=0}
+            else if (!assignIndependentPushComponent(p, ordinal)) enterPushDfs(p,ordinal)
             return
         }
         val n=pushNode(p,p.frame)
@@ -363,6 +389,33 @@ internal class OversqliteStageStore(
         val onStack=checkNotNull(planOne("SELECT on_stack FROM _sync_push_nodes WHERE unit=? AND ordinal=?",p.unit,peer.ordinal) { it.getLong(0) })
         if(onStack==1L) planExec("UPDATE _sync_push_nodes SET lowlink=MIN(lowlink,?) WHERE unit=? AND ordinal=?",peer.index,p.unit,n.ordinal)
     }
+    private suspend fun requireEmptyPushEdges(p: PushPlan) {
+        require(planOne("SELECT 1 FROM _sync_push_edges WHERE unit=? LIMIT 1", p.unit) { true } != true) {
+            "empty push dependency index contradicts retained edges"
+        }
+    }
+
+    private suspend fun assignIndependentPushComponent(p: PushPlan, ordinal: Long): Boolean {
+        if (p.nextEdge != 0L || currentCoroutineContext()[OversqliteWorkSlice] == null) return false
+        requireEmptyPushEdges(p)
+        val pristine = planOne("""SELECT dfs_index=0 AND lowlink=0 AND parent=0 AND on_stack=0 AND stack_ordinal=0
+            AND edge_cursor=0 AND component=0 AND component_rows=0 AND ready_ordinal=0
+            AND ready_schema='' AND ready_table='' AND ready_key='' FROM _sync_push_nodes WHERE unit=? AND ordinal=?""",
+            p.unit, ordinal) { it.getLong(0) != 0L }
+        if (pristine != true) return false
+        val n = pushNode(p, ordinal)
+        val readyBytes = checkedPushMultiply(checkedPushAdd(checkedPushAdd(utf8Size(n.schema), utf8Size(n.table), p), utf8Size(n.key), p), 6, p)
+        pushSpace(p, 0, readyBytes)
+        val index = checkedPushAdd(p.index, 1, p)
+        val stack = checkedPushAdd(p.stack, 1, p)
+        planExec("""UPDATE _sync_push_nodes SET status='member',dfs_index=?,lowlink=?,parent=0,on_stack=0,
+            stack_ordinal=?,component=ordinal,component_rows=1,ready_ordinal=?,ready_schema=?,ready_table=?,ready_key=?,
+            charge=charge+? WHERE unit=? AND ordinal=?""", index,index,stack,n.dirtyOrdinal,n.schema,n.table,n.key,readyBytes,p.unit,ordinal)
+        p.index = index; p.stack = stack; p.pop = ordinal
+        p.bytes = checkedPushAdd(p.bytes, readyBytes, p)
+        return true
+    }
+
     private suspend fun popPushScc(p: PushPlan) {
         val ordinal=checkNotNull(planOne("SELECT ordinal FROM _sync_push_nodes WHERE unit=? AND on_stack=1 ORDER BY stack_ordinal DESC LIMIT 1",p.unit) { it.getLong(0) })
         val n=pushNode(p,ordinal)
@@ -498,6 +551,11 @@ internal class OversqliteStageStore(
         p.cursor=n.ordinal
     }
     private suspend fun propagatePushComponentStep(p: PushPlan) {
+        if (p.nextEdge == 0L && currentCoroutineContext()[OversqliteWorkSlice] != null) {
+            requireEmptyPushEdges(p)
+            p.cursor = p.current; p.visit = 0; p.count = 0; p.subphase = "choose"
+            return
+        }
         if(p.visit==0L) {
             val ordinal=planOne("SELECT ordinal FROM _sync_push_nodes WHERE unit=? AND component=? AND ordinal>? ORDER BY ordinal LIMIT 1",p.unit,p.current,p.cursor) { it.getLong(0) }
             if(ordinal==null) {p.subphase="choose";return};p.cursor=ordinal;p.visit=ordinal;p.count=0
@@ -525,15 +583,22 @@ internal class OversqliteStageStore(
         }
     }
 
-    private suspend fun advancePushPlan(state: RuntimeState): Pair<PushPlan?,Boolean> {
-        if (planOne("SELECT state FROM _sync_outbox_bundle WHERE singleton_key=1") { it.getText(0) } != outboxStateNone)
-            return null to true
-        var p=loadPushPlan()
+    private suspend fun advancePushPlan(state: RuntimeState, stepWork: (PushPlan) -> Long): Pair<PushPlan?,Boolean> {
+        val memo = currentCoroutineContext()[PushPlanningWorkspaceSnapshot]?.takeIf { it.db === db }
+        if (memo == null || !memo.outboxNone) {
+            if (planOne("SELECT state FROM _sync_outbox_bundle WHERE singleton_key=1") { it.getText(0) } != outboxStateNone) return null to true
+            memo?.outboxNone = true
+        }
+        var p = if (memo != null && memo.planLoaded) memo.plan else loadPushPlan().also {
+            if (memo != null) { memo.plan = it; memo.planLoaded = true }
+        }
         val newPlan=p==null
         if(p==null) {
             p=PushPlan(newPushUnit(),"",cursorSecret=newPushUnit())
+            if (memo != null) { memo.plan = p; memo.planLoaded = true }
         }
-        operations.reserveSyncWork(p.unit,pushStepWork(state,p))
+        val measuredStep = stepWork(p)
+        operations.reserveSyncWork(p.unit,measuredStep)
         if(newPlan && planOne("SELECT 1 FROM _sync_dirty_rows LIMIT 1") { it.getLong(0) }==null)
             return null to true
         if(p.phase=="clear") {clearPushStep(p);return p to false}
@@ -542,7 +607,7 @@ internal class OversqliteStageStore(
         if(p.guard=="") {p.guard=guard;p.sourceBundleId=next;p.initializationId=init}
         else if(guard!=p.guard) {p.phase="clear";clearPushStep(p);return p to false}
         when(p.phase) {
-            "discover" -> if(p.subphase=="seed") seedPushStep(state,p) else discoverPushStep(state,p)
+            "discover" -> if(p.subphase=="seed") seedPushStep(state,p,measuredStep) else discoverPushStep(state,p)
             "scc" -> sccPushStep(p)
             "pack" -> packPushStep(state,p)
             "ready" -> return p to true
@@ -552,11 +617,24 @@ internal class OversqliteStageStore(
     }
 
     suspend fun preparePushPlan(state: RuntimeState): PushPlan? {
-        while(true) {
-            val (p,ready)=db.transaction(TransactionMode.IMMEDIATE) {
-                val step=advancePushPlan(state)
-                currentCoroutineContext().ensureActive();step
+        var measuredWork: Long? = null
+        return operations.completeWorkPhase("push preparation") {
+            preparePushPlanSlice(state) { plan ->
+                measuredWork ?: pushStepWork(state, plan).also { measuredWork = it }
             }
+        }
+    }
+
+    internal suspend fun preparePushPlanSlice(state: RuntimeState, stepWork: (PushPlan) -> Long): PushPlan? {
+        while(true) {
+            operations.workSliceDiagnostics.pushPlanningTransactions++
+            val group=db.transaction(TransactionMode.IMMEDIATE) {
+                if (currentCoroutineContext()[OversqliteWorkSlice] == null) advancePushPreparationGroup(state, stepWork)
+                else kotlinx.coroutines.withContext(PushPlanningWorkspaceSnapshot(db)) { advancePushPreparationGroup(state, stepWork) }
+            }
+            commitWorkStep()
+            group.pending?.let { throw it }
+            val p=group.plan; val ready=group.ready
             if(ready) {
                 if(p!=null && p.candidateRows==0L && p.blockedComponent!=0L) {
                     db.transaction(TransactionMode.IMMEDIATE) {
@@ -567,6 +645,30 @@ internal class OversqliteStageStore(
                 return p
             }
         }
+    }
+
+    private data class PushPreparationGroup(val plan: PushPlan?, val ready: Boolean,
+        val pending: SyncWorkLimitException? = null)
+
+    private suspend fun advancePushPreparationGroup(state: RuntimeState, stepWork: (PushPlan) -> Long): PushPreparationGroup {
+        val slice=currentCoroutineContext()[OversqliteWorkSlice]
+        val limit=if (slice == null) 1 else 32
+        var plan: PushPlan?=null
+        repeat(limit) { index ->
+            currentCoroutineContext().ensureActive()
+            val step=try { advancePushPlan(state, stepWork) } catch (failure: SyncWorkLimitException) {
+                if (slice == null || index == 0 || failure.suppressedExceptions.isNotEmpty()) throw failure
+                // Prior steps have already saved their private frontier. Successful
+                // transaction cleanup publishes it before the driver sees the yield.
+                return PushPreparationGroup(plan, false, failure)
+            }
+            operations.workSliceDiagnostics.pushPlanningSteps++
+            plan=step.first
+            if (plan != null) checkpointWorkStep()
+            currentCoroutineContext().ensureActive()
+            if (step.second) return PushPreparationGroup(plan, true)
+        }
+        return PushPreparationGroup(plan, false)
     }
 
     suspend fun preparePush(state: RuntimeState,p: PushPlan, reservationToken: String? = null): PreparedPush {
@@ -605,23 +707,53 @@ internal class OversqliteStageStore(
     }
 
     suspend fun clearPushPlanForLifecycle(onlyInvalid: Boolean=false,diagnosticId: String?=null) {
-        var clearingUnit: String?=null
-        while(true) {
-            val done=db.transaction(TransactionMode.IMMEDIATE) {
-                val p=loadPushPlan(forCleanup=true) ?: return@transaction true
-                if(diagnosticId!=null && p.cleanupDiagnosticId!=diagnosticId && planOne("SELECT 1 FROM _sync_push_nodes WHERE unit=? AND diagnostic_id=? LIMIT 1",p.unit,diagnosticId) { it.getLong(0) }==null) return@transaction true
-                if(onlyInvalid && p.phase!="clear") return@transaction true
-                if(clearingUnit==null) clearingUnit=p.unit
-                if(clearingUnit!=p.unit) return@transaction true
-                operations.reserveSyncWork(p.unit, 8)
-                p.phase="clear"
-                if(diagnosticId!=null) p.cleanupDiagnosticId=diagnosticId
-                val complete=clearPushStep(p)
-                currentCoroutineContext().ensureActive()
-                complete
+        val identity = PushCleanupIdentity()
+        operations.completeWorkPhase("push plan cleanup") { clearPushPlanForLifecycleSlice(onlyInvalid, diagnosticId, identity) }
+    }
+
+    internal class PushCleanupIdentity(var unit: String? = null)
+
+    private data class PushCleanupBatch(val complete: Boolean, val records: Int,
+        val pending: SyncWorkLimitException? = null)
+
+    internal suspend fun clearPushPlanForLifecycleSlice(onlyInvalid: Boolean,diagnosticId: String?, identity: PushCleanupIdentity) {
+        while (true) {
+            val group = db.transaction(TransactionMode.IMMEDIATE) {
+                val p = loadPushPlan(forCleanup = true) ?: return@transaction PushCleanupBatch(true, 0)
+                if (diagnosticId != null && p.cleanupDiagnosticId != diagnosticId &&
+                    planOne("SELECT 1 FROM _sync_push_nodes WHERE unit=? AND diagnostic_id=? LIMIT 1",p.unit,diagnosticId) { it.getLong(0) } == null)
+                    return@transaction PushCleanupBatch(true, 0)
+                if (onlyInvalid && p.phase != "clear") return@transaction PushCleanupBatch(true, 0)
+                if (identity.unit == null) identity.unit = p.unit
+                if (identity.unit != p.unit) return@transaction PushCleanupBatch(true, 0)
+                advancePushCleanupBatch(p, diagnosticId)
             }
-            if(done) return
+            commitWorkStep()
+            if (group.records > 0) operations.workSliceDiagnostics.pushCleanupCommits++
+            group.pending?.let { throw it }
+            if (group.complete) return
         }
+    }
+
+    // Work refusal occurs before the next record's mutation, so prior saved
+    // records may commit without retaining a partially changed frontier.
+    private suspend fun advancePushCleanupBatch(p: PushPlan, diagnosticId: String?): PushCleanupBatch {
+        val limit = if (currentCoroutineContext()[OversqliteWorkSlice] == null) 1 else 32
+        repeat(limit) { index ->
+            currentCoroutineContext().ensureActive()
+            try { operations.reserveSyncWork(p.unit, 8) }
+            catch (failure: SyncWorkLimitException) {
+                if (index == 0 || failure.suppressedExceptions.isNotEmpty()) throw failure
+                return PushCleanupBatch(false, index, failure)
+            }
+            p.phase = "clear"
+            if (diagnosticId != null) p.cleanupDiagnosticId = diagnosticId
+            val complete = clearPushStep(p)
+            checkpointWorkStep()
+            currentCoroutineContext().ensureActive()
+            if (complete) return PushCleanupBatch(true, index + 1)
+        }
+        return PushCleanupBatch(false, limit)
     }
 
     private suspend fun pushBlockedError(state: RuntimeState,p: PushPlan): Throwable {
@@ -719,14 +851,26 @@ internal class OversqliteStageStore(
 
     fun recordConfirmedBundle(source: String, id: Long) = operations.recordConfirmedBundle(source,id)
 
-    internal suspend fun ensureSnapshotWorkAvailable(unit: String) = operations.ensureSyncWorkAvailable(unit)
+    internal suspend fun ensureSnapshotWorkAvailable(unit: String) = operations.nextWorkSliceIfNeeded()
 
     internal suspend fun <T> withSnapshotTransportRetry(label: String, block: suspend () -> T): T =
         operations.withTransientRetry(label, block)
 
+    suspend fun <T> completeWorkPhase(phase: String, block: suspend () -> T): T = operations.completeWorkPhase(phase, block)
+
     suspend fun chargeBufferWork(unit: String, work: Long) = operations.reserveSyncWork(unit,work)
 
     suspend fun stageSnapshotChunk(
+        state: RuntimeState,
+        session: SnapshotSession,
+        chunk: SnapshotChunkResponse,
+        afterRowOrdinal: Long,
+        finalizer: suspend () -> Unit = {},
+    ) = operations.completeWorkPhase("snapshot chunk stage") {
+        stageSnapshotChunkSlice(state, session, chunk, afterRowOrdinal, finalizer)
+    }
+
+    private suspend fun stageSnapshotChunkSlice(
         state: RuntimeState,
         session: SnapshotSession,
         chunk: SnapshotChunkResponse,

@@ -7,7 +7,7 @@ import kotlinx.coroutines.CancellationException
 import kotlin.test.*
 
 internal class SnapshotChunkStatementReuseTest : SurvivorTestSupport() {
-    @Test fun workspaceHandleClosesBeforeChunkYield() = runOwnedWebDatabaseTest { chunkCase() }
+    @Test fun workspaceHandlesCloseAcrossInternalChunkSlices() = runOwnedWebDatabaseTest { chunkCase() }
     @Test fun workspacePrepareFailureRollsBackChunk() = runOwnedWebDatabaseTest { chunkCase(Point.PREPARE) }
     @Test fun workspaceResetFailureRollsBackChunk() = runOwnedWebDatabaseTest { chunkCase(Point.RESET) }
     @Test fun workspaceClearFailureRollsBackChunk() = runOwnedWebDatabaseTest { chunkCase(Point.CLEAR) }
@@ -38,7 +38,7 @@ internal class SnapshotChunkStatementReuseTest : SurvivorTestSupport() {
             val wrapper = object : SQLiteConnection by delegate {
                 override fun prepare(sql: String): SQLiteStatement {
                     val insertion = sql.startsWith("INSERT INTO _sync_snapshot_stage (")
-                    val workspace = sql.startsWith("SELECT o.reserved_entries") && sql.contains("LEFT JOIN _sync_apply_plan")
+                    val workspace = liveChunkInsertions > 0 && sql.startsWith("SELECT o.reserved_entries") && sql.contains("LEFT JOIN _sync_apply_plan")
                     if (workspace && chunkInsertionPrepared && point == Point.PREPARE && !injected) { injected = true; throw fault }
                     val statement = delegate.prepare(sql)
                     if (insertion) {
@@ -85,13 +85,14 @@ internal class SnapshotChunkStatementReuseTest : SurvivorTestSupport() {
                 assertTrue(chunkInsertionPrepared, "the fault must exercise chunk staging")
                 assertEquals(0, liveChunkInsertions, "chunk insertion handle must close even when workspace preparation fails")
                 assertEquals(0, liveWorkspace, "chunk workspace handles cannot cross return/yield")
-                assertEquals(if (point == Point.PREPARE) 0 else 1, resetCountsAtClose.size,
+                assertEquals(if (point == Point.PREPARE) 0 else if (point == null && !primary) 2 else 1, resetCountsAtClose.size,
                     "only successfully prepared workspace handles require cleanup")
                 if (point == null && !primary) {
-                    assertIs<SyncWorkLimitException>(failure)
-                    assertEquals(2, resetCountsAtClose.single(), "both row checks retain execution")
-                    assertEquals(2L, OversqliteOperationStateStore(db).loadState().snapshotStagedRowCount)
-                    assertEquals(2L, scalarLong(db, "SELECT count(*) FROM _sync_snapshot_stage"))
+                    assertNull(failure)
+                    assertEquals(listOf(2, 2), resetCountsAtClose, "each chunk releases its two-row workspace checks")
+                    assertEquals(0L, OversqliteOperationStateStore(db).loadState().snapshotStagedRowCount)
+                    assertEquals(0L, scalarLong(db, "SELECT count(*) FROM _sync_snapshot_stage"))
+                    assertEquals(4L, scalarLong(db, "SELECT count(*) FROM nodes"))
                 } else {
                     assertNotNull(failure)
                     val expected = if (primary) first else fault
@@ -113,8 +114,15 @@ internal class SnapshotChunkStatementReuseTest : SurvivorTestSupport() {
                         assertEquals(0L, scalarLong(reopened, "SELECT count(*) FROM _sync_snapshot_stage"))
                     }
                     val after = baselineQualificationVector(reopened, listOf("nodes"))
-                    for (table in listOf("nodes", "_sync_row_state", "_sync_outbox_rows", "_sync_outbox_bundle"))
+                    for (table in listOf("nodes", "_sync_outbox_rows", "_sync_outbox_bundle"))
                         assertEquals(before.rows(table), after.rows(table), table)
+                    if (point == null && !primary) {
+                        val replacementFields = setOf("server_provenance", "server_revision", "updated_at")
+                        assertEquals(before.rows("_sync_row_state").map { it.filterKeys { key -> key !in replacementFields } },
+                            after.rows("_sync_row_state").map { it.filterKeys { key -> key !in replacementFields } },
+                            "completed replacement retains authoritative row contents and relationships")
+                        assertEquals(4L, scalarLong(reopened, "SELECT count(*) FROM _sync_row_state WHERE json_extract(server_provenance,'$.origin')='snapshot'"))
+                    } else assertEquals(before.rows("_sync_row_state"), after.rows("_sync_row_state"))
                 } finally { reopened.close() }
             } finally {
                 client.setSnapshotStageStatementCloseForTest(null)
