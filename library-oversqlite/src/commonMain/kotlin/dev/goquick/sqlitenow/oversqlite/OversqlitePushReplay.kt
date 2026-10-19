@@ -172,7 +172,11 @@ internal class OversqlitePushReplayExecutor(
 
         val decisions = buildReplayPlans(state, uploadedRows, committedRows, statementCache,reservationToken,reservationBase,decisionContinuation)
         val plans = decisions.plans
-        bundleApplier.survivors.prepare(state, applyUnit("push", committed.bundleSeq, committed.bundleHash), committedRows.size, operationKind = "settlement", workspaceStatementCache = statementCache, replayStatementCache = statementCache) { index ->
+        val acknowledgementOnly = canAcknowledgeWithoutBusinessWrites(state, committedRows, plans, statementCache)
+        // Strategy is part of the derived unit: a resumed writer must not reuse
+        // a root-only plan if new intent or application triggers require closure.
+        val unit = applyUnit(if (acknowledgementOnly) "push-ack" else "push", committed.bundleSeq, committed.bundleHash)
+        bundleApplier.survivors.prepare(state, unit, committedRows.size, operationKind = "settlement", workspaceStatementCache = statementCache, replayStatementCache = statementCache, discoverDependents = !acknowledgementOnly) { index ->
             val row = committedRows[index]
             if (plans[row.toRowRef()]?.action is ReplayRowAction.PreserveLocal) {
                 bundleApplier.survivors.capture(state, row.tableName, row.localPk, workspaceStatementCache = statementCache, replayStatementCache = statementCache)
@@ -197,7 +201,8 @@ internal class OversqlitePushReplayExecutor(
             when (val action = plans[row.toRowRef()]?.action) {
                 null -> bundleApplier.applyAuthoritativeRow(state, bundleRow, row.localPk, row.keyJson, statementCache,"settlement",committed.bundleSeq)
                 ReplayRowAction.AcceptAuthoritative -> {
-                    bundleApplier.applyAuthoritativeRow(state, bundleRow, row.localPk, row.keyJson, statementCache,"settlement",committed.bundleSeq)
+                    if (acknowledgementOnly) bundleApplier.recordAuthoritativeRow(state, bundleRow, row.keyJson, statementCache, "settlement", committed.bundleSeq)
+                    else bundleApplier.applyAuthoritativeRow(state, bundleRow, row.localPk, row.keyJson, statementCache,"settlement",committed.bundleSeq)
                     syncStateStore.deleteDirtyRow(row.schemaName, row.tableName, row.keyJson, statementCache)
                 }
                 is ReplayRowAction.PreserveLocal -> {
@@ -234,6 +239,43 @@ internal class OversqlitePushReplayExecutor(
         outboxStateStore.clearBundleAndRows(statementCache, pagedSettlement = true)
         assertReplayResidualDirtyState(uploadedRows, plans, statementCache)
         return updatedTables
+    }
+
+    private suspend fun canAcknowledgeWithoutBusinessWrites(
+        state: RuntimeState,
+        rows: List<CommittedReplayRow>,
+        plans: Map<DirtyRowRef, UploadedReplayPlan>,
+        cache: StatementCache,
+    ): Boolean {
+        for (row in rows) {
+            if (row.op != "INSERT" && row.op != "UPDATE") return false
+            val plan = plans[row.toRowRef()] ?: return false
+            bundleApplier.survivors.reserveAcknowledgementCheck()
+            if (plan.action != ReplayRowAction.AcceptAuthoritative ||
+                !OversqliteValueCodec.equivalentPayloadTexts(
+                    state.validated.tableInfoByName.getValue(row.tableName),
+                    plan.diagnostics.livePayload, row.payload,
+                    PayloadSource.LOCAL_STATE, PayloadSource.AUTHORITATIVE_WIRE, json,
+                )) return false
+        }
+        val db = syncStateStore.db
+        // Existing decision-copy reservations cover comparisons. Retain all
+        // ordinary root preflight/atomic admission and final FK validation.
+        if (db.withPreparedStatement("SELECT 1 FROM _sync_dirty_rows LIMIT 1", cache) { it.step() }) return false
+        for (table in rows.map { it.tableName }.distinct()) {
+            bundleApplier.survivors.reserveAcknowledgementCheck()
+            val owned = oversqliteManagedTriggerNames(setOf(table)).toList()
+            val sql = "SELECT 1 FROM sqlite_schema WHERE type='trigger' AND lower(tbl_name)=? AND name NOT IN (${owned.joinToString(",") { "?" }}) " +
+                "UNION ALL SELECT 1 FROM sqlite_temp_schema WHERE type='trigger' AND lower(tbl_name)=? LIMIT 1"
+            val applicationTrigger = db.withPreparedStatement(sql, cache) { statement ->
+                statement.bindText(1, table)
+                owned.forEachIndexed { index, name -> statement.bindText(index + 2, name) }
+                statement.bindText(owned.size + 2, table)
+                statement.step()
+            }
+            if (applicationTrigger) return false
+        }
+        return true
     }
 
     private fun requireCommittedEffectCoverage(

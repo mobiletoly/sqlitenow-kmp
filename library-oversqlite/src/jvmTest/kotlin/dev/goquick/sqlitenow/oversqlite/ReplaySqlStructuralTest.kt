@@ -36,6 +36,13 @@ internal open class ReplaySqlStructuralTest : SurvivorTestSupport() {
                         val observer = ReplaySqlObservation.install(db)
                         val cachedSql = mutableListOf<String>()
                         val owner = replayValidatedOwner(client)
+                        // Unchanged seed acknowledgements do not need traversal.
+                        // Observe steady-state retention after schema-only warmup.
+                        val description = owner.replaySql.table("nodes")
+                        description.initialKey
+                        description.afterCursorKey
+                        description.upsert
+                        owner.tableInfoByName.getValue("nodes").foreignKeys.indices.forEach(description::foreignKey)
                         val beforeConstruction = construction?.snapshot()
                         val retainedBefore = replayRetainedDescriptions(owner.replaySql)
                         client.setSnapshotApplyFaultInjectorForTest(SnapshotApplyFaultInjector(statementCacheOperations = StatementCacheOperations(
@@ -215,8 +222,26 @@ internal open class ReplaySqlStructuralTest : SurvivorTestSupport() {
         val expected = baseline.getValue("cases").jsonArray.map { it.jsonObject }.single { it.getValue("size").jsonPrimitive.int == size }
         for (key in listOf("bindingTrace", "selectedExecutions", "accounting"))
             assertEquals(expected[key], actual[key], "immutable untouched-source oracle size=$size field=$key")
-        assertEquals(decisionBindingSqlOracle(boundedCleanupSqlOracle(expected.getValue("sql").jsonObject)), actual["sql"],
-            "untouched-source SQL oracle plus declared cleanup grouping and decision binding size=$size")
+        assertEquals(relationshipChangesSqlOracle(decisionBindingSqlOracle(boundedCleanupSqlOracle(expected.getValue("sql").jsonObject))), actual["sql"],
+            "untouched-source SQL oracle plus declared cleanup grouping, decision binding and relationship statement reuse size=$size")
+    }
+
+    // C->P and D->C create two edge attempts in one settlement writer.
+    // Cache their two scalar probes as one handle; all six steps (including
+    // four uncached cleanup probes), bindings and work charges stay frozen.
+    private fun relationshipChangesSqlOracle(original: JsonObject): JsonObject {
+        val edgeAttempts = original.getValue("INSERT OR IGNORE INTO _sync_apply_edges VALUES(?,?,?,?,?,?)")
+            .jsonObject.getValue("steps").jsonPrimitive.long
+        assertEquals(2L, edgeAttempts, "frozen fixture has exactly C->P and D->C")
+        val changes = original.getValue("SELECT changes()").jsonObject
+        return JsonObject(original + ("SELECT changes()" to JsonObject(changes.mapValues { (counter, count) ->
+            val delta = when (counter) {
+                "prepares", "closes" -> 1L - edgeAttempts
+                "resets", "clears" -> edgeAttempts
+                else -> 0L
+            }
+            JsonPrimitive(count.jsonPrimitive.long + delta)
+        })))
     }
 
     // This fixture freezes one root: its node removal and final owner deletion

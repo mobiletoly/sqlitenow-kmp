@@ -249,6 +249,17 @@ Row application rules:
 - `DELETE`: delete the business row by PK, then update `_sync_row_state` as deleted
 - stale incoming rows are skipped when local `_sync_row_state.row_version >= incoming.row_version`
 
+Push settlement has a metadata-only acknowledgement path when every committed
+INSERT/UPDATE matches its accepted live row under the typed payload codec, no
+dirty intent remains, and affected tables have no application or TEMP triggers.
+It records authoritative baselines and advances source/checkpoint/outbox state
+without rewriting business rows or building the database-wide survivor edge index.
+Root dependency checks, workspace/work admission, final FK validation and atomic
+rollback remain in effect. Normalized values, deletes, pending edits, additional
+unplanned effects and application triggers use ordinary survivor preparation.
+The preparation unit binds this strategy so eligibility changes invalidate an
+incompatible saved plan. Pull, conflict and snapshot behavior is unchanged.
+
 ## 8. Recovery And Intent Preservation
 
 The most important recovery invariant is:

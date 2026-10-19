@@ -94,6 +94,10 @@ internal class OversqliteApplySurvivors(
     fun recordDecisionContinuationHit() { operations.workSliceDiagnostics.replayDecisionReuses++ }
     fun recordDecisionContinuationInvalidation() { operations.workSliceDiagnostics.replayDecisionInvalidations++ }
 
+    suspend fun reserveAcknowledgementCheck() {
+        operations.reserveSyncWork(ReplayFixedUnits.settlementDecisions, 16)
+    }
+
     suspend fun currentDecisionBinding(state: RuntimeState, token: String, base: WorkspaceCharge, held: WorkspaceCharge, writer: StatementCache): WorkspaceReservationBinding {
         operations.reserveSyncWork(ReplayFixedUnits.settlementDecisions, 16)
         val workspace = OversqliteWorkspace(db, config)
@@ -139,9 +143,10 @@ internal class OversqliteApplySurvivors(
         }
     }
 
-    suspend fun prepare(state: RuntimeState, unit: String, roots: Int, operationKind: String = "pull", inputSequence: Long? = null, workspaceStatementCache: StatementCache? = null, replayStatementCache: StatementCache? = null, sourceSnapshotId: String = "", seed: suspend (Int) -> ApplySurvivor) {
+    suspend fun prepare(state: RuntimeState, unit: String, roots: Int, operationKind: String = "pull", inputSequence: Long? = null, workspaceStatementCache: StatementCache? = null, replayStatementCache: StatementCache? = null, sourceSnapshotId: String = "", discoverDependents: Boolean = true, seed: suspend (Int) -> ApplySurvivor) {
         try {
-            preparePlan(state, unit, roots, operationKind, inputSequence, workspaceStatementCache, replayStatementCache, sourceSnapshotId, seed)
+            require(discoverDependents || operationKind == "settlement") { "only unchanged push acknowledgements may omit dependency discovery" }
+            preparePlan(state, unit, roots, operationKind, inputSequence, workspaceStatementCache, replayStatementCache, sourceSnapshotId, discoverDependents, seed)
         } catch (limit: SyncWorkLimitException) {
             throw ApplyProgressPending(limit)
         }
@@ -153,7 +158,7 @@ internal class OversqliteApplySurvivors(
             plan.guard == OversqliteWorkspace(db, config).contextGuard(state, unit)
     }
 
-    private suspend fun preparePlan(state: RuntimeState, unit: String, roots: Int, operationKind: String, inputSequence: Long?, workspaceStatementCache: StatementCache?, replayStatementCache: StatementCache?, sourceSnapshotId: String, seed: suspend (Int) -> ApplySurvivor) {
+    private suspend fun preparePlan(state: RuntimeState, unit: String, roots: Int, operationKind: String, inputSequence: Long?, workspaceStatementCache: StatementCache?, replayStatementCache: StatementCache?, sourceSnapshotId: String, discoverDependents: Boolean, seed: suspend (Int) -> ApplySurvivor) {
         val guard = OversqliteWorkspace(db, config).contextGuard(state, unit)
         val plan = load(replayStatementCache = replayStatementCache) ?: ApplyPlan(unit, guard, kind = operationKind, sourceSnapshotId = sourceSnapshotId)
         checkSpace(plan, workspaceStatementCache = workspaceStatementCache)
@@ -171,7 +176,7 @@ internal class OversqliteApplySurvivors(
             when (plan.phase) {
                 "clear" -> clearStep(plan, replayStatementCache = replayStatementCache)
                 "roots" -> if (plan.root == roots.toLong()) {
-                    plan.phase = if (operationKind == "snapshot") "ready" else "index"; plan.fk = -1
+                    plan.phase = if (operationKind == "snapshot" || !discoverDependents) "ready" else "index"; plan.fk = -1
                 } else {
                     put(plan, seed(plan.root.toInt()), workspaceStatementCache, replayStatementCache = replayStatementCache); plan.root++
                 }
@@ -315,7 +320,9 @@ internal class OversqliteApplySurvivors(
         checkSpace(p, 7, 6 * size, workspaceStatementCache)
         val parent = checkNotNull(one(sql.value, value, replayStatementCache = replayStatementCache) { it.getText(0) })
         exec("INSERT OR IGNORE INTO _sync_apply_edges VALUES(?,?,?,?,?,?)", p.edgeEntries + 1, parentTable, parent, table, p.cursor, size, replayStatementCache = replayStatementCache)
-        if (db.scalarLong("SELECT changes()") != 0L) { p.edgeEntries++; p.edgeBytes += size }
+        // Read immediately after the insert, reusing the transaction-owned handle.
+        val inserted = checkNotNull(one("SELECT changes()", replayStatementCache = replayStatementCache) { it.getLong(0) })
+        if (inserted != 0L) { p.edgeEntries++; p.edgeBytes += size }
     }
 
     private suspend fun walk(state: RuntimeState, p: ApplyPlan, workspaceStatementCache: StatementCache?, replayStatementCache: StatementCache?) {

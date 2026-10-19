@@ -41,6 +41,17 @@ internal class OversqliteBundleApplier(
             else -> error("unsupported bundle row op ${row.op}")
         }
 
+        recordAuthoritativeRow(state, row, keyJson, statementCache, origin, bundleSeq)
+    }
+
+    suspend fun recordAuthoritativeRow(
+        state: RuntimeState,
+        row: BundleRow,
+        keyJson: String,
+        statementCache: StatementCache?,
+        origin: String,
+        bundleSeq: Long?,
+    ) {
         syncStateStore.installAuthoritativeBaseline(
             schemaName = state.validated.schemaForTable(row.table),
             tableName = row.table,
