@@ -20,9 +20,33 @@ import kotlin.time.Duration.Companion.seconds
 
 /** Actual settlement statements; synchronous operation faults are distinct from worker faults. */
 internal class ReplayStatementCleanupTest : SurvivorTestSupport() {
-    private enum class Target { PLAN_SAVE, CAPTURE_SIZE }
+    private enum class Target { PLAN_SAVE, CAPTURE_SIZE, EDGES_DELETE, ROWS_DELETE, CHANGES, PLAN_DELETE }
     private enum class Body { SUCCESS, FAILURE, CANCEL }
     private enum class Cleanup { NONE, RESET, CLEAR, RESET_AND_CLEAR, CLOSE, PREPARE }
+
+    @Test fun pushCleanupReleaseAndPreparationFailuresRollBackOnReopen() = runOwnedWebDatabaseTest(timeout = 180.seconds) {
+        for (target in listOf(Target.EDGES_DELETE, Target.ROWS_DELETE, Target.CHANGES, Target.PLAN_DELETE)) {
+            failedSettlement(target, Cleanup.PREPARE, Body.SUCCESS)
+            for (cleanup in listOf(Cleanup.RESET, Cleanup.CLEAR, Cleanup.RESET_AND_CLEAR, Cleanup.CLOSE))
+                for (body in Body.entries) failedSettlement(target, cleanup, body)
+        }
+    }
+
+    @Test fun pushCleanupHandlesCloseWithTheirOwningWriter() = runOwnedWebDatabaseTest(timeout = 180.seconds) {
+        for (target in listOf(Target.EDGES_DELETE, Target.ROWS_DELETE, Target.CHANGES, Target.PLAN_DELETE)) {
+            withLostReplay { server, db, _, client ->
+                val probe = CleanupProbe(target, Cleanup.NONE, Body.SUCCESS)
+                client.setSnapshotApplyFaultInjectorForTest(probe.injector())
+                try { client.pushPending().getOrThrow() } finally { client.setSnapshotApplyFaultInjectorForTest(null) }
+                probe.assertReached()
+                assertEquals(probe.steps, probe.resets)
+                assertEquals(probe.steps, probe.clears)
+                assertEquals(1, probe.closes)
+                assertTrue(probe.beforeCommit)
+                assertSettled(server, db)
+            }
+        }
+    }
 
     @Test fun planSaveReleaseFailuresPreserveBodyPriority() = releaseCases(Target.PLAN_SAVE)
     @Test fun captureSizeReleaseFailuresPreserveBodyPriority() = releaseCases(Target.CAPTURE_SIZE)
@@ -32,7 +56,7 @@ internal class ReplayStatementCleanupTest : SurvivorTestSupport() {
     @Test fun captureSizeFailedPreparationIsNotRetained() = failureCase(Target.CAPTURE_SIZE, Cleanup.PREPARE)
 
     @Test fun successfulCleanupClosesBothSelectedStatementFamilies() = runOwnedWebDatabaseTest(timeout = 180.seconds) {
-        for (target in Target.entries) withLostReplay { server, db, _, client ->
+        for (target in listOf(Target.PLAN_SAVE, Target.CAPTURE_SIZE)) withLostReplay { server, db, _, client ->
             val probe = CleanupProbe(target, Cleanup.NONE, Body.SUCCESS)
             client.setSnapshotApplyFaultInjectorForTest(probe.injector())
             try { client.pushPending().getOrThrow() }
@@ -383,7 +407,7 @@ internal class ReplayStatementCleanupTest : SurvivorTestSupport() {
                                     executionFailure = failure; throw failure
                                 }
                                 if (steps == 1) {
-                                    assertEquals(target == Target.CAPTURE_SIZE, row, "real capture SELECT returns ROW; plan UPSERT returns DONE")
+                                    assertEquals(target in listOf(Target.CAPTURE_SIZE, Target.CHANGES), row, "scalar SELECT returns ROW; cached mutation returns DONE")
                                     when (body) {
                                         Body.SUCCESS -> Unit
                                         Body.FAILURE -> throw bodyFailure
@@ -445,7 +469,7 @@ internal class ReplayStatementCleanupTest : SurvivorTestSupport() {
             if (cleanup != Cleanup.CLOSE || body != Body.SUCCESS) {
                 assertEquals(1, steps); assertEquals(1, resets); assertEquals(1, clears)
             } else {
-                assertTrue(steps > 1, "successful body performs and reuses the real statement before close fails")
+                assertTrue(steps >= if (target == Target.PLAN_DELETE) 1 else 2, "successful body executes selected statement before close fails")
                 assertEquals(steps, resets); assertEquals(steps, clears)
             }
             val cleanupFailure = when (cleanup) {
@@ -476,6 +500,10 @@ internal class ReplayStatementCleanupTest : SurvivorTestSupport() {
     private fun selectedSql(target: Target, sql: String): Boolean = when (target) {
         Target.PLAN_SAVE -> sql == planSaveSql
         Target.CAPTURE_SIZE -> sql == captureSizeSql
+        Target.EDGES_DELETE -> sql == "DELETE FROM _sync_apply_edges WHERE ordinal IN (SELECT ordinal FROM _sync_apply_edges ORDER BY ordinal LIMIT 128)"
+        Target.ROWS_DELETE -> sql == "DELETE FROM _sync_apply_rows WHERE ordinal IN (SELECT ordinal FROM _sync_apply_rows ORDER BY ordinal LIMIT 128)"
+        Target.CHANGES -> sql == "SELECT changes()"
+        Target.PLAN_DELETE -> sql == "DELETE FROM _sync_apply_plan"
     }
 
     private fun originalFailure(error: Throwable): Throwable = generateSequence(error) { it.cause }.last()

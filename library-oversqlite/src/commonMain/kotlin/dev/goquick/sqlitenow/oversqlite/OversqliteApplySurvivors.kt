@@ -276,14 +276,20 @@ internal class OversqliteApplySurvivors(
         return changed
     }
 
-    suspend fun finish() {
+    suspend fun finish(replayStatementCache: StatementCache? = null) {
         for (table in listOf("_sync_apply_edges", "_sync_apply_rows")) {
+            var changes: Long
             do {
                 currentCoroutineContext().ensureActive()
-                db.execSQL("DELETE FROM $table WHERE ordinal IN (SELECT ordinal FROM $table ORDER BY ordinal LIMIT 128)")
-            } while (db.scalarLong("SELECT changes()") != 0L)
+                val sql = "DELETE FROM $table WHERE ordinal IN (SELECT ordinal FROM $table ORDER BY ordinal LIMIT 128)"
+                if (replayStatementCache == null) db.execSQL(sql)
+                else exec(sql, replayStatementCache = replayStatementCache)
+                changes = if (replayStatementCache == null) db.scalarLong("SELECT changes()")
+                else checkNotNull(one("SELECT changes()", replayStatementCache = replayStatementCache) { it.getLong(0) })
+            } while (changes != 0L)
         }
-        db.execSQL("DELETE FROM _sync_apply_plan")
+        if (replayStatementCache == null) db.execSQL("DELETE FROM _sync_apply_plan")
+        else exec("DELETE FROM _sync_apply_plan", replayStatementCache = replayStatementCache)
     }
 
     private suspend fun indexStep(state: RuntimeState, p: ApplyPlan, workspaceStatementCache: StatementCache?, replayStatementCache: StatementCache?) {

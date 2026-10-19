@@ -174,7 +174,7 @@ internal class OversqlitePushReplayExecutor(
         val plans = decisions.plans
         val acknowledgementOnly = canAcknowledgeWithoutBusinessWrites(state, committedRows, plans, statementCache)
         // Strategy is part of the derived unit: a resumed writer must not reuse
-        // a root-only plan if new intent or application triggers require closure.
+        // a root-only plan if uploaded-row edits or application triggers require closure.
         val unit = applyUnit(if (acknowledgementOnly) "push-ack" else "push", committed.bundleSeq, committed.bundleHash)
         bundleApplier.survivors.prepare(state, unit, committedRows.size, operationKind = "settlement", workspaceStatementCache = statementCache, replayStatementCache = statementCache, discoverDependents = !acknowledgementOnly) { index ->
             val row = committedRows[index]
@@ -232,7 +232,7 @@ internal class OversqlitePushReplayExecutor(
         updatedTables += restoreDirtyBusinessRows(state, statementCache)
         bundleApplier.survivors.restore(state, statementCache, verifyOnly = true, workspaceStatementCache = statementCache, replayStatementCache = statementCache)
         bundleApplier.survivors.restorePrimaryIntent(state, statementCache, verifyOnly = true, workspaceStatementCache = statementCache, replayStatementCache = statementCache)
-        bundleApplier.survivors.finish()
+        bundleApplier.survivors.finish(replayStatementCache = statementCache)
 
         sourceStateStore.advanceAfterCommittedPush(state.sourceId, committed.sourceBundleId)
         attachmentStateStore.advanceAfterCommittedPush(committed.bundleSeq, statementCache)
@@ -261,7 +261,8 @@ internal class OversqlitePushReplayExecutor(
         val db = syncStateStore.db
         // Existing decision-copy reservations cover comparisons. Retain all
         // ordinary root preflight/atomic admission and final FK validation.
-        if (db.withPreparedStatement("SELECT 1 FROM _sync_dirty_rows LIMIT 1", cache) { it.step() }) return false
+        // Other pending owners retain the existing preservation passes;
+        // unchanged business rows do not require a global dependency index.
         for (table in rows.map { it.tableName }.distinct()) {
             bundleApplier.survivors.reserveAcknowledgementCheck()
             val owned = oversqliteManagedTriggerNames(setOf(table)).toList()

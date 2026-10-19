@@ -222,8 +222,34 @@ internal open class ReplaySqlStructuralTest : SurvivorTestSupport() {
         val expected = baseline.getValue("cases").jsonArray.map { it.jsonObject }.single { it.getValue("size").jsonPrimitive.int == size }
         for (key in listOf("bindingTrace", "selectedExecutions", "accounting"))
             assertEquals(expected[key], actual[key], "immutable untouched-source oracle size=$size field=$key")
-        assertEquals(relationshipChangesSqlOracle(decisionBindingSqlOracle(boundedCleanupSqlOracle(expected.getValue("sql").jsonObject))), actual["sql"],
-            "untouched-source SQL oracle plus declared cleanup grouping, decision binding and relationship statement reuse size=$size")
+        assertEquals(pushCleanupCacheSqlOracle(relationshipChangesSqlOracle(decisionBindingSqlOracle(boundedCleanupSqlOracle(expected.getValue("sql").jsonObject)))), actual["sql"],
+            "untouched-source SQL oracle plus declared cleanup grouping, decision binding and writer statement reuse size=$size")
+    }
+
+    // One settlement writer owns all four cleanup handles. Keep every frozen
+    // page/probe execution and derive only its prepare/release/close lifecycle.
+    private fun pushCleanupCacheSqlOracle(original: JsonObject): JsonObject {
+        val shapes = setOf(
+            "DELETE FROM _sync_apply_edges WHERE ordinal IN (SELECT ordinal FROM _sync_apply_edges ORDER BY ordinal LIMIT 128)",
+            "DELETE FROM _sync_apply_rows WHERE ordinal IN (SELECT ordinal FROM _sync_apply_rows ORDER BY ordinal LIMIT 128)",
+            "SELECT changes()",
+            "DELETE FROM _sync_apply_plan",
+        )
+        assertTrue(original.keys.containsAll(shapes))
+        return JsonObject(original.mapValues { (sql, value) ->
+            if (sql !in shapes) value else {
+                val counters = value.jsonObject
+                val steps = counters.getValue("steps").jsonPrimitive.long
+                assertTrue(steps > 0)
+                JsonObject(counters.mapValues { (counter, count) ->
+                    when (counter) {
+                        "prepares", "closes" -> JsonPrimitive(1L)
+                        "resets", "clears" -> JsonPrimitive(steps)
+                        else -> count
+                    }
+                })
+            }
+        })
     }
 
     // C->P and D->C create two edge attempts in one settlement writer.

@@ -250,15 +250,26 @@ Row application rules:
 - stale incoming rows are skipped when local `_sync_row_state.row_version >= incoming.row_version`
 
 Push settlement has a metadata-only acknowledgement path when every committed
-INSERT/UPDATE matches its accepted live row under the typed payload codec, no
-dirty intent remains, and affected tables have no application or TEMP triggers.
+INSERT/UPDATE has an `AcceptAuthoritative` decision and matches its accepted live
+row under the typed payload codec, all committed effects are covered, and affected
+tables have no application or TEMP triggers.
 It records authoritative baselines and advances source/checkpoint/outbox state
 without rewriting business rows or building the database-wide survivor edge index.
 Root dependency checks, workspace/work admission, final FK validation and atomic
-rollback remain in effect. Normalized values, deletes, pending edits, additional
-unplanned effects and application triggers use ordinary survivor preparation.
+rollback remain in effect. Other pending rows retain their payloads, historical
+baselines, provenance, desired relationships and physical exceptions through the
+existing bounded preservation passes. These passes still cost work proportional
+to pending intent; final FK validation can also grow with database size.
+Edits to an uploaded row, normalized values, deletes, additional unplanned effects
+and application triggers use ordinary survivor preparation.
 The preparation unit binds this strategy so eligibility changes invalidate an
 incompatible saved plan. Pull, conflict and snapshot behavior is unchanged.
+
+Push settlement borrows its writer's statement cache for survivor cleanup:
+the two paged DELETE statements, their immediate `SELECT changes()` probes and
+the final plan DELETE reuse handles within that writer. Cleanup retains 128-row
+pages, terminal probes and cancellation checks. The enclosing writer releases
+and closes the cache before commit; other callers keep uncached cleanup.
 
 ## 8. Recovery And Intent Preservation
 
