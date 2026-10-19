@@ -113,9 +113,13 @@ kotlin {
             implementation(libs.sqlite.bundled)
         }
 
-        jvmTest.dependencies {
-            implementation("io.ktor:ktor-client-cio:${libs.versions.ktor.get()}")
-            implementation("org.yaml:snakeyaml:2.7")
+        jvmTest {
+            kotlin.srcDir("src/jvmAndroidTest/kotlin")
+            dependencies {
+                implementation("io.ktor:ktor-client-cio:${libs.versions.ktor.get()}")
+                implementation(libs.ktor.client.okhttp)
+                implementation("org.yaml:snakeyaml:2.7")
+            }
         }
 
         androidMain.dependencies {
@@ -123,11 +127,14 @@ kotlin {
             implementation(libs.ktor.client.okhttp)
         }
 
-        getByName("androidDeviceTest").dependencies {
-            implementation(libs.androidx.test.runner)
-            implementation(libs.androidx.test.rules)
-            implementation(libs.androidx.junit)
-            implementation(libs.kotlinx.coroutines.test)
+        getByName("androidDeviceTest") {
+            kotlin.srcDir("src/jvmAndroidTest/kotlin")
+            dependencies {
+                implementation(libs.androidx.test.runner)
+                implementation(libs.androidx.test.rules)
+                implementation(libs.androidx.junit)
+                implementation(libs.kotlinx.coroutines.test)
+            }
         }
 
         iosMain.dependencies {

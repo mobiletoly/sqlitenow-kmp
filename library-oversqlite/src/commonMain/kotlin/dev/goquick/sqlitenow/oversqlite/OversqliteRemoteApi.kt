@@ -297,6 +297,8 @@ internal class OversqliteRemoteApi(
 
     private companion object {
         const val sourceIdHeaderName = "Oversync-Source-ID"
+        // Allow 20–25-second heartbeats while bounding recovery from a stalled connection.
+        const val bundleChangeWatchSocketTimeoutMillis = 90_000L
         const val snapshotControlBodyLimit = 64L * 1024L
         val snapshotSessionLimitDimensions = setOf("row_count", "logical_byte_count", "row_decoded_body_bytes")
         val snapshotCapacityErrorCodes = setOf("snapshot_build_capacity", "snapshot_chunk_capacity")
@@ -393,6 +395,7 @@ internal class OversqliteRemoteApi(
                         acceptIdentityEventStream()
                         timeout {
                             requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
+                            socketTimeoutMillis = bundleChangeWatchSocketTimeoutMillis
                         }
                         url {
                             parameters.append("after_bundle_seq", normalizedAfterBundleSeq.toString())
