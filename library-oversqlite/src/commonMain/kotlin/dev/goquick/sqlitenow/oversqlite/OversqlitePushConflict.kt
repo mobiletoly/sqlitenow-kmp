@@ -51,8 +51,10 @@ internal class OversqliteConflictExecutor(
         workspace.resizeInWriter(state, reservationToken, workspace.add(unit, reservationBase, WorkspaceCharge(32, workspace.scale(unit, size, 16))))
         val desiredText = upsert?.payload?.toString()
         val selectedUnit = applyUnit("conflict", snapshot.sourceBundleId, "$unitInput/$desiredText/$hasNewerIntent")
-        survivors.prepare(state, selectedUnit, 1, "conflict", observed?.rowVersion) {
-            if (hasNewerIntent) survivors.capture(state, tableName, conflictingRow.localPk)
+        survivors.prepare(state, selectedUnit, 1, "conflict", observed?.rowVersion,
+            workspaceStatementCache = statementCache, replayStatementCache = statementCache) {
+            if (hasNewerIntent) survivors.capture(state, tableName, conflictingRow.localPk,
+                workspaceStatementCache = statementCache, replayStatementCache = statementCache)
             else ApplySurvivor(tableName, conflictingRow.localPk, desiredText,
                 wire = upsert?.payloadSource == PayloadSource.AUTHORITATIVE_WIRE, role = "intended")
         }
@@ -121,7 +123,7 @@ internal class OversqliteConflictExecutor(
             )
         }
         updatedTables += lifecycle.restoreAndVerify(state, statementCache)
-        survivors.finish()
+        survivors.finish(replayStatementCache = statementCache)
         outboxStateStore.clearBundleAndRows(statementCache)
         return updatedTables
     }

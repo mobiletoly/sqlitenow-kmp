@@ -265,11 +265,22 @@ and application triggers use ordinary survivor preparation.
 The preparation unit binds this strategy so eligibility changes invalidate an
 incompatible saved plan. Pull, conflict and snapshot behavior is unchanged.
 
-Push settlement borrows its writer's statement cache for survivor cleanup:
+Push settlement, incremental pull, conflict resolution and snapshot installation
+borrow their writer's statement cache for survivor cleanup:
 the two paged DELETE statements, their immediate `SELECT changes()` probes and
 the final plan DELETE reuse handles within that writer. Cleanup retains 128-row
 pages, terminal probes and cancellation checks. The enclosing writer releases
-and closes the cache before commit; other callers keep uncached cleanup.
+and closes the cache before commit. Cleanup borrows the cache and never closes it
+or retains a handle across writers; the helper's uncached default remains available.
+
+Pull and conflict survivor preparation also borrow that cache for workspace checks
+and replay traversal, including version-skipped pull roots and newer conflict intent.
+Pull restoration and final survivor verification use the same writer cache.
+Snapshot traversal and conflict restoration already use it. Each resumed writer
+creates fresh handles and repeats the existing context guards. Wire sizing and
+dependency-validation internals retain their existing defaults. This reduces
+preparations while preserving every scan, SQL execution and work charge; global
+relationship discovery still grows with the managed row and relationship population.
 
 ## 8. Recovery And Intent Preservation
 

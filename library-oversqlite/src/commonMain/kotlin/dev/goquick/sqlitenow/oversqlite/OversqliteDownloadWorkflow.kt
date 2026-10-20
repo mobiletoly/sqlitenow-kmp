@@ -373,12 +373,17 @@ internal class OversqliteDownloadWorkflow(
             },
         ) { statementCache ->
             val updatedTables = linkedSetOf<String>()
-            bundleApplier.survivors.prepare(state, applyUnit("pull", bundle.bundleSeq, bundle.bundleHash), bundle.rows.size, inputSequence = bundle.bundleSeq) { index ->
+            bundleApplier.survivors.prepare(
+                state, applyUnit("pull", bundle.bundleSeq, bundle.bundleHash), bundle.rows.size,
+                inputSequence = bundle.bundleSeq,
+                workspaceStatementCache = statementCache, replayStatementCache = statementCache,
+            ) { index ->
                 val row = bundle.rows[index]
                 val (key, pk) = localStore.bundleRowKeyToLocalKey(state, row.table, row.key)
                 val current = syncStateStore.loadStructuredRowState(state.validated.schemaForTable(row.table), row.table, key, statementCache)
                 if (current.exists && current.rowVersion >= row.rowVersion) {
-                    bundleApplier.survivors.capture(state, row.table, pk)
+                    bundleApplier.survivors.capture(state, row.table, pk,
+                        workspaceStatementCache = statementCache, replayStatementCache = statementCache)
                 } else bundleApplier.survivors.wire(row.table, pk, row.payload)
             }
             for (row in bundle.rows) {
@@ -394,12 +399,14 @@ internal class OversqliteDownloadWorkflow(
                 updatedTables += row.table.lowercase()
             }
             for (pass in 0 until 64) {
-                val restored = bundleApplier.survivors.restore(state, statementCache)
+                val restored = bundleApplier.survivors.restore(state, statementCache,
+                    workspaceStatementCache = statementCache, replayStatementCache = statementCache)
                 updatedTables += restored
                 if (restored.isEmpty()) break
             }
-            bundleApplier.survivors.restore(state, statementCache, verifyOnly = true)
-            bundleApplier.survivors.finish()
+            bundleApplier.survivors.restore(state, statementCache, verifyOnly = true,
+                workspaceStatementCache = statementCache, replayStatementCache = statementCache)
+            bundleApplier.survivors.finish(replayStatementCache = statementCache)
             attachmentStateStore.markBundleSeen(bundle.bundleSeq, statementCache)
             updatedTables
         }
@@ -532,7 +539,7 @@ internal class OversqliteDownloadWorkflow(
             }
             lifecycle.restoreAndVerify(state, statementCache)
             lifecycle.verifySnapshot(state, session, preserve, statementCache)
-            bundleApplier.survivors.finish()
+            bundleApplier.survivors.finish(replayStatementCache = statementCache)
             attachmentStateStore.persistAttachedState(
                 sourceId = currentSourceId,
                 userId = state.userId,
