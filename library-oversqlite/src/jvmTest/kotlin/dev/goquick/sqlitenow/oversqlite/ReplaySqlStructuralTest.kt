@@ -222,8 +222,27 @@ internal open class ReplaySqlStructuralTest : SurvivorTestSupport() {
         val expected = baseline.getValue("cases").jsonArray.map { it.jsonObject }.single { it.getValue("size").jsonPrimitive.int == size }
         for (key in listOf("bindingTrace", "selectedExecutions", "accounting"))
             assertEquals(expected[key], actual[key], "immutable untouched-source oracle size=$size field=$key")
-        assertEquals(pushCleanupCacheSqlOracle(relationshipChangesSqlOracle(decisionBindingSqlOracle(boundedCleanupSqlOracle(expected.getValue("sql").jsonObject)))), actual["sql"],
-            "untouched-source SQL oracle plus declared cleanup grouping, decision binding and writer statement reuse size=$size")
+        assertEquals(indexAccountingSqlOracle(pushCleanupCacheSqlOracle(relationshipChangesSqlOracle(decisionBindingSqlOracle(boundedCleanupSqlOracle(expected.getValue("sql").jsonObject)))), size), actual["sql"],
+            "untouched-source SQL oracle plus declared cleanup grouping, decision binding, statement reuse and index accounting snapshot size=$size")
+    }
+
+    private fun indexAccountingSqlOracle(original: JsonObject, size: Int): JsonObject {
+        val accounting = original.keys.single { it.startsWith("SELECT o.reserved_entries") && it.contains("NULL,0,0,0,0,0") }
+        // P,Q,C,D plus size unrelated NULL-FK rows: four admissions per row,
+        // one additional admission for each of C->P and D->C, and one terminal
+        // index-key probe. Retain one fresh read and all admissions/work charges.
+        val removed = 4L * (size + 4) + 2
+        val counters = original.getValue(accounting).jsonObject
+        assertTrue(counters.getValue("steps").jsonPrimitive.long > removed)
+        val updated = JsonObject(counters.mapValues { (counter, value) ->
+            if (counter in setOf("steps", "resets", "clears")) JsonPrimitive(value.jsonPrimitive.long - removed) else value
+        })
+        val eligibility = "SELECT 1 FROM sqlite_schema WHERE type='trigger' AND lower(tbl_name) IN ('_sync_apply_edges','_sync_apply_plan') " +
+            "UNION ALL SELECT 1 FROM sqlite_temp_schema WHERE type='trigger' AND lower(tbl_name) IN ('_sync_apply_edges','_sync_apply_plan') LIMIT 1"
+        assertFalse(eligibility in original)
+        return JsonObject(original + (accounting to updated) + (eligibility to buildJsonObject {
+            for (counter in listOf("prepares", "steps", "resets", "clears", "closes")) put(counter, 1L)
+        }))
     }
 
     // One settlement writer owns all four cleanup handles. Keep every frozen

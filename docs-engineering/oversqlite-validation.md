@@ -51,6 +51,14 @@ Implementation, candidate qualification, independent review, owner acceptance an
 release are separate gates. An owner-approved maintenance exception is prospective:
 it never relabels old source-revision evidence as a current pass.
 
+Changes to Oversqlite `commonMain` require
+`./gradlew :library-oversqlite:compileCommonMainKotlinMetadata` before runtime
+qualification, including the Development profile. JVM/Android compilation can
+resolve platform members that are absent from the common API, so their tests do
+not replace this check. For shared SQLite async API changes, also compile the
+affected JS/Wasm targets. Metadata compilation and runtime tests do not establish
+publication success; report packaging and publishing evidence separately.
+
 ## Select the smallest sound set
 
 Compare both complete worktrees with the last evidenced candidate, including

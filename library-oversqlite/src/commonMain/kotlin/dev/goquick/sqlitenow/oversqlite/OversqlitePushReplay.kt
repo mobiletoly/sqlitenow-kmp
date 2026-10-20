@@ -15,6 +15,7 @@
  */
 package dev.goquick.sqlitenow.oversqlite
 
+import androidx.sqlite.async.step
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive

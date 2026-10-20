@@ -282,6 +282,17 @@ dependency-validation internals retain their existing defaults. This reduces
 preparations while preserving every scan, SQL execution and work charge; global
 relationship discovery still grows with the managed row and relationship population.
 
+Within a consecutive dependency-indexing phase, a writer may also retain the
+non-apply workspace accounting total. Every admission still combines that total
+with the current apply rows, edges, cursor and temporary allocation. This optional
+holder costs two entries and256bytes; insufficient initial or later capacity
+disables retention for the rest of the run and uses fresh accounting instead.
+Main or TEMP triggers on the internal edge/plan tables also disable retention.
+The holder ends before walking or other phases and never crosses a writer,
+continuation or reopen. Other phases and raw callers retain fresh accounting.
+This removes repeated metadata reads, while relationship scans and work charges
+remain unchanged.
+
 ## 8. Recovery And Intent Preservation
 
 The most important recovery invariant is:

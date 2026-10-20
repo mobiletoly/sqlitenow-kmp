@@ -235,6 +235,66 @@ internal class ApplyStatementReuseLiveTest : ApplyStatementTestSupport() {
             scalarLong(reader.db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
     }
 
+    @Test fun indexAccountingCancellationReopens() = runOwnedWebDatabaseTest(timeout = 240.seconds) {
+        withContext(Dispatchers.Default) {
+            val config = config() ?: return@withContext
+            val user = randomRealServerId("apply-index-reopen")
+            val writer = endpoint(config, user)
+            var reader: Endpoint? = null
+            val parent = randomRealServerUuid()
+            val root = randomRealServerUuid()
+            try {
+                writer.db.execSQL("INSERT INTO categories VALUES('$parent','parent',NULL),('$root','before',NULL)")
+                repeat(3) { writer.db.execSQL("INSERT INTO categories VALUES('${randomRealServerUuid()}','unrelated','$parent')") }
+                writer.client.pushPending().getOrThrow()
+                val follower = endpoint(config, user); reader = follower
+                assertConverged(writer, follower, 3, parent)
+                val checkpoint = scalarLong(follower.db, "SELECT last_bundle_seq_seen FROM _sync_attachment_state")
+                val source = scalarText(follower.db, "SELECT current_source_id FROM _sync_attachment_state")
+                val sequence = scalarLong(follower.db, "SELECT next_source_bundle_id FROM _sync_source_state")
+                val before = baselineQualificationVector(follower.db, listOf("categories", "_sync_apply_plan", "_sync_apply_rows", "_sync_apply_edges"))
+                writer.db.execSQL("UPDATE categories SET name='after' WHERE id='$root'")
+                writer.client.pushPending().getOrThrow()
+                var edges = 0
+                follower.client.setSnapshotApplyFaultInjectorForTest(SnapshotApplyFaultInjector(statementCacheOperations = StatementCacheOperations(
+                    prepare = { db, sql ->
+                        val delegate = db.prepare(sql)
+                        object : SQLiteStatement by delegate {
+                            override fun step(): Boolean {
+                                val result = delegate.step()
+                                if (sql.startsWith("INSERT OR IGNORE INTO _sync_apply_edges") && ++edges == 2)
+                                    throw CancellationException("cancel after indexing started")
+                                return result
+                            }
+                        }
+                    },
+                )))
+                try { assertFailsWith<CancellationException> { follower.client.pullToStable().getOrThrow() } }
+                finally { follower.client.setSnapshotApplyFaultInjectorForTest(null) }
+                assertEquals(2, edges)
+                assertEquals(before, baselineQualificationVector(follower.db, listOf("categories", "_sync_apply_plan", "_sync_apply_rows", "_sync_apply_edges")))
+                close(follower, deleteFiles = false)
+                val physical = newFileBackedDb(follower.path)
+                try {
+                    assertEquals(before, baselineQualificationVector(physical, listOf("categories", "_sync_apply_plan", "_sync_apply_rows", "_sync_apply_edges")))
+                    assertEquals("before", scalarText(physical, "SELECT name FROM categories WHERE id='$root'"))
+                    assertEquals(checkpoint, scalarLong(physical, "SELECT last_bundle_seq_seen FROM _sync_attachment_state"))
+                } finally { physical.close() }
+                val retry = reopen(config, user, follower.path); reader = retry
+                val observed = ApplyStatementObservation.install(retry.db)
+                try { retry.client.pullToStable().getOrThrow() } finally { observed.restore() }
+                observed.assertClosed()
+                assertEquals(3L, observed.steps.filterKeys { it.startsWith("INSERT OR IGNORE INTO _sync_apply_edges") }.values.sum())
+                assertEquals(1L, observed.steps.filterKeys { it.contains("sqlite_temp_schema") && it.contains("_sync_apply_edges") }.values.sum())
+                assertEquals(source, scalarText(retry.db, "SELECT current_source_id FROM _sync_attachment_state"))
+                assertEquals(sequence, scalarLong(retry.db, "SELECT next_source_bundle_id FROM _sync_source_state"))
+                assertConverged(writer, retry, 3, parent)
+                assertEquals("after", scalarText(retry.db, "SELECT name FROM categories WHERE id='$root'"))
+                println("APPLY_LIVE_INDEX_VERIFIED indexedEdgesBeforeCancel=$edges physicalReopen=true replayEdges=3 fullPayloads=true checkpoints=true")
+            } finally { closeAll(listOfNotNull(reader, writer)) }
+        }
+    }
+
     @Test fun snapshotCleanupCancellationReopens() = runOwnedWebDatabaseTest(timeout = 240.seconds) {
         withContext(Dispatchers.Default) {
             val config = config() ?: return@withContext

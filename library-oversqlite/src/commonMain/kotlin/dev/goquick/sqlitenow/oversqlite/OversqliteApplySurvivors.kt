@@ -75,6 +75,9 @@ private data class ApplyPlan(
     var atomicWork: Long = 0, var preservationComplete: Boolean = false, var sourceSnapshotId: String = "",
 )
 
+/** Includes the optional two-entry/256-byte holder, never the changing apply owner. */
+private class IndexAccountingSnapshot(val chargedExternal: Pair<Long, Long>)
+
 internal fun applyUnit(kind: String, sequence: Long, hash: String): String =
     sha256Hex("$kind:$sequence:$hash".encodeToByteArray())
 
@@ -170,28 +173,67 @@ internal class OversqliteApplySurvivors(
             "obsolete snapshot count phase requires fresh installation"
         }
         save(plan, replayStatementCache = replayStatementCache)
-        while (plan.phase != "ready") {
-            operations.reserveSyncWork(unit, 16)
-            val phaseBefore = plan.phase
-            when (plan.phase) {
-                "clear" -> clearStep(plan, replayStatementCache = replayStatementCache)
-                "roots" -> if (plan.root == roots.toLong()) {
-                    plan.phase = if (operationKind == "snapshot" || !discoverDependents) "ready" else "index"; plan.fk = -1
-                } else {
-                    put(plan, seed(plan.root.toInt()), workspaceStatementCache, replayStatementCache = replayStatementCache); plan.root++
+        var indexSnapshot: IndexAccountingSnapshot? = null
+        var indexSnapshotAttempted = false
+        suspend fun checkIndexSpace(entries: Long, bytes: Long) {
+            val held = indexSnapshot
+            if (held != null) {
+                try {
+                    checkSpaceWithPush(plan, held.chargedExternal, entries, bytes)
+                    return
+                } catch (_: SyncWorkspaceLimitException) {
+                    // Only the pure admission above can take this optional fallback.
+                    // Release the scalar holder before refreshing or reporting refusal.
+                    indexSnapshot = null
                 }
-                "index" -> indexStep(state, plan, workspaceStatementCache, replayStatementCache = replayStatementCache)
-                "walk" -> walk(state, plan, workspaceStatementCache, replayStatementCache = replayStatementCache)
-                else -> error("invalid survivor plan phase")
             }
-            checkSpace(plan, workspaceStatementCache = workspaceStatementCache)
-            // Root callbacks reload the retained plan. Publish ready state and the
-            // last completed private step before the next work reservation refuses.
-            if (phaseBefore == "roots" || plan.phase == "roots" || plan.phase == "ready" ||
-                16 > config.maxSyncWorkUnitsPerInvocation - operations.usedSyncWork()) {
-                save(plan, replayStatementCache = replayStatementCache)
+            val external = pushWorkspace(workspaceStatementCache)
+            checkSpaceWithPush(plan, external, entries, bytes)
+            if (workspaceStatementCache == null || indexSnapshotAttempted) return
+            indexSnapshotAttempted = true
+            val trigger = one("SELECT 1 FROM sqlite_schema WHERE type='trigger' AND lower(tbl_name) IN ('_sync_apply_edges','_sync_apply_plan') " +
+                "UNION ALL SELECT 1 FROM sqlite_temp_schema WHERE type='trigger' AND lower(tbl_name) IN ('_sync_apply_edges','_sync_apply_plan') LIMIT 1",
+                replayStatementCache = workspaceStatementCache) { true }
+            if (trigger == true) return
+            try {
+                // The original admission succeeded, so adding these finite temporary
+                // charges cannot overflow before the existing checked admission.
+                checkSpaceWithPush(plan, external, entries + 2, bytes + 256)
+            } catch (_: SyncWorkspaceLimitException) {
+                return
             }
-            checkpointWorkStep()
+            indexSnapshot = IndexAccountingSnapshot(external.first + 2 to external.second + 256)
+        }
+        try {
+            while (plan.phase != "ready") {
+                operations.reserveSyncWork(unit, 16)
+                val phaseBefore = plan.phase
+                when (plan.phase) {
+                    "clear" -> clearStep(plan, replayStatementCache = replayStatementCache)
+                    "roots" -> if (plan.root == roots.toLong()) {
+                        plan.phase = if (operationKind == "snapshot" || !discoverDependents) "ready" else "index"; plan.fk = -1
+                    } else {
+                        put(plan, seed(plan.root.toInt()), workspaceStatementCache, replayStatementCache = replayStatementCache); plan.root++
+                    }
+                    "index" -> indexStep(state, plan, ::checkIndexSpace, replayStatementCache = replayStatementCache)
+                    "walk" -> walk(state, plan, workspaceStatementCache, replayStatementCache = replayStatementCache)
+                    else -> error("invalid survivor plan phase")
+                }
+                if (phaseBefore == "index" && plan.phase == "index") checkIndexSpace(0, 0)
+                else {
+                    indexSnapshot = null
+                    checkSpace(plan, workspaceStatementCache = workspaceStatementCache)
+                }
+                // Root callbacks reload the retained plan. Publish ready state and the
+                // last completed private step before the next work reservation refuses.
+                if (phaseBefore == "roots" || plan.phase == "roots" || plan.phase == "ready" ||
+                    16 > config.maxSyncWorkUnitsPerInvocation - operations.usedSyncWork()) {
+                    save(plan, replayStatementCache = replayStatementCache)
+                }
+                checkpointWorkStep()
+            }
+        } finally {
+            indexSnapshot = null
         }
         if (operationKind == "settlement" || operationKind == "conflict") prepareSettlementIntent(state, plan, workspaceStatementCache, replayStatementCache = replayStatementCache)
         val lifecycle = OversqliteApplyLifecycle(db, config, local, this, json,
@@ -292,7 +334,7 @@ internal class OversqliteApplySurvivors(
         else exec("DELETE FROM _sync_apply_plan", replayStatementCache = replayStatementCache)
     }
 
-    private suspend fun indexStep(state: RuntimeState, p: ApplyPlan, workspaceStatementCache: StatementCache?, replayStatementCache: StatementCache?) {
+    private suspend fun indexStep(state: RuntimeState, p: ApplyPlan, admit: suspend (Long, Long) -> Unit, replayStatementCache: StatementCache?) {
         if (p.table >= state.validated.tables.size) {
             p.phase = "walk"; p.table = 0; p.fk = 0; p.cursor = null
             return
@@ -300,30 +342,30 @@ internal class OversqliteApplySurvivors(
         val table = state.validated.tables[p.table.toInt()].tableName
         val info = state.validated.tableInfoByName.getValue(table)
         if (info.foreignKeys.isEmpty()) { p.table++; p.fk = -1; p.cursor = null; return }
-        if (p.fk < 0) { nextIndexKey(state, p, table, info, workspaceStatementCache, replayStatementCache = replayStatementCache); return }
+        if (p.fk < 0) { nextIndexKey(state, p, table, info, admit, replayStatementCache = replayStatementCache); return }
         if (p.fk >= info.foreignKeys.size) { p.fk = -1; return }
-        indexForeignKey(state, p, table, info, info.foreignKeys[p.fk.toInt()], workspaceStatementCache, replayStatementCache = replayStatementCache)
+        indexForeignKey(state, p, table, info, info.foreignKeys[p.fk.toInt()], admit, replayStatementCache = replayStatementCache)
         p.fk++
     }
 
-    private suspend fun nextIndexKey(state: RuntimeState, p: ApplyPlan, table: String, info: TableInfo, workspaceStatementCache: StatementCache? = null, replayStatementCache: StatementCache? = null) {
+    private suspend fun nextIndexKey(state: RuntimeState, p: ApplyPlan, table: String, info: TableInfo, admit: suspend (Long, Long) -> Unit, replayStatementCache: StatementCache? = null) {
         val description = state.validated.replaySql.table(table)
         val sql = if (p.cursor == null) description.initialKey else description.afterCursorKey
         val args = p.cursor?.let { arrayOf(physicalKey(state, table, it)) } ?: emptyArray()
         val size = one(sql.size, *args, replayStatementCache = replayStatementCache) { it.getLong(0) }
         if (size == null) { p.table++; p.fk = -1; p.cursor = null; return }
-        checkSpace(p, 3, 18 * size + 128, workspaceStatementCache)
+        admit(3, 18 * size + 128)
         p.cursor = checkNotNull(one(sql.value, *args, replayStatementCache = replayStatementCache) { it.getText(0) })
         p.fk = 0
     }
 
-    private suspend fun indexForeignKey(state: RuntimeState, p: ApplyPlan, table: String, info: TableInfo, fk: ForeignKeyInfo, workspaceStatementCache: StatementCache?, replayStatementCache: StatementCache?) {
+    private suspend fun indexForeignKey(state: RuntimeState, p: ApplyPlan, table: String, info: TableInfo, fk: ForeignKeyInfo, admit: suspend (Long, Long) -> Unit, replayStatementCache: StatementCache?) {
         val parentTable = fk.refTable.lowercase()
         val sql = state.validated.replaySql.table(table).foreignKey(p.fk.toInt())
         val value = physicalKey(state, table, checkNotNull(p.cursor))
         val parentBytes = one(sql.size, value, replayStatementCache = replayStatementCache) { it.getLong(0) } ?: return
         val size = 6 * (parentBytes + utf8Size(parentTable) + utf8Size(table) + utf8Size(checkNotNull(p.cursor))) + 64
-        checkSpace(p, 7, 6 * size, workspaceStatementCache)
+        admit(7, 6 * size)
         val parent = checkNotNull(one(sql.value, value, replayStatementCache = replayStatementCache) { it.getText(0) })
         exec("INSERT OR IGNORE INTO _sync_apply_edges VALUES(?,?,?,?,?,?)", p.edgeEntries + 1, parentTable, parent, table, p.cursor, size, replayStatementCache = replayStatementCache)
         // Read immediately after the insert, reusing the transaction-owned handle.

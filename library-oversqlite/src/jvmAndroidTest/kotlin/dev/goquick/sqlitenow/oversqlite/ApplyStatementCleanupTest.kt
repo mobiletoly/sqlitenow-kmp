@@ -28,7 +28,8 @@ internal class ApplyStatementCleanupTest : ApplyStatementTestSupport() {
             val shapes = small.steps.filter { (sql, steps) ->
                 sql.startsWith("INSERT OR IGNORE INTO _sync_apply_edges") || sql == "SELECT changes()" ||
                     sql.startsWith("SELECT unit,guard,phase,root_cursor") ||
-                    (steps >= 32 && (sql.startsWith("SELECT o.reserved_entries") || sql.contains("FROM \"nodes\"")))
+                    (sql.startsWith("SELECT o.reserved_entries") && sql.contains("NULL,0,0,0,0,0")) ||
+                    (steps >= 32 && sql.contains("FROM \"nodes\""))
             }.keys
             assertTrue(shapes.any { it.startsWith("SELECT o.reserved_entries") }, "workspace checks remain observed")
             assertTrue(shapes.any { it.contains("FROM \"nodes\"") }, "managed key/FK scans remain observed")
@@ -37,6 +38,8 @@ internal class ApplyStatementCleanupTest : ApplyStatementTestSupport() {
                 // Uncached wire sizing and dependency validation stay intact. Their fixed
                 // root work must not conceal preparations proportional to the global scan.
                 assertEquals(small.handles.count { it.sql == sql }, large.handles.count { it.sql == sql }, sql)
+                if (sql.startsWith("SELECT o.reserved_entries"))
+                    assertEquals(small.steps[sql], large.steps[sql], "index accounting reads are bounded: $sql")
             }
         }
     }
